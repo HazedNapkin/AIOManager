@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
     Dialog,
     DialogContent,
@@ -9,7 +10,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { toast } from '@/hooks/use-toast'
+import { cn } from '@/lib/utils'
 import { AddonDescriptor, Catalog } from '@/types/addon'
+import { isCinemetaAddon } from '@/lib/cinemeta-utils'
 import {
     DndContext,
     closestCenter,
@@ -28,7 +31,7 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2, RotateCcw } from 'lucide-react'
+import { GripVertical, Trash2, Info } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
 interface SortableCatalogItemProps {
@@ -57,43 +60,44 @@ function SortableCatalogItem({ catalog, onRename, onDelete }: SortableCatalogIte
         <div
             ref={setNodeRef}
             style={style}
-            className={`flex items-center gap-3 p-3 rounded-lg border bg-card ${isDragging ? 'shadow-lg' : ''}`}
+            className={cn(
+                'group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border/45 bg-card p-2.5 transition-[border-color,background-color,box-shadow,transform,opacity]',
+                'hover:border-border/70 hover:bg-muted/20',
+                isDragging ? 'scale-[0.99] border-primary/35 bg-primary/10 shadow-lg' : ''
+            )}
         >
-            {/* Drag handle - Increased Touch Target */}
+            <Tooltip content="Drag to reorder" side="top">
             <button
                 {...attributes}
                 {...listeners}
-                className="
-                    -ml-2 p-3 cursor-grab active:cursor-grabbing 
-                    text-muted-foreground hover:text-foreground 
-                    hover:bg-accent rounded-md transition-colors 
-                    shrink-0
-                "
+                type="button"
+                aria-label={`Drag ${catalog.name || catalog.id} to reorder`}
+                className="flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-lg border border-border/45 bg-muted/20 text-muted-foreground transition-colors hover:border-border/70 hover:bg-accent hover:text-foreground active:cursor-grabbing"
                 style={{ touchAction: 'none' }}
-                title="Drag to reorder"
             >
-                <GripVertical className="h-5 w-5" />
+                <GripVertical className="h-4 w-4" />
             </button>
+            </Tooltip>
 
-            {/* Name input */}
             <div className="flex-1 min-w-0">
                 <Input
                     value={catalog.name || ''}
                     placeholder={`${catalog.type} - ${catalog.id}`}
                     onChange={(e) => onRename(catalog._tempId, e.target.value)}
-                    className="h-8"
+                    className="h-9 rounded-lg text-sm font-medium"
                 />
-                <div className="text-xs text-muted-foreground mt-1">
+                <div className="mt-1 truncate px-1 text-xs text-muted-foreground">
                     Type: {catalog.type} • ID: {catalog.id}
                 </div>
             </div>
 
-            {/* Delete button */}
             <Button
+                type="button"
                 variant="ghost"
                 size="icon"
                 onClick={() => onDelete(catalog._tempId)}
-                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                className="h-9 w-9 rounded-full text-destructive/75 hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`Delete ${catalog.name || catalog.id}`}
             >
                 <Trash2 className="h-4 w-4" />
             </Button>
@@ -139,10 +143,12 @@ export function CatalogEditorDialog({
     useEffect(() => {
         if (open && addon.manifest.catalogs) {
             // Respect existing overrides on open
+            const overrideCatalogs = addon.catalogOverrides?.catalogs
             const removedIds = new Set(addon.catalogOverrides?.removed || [])
+            const sourceCatalogs = overrideCatalogs || addon.manifest.catalogs
 
-            const effectiveCatalogs = addon.manifest.catalogs
-                .filter(cat => !removedIds.has(cat.id))
+            const effectiveCatalogs = sourceCatalogs
+                .filter(cat => overrideCatalogs || !removedIds.has(cat.id))
                 .map((cat, idx) => ({
                     ...cat,
                     _tempId: `${cat.id}-${cat.type}-${idx}`,
@@ -186,24 +192,6 @@ export function CatalogEditorDialog({
         try {
             // Remove the temporary IDs before saving
             const cleanedCatalogs: Catalog[] = catalogs.map(({ _tempId, ...rest }) => rest)
-            const currentCatalogIds = new Set(cleanedCatalogs.map(c => c.id))
-
-            // Logic:
-            // 1. Start with existing removed IDs
-            const finalRemovedIds = new Set(addon.catalogOverrides?.removed || [])
-
-            // 2. Un-delete: If an ID is currently visible, it must NOT be in the removed list
-            for (const id of currentCatalogIds) {
-                finalRemovedIds.delete(id)
-            }
-
-            // 3. New Deletions: If an ID was in the visible list we started with, but is gone now, ADD it to removed
-            const originalVisibleIds = (addon.manifest.catalogs || []).map(c => c.id)
-            for (const id of originalVisibleIds) {
-                if (!currentCatalogIds.has(id)) {
-                    finalRemovedIds.add(id)
-                }
-            }
 
             const updatedAddon: AddonDescriptor = {
                 ...addon,
@@ -213,7 +201,8 @@ export function CatalogEditorDialog({
                 },
                 catalogOverrides: {
                     ...addon.catalogOverrides,
-                    removed: Array.from(finalRemovedIds)
+                    removed: [],
+                    catalogs: cleanedCatalogs,
                 }
             }
 
@@ -266,20 +255,29 @@ export function CatalogEditorDialog({
     }
 
     const catalogCount = catalogs.length
+    const isCinemeta = isCinemetaAddon(addon)
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-lg max-h-[80vh] flex flex-col">
+            <DialogContent className="max-h-[88vh] overflow-hidden sm:max-w-lg flex flex-col">
                 <DialogHeader>
                     <DialogTitle>Edit Catalogs: {addon.manifest.name}</DialogTitle>
                     <DialogDescription>
                         Drag to reorder, rename, or delete catalogs. {catalogCount} catalog{catalogCount !== 1 ? 's' : ''}.
                     </DialogDescription>
                 </DialogHeader>
+                {isCinemeta && (
+                    <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                            Stremio keeps official Cinemeta catalog labels, so renames may still show as Popular, New, or Featured there. Deleting and reordering Cinemeta catalogs still applies.
+                        </span>
+                    </div>
+                )}
 
-                <div className="flex-1 overflow-y-auto space-y-2 py-4">
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] -mr-2 pr-3 py-4">
                     {catalogs.length === 0 ? (
-                        <div className="text-center text-muted-foreground py-8">
+                        <div className="rounded-xl border border-dashed border-border/45 bg-muted/10 py-10 text-center text-sm text-muted-foreground">
                             This addon has no catalogs
                         </div>
                     ) : (
@@ -292,20 +290,22 @@ export function CatalogEditorDialog({
                                 items={catalogs.map((c) => c._tempId)}
                                 strategy={verticalListSortingStrategy}
                             >
-                                {catalogs.map((catalog) => (
-                                    <SortableCatalogItem
-                                        key={catalog._tempId}
-                                        catalog={catalog}
-                                        onRename={handleRename}
-                                        onDelete={handleDelete}
-                                    />
-                                ))}
+                                <div className="space-y-2">
+                                    {catalogs.map((catalog) => (
+                                        <SortableCatalogItem
+                                            key={catalog._tempId}
+                                            catalog={catalog}
+                                            onRename={handleRename}
+                                            onDelete={handleDelete}
+                                        />
+                                    ))}
+                                </div>
                             </SortableContext>
                         </DndContext>
                     )}
                 </div>
 
-                <DialogFooter className="gap-2">
+                <DialogFooter>
                     <Button
                         type="button"
                         variant="ghost"
@@ -313,12 +313,10 @@ export function CatalogEditorDialog({
                         onClick={handleReset}
                         disabled={saving}
                         className="mr-auto text-muted-foreground hover:text-foreground"
-                        title="Restore original catalogs"
                     >
-                        <RotateCcw className="h-4 w-4 mr-2" />
                         Default
                     </Button>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+                    <Button variant="subtle" onClick={() => onOpenChange(false)} disabled={saving}>
                         Cancel
                     </Button>
                     <Button onClick={handleSave} disabled={!hasChanges || saving}>

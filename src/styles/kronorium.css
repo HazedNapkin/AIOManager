@@ -1,0 +1,104 @@
+@import "tailwindcss";
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/*
+ * fumadocs base.css injects: body { background-color: var(--color-fd-background); color: var(--color-fd-foreground); }
+ * That rule bleeds into the main app after Kronorium CSS is loaded.
+ * Counter it: restore app CSS vars on body when #kronorium-root is NOT present.
+ */
+body:not(:has(#kronorium-root)) {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+/* Scoped fumadocs-ui styles - only active inside #kronorium-root */
+
+#kronorium-root {
+  /* fumadocs-ui neutral theme tokens (0 saturation = pure neutral) */
+  --fd-background: 0 0% 7%;
+  --fd-foreground: 0 0% 92%;
+  --fd-card: 0 0% 9.8%;
+  --fd-card-foreground: 0 0% 98%;
+  --fd-popover: 0 0% 11.6%;
+  --fd-popover-foreground: 0 0% 86.9%;
+  --fd-primary: 0 0% 98%;
+  --fd-primary-foreground: 0 0% 9%;
+  --fd-secondary: 0 0% 12.9%;
+  --fd-secondary-foreground: 0 0% 92%;
+  --fd-muted: 0 0% 12.9%;
+  --fd-muted-foreground: 0 0% 70%;
+  --fd-accent: 0 0% 18%;
+  --fd-accent-foreground: 0 0% 90%;
+  --fd-border: 0 0% 40% / 0.2;
+  --fd-input: 0 0% 12.9%;
+  --fd-ring: 0 0% 54.9%;
+  --fd-radius: 0.75rem;
+
+  /* Tailwind v4 color tokens */
+  --color-fd-primary: hsl(0, 0%, 98%);
+  --color-fd-primary-foreground: hsl(0, 0%, 9%);
+
+  /* Override body variables for fumadocs */
+  --background: 0 0% 7%;
+  --foreground: 0 0% 92%;
+
+  font-family: 'Inter', system-ui, sans-serif;
+  color-scheme: dark;
+  background-color: hsl(0, 0%, 7%);
+  min-height: 100vh;
+  scrollbar-gutter: stable;
+  background-image: none;
+}
+
+/* Sidebar & Search Portal Restoration */
+#kronorium-root .fd-sidebar {
+    background-color: var(--fd-background);
+    border-right-width: 1px;
+    border-color: var(--fd-border);
+}
+
+/* Ensure body-level portals (Search) inherit variables only when docs are active */
+body:has(#kronorium-root) [data-search-dialog] {
+    --fd-popover: 0 0% 11.6%;
+}
+
+/* 1:1 Search Parity Restoration */
+[data-search-dialog] {
+    --fd-popover: 0 0% 11.6%;
+}
+
+[data-search-item] {
+    @apply !rounded-lg !transition-colors !border !border-transparent;
+}
+
+[data-search-item][data-active="true"] {
+    @apply !bg-fd-accent/50 !border-fd-border/50;
+}
+
+[data-search-item] mark {
+    @apply !bg-transparent !text-fd-primary !font-bold !underline !decoration-fd-primary/30 !underline-offset-2;
+}
+
+[data-search-dialog] [data-search-group-title] {
+    @apply !text-[10px] !uppercase !tracking-[0.15em] !font-bold !text-fd-muted-foreground/50 !py-3 !px-2;
+}
+
+/* Override fd-primary when Kronorium is active - prevents app gold leaking */
+:root:has(#kronorium-root) {
+    --color-fd-primary: hsl(0, 0%, 98%);
+    --color-fd-primary-foreground: hsl(0, 0%, 9%);
+}
+
+/* Hide theme toggle in docs sidebar */
+#kronorium-root [data-theme-toggle] {
+    display: none !important;
+}
+
+/* Step spacing - consistent across all step lists */
+#kronorium-root .fd-step {
+    padding-bottom: 0.75rem;
+}
+
+/* Expose fumadocs source paths for Tailwind scanning */
+@source "../../node_modules/fumadocs-ui/dist/**/*.js";

@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { useProfileStore } from '@/store/profileStore'
 import { Profile } from '@/types/profile'
 import { Plus } from 'lucide-react'
@@ -18,13 +19,15 @@ import { useToast } from '@/hooks/use-toast'
 interface ProfileDialogProps {
     profile?: Profile // If provided, we are editing
     trigger?: React.ReactNode
+    onDelete?: (id: string) => void
 }
 
-export function ProfileDialog({ profile, trigger }: ProfileDialogProps) {
+export function ProfileDialog({ profile, trigger, onDelete }: ProfileDialogProps) {
     const [open, setOpen] = useState(false)
     const [name, setName] = useState('')
     const [description, setDescription] = useState('')
-    const { createProfile, updateProfile } = useProfileStore()
+    const createProfile = useProfileStore(s => s.createProfile)
+    const updateProfile = useProfileStore(s => s.updateProfile)
     const { toast } = useToast()
 
     // Reset form when dialog opens/closes or profile changes
@@ -58,45 +61,69 @@ export function ProfileDialog({ profile, trigger }: ProfileDialogProps) {
         }
     }
 
+    const handleDelete = () => {
+        if (!profile || !onDelete) return
+        setOpen(false)
+        onDelete(profile.id)
+    }
+
     return (
         <>
             <div onClick={() => setOpen(true)} className="inline-block cursor-pointer">
                 {trigger || (
-                    <Button>
-                        <Plus className="mr-2 h-4 w-4" />
+                    <Button className="gap-2">
+                        <Plus className="h-4 w-4" />
                         Create Profile
                     </Button>
                 )}
             </div>
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="sm:max-w-[425px]">
+                <DialogContent className="sm:max-w-[460px]">
                     <DialogHeader>
                         <DialogTitle>{profile ? 'Edit Profile' : 'Create Profile'}</DialogTitle>
                         <DialogDescription>
-                            {profile ? 'Update profile details.' : 'Create a new profile to organize your addons.'}
+                            {profile
+                                ? 'Update how this saved-addons profile is labeled in your library.'
+                                : 'Profiles are folders for saved addons, so you can keep separate collections for different people, devices, or setups.'}
                         </DialogDescription>
                     </DialogHeader>
                     <form onSubmit={handleSubmit} className="space-y-4 py-4">
                         <div className="grid gap-2">
-                            <Label htmlFor="name">Name</Label>
+                            <Label htmlFor="name">Profile name</Label>
                             <Input
                                 id="name"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
-                                placeholder="e.g. Kids, Guests"
+                                placeholder="e.g. Kids, Guests, Testing"
                                 required
                             />
                         </div>
                         <div className="grid gap-2">
                             <Label htmlFor="description">Description (Optional)</Label>
-                            <Input
+                            <Textarea
                                 id="description"
                                 value={description}
                                 onChange={(e) => setDescription(e.target.value)}
-                                placeholder="Brief description of this profile"
+                                placeholder="What belongs in this profile?"
+                                className="min-h-28 resize-y"
                             />
                         </div>
-                        <DialogFooter>
+                        {!profile && (
+                            <p className="rounded-xl border border-border/45 bg-muted/25 px-3 py-2 text-xs leading-snug text-muted-foreground">
+                                After creating it, assign saved addons to this profile from the library or when saving addons from an account.
+                            </p>
+                        )}
+                        <DialogFooter className={profile && onDelete ? 'sm:justify-between' : undefined}>
+                            {profile && onDelete && (
+                                <Button
+                                    type="button"
+                                    variant="subtle"
+                                    onClick={handleDelete}
+                                    className="text-destructive hover:text-destructive"
+                                >
+                                    Delete Profile
+                                </Button>
+                            )}
                             <Button type="submit">{profile ? 'Save Changes' : 'Create Profile'}</Button>
                         </DialogFooter>
                     </form>

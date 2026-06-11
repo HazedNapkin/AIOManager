@@ -8,24 +8,24 @@ export async function wipeAllData(): Promise<void> {
   // Wipe IndexedDB via LocalForage (Nuclear)
   try {
     await localforage.clear()
-    console.log('IndexedDB cleared')
+    if (import.meta.env.DEV) console.log('IndexedDB cleared')
   } catch (err) {
-    console.error('Failed to clear IndexedDB:', err)
+    import.meta.env.DEV && console.error('Failed to clear IndexedDB:', err)
   }
 
   // Wipe localStorage
   try {
     localStorage.clear()
-    console.log('localStorage cleared')
+    if (import.meta.env.DEV) console.log('localStorage cleared')
   } catch (err) {
-    console.error('Failed to clear localStorage:', err)
+    import.meta.env.DEV && console.error('Failed to clear localStorage:', err)
   }
 
   // Wipe sessionStorage
   try {
     sessionStorage.clear()
-    console.log('sessionStorage cleared')
+    if (import.meta.env.DEV) console.log('sessionStorage cleared')
   } catch (err) {
-    console.error('Failed to clear sessionStorage:', err)
+    import.meta.env.DEV && console.error('Failed to clear sessionStorage:', err)
   }
 }

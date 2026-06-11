@@ -1,0 +1,352 @@
+---
+title: Provider Endpoints
+description: REST API for connection management, reconciliation, and provider authentication.
+---
+
+All provider endpoints require the `x-sync-user` and `x-sync-password` headers. These are derived from your AIOManager sync credentials.
+
+## Reconciliation
+
+### POST /api/providers/sync/:accountId
+
+Trigger bidirectional reconciliation for an account across all its connections.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `accountId` | string | Stremio account ID |
+
+**Body:**
+```json
+{
+  "primaryConnectionId": "connection-uuid",
+  "connections": [],
+  "addons": []
+}
+```
+
+**Response (200):**
+```json
+{
+  "synced": true,
+  "changes": [
+    {
+      "type": "addition",
+      "url": "https://addon.example.com/manifest.json",
+      "platform": "stremio",
+      "primary": true
+    }
+  ],
+  "connectionStates": {}
+}
+```
+
+### GET /api/providers/status/:accountId
+
+Get the current connection states for an account.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `accountId` | string | Stremio account ID |
+
+**Response (200):**
+```json
+{
+  "connectionStates": {
+    "connection-id": {
+      "consecutiveFailures": 0,
+      "lastError": null,
+      "lastErrorAt": null,
+      "lastSync": 1700000000000,
+      "status": "active",
+      "skipCyclesRemaining": 0
+    }
+  }
+}
+```
+
+## Connection Credentials
+
+### POST /api/providers/connections/:connectionId/credentials
+
+Store encrypted credentials for a connection.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connectionId` | string | Connection UUID |
+
+**Body:**
+```json
+{
+  "accountId": "stremio-account-id",
+  "credential": "api-key-or-token",
+  "credentialType": "hydra"
+}
+```
+
+Valid `credentialType` values: `nuvio`, `realstream`, `hydra`.
+
+**Response (200):**
+```json
+{
+  "ok": true
+}
+```
+
+### DELETE /api/providers/connections/:connectionId/credentials
+
+Remove stored credentials for a connection.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connectionId` | string | Connection UUID |
+
+**Response (200):**
+```json
+{
+  "ok": true
+}
+```
+
+## Token Management
+
+### POST /api/providers/connections/:connectionId/token
+
+Refresh and retrieve an access token for a connection. Server-side token custody ensures only one refresh happens at a time.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connectionId` | string | Connection UUID |
+
+**Body:**
+```json
+{
+  "accountId": "stremio-account-id",
+  "platform": "nuvio"
+}
+```
+
+Valid `platform` values: `nuvio`, `realstream`.
+
+**Response (200):**
+```json
+{
+  "accessToken": "eyJhbGci...",
+  "expiresAt": 1700000000000,
+  "profileId": "profile-uuid"
+}
+```
+
+### POST /api/providers/connections/:connectionId/profile
+
+Switch the active profile for a Nuvio connection. Updates only the profile ID without touching rotating tokens.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connectionId` | string | Connection UUID |
+
+**Body:**
+```json
+{
+  "profileId": "new-profile-uuid"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true
+}
+```
+
+## Provider Authentication
+
+### POST /api/providers/nuvio/auth
+
+Authenticate with Nuvio via email and password. Returns tokens and available profiles.
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password",
+  "publishableKey": "optional-supabase-key"
+}
+```
+
+**Response (200):**
+```json
+{
+  "tokens": {
+    "accessToken": "eyJhbGci...",
+    "refreshToken": "v1.xxx..."
+  },
+  "profiles": [
+    { "id": 1, "name": "Default" }
+  ]
+}
+```
+
+### POST /api/providers/nuvio/signup
+
+Create a new Nuvio account.
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password",
+  "publishableKey": "optional-supabase-key"
+}
+```
+
+**Response (200):**
+```json
+{
+  "tokens": {
+    "accessToken": "eyJhbGci...",
+    "refreshToken": "v1.xxx..."
+  },
+  "profiles": []
+}
+```
+
+### POST /api/providers/realstream/auth
+
+Authenticate with RealStream via email and password. Password is not stored.
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password",
+  "baseUrl": "https://optional-custom-instance.com"
+}
+```
+
+**Response (200):**
+```json
+{
+  "tokens": {
+    "accessToken": "eyJhbGci..."
+  }
+}
+```
+
+### POST /api/providers/realstream/signup
+
+Create a new RealStream account.
+
+**Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "password",
+  "name": "Display Name",
+  "baseUrl": "https://optional-custom-instance.com"
+}
+```
+
+**Response (200):**
+```json
+{
+  "tokens": {
+    "accessToken": "eyJhbGci..."
+  }
+}
+```
+
+### POST /api/providers/hydra/test
+
+Test connectivity to a Hydra-compatible provider.
+
+**Body:**
+```json
+{
+  "baseUrl": "https://hydra-instance.com",
+  "authType": "header",
+  "authHeader": "X-API-Key",
+  "authValue": "your-api-key"
+}
+```
+
+**Response (200):** Returns the Hydra server status object.
+
+## Hydra Subscribers
+
+### GET /api/providers/subscribers/:accountId
+
+List all Hydra subscribers for an account.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `accountId` | string | Stremio account ID |
+
+**Response (200):**
+```json
+{
+  "subscribers": [
+    {
+      "name": "subscriber-name",
+      "logo": "https://example.com/logo.png",
+      "created_at": 1700000000000,
+      "last_seen_at": 1700000000000
+    }
+  ]
+}
+```
+
+### DELETE /api/providers/subscribers/:accountId
+
+Remove a specific Hydra subscriber.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `accountId` | string | Stremio account ID |
+
+**Body:**
+```json
+{
+  "name": "subscriber-name"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true
+}
+```
+
+## Canonical Addon Lists
+
+### GET /api/providers/canonical
+
+Read the server-readable canonical addon lists for all accounts owned by the authenticated user. Used by the client to detect external writes before pushing.
+
+**Response (200):**
+```json
+{
+  "canonical": {
+    "account-id-1": {
+      "addons": [],
+      "updatedAt": 1700000000000
+    }
+  }
+}
+```

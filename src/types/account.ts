@@ -3,20 +3,38 @@ import { SavedAddon } from './saved-addon'
 import { Profile } from './profile'
 import { FailoverRule, WebhookConfig } from '@/store/failoverStore'
 import { AccountAddonState } from './saved-addon'
+import { Connection } from './connection'
 
-export type AccountStatus = 'active' | 'error'
+export type AccountStatus = 'active' | 'error' | 'expired'
+
+export interface AccountProfile {
+  id: string
+  name: string
+  addons: AddonDescriptor[]
+  apRules?: FailoverRule[]
+}
 
 export interface StremioAccount {
   id: string
   name: string
   email?: string
-  authKey: string // Encrypted
+  authKey: string // Encrypted, or '' for local-only accounts
   password?: string // Encrypted (optional)
   addons: AddonDescriptor[]
   lastSync: Date
   status: AccountStatus
   accentColor?: string
   emoji?: string
+  note?: string
+  hideLastWatched?: boolean
+  profiles?: AccountProfile[]
+  activeProfileId?: string
+  connections?: Connection[]
+  primaryConnectionId?: string
+  apiKey?: string
+  // Normalized transportUrl -> deletedAt(ms). Stops a deleted addon from being resurrected by
+  // an inbound Stremio/cloud sync. See lib/addon-tombstones.ts.
+  deletedAddons?: Record<string, number>
 }
 
 export interface AddonChangelogEntry {
@@ -24,8 +42,11 @@ export interface AddonChangelogEntry {
   accountId: string
   addonName: string
   addonId: string
+  addonUrl?: string
+  oldAddonUrl?: string
+  newAddonUrl?: string
   addonLogo?: string
-  action: 'installed' | 'updated' | 'removed'
+  action: 'installed' | 'updated' | 'removed' | 'replaced'
   timestamp: string
 }
 

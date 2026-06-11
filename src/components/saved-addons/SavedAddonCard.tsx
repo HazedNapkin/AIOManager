@@ -5,20 +5,30 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
-import { cn, getAddonConfigureUrl, isNewerVersion } from '@/lib/utils'
+import { cn, getAddonConfigureUrl, isNewerVersion, getTimeAgo } from '@/lib/utils'
+import { describeManifestChanges } from '@/lib/addon-manifest-diff'
 import { useAddonStore } from '@/store/addonStore'
-import { Copy, MoreVertical, Pencil } from 'lucide-react'
+import { useUIStore } from '@/store/uiStore'
+import { Button } from '@/components/ui/button'
+import { StatusChip } from '@/components/ui/status-chip'
+import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil } from 'lucide-react'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 
 import React, { useState } from 'react'
-import { SavedAddon } from '@/types/saved-addon'
+import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
+import type { StremioAccount } from '@/types/account'
 import { SavedAddonDetails } from './SavedAddonDetails'
 import { getTagColor } from '@/lib/tag-utils'
+import { HighlightText } from '@/components/ui/highlight-text'
+import { Tooltip } from '@/components/ui/tooltip'
+import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
+import { SavedAddonIcon } from './SavedAddonIcon'
+import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
+import type { AddonDescriptor } from '@/types/addon'
 
 interface SavedAddonCardProps {
   savedAddon: SavedAddon
@@ -29,6 +39,9 @@ interface SavedAddonCardProps {
   onToggleSelect?: (id: string) => void
   onLongPress?: (id: string) => void
   profileName?: string
+  deployedAccounts?: StremioAccount[]
+  highlight?: string
+  manifestChange?: SavedAddonManifestChangeSummary
 }
 
 export const SavedAddonCard = React.memo(function SavedAddonCard({
@@ -39,15 +52,23 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
   isSelected,
   onToggleSelect,
   onLongPress,
-  profileName
+  profileName,
+  deployedAccounts = [],
+  highlight = '',
+  manifestChange,
 }: SavedAddonCardProps) {
-  const { deleteSavedAddon } = useAddonStore()
+  const deleteSavedAddon = useAddonStore(s => s.deleteSavedAddon)
+  const replaceTransportUrlUniversally = useAddonStore(s => s.replaceTransportUrlUniversally)
+  const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
   const { toast } = useToast()
   const [showDetails, setShowDetails] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [updating, setUpdating] = useState(false)
 
-  const hasUpdate = latestVersion ? isNewerVersion(savedAddon.manifest.version, latestVersion) : false
+  const hasVersionUpdate = latestVersion ? isNewerVersion(savedAddon.manifest.version, latestVersion) : false
+  const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
+  const hasUpdate = hasVersionUpdate || hasManifestShapeChange
+  const manifestChangeLabel = manifestChange ? describeManifestChanges(manifestChange) : ''
 
   const handleDelete = () => {
     setShowDeleteDialog(true)
@@ -58,7 +79,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
       await deleteSavedAddon(savedAddon.id)
       setShowDeleteDialog(false)
     } catch (error) {
-      console.error('Failed to delete saved addon:', error)
+      if (import.meta.env.DEV) console.error('Failed to delete saved addon:', error)
     }
   }
 
@@ -88,17 +109,6 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
     return `${status}${error}\nLast checked: ${timeAgo}`
   }
 
-  const getTimeAgo = (date: Date) => {
-    const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
-    if (seconds < 60) return 'just now'
-    const minutes = Math.floor(seconds / 60)
-    if (minutes < 60) return `${minutes}m ago`
-    const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours}h ago`
-    const days = Math.floor(hours / 24)
-    return `${days}d ago`
-  }
-
   const handleUpdate = async (e?: React.MouseEvent) => {
     e?.stopPropagation()
     if (!onUpdate) return
@@ -110,22 +120,35 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
     }
   }
 
+  const handleReplaceUrl = async (descriptor: AddonDescriptor, requestedUrl: string) => {
+    return replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, descriptor.transportUrl || requestedUrl, undefined, descriptor)
+  }
+
   const { isLongPressTriggered, ...longPressProps } = useLongPress(() => {
     if (!isSelectionMode && onLongPress) {
       onLongPress(savedAddon.id)
     }
   })
 
+  const handleCardActivate = () => {
+    if (isLongPressTriggered) return
+    if (isSelectionMode && onToggleSelect) {
+      onToggleSelect(savedAddon.id)
+    }
+  }
+
   return (
     <>
       <div
         {...longPressProps}
+        role={isSelectionMode ? "button" : undefined}
+        tabIndex={isSelectionMode ? 0 : undefined}
         className={cn(
-          "group flex flex-col h-full relative rounded-2xl p-5 border transition-all duration-200",
+          "group flex flex-col h-full relative rounded-2xl p-3 sm:p-5 border transition-[transform,opacity,box-shadow] duration-200",
           isSelectionMode ? "cursor-pointer" : "",
           isSelected
-            ? "bg-primary/10 border-primary shadow-[0_0_15px_hsla(var(--primary),0.2)]"
-            : "bg-muted/40 border-border hover:bg-muted/70"
+            ? "bg-primary/12 border-primary/25 shadow-[0_0_15px_hsla(var(--primary)/0.2)]"
+            : "bg-card border-border/40 hover:border-border/80 shadow-sm"
         )}
         onClick={() => {
           if (isLongPressTriggered) return
@@ -133,9 +156,10 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
             onToggleSelect(savedAddon.id)
           }
         }}
+        onKeyDown={isSelectionMode ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardActivate() } } : undefined}
       >
         {isSelected && (
-          <div className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center border-2 border-background shadow-lg" style={{ background: 'hsl(var(--primary))' }}>
+          <div className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center border-2 border-background shadow-lg bg-primary">
             <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
@@ -145,116 +169,93 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
         <div className={isSelectionMode ? 'pointer-events-none flex flex-col flex-1 h-full' : 'flex flex-col flex-1 h-full'}>
           <div className="flex items-start justify-between pb-4">
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              {(savedAddon.metadata?.customLogo || savedAddon.manifest.logo) ? (
-                <div
-                  className="shrink-0 flex items-center justify-center overflow-hidden"
-                  style={{
-                    width: '44px',
-                    height: '44px',
-                    borderRadius: '12px',
-                    background: 'hsl(var(--muted))'
-                  }}
-                >
-                  <img
-                    src={savedAddon.metadata?.customLogo || savedAddon.manifest.logo}
-                    alt={savedAddon.name}
-                    className="w-full h-full object-contain"
-                    onError={(e) => {
-                      e.currentTarget.style.display = 'none'
-                    }}
+              <div className="relative w-11 h-11 shrink-0">
+                <SavedAddonIcon
+                  name={savedAddon.name}
+                  logo={savedAddon.metadata?.customLogo || savedAddon.manifest.logo}
+                  alt={savedAddon.name}
+                  className="h-full w-full"
+                  textClassName="text-lg text-foreground"
+                />
+                {/* Health dot, bottom-right ring overlay */}
+                <Tooltip content={getHealthTooltip()} side="top">
+                  <span
+                    className={cn(
+                      "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-card z-20",
+                      savedAddon.health
+                        ? savedAddon.health.isOnline
+                          ? "bg-success animate-pulse"
+                          : "bg-destructive"
+                        : "bg-muted-foreground/60"
+                    )}
                   />
-                </div>
-              ) : (
-                <div
-                  className="shrink-0 flex items-center justify-center"
-                  style={{
-                    width: '44px',
-                    height: '44px',
-                    borderRadius: '12px',
-                    background: 'linear-gradient(135deg, rgba(99,102,241,0.3), rgba(168,85,247,0.3))',
-                    color: 'hsl(var(--foreground))',
-                    fontFamily: '"DM Sans", sans-serif',
-                    fontWeight: 900,
-                    fontSize: '18px'
-                  }}
-                >
-                  {savedAddon.name.charAt(0).toUpperCase()}
-                </div>
-              )}
+                </Tooltip>
+              </div>
 
               <div className="flex flex-col min-w-0 pr-2">
-                <div
-                  className="truncate leading-tight flex items-center gap-2"
-                  style={{
-                    fontFamily: '"DM Sans", sans-serif',
-                    fontSize: '15px',
-                    fontWeight: 700,
-                    color: 'hsl(var(--foreground))'
-                  }}
-                >
-                  {savedAddon.name}
+                <div className="truncate leading-tight flex items-center gap-2 text-base font-semibold">
+                  <HighlightText text={savedAddon.name} highlight={highlight} />
                 </div>
-                <div className="flex flex-wrap items-center gap-2 mt-[2px] overflow-hidden">
+                <div className="flex flex-wrap items-center gap-2 mt-0.5 overflow-hidden">
                   <div className="flex items-center gap-1.5">
-                    <span
-                      style={{
-                        fontFamily: '"DM Mono", monospace',
-                        fontSize: '10px',
-                        color: 'hsl(var(--muted-foreground))'
-                      }}
-                      className="truncate"
-                    >
+                    <span className="truncate text-xs text-muted-foreground/70">
                       v{savedAddon.manifest.version}
                     </span>
 
-                    <span
-                      style={{
-                        width: '6px',
-                        height: '6px',
-                        borderRadius: '50%',
-                        backgroundColor: savedAddon.health ? (savedAddon.health.isOnline ? '#22c55e' : '#ef4444') : '#9ca3af',
-                        boxShadow: savedAddon.health?.isOnline ? '0 0 6px #22c55e' : 'none'
-                      }}
-                      className="shrink-0"
-                      title={getHealthTooltip()}
-                    />
-
-
-                    {savedAddon.manifest.behaviorHints?.configurable && (
-                      <button
-                        onClick={handleOpenConfiguration}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity ml-1.5 text-muted-foreground hover:text-foreground"
-                        title="Configure"
-                      >
-                        <AnimatedSettingsIcon className="h-3 w-3" />
-                      </button>
+                    {(savedAddon.manifest.behaviorHints?.configurable || savedAddon.manifest.behaviorHints?.configurationRequired) && (
+                      <Tooltip content="Configure">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleOpenConfiguration}
+                          className="ml-1 h-5 w-5 text-muted-foreground hover:text-foreground"
+                          aria-label="Configure"
+                        >
+                          <AnimatedSettingsIcon className="h-3 w-3" />
+                        </Button>
+                      </Tooltip>
                     )}
                   </div>
 
                   {savedAddon.syncWithInstalled && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/20" title="Automatically syncs between your library and installed accounts">
-                      Synced
-                    </span>
+                    hasUpdate ? (
+                      <Tooltip content={manifestChangeLabel || 'A newer version is available to push to your installed accounts'}>
+                        <StatusChip variant="warning" icon={<ArrowUpCircle />}>Update ready</StatusChip>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip content="In sync with your installed accounts">
+                        <StatusChip variant="success" icon={<Link2 />}>In Sync</StatusChip>
+                      </Tooltip>
+                    )
                   )}
                   {savedAddon.sourceType === 'cloned-from-account' && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-primary/12 text-primary border border-primary/25">
                       Cloned
                     </span>
+                  )}
+                  {hasManifestShapeChange && (
+                    <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'}>
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-warning/10 text-warning border border-warning/25">
+                        Manifest
+                      </span>
+                    </Tooltip>
                   )}
                   {(() => {
                     const status = restorationManager.getStatus(savedAddon.installUrl)
                     if (status.status === 'restoring') {
                       return (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20 animate-pulse">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-warning/10 text-warning border border-warning/20 animate-pulse">
                           Restoring...
                         </span>
                       )
                     }
                     if (status.circuitState === 'open') {
                       return (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-red-500/10 text-red-500 border border-red-500/20" title="Auto-restore disabled after repeated failures. 30m cooldown.">
-                          Failed
-                        </span>
+                        <Tooltip content="Auto-restore disabled after repeated failures. 30m cooldown.">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-destructive/10 text-destructive border border-destructive/20">
+                            Failed
+                          </span>
+                        </Tooltip>
                       )
                     }
                     return null
@@ -265,33 +266,34 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button
-                  className="p-1.5 hover:bg-muted rounded-lg transition-colors duration-150 shrink-0 outline-none flex items-center justify-center -mr-2"
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={(e) => e.stopPropagation()}
+                  className="shrink-0 -mr-2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                  aria-label="More options"
                 >
-                  <MoreVertical className="h-4 w-4 text-muted-foreground hover:text-foreground transition-colors" />
-                </button>
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={4} collisionPadding={8} className="w-56">
-                <div className="px-2 py-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground opacity-70">MANAGE SAVED ADDON</div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleCopyUrl}>
-                  <Copy className="h-4 w-4 mr-2" />
+              <DropdownMenuContent align="end" sideOffset={4} collisionPadding={8} className="w-56 max-w-[calc(100vw-2rem)]">
+                <div className="px-2 py-1.5 text-xs font-medium uppercase text-muted-foreground">Manage Saved Addon</div>
+                <DropdownMenuItem onClick={handleCopyUrl} className="gap-2">
+                  <Copy className="h-4 w-4" />
                   Copy URL
                 </DropdownMenuItem>
-                {savedAddon.manifest.behaviorHints?.configurable && (
-                  <DropdownMenuItem onClick={handleOpenConfiguration}>
-                    <AnimatedSettingsIcon className="h-4 w-4 mr-2" />
+                {(savedAddon.manifest.behaviorHints?.configurable || savedAddon.manifest.behaviorHints?.configurationRequired) && (
+                  <DropdownMenuItem onClick={handleOpenConfiguration} className="gap-2">
+                    <AnimatedSettingsIcon className="h-4 w-4" />
                     Configure
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={() => setShowDetails(true)}>
-                  <Pencil className="h-4 w-4 mr-2" />
+                <DropdownMenuItem onClick={() => setShowDetails(true)} className="gap-2">
+                  <Pencil className="h-4 w-4" />
                   Edit
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem destructive onClick={handleDelete}>
-                  <AnimatedTrashIcon className="h-4 w-4 mr-2" />
+                <DropdownMenuItem destructive onClick={handleDelete} className="gap-2 text-destructive focus:text-destructive">
+                  <AnimatedTrashIcon className="h-4 w-4" />
                   Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -299,78 +301,44 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
           </div>
 
           <div className="flex-grow flex flex-col min-w-0 pt-2">
-            {/* Condensed URL */}
-            <div className="flex items-center gap-1.5 mb-2 w-full min-w-0 group/url cursor-pointer" onClick={handleCopyUrl}>
-              <span
-                className="truncate flex-grow min-w-0"
-                style={{
-                  fontFamily: '"DM Mono", monospace',
-                  fontSize: '10px',
-                  color: 'hsl(var(--muted-foreground) / 0.6)'
-                }}
-              >
-                {(() => {
-                  try {
-                    const urlObj = new URL(savedAddon.installUrl)
-                    return `${urlObj.hostname}/••••••`
-                  } catch {
-                    return savedAddon.installUrl
-                  }
-                })()}
-              </span>
-              <Copy className="h-3 w-3 text-muted-foreground opacity-0 group-hover/url:opacity-100 transition-opacity shrink-0" />
-            </div>
-
-            {/* Description */}
             {((savedAddon.metadata?.customDescription || (savedAddon.manifest.description && savedAddon.manifest.description !== `Addon generated by ${savedAddon.name}`))) && (
-              <div
-                className="line-clamp-1 mb-3"
-                style={{
-                  fontFamily: '"DM Sans", sans-serif',
-                  fontSize: '12px',
-                  color: 'hsl(var(--muted-foreground))',
-                  lineHeight: 1.5
-                }}
-              >
+              <div className="line-clamp-2 mb-3 text-xs text-muted-foreground leading-relaxed">
                 {savedAddon.metadata?.customDescription || savedAddon.manifest.description}
               </div>
             )}
 
-            <div className="flex-grow"></div>
+            <SourceUrlBox
+              url={savedAddon.installUrl}
+              manifest={savedAddon.manifest}
+              privacyMode={isPrivacyModeEnabled}
+              variant="compact"
+              disabled={updating}
+              onReplace={handleReplaceUrl}
+              successDescription="Library entry, installed copies, and Autopilot rules were updated."
+              className="mb-2"
+            />
 
-            {/* Tags + Update button */}
+
+            <div className="flex-grow" />
+
             <div className="flex flex-wrap gap-1 relative z-20 mt-auto pt-2" onClick={(e) => e.stopPropagation()}>
               {hasUpdate && onUpdate && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={handleUpdate}
                   disabled={updating}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '3px',
-                    padding: '2px 7px',
-                    borderRadius: '999px',
-                    background: 'rgba(245,158,11,0.12)',
-                    border: '1px solid rgba(245,158,11,0.3)',
-                    fontFamily: '"DM Mono", monospace',
-                    fontSize: '8px',
-                    fontWeight: 700,
-                    color: '#f59e0b',
-                    cursor: updating ? 'not-allowed' : 'pointer',
-                    opacity: updating ? 0.5 : 1,
-                    flexShrink: 0,
-                    whiteSpace: 'nowrap'
-                  }}
+                  className="h-5 px-2 gap-0.5 text-[10px] font-bold uppercase bg-primary/12 text-primary border border-primary/25 hover:bg-primary/20 hover:text-primary shrink-0"
                 >
-                  {updating ? 'Updating...' : <><AnimatedUpdateIcon className="h-3 w-3 mr-1" isAnimating={updating} /> Update</>}
-                </button>
+                  {updating ? 'Updating...' : <><AnimatedUpdateIcon className="h-3 w-3" isAnimating={updating} /> {hasVersionUpdate ? 'Update' : 'Refresh'}</>}
+                </Button>
               )}
               {savedAddon.tags.map((tag) => {
                 const color = getTagColor(tag)
                 return (
                   <span
                     key={tag}
-                    className="font-mono text-[9px] pointer-events-none uppercase tracking-wider font-bold mb-0.5 px-1.5 py-0.5 rounded-md"
+                    className="text-[10px] pointer-events-none px-1.5 py-0 rounded-full leading-5 font-medium"
                     style={{
                       background: color.bg,
                       color: color.text,
@@ -383,28 +351,29 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
               })}
             </div>
 
-            {/* Footer: profile + timestamp */}
-            <div className="flex items-center justify-between pt-3 mt-2 border-t border-border/30">
-              <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex items-center justify-between gap-2 pt-3 mt-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 {profileName && (
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-foreground/25 truncate">
+                  <span className="text-xs text-foreground/60 whitespace-normal break-words line-clamp-2">
                     {profileName}
                   </span>
                 )}
               </div>
-              {savedAddon.createdAt && (
-                <span className="text-[10px] text-foreground/20 tabular-nums shrink-0">
-                  {getTimeAgo(new Date(savedAddon.createdAt))}
-                </span>
-              )}
+              <div className="flex shrink-0 items-center gap-1.5">
+                <SavedAddonDeploymentBadge accounts={deployedAccounts} />
+                {savedAddon.createdAt && (
+                  <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">
+                    Added {getTimeAgo(new Date(savedAddon.createdAt))}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Details Dialog */}
       <Dialog open={showDetails} onOpenChange={setShowDetails}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Edit Saved Addon</DialogTitle>
           </DialogHeader>
@@ -412,7 +381,6 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <ConfirmationDialog
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}

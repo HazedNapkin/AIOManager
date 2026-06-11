@@ -1,0 +1,25 @@
+---
+title: Cinemeta Configuration
+description: Apply low-level patches to the Cinemeta addon manifest.
+---
+
+Cinemeta (the official Stremio catalog addon) has a dedicated configuration dialog accessible from its addon card. It applies low-level manifest patches that don't affect Cinemeta's ability to provide metadata, only what it shows in your Stremio interface.
+
+## Available Patches
+
+**Remove Search Artifacts:** Strips the search resource from Cinemeta. Useful if you prefer another addon to handle search results and want to avoid Cinemeta appearing in every search query.
+
+**Remove Standard Catalogs:** Removes Cinemeta's default catalogs (Top Movies, Top Series, etc.) from your Stremio home screen. Cinemeta still provides metadata for content; it just won't clutter your Discover tab.
+
+**Remove Meta Resource:** Advanced. Strips the meta resource from Cinemeta entirely. Use this only if another addon is providing metadata and you want to prevent Cinemeta from intercepting it.
+
+## Patching vs. Disabling
+
+| | Patch | Disable / Delete |
+|---|---|---|
+| Metadata for content | Yes | Yes |
+| New episode notifications | Yes | No |
+| Desktop app calendar | Yes | No |
+| Removes unwanted catalogs | Yes | Yes |
+
+Patching is recommended. Stremio has internal functionality tied to Cinemeta being present. Disabling or deleting it entirely cuts off new episode notifications for library items and breaks the desktop app calendar. Patching lets you remove only what you want while keeping Cinemeta available for the rest of Stremio.

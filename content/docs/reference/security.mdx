@@ -1,0 +1,36 @@
+---
+title: Security Model
+description: How AIOManager protects your credentials and data.
+---
+
+## Local Encryption
+
+All AuthKeys and passwords are encrypted using **AES-256-GCM** directly in your browser before being stored in IndexedDB. The encryption key is derived from your Master Password using PBKDF2. AIOManager's servers never receive your credentials or addon configurations in plaintext, only ciphertext.
+
+<Warning>If you forget your Master Password, your encrypted data cannot be recovered. There is no password reset, as the server never sees your key.</Warning>
+
+## Server-Side Protection
+
+**Autopilot Rule Encryption:** Autopilot rules stored on the server, including embedded Stremio auth keys, are encrypted at rest using AES-256-GCM with the server's `ENCRYPTION_KEY`.
+
+**SSRF Protection:** All proxy and manifest fetch requests are validated before execution. Localhost, private IP ranges (10.x, 172.16-31.x, 192.168.x), and link-local addresses are blocked.
+
+**Rate Limiting:** API endpoints are individually rate-limited. The sync endpoint allows 60 requests/minute, proxy endpoints 30/minute, health checks 30/minute.
+
+**Password Verification:** Sync passwords are verified using timing-safe comparison to prevent timing-based enumeration attacks.
+
+**Input Validation:** All addon URLs and webhook URLs are validated against allowlists before processing. SQL queries use parameterized statements throughout.
+
+## Encryption Key Management
+
+If `ENCRYPTION_KEY` is not set in your `.env`, the server auto-generates a secure 32-byte key on first boot and saves it to `DATA_DIR/server_secret.key`. Back this file up; losing it means existing encrypted Autopilot data cannot be decrypted.
+
+If you later set a manual `ENCRYPTION_KEY`, the server uses the new key for new data and automatically falls back to the old `server_secret.key` for existing data. No one is locked out.
+
+<Note>AIOManager must be served over HTTPS or localhost. Plain HTTP connections block the browser's Web Crypto APIs required for the Key Vault and Cloud Sync.</Note>
+
+## Privacy
+
+AIOManager does not collect telemetry or tracking data. All your data stays on your own infrastructure. The only external connections made are to the Stremio API (for account syncing) and the addon URLs you install.
+
+**Privacy Mode** in Settings masks account emails and sensitive data across the UI, which is useful for screenshots or screen sharing. It persists across reloads via localStorage.

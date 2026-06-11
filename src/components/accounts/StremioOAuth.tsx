@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Loader2, ExternalLink, Copy, CheckCircle2, AlertCircle } from 'lucide-react'
 
 interface StremioOAuthProps {
-    onAuthKey: (authKey: string) => void
+    onAuthKey: (authKey: string, user?: { email?: string; username?: string; name?: string }) => void
     onError?: (message: string) => void
     disabled?: boolean
 }
@@ -24,7 +24,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
     const timeLeft = (() => {
         // We reference tick to ensure we re-calculate every second
         // but we don't need its value, just the re-render it triggers
-        tick;
+        void tick;
         if (!expiresAt || isExpired) return null
         const diff = Math.max(0, expiresAt - Date.now())
         const minutes = Math.floor(diff / 60000)
@@ -50,6 +50,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                     'X-Requested-With': host,
                     Origin: origin,
                 },
+                referrerPolicy: 'no-referrer',
             })
 
             if (!res.ok) throw new Error('Failed to connect to Stremio')
@@ -90,19 +91,36 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                             'X-Requested-With': host,
                             Origin: origin,
                         },
+                        referrerPolicy: 'no-referrer',
                     }
                 )
 
+                if (res.status === 410) {
+                    setError('Link expired. Please try again.')
+                    setIsPolling(false)
+                    return
+                }
+
+                if (!res.ok) {
+                    throw new Error(`Server returned ${res.status}`)
+                }
+
                 const data = await res.json()
                 if (data?.result?.success && data.result.authKey) {
-                    onAuthKey(data.result.authKey)
+                    onAuthKey(data.result.authKey, data.result.user)
                     setIsPolling(false)
-                } else if (data?.error && data.error.code !== 101) {
-                    // 101 is pending
+                } else if (data?.error) {
+                    const code = data.error.code
+                    if (code === 101) return
+                    if (code === 404 || code === 410 || data.error.message?.toLowerCase().includes('expired')) {
+                        setError('Link expired or invalidated. Please try again.')
+                        setIsPolling(false)
+                        return
+                    }
                     throw new Error(data.error.message || 'Polling failed')
                 }
             } catch (err) {
-                console.warn('Stremio OAuth Poll Error:', err)
+                if (!cancelled && import.meta.env.DEV) console.warn('Stremio OAuth Poll Error:', err)
             }
         }
 
@@ -122,9 +140,13 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
 
     const copyCode = () => {
         if (!stremioCode) return
-        navigator.clipboard.writeText(stremioCode)
-        setIsCopied(true)
-        setTimeout(() => setIsCopied(false), 2000)
+        try {
+            navigator.clipboard.writeText(stremioCode)
+            setIsCopied(true)
+            setTimeout(() => setIsCopied(false), 2000)
+        } catch {
+            setIsCopied(false)
+        }
     }
 
     return (
@@ -136,17 +158,23 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                     </div>
                     <h3 className="font-semibold text-sm mb-1">Stremio OAuth</h3>
                     <p className="text-xs text-muted-foreground text-center mb-6 max-w-[240px]">
-                        Sign in securely using the official Stremio OAuth flow. No password required.
+                        Approve Stremio's official link flow. No password is shared with AIOManager.
                     </p>
+                    <div className="mb-4 rounded-md border border-warning/25 bg-warning/10 p-3 text-left text-xs text-warning">
+                        <p className="font-medium">May expire after Stremio Web logout</p>
+                        <p className="mt-1 text-warning/85">
+                            Stremio can revoke OAuth link tokens when the approving web session signs out. After approval, add your password for long-lived sync.
+                        </p>
+                    </div>
                     <Button
                         type="button"
                         onClick={startOAuthFlow}
                         disabled={isCreating || disabled}
-                        className="w-full"
+                        className="w-full gap-2"
                     >
                         {isCreating ? (
                             <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                <Loader2 className="h-4 w-4 animate-spin" />
                                 Connecting...
                             </>
                         ) : (
@@ -168,11 +196,11 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                             <p className="text-sm font-medium">Authorization Code</p>
                             <div
                                 onClick={copyCode}
-                                className="cursor-pointer group relative flex items-center justify-center gap-3 bg-background border px-6 py-3 rounded-xl hover:border-primary/50 transition-all active:scale-95"
+                                className="cursor-pointer group relative flex items-center justify-center gap-3 bg-background border px-6 py-3 rounded-xl hover:border-primary/50 transition-[transform,opacity,box-shadow] active:scale-95"
                             >
-                                <span className="text-2xl font-mono font-bold tracking-[0.2em]">{stremioCode}</span>
+                                <span className="text-2xl font-mono font-bold">{stremioCode}</span>
                                 {isCopied ? (
-                                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                    <CheckCircle2 className="h-4 w-4 text-success" />
                                 ) : (
                                     <Copy className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                                 )}
@@ -182,40 +210,38 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                         <div className="grid grid-cols-2 gap-2 w-full">
                             <Button
                                 type="button"
-                                variant="outline"
-                                className="bg-background"
-                                onClick={(e) => {
-                                    e.preventDefault()
-                                    e.stopPropagation()
-                                    window.open(stremioLink, '_blank')
-                                }}
-                            >
-                                <ExternalLink className="mr-2 h-4 w-4" />
+                                variant="subtle"
+                                 className="bg-background gap-2"
+                                onClick={() => { if (stremioLink) window.open(stremioLink, '_blank', 'noopener,noreferrer') }}
+                                >
+                                    <ExternalLink className="h-4 w-4" />
                                 Open Link
                             </Button>
                             <Button
                                 type="button"
-                                variant="outline"
-                                className="bg-background"
+                                variant="subtle"
+                                 className="bg-background gap-2"
                                 onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
                                     if (stremioLink) {
-                                        navigator.clipboard.writeText(stremioLink)
-                                        setIsLinkCopied(true)
-                                        setTimeout(() => setIsLinkCopied(false), 2000)
+                                        try {
+                                            navigator.clipboard.writeText(stremioLink)
+                                            setIsLinkCopied(true)
+                                            setTimeout(() => setIsLinkCopied(false), 2000)
+                                        } catch (e) { if (import.meta.env.DEV) console.error(e) }
                                     }
                                 }}
                             >
-                                {isLinkCopied ? (
-                                    <CheckCircle2 className="mr-2 h-4 w-4 text-green-500" />
-                                ) : (
-                                    <Copy className="mr-2 h-4 w-4" />
+                                 {isLinkCopied ? (
+                                    <CheckCircle2 className="h-4 w-4 text-success" />
+                                 ) : (
+                                    <Copy className="h-4 w-4" />
                                 )}
                                 {isLinkCopied ? 'Copied' : 'Copy Link'}
                             </Button>
                         </div>
-                        <p className="text-[10px] text-muted-foreground text-center">
+                        <p className="text-xs text-muted-foreground text-center">
                             Link expires in <span className="font-mono font-medium text-foreground">{timeLeft}</span>
                         </p>
                     </div>
@@ -223,7 +249,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                     <div className="flex flex-col items-center gap-2 py-2">
                         <div className="flex items-center gap-2">
                             <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                            <span className="text-[11px] text-muted-foreground italic">
+                            <span className="text-xs text-muted-foreground italic">
                                 Waiting for you to authorize...
                             </span>
                         </div>
@@ -234,7 +260,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                                 e.stopPropagation()
                                 startOAuthFlow()
                             }}
-                            className="text-[10px] text-primary hover:underline"
+                            className="text-xs text-primary hover:underline"
                         >
                             Link expired? Generate new one
                         </button>

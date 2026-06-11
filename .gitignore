@@ -44,6 +44,8 @@ Thumbs.db
 # Testing
 coverage
 .nyc_output
+server/tests
+src/**/*.test.ts
 
 # Temporary files
 *.tmp
@@ -69,7 +71,9 @@ CLAUDE.local.md
 # AIOManager Data
 server/data/
 aio.db
-data/
+/data/
 *.db
 *.db-shm
 *.db-wal
+
+.source/

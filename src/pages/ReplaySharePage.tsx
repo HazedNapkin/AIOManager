@@ -11,6 +11,7 @@ import { ReplayMonths } from '@/components/replay/ReplayMonths'
 import { ReplayMilestones } from '@/components/replay/ReplayMilestones'
 import { ReplayInsights } from '@/components/replay/ReplayInsights'
 import { ReplayShareCard } from '@/components/replay/ReplayShareCard'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 const MILESTONE_TEMPLATES = [
     { id: 'titles-50', icon: '🎬', title: 'Cineplex Pass', description: 'Watched 50 unique titles', threshold: 50 },
@@ -43,17 +44,20 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
                 tp, t, ds, mt, hg, g, hpa, mb, m, hd, dd, yoy, ph, pdb
             ] = payload
 
-            const pool = (tp || []).map((item: any) => ({
-                itemId: 'tt' + item[0],
-                name: item[1],
-                type: item[2] === 1 ? 'series' : 'movie',
-                poster: `https://images.metahub.space/poster/small/tt${item[0]}/img`,
-                id: 'tt' + item[0],
-                uniqueItemId: 'tt' + item[0],
-                watchCount: 0,
-                totalHours: 0,
-                rank: 0
-            }))
+            const pool = (tp || []).map((item: unknown) => {
+                const arr = item as unknown[]
+                return {
+                    itemId: 'tt' + arr[0],
+                    name: arr[1] as string,
+                    type: (arr[2] as number) === 1 ? 'series' : 'movie',
+                    poster: `https://live.metahub.space/poster/small/tt${arr[0]}/img`,
+                    id: 'tt' + arr[0],
+                    uniqueItemId: 'tt' + arr[0],
+                    watchCount: 0,
+                    totalHours: 0,
+                    rank: 0,
+                }
+            })
 
             const data: ReplayData = {
                 year: y,
@@ -62,32 +66,37 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
                 totalGenres: tg,
                 longestStreak: ls,
                 avgTitlesPerMonth: apm,
-                topTitles: (t || []).map((item: any, i: number) => {
-                    const base = pool[item[0]]
-                    return base ? { ...base, totalHours: item[1], watchCount: isLatest ? item[2] : 0, rank: i + 1 } : null
+                topTitles: (t || []).map((item: unknown, i: number) => {
+                    const arr = item as unknown[]
+                    const base = pool[arr[0] as number]
+                    return base ? { ...base, totalHours: arr[1] as number, watchCount: isLatest ? arr[2] as number : 0, rank: i + 1 } : null
                 }).filter(Boolean),
-                topGenres: (g || []).map((item: any) => ({
-                    genre: item[0],
-                    count: item[1],
-                    percentage: item[2],
-                    color: item[3]
-                })),
-                monthlyBreakdown: (mb || []).map((item: any, i: number) => {
+                topGenres: (g || []).map((item: unknown) => {
+                    const arr = item as unknown[]
+                    return {
+                        genre: arr[0] as string,
+                        count: arr[1] as number,
+                        percentage: arr[2] as number,
+                        color: arr[3] as string,
+                    }
+                }),
+                monthlyBreakdown: (mb || []).map((item: unknown, i: number) => {
+                    const arr = item as unknown[]
                     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                     const year = y || new Date().getFullYear()
-                    const mTitles = (item[2] || []).map((idx: number, r: number) => {
-                        const base = pool[idx]
+                    const mTitles = ((arr[2] || []) as unknown[]).map((idx: unknown, r: number) => {
+                        const base = pool[idx as number]
                         return base ? { ...base, rank: r + 1 } : null
                     }).filter(Boolean)
 
                     return {
                         month: monthNames[i] || 'Unknown',
                         monthKey: `${year}-${String(i + 1).padStart(2, '0')}`,
-                        totalTitles: item[0],
-                        totalHours: item[1],
+                        totalTitles: arr[0] as number,
+                        totalHours: arr[1] as number,
                         topTitle: mTitles[0] || null,
                         top3Titles: mTitles,
-                        isHighActivity: item[3] === 1
+                        isHighActivity: arr[3] === 1
                     }
                 }),
                 discoveries: (ds || []).map((idx: number) => pool[idx]).filter(Boolean),
@@ -95,7 +104,7 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
                 hiddenGems: (hg || []).map((idx: number) => pool[idx]).filter(Boolean),
                 availableYears: [],
                 availableMonths: [],
-                heroPosterArt: (hpa || []).map((id: string) => `https://images.metahub.space/poster/small/tt${id}/img`),
+                heroPosterArt: (hpa || []).map((id: string) => `https://live.metahub.space/poster/small/tt${id}/img`),
                 persona: p ?? '',
                 personaDescription: pd ?? '',
                 milestones: MILESTONE_TEMPLATES.map((tmpl, i) => {
@@ -107,17 +116,17 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
                         value: isLatest ? milestoneData?.[1] ?? 0 : 0
                     }
                 }),
-                hourlyDistribution: (hd || []).map((item: any, h: number) => ({
+                hourlyDistribution: (hd || []).map((item: unknown[] | number, h: number) => ({
                     hour: h,
-                    percentage: isLatest ? item[0] : item,
-                    count: isLatest ? item[1] : 0
+                    percentage: isLatest ? (item as unknown[])[0] as number : item as number,
+                    count: isLatest ? (item as unknown[])[1] as number : 0
                 })),
-                dailyDistribution: (dd || []).map((item: any, d: number) => ({
+                dailyDistribution: (dd || []).map((item: unknown[] | number, d: number) => ({
                     day: d,
                     dayName: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d],
-                    percentage: isLatest ? item[0] : item,
-                    count: isLatest ? item[1] : 0,
-                    hours: isLatest ? item[2] : 0
+                    percentage: isLatest ? (item as unknown[])[0] as number : item as number,
+                    count: isLatest ? (item as unknown[])[1] as number : 0,
+                    hours: isLatest ? (item as unknown[])[2] as number : 0
                 })),
                 yearOverYear: yoy ? {
                     prevYear: yoy[0],
@@ -141,12 +150,13 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
 
         return null
     } catch (e) {
-        console.error('[ShareDecode] Error:', e)
+        import.meta.env.DEV && console.error('[ShareDecode] Error:', e)
         return null
     }
 }
 
 export function ReplaySharePage() {
+    useDocumentTitle('Replay')
     const { token } = useParams<{ token: string }>()
     const [decoded, setDecoded] = useState<{ data: ReplayData; userName?: string } | null | 'error' | 'loading'>('loading')
     const [activeSection, setActiveSection] = useState('hero')
@@ -217,10 +227,10 @@ export function ReplaySharePage() {
         return (
             <div style={{ minHeight: '100vh', background: '#08080f', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '24px' }}>
                 <div style={{ fontSize: '48px' }}>🎬</div>
-                <div style={{ fontFamily: '"DM Mono", monospace', fontSize: '12px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)' }}>
+                <div style={{ fontFamily: '"Inter", monospace', fontSize: '12px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)' }}>
                     This replay link is invalid or has expired
                 </div>
-                <a href="/" style={{ marginTop: '8px', fontFamily: '"DM Sans", sans-serif', fontSize: '14px', fontWeight: 700, color: '#818cf8', textDecoration: 'none' }}>
+                <a href="/" style={{ marginTop: '8px', fontFamily: '"Inter", sans-serif', fontSize: '14px', fontWeight: 700, color: '#818cf8', textDecoration: 'none' }}>
                     Open AIOManager →
                 </a>
             </div>
@@ -231,18 +241,16 @@ export function ReplaySharePage() {
 
     return (
         <div className="relative min-h-screen w-full bg-[#08080f] text-white selection:bg-primary/30">
-            {/* PERFORMANCE BACKGROUND - Now part of the natural scroll flow */}
             <div className="fixed inset-0 z-0 mesh-gradient opacity-60 pointer-events-none" />
             <div className="fixed inset-0 z-0 noise-overlay pointer-events-none" />
             <div className="fixed inset-0 z-0 vignette-overlay pointer-events-none" />
 
-            {/* Top bar - Now with solid/frosted background */}
             <div className="fixed top-0 inset-x-0 h-16 md:h-20 z-[100] flex items-center justify-between px-6 md:px-8 bg-[#08080f]/80 backdrop-blur-xl border-b border-white/5 pt-2 md:pt-0">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <img src="/logo.png" alt="" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
-                    <span style={{ fontFamily: '"DM Mono", monospace', fontSize: '11px', fontWeight: 900, letterSpacing: '0.1em', color: 'white', textTransform: 'uppercase' }}>AIOManager</span>
+                    <span style={{ fontFamily: '"Inter", monospace', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'white', textTransform: 'uppercase' }}>AIOManager</span>
                 </div>
-                <a href="/" style={{ fontFamily: '"DM Sans", sans-serif', fontSize: '13px', fontWeight: 700, color: '#818cf8', textDecoration: 'none', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '999px', padding: '6px 16px' }}>
+                <a href="/" style={{ fontFamily: '"Inter", sans-serif', fontSize: '13px', fontWeight: 700, color: '#818cf8', textDecoration: 'none', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '999px', padding: '6px 16px' }}>
                     Try AIOManager
                 </a>
             </div>
@@ -271,8 +279,8 @@ export function ReplaySharePage() {
                                 }`}
                         />
                         <div className="absolute left-6 px-3 py-1.5 bg-black/80 backdrop-blur 
-                            border border-white/10 text-white text-[10px] font-black uppercase 
-                            tracking-widest rounded-lg opacity-0 group-hover:opacity-100 
+                            border border-white/10 text-white text-xs font-bold uppercase 
+                            rounded-lg opacity-0 group-hover:opacity-100 
                             transition-opacity pointer-events-none whitespace-nowrap">
                             {section.label}
                         </div>
@@ -310,15 +318,15 @@ export function ReplaySharePage() {
 
                 {/* Bottom CTA */}
                 <div style={{ padding: '80px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div style={{ fontFamily: '"DM Mono", monospace', fontSize: '9px', fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'rgba(99,102,241,0.8)' }}>✦ Want your own Replay?</div>
-                    <div style={{ fontFamily: '"DM Sans", sans-serif', fontSize: 'clamp(28px, 5vw, 48px)', fontWeight: 900, letterSpacing: '-0.03em', color: 'white', lineHeight: 1.1 }}>
+                    <div style={{ fontFamily: '"Inter", monospace', fontSize: '9px', fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'rgba(99,102,241,0.8)' }}>✦ Want your own Replay?</div>
+                    <div style={{ fontFamily: '"Inter", sans-serif', fontSize: 'clamp(28px, 5vw, 48px)', fontWeight: 700, letterSpacing: '-0.03em', color: 'white', lineHeight: 1.1 }}>
                         Manage your Stremio.<br />
                         <span style={{ background: 'linear-gradient(135deg, #818cf8, #f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Your way.</span>
                     </div>
-                    <p style={{ fontFamily: '"DM Sans", sans-serif', fontSize: '16px', color: 'rgba(255,255,255,0.5)', maxWidth: '400px', lineHeight: 1.6 }}>
+                    <p style={{ fontFamily: '"Inter", sans-serif', fontSize: '16px', color: 'rgba(255,255,255,0.5)', maxWidth: '400px', lineHeight: 1.6 }}>
                         AIOManager is a free, open-source tool for managing your Stremio accounts, addons, and watch history.
                     </p>
-                    <a href="https://github.com/Sonicx161/AIOManager" target="_blank" rel="noopener noreferrer" style={{ marginTop: '8px', fontFamily: '"DM Sans", sans-serif', fontSize: '15px', fontWeight: 700, color: 'white', textDecoration: 'none', background: 'linear-gradient(135deg, rgba(99,102,241,0.8), rgba(244,114,182,0.8))', borderRadius: '999px', padding: '14px 32px', boxShadow: '0 8px 32px rgba(99,102,241,0.3)' }}>
+                    <a href="https://github.com/Sonicx161/AIOManager" target="_blank" rel="noopener noreferrer" style={{ marginTop: '8px', fontFamily: '"Inter", sans-serif', fontSize: '15px', fontWeight: 700, color: 'white', textDecoration: 'none', background: 'linear-gradient(135deg, rgba(99,102,241,0.8), rgba(244,114,182,0.8))', borderRadius: '999px', padding: '14px 32px', boxShadow: '0 8px 32px rgba(99,102,241,0.3)' }}>
                         Get AIOManager →
                     </a>
                 </div>

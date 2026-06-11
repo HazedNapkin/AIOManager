@@ -7,7 +7,6 @@ import {
   saveSalt,
   loadPasswordHash,
   savePasswordHash,
-  isPasswordSetup,
   saveSessionKey,
   loadSessionKey,
   clearSessionKey,
@@ -20,12 +19,11 @@ interface AuthStore {
   encryptionKey: CryptoKey | null
 
   initialize: () => Promise<void>
-  setupMasterPassword: (password: string) => Promise<void>
+  setupMasterPassword: (password: string, saltOverride?: Uint8Array, options?: { resetSyncStore?: boolean }) => Promise<void>
   unlock: (password: string) => Promise<boolean>
   lock: () => void
   resetMasterPassword: (password: string) => Promise<void>
-  unlockFromSync: (password: string, saltBase64?: string) => Promise<void>
-  isPasswordSet: () => boolean
+  unlockFromSync: (password: string, saltBase64?: string, options?: { allowGenerate?: boolean }) => Promise<void>
 }
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
@@ -37,25 +35,30 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    * Tries to load session key, otherwise determines if password is set
    */
   initialize: async () => {
-    const passwordSet = isPasswordSetup()
+    const salt = loadSalt()
+    const storedHash = loadPasswordHash()
+    const passwordSet = !!(salt && storedHash)
 
-    if (!passwordSet) {
-      // No password set yet - not locked
+    if (!salt && !storedHash) {
       set({ isLocked: false })
       return
     }
 
-    // Try to load existing session key
+    if (!passwordSet) {
+      // Partial metadata means the browser session needs a normal sign-in
+      // or cloud restore before encrypted account data can be used safely.
+      set({ isLocked: true })
+      return
+    }
+
     const sessionKey = await loadSessionKey()
 
     if (sessionKey) {
-      // Session key found - user is unlocked
       set({
         encryptionKey: sessionKey,
         isLocked: false,
       })
     } else {
-      // No session key - user needs to unlock
       set({ isLocked: true })
 
       // Critical: If we have an existing session key in storage but it failed to load,
@@ -66,33 +69,37 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   /**
    * Set up master password for the first time
-   * Generates salt, hashes password, stores both, and derives encryption key
+   * Generates or accepts a salt, hashes password, stores both, and derives encryption key
    * Wipes any existing data to prevent decryption issues
    */
-  setupMasterPassword: async (password: string) => {
+  setupMasterPassword: async (password: string, saltOverride?: Uint8Array, options?: { resetSyncStore?: boolean }) => {
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters')
     }
 
-    // Wipe any existing data (could be from old encryption system)
-    await wipeAllData()
-    resetAllStores()
-
-    // Generate and save salt
-    const salt = generateSalt()
-    saveSalt(salt)
-
-    // Hash and save password
+    const salt = saltOverride ?? generateSalt()
     const hash = await hashPassword(String(password), salt)
-    savePasswordHash(hash)
-
-    // Derive encryption key
     const key = await deriveKey(String(password), salt)
 
-    // Save to session storage
-    await saveSessionKey(key)
+    saveSalt(salt)
+    savePasswordHash(hash)
+    try {
+      await saveSessionKey(key)
+    } catch {
+      // non-fatal - key is in zustand state for this session
+    }
 
-    // Update state - user is now unlocked
+    await wipeAllData()
+    await resetAllStores({ includeSync: options?.resetSyncStore ?? true })
+
+    saveSalt(salt)
+    savePasswordHash(hash)
+    try {
+      await saveSessionKey(key)
+    } catch {
+      // non-fatal - key is in zustand state for this session
+    }
+
     set({
       encryptionKey: key,
       isLocked: false,
@@ -108,25 +115,20 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const storedHash = loadPasswordHash()
 
     if (!salt || !storedHash) {
-      throw new Error('App is not initialized. Please set up a master password or login via Cloud Sync.')
+      throw new Error('App is not initialized. Set up a master password or login via Cloud Sync.')
     }
 
 
-    // Hash provided password
     const hash = await hashPassword(String(password), salt)
 
-    // Compare hashes
     if (hash !== storedHash) {
-      return false // Wrong password
+      return false
     }
 
-    // Derive encryption key
     const key = await deriveKey(password, salt)
 
-    // Save to session storage
     await saveSessionKey(key)
 
-    // Update state
     set({
       encryptionKey: key,
       isLocked: false,
@@ -141,6 +143,16 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    */
   lock: () => {
     clearSessionKey()
+    import('@/store/accountStore').then(({ clearAuthKeyCache }) => {
+      clearAuthKeyCache()
+    })
+    import('@/store/syncStore').then(({ useSyncStore }) => {
+      const { auth } = useSyncStore.getState()
+      if (auth.isAuthenticated) {
+        useSyncStore.setState({ auth: { ...auth, password: '' } })
+      }
+    })
+    try { sessionStorage.removeItem('stremio-sync-password') } catch { /* noop */ }
     set({
       encryptionKey: null,
       isLocked: true,
@@ -156,13 +168,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       throw new Error('Password must be at least 8 characters')
     }
 
-    // Wipe all data first
     await wipeAllData()
 
-    // Reset in-memory state from all stores
-    resetAllStores()
+    await resetAllStores()
 
-    // Set up new password using existing function
     await get().setupMasterPassword(password)
   },
 
@@ -170,28 +179,33 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    * Unlock or initialize encryption from a sync login
    * Useful for fresh installs or cross-device restoration
    */
-  unlockFromSync: async (password: string, saltBase64?: string) => {
+  unlockFromSync: async (password: string, saltBase64?: string, options?: { allowGenerate?: boolean }) => {
     let salt: Uint8Array | null = null
 
     if (saltBase64) {
-      // Decode and save salt from cloud
       try {
         salt = Uint8Array.from(atob(saltBase64), (c) => c.charCodeAt(0))
         saveSalt(salt)
       } catch (e) {
-        console.error('Failed to decode sync salt:', e)
+        import.meta.env.DEV && console.error('Failed to decode sync salt:', e)
       }
     }
 
     if (!salt) {
-      // Fallback to local salt
       salt = loadSalt()
     }
 
     if (!salt) {
-      // If still no salt, we can't derive the key.
-      // This happens if logging into an old account that didn't sync its salt yet.
-      throw new Error('Encryption metadata (salt) is missing from this account backup.')
+      if (!options?.allowGenerate) {
+        // Refuse to invent a salt. Deriving a key from a new salt produces a DIFFERENT key,
+        // which silently fails to decrypt any account authKey or vault entry that was encrypted
+        // under the original salt. The caller only allows generation when there is no existing
+        // encrypted data to corrupt (e.g. a brand-new or empty account).
+        throw new Error('Encryption salt missing; this account can only be restored from the device or browser where it was created.')
+      }
+      salt = generateSalt()
+      saveSalt(salt)
+      if (import.meta.env.DEV) console.warn('[Auth] No salt available; generated fresh local encryption metadata for an empty account.')
     }
 
     const key = await deriveKey(password, salt)
@@ -201,20 +215,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const hash = await hashPassword(password, salt)
     savePasswordHash(hash)
 
-    // Save to session storage
     await saveSessionKey(key)
 
-    // Update state - user is now unlocked
     set({
       encryptionKey: key,
       isLocked: false,
     })
   },
 
-  /**
-   * Check if master password is set up
-   */
-  isPasswordSet: () => {
-    return isPasswordSetup()
-  },
 }))

@@ -1,0 +1,418 @@
+---
+title: Hydra API
+description: The Hydra addon management protocol for addon developers and platform integrations.
+---
+
+Hydra is AIOManager's standard HTTP protocol for managing addon collections. External platforms, tools, and addon developers use it to read and write a user's addon fleet through a single API surface.
+
+## Two roles
+
+Hydra has two roles, and AIOManager implements both sides of the same endpoint contract.
+
+| Role | Who hosts the endpoints | Fits | How it appears in AIOManager |
+|------|-------------------------|------|------------------------------|
+| **Pull** (primary) | **AIOManager** hosts `/hydra/*`. Your app reads/syncs the user's collection on its own schedule. | **Backendless / client-only apps** (e.g. Fusion, which syncs via iCloud and has no server). This is the gap Hydra fills. | A connection card. Your app registers on connect (see `POST /hydra/register`) and reports last-sync. |
+| **Push** | The **platform** hosts `/hydra/*`; AIOManager calls them and pushes on every change. | Platforms that run their own backend and want real-time, AIOManager-initiated updates. | A connection card AIOManager actively pushes to and runs Autopilot against. |
+
+**Pull is the primary path**: most apps that need Hydra are backendless, which is the whole point. The user enters their AIOManager **instance URL** + **account API key** *into your app*, and your app reads from AIOManager. The endpoints below are the ones **AIOManager serves** (the pull surface). The Push role uses the identical contract in the opposite direction.
+
+## Authentication
+
+All Hydra endpoints (except `GET /hydra/status` and `POST /hydra/test`) require the `X-API-Key` header with the user's account API key.
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-API-Key` | Yes (most endpoints) | Account API key from AIOManager settings |
+| `Content-Type` | POST/PUT | Must be `application/json` |
+
+## The Addon Object
+
+Every Hydra endpoint exchanges addons in this shape:
+
+```json
+{
+  "transportUrl": "https://v3-cinemeta.strem.io/manifest.json",
+  "name": "Cinemeta",
+  "version": "3.0.14",
+  "logo": "https://.../logo.png",
+  "enabled": true,
+  "types": ["movie", "series"],
+  "resources": ["catalog", "meta"]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transportUrl` | string | The manifest URL. This is the stable identity of an addon. |
+| `name` | string | Display name |
+| `version` | string | Addon version |
+| `logo` | string | Logo URL |
+| `enabled` | boolean | Whether the addon is active. Default `true`. |
+| `types` | string[] | Content types from the manifest |
+| `resources` | string[] | Resources from the manifest |
+
+## Endpoints
+
+### GET /hydra/status
+
+Server identity and health. **No authentication required.**
+
+```json
+{
+  "name": "AIOManager",
+  "version": "1.0.0",
+  "platformVersion": "2.3.1",
+  "capabilities": ["addons", "sync", "validate"]
+}
+```
+
+### GET /hydra/version
+
+Cheap change detection. Returns the canonical store's `updated_at` timestamp. Poll this to avoid pulling the full addon list when nothing changed.
+
+**Response:**
+```json
+{
+  "version": 1717000000000
+}
+```
+
+Returns `{ "version": null }` if the account has no canonical store yet.
+
+### GET /hydra/addons
+
+Read the user's full addon collection.
+
+**Response:**
+```json
+{
+  "addons": [
+    {
+      "transportUrl": "https://v3-cinemeta.strem.io/manifest.json",
+      "name": "Cinemeta",
+      "version": "3.0.14",
+      "logo": "https://.../logo.png",
+      "enabled": true,
+      "types": ["movie", "series"],
+      "resources": ["catalog", "meta"]
+    }
+  ]
+}
+```
+
+Returns `{ "addons": [] }` for an account with no addons. This is not an error.
+
+### POST /hydra/addons
+
+Install a single addon. Validates the manifest before adding. Idempotent if the addon is already installed.
+
+**Request:**
+```json
+{
+  "url": "https://addon.example.com/manifest.json"
+}
+```
+
+**Response:** the full updated collection.
+```json
+{
+  "addons": [ ... ]
+}
+```
+
+**Errors:**
+- `400`: invalid URL or manifest missing required fields (`id`, `name`, `version`, `resources`, `types`)
+
+### DELETE /hydra/addons
+
+Remove a single addon by its transport URL.
+
+**Query parameter:** `url` (URL-encoded transport URL)
+
+**Response:** the full updated collection.
+```json
+{
+  "addons": [ ... ]
+}
+```
+
+**Errors:**
+- `404`: addon not installed
+
+### PUT /hydra/addons
+
+Replace the entire addon collection. Maximum 500 addons.
+
+**Request:**
+```json
+{
+  "addons": [
+    {
+      "transportUrl": "https://addon1.example.com/manifest.json",
+      "id": "community.addon1",
+      "name": "Addon One",
+      "version": "1.0.0",
+      "types": ["movie"],
+      "resources": ["stream"],
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Response:** the normalized collection.
+```json
+{
+  "addons": [ ... ]
+}
+```
+
+**Catastrophic-shrink guard:** if the request would clear the collection to empty while the current collection has 3 or more addons, the server rejects with `409 Conflict`. Remove addons individually instead.
+
+**Errors:**
+- `400`: invalid addon URLs, oversized collection
+- `409`: refused to wipe a non-trivial collection
+
+### POST /hydra/reinstall
+
+Re-validate and update an addon's manifest, or install it if missing. **This is the endpoint addon developers should use** (see Addon Developer Integration below).
+
+**Request:**
+```json
+{
+  "addonUrl": "https://addon.example.com/manifest.json"
+}
+```
+
+Alternatively, match by addon ID:
+```json
+{
+  "addonId": "community.addon"
+}
+```
+
+**Response:** the full collection.
+```json
+{
+  "addons": [ ... ]
+}
+```
+
+**Order preservation:** reinstalling an addon keeps it in its current position in the collection. New installs are appended to the end.
+
+**Errors:**
+- `400`: must provide `addonUrl` or `addonId`; invalid URL; manifest failed validation
+
+### POST /hydra/validate
+
+Validate a manifest URL without installing it.
+
+**Request:**
+```json
+{
+  "manifestUrl": "https://addon.example.com/manifest.json"
+}
+```
+
+**Valid response:**
+```json
+{
+  "valid": true,
+  "manifest": {
+    "id": "community.addon",
+    "name": "My Addon",
+    "version": "1.0.0",
+    "types": ["movie", "series"],
+    "resources": ["stream", "catalog"]
+  }
+}
+```
+
+**Invalid response:**
+```json
+{
+  "valid": false,
+  "errors": ["Missing or invalid \"id\"", "Missing or empty \"resources\""]
+}
+```
+
+A valid manifest requires: string `id`, string `name`, string `version`, non-empty array `resources`, non-empty array `types`.
+
+### POST /hydra/register
+
+Register your app as a pull subscriber. Makes your app appear as a connection card in AIOManager alongside Stremio, Nuvio, and RealStream.
+
+**Request:**
+```json
+{
+  "name": "Fusion",
+  "logo": "https://fusion.example.com/logo.png"
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true
+}
+```
+
+Re-call on each sync to refresh the "last seen" timestamp. Registration is optional. Your app can read and write addons without it, but it won't appear as a connection card.
+
+### GET /hydra/addons/&#123;url&#125;/health
+
+Check liveness of a single addon. Used by Autopilot for failover decisions.
+
+**Response:**
+```json
+{
+  "healthy": true,
+  "latencyMs": 142
+}
+```
+
+Unreachable addons return `{ "healthy": false, "latencyMs": -1 }`.
+
+### POST /hydra/sync
+
+Force a re-push of the stored canonical collection.
+
+**Response:**
+```json
+{
+  "synced": true,
+  "addonCount": 15
+}
+```
+
+### POST /hydra/test
+
+Compliance test suite. This is **tooling, not part of the addon surface**. It tests a *remote* Hydra server (the `baseUrl` you pass), not AIOManager's own collection. Use it to verify a Push-role platform implements the spec correctly. **No authentication required.**
+
+**Request:**
+```json
+{
+  "baseUrl": "https://some-hydra-server.com"
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    { "endpoint": "GET /hydra/status", "status": 200, "latencyMs": 50, "pass": true },
+    { "endpoint": "GET /hydra/addons", "status": 200, "latencyMs": 30, "pass": true }
+  ],
+  "totalTests": 6,
+  "passed": 6
+}
+```
+
+## Error Format
+
+All errors use this envelope:
+
+```json
+{
+  "error": "bad_request",
+  "message": "Human-readable description"
+}
+```
+
+| Code | Error | When |
+|------|-------|------|
+| 400 | `bad_request` | Invalid URL, missing fields, oversized collection |
+| 401 | `unauthorized` | Missing or invalid `X-API-Key` |
+| 404 | `not_found` | DELETE of an addon that isn't installed |
+| 409 | `conflict` | Catastrophic-shrink guard tripped |
+| 500 | `internal_error` | Unexpected server failure |
+
+## Rate Limits
+
+| Endpoint | Limit |
+|----------|-------|
+| `GET /hydra/status` | 120/min |
+| `GET /hydra/version` | 120/min |
+| `GET /hydra/addons` | 60/min |
+| `GET /hydra/addons/&#123;url&#125;/health` | 60/min |
+| `POST /hydra/addons` | 30/min |
+| `DELETE /hydra/addons` | 30/min |
+| `PUT /hydra/addons` | 30/min |
+| `POST /hydra/register` | 30/min |
+| `POST /hydra/validate` | 30/min |
+| `POST /hydra/reinstall` | 10/min |
+| `POST /hydra/sync` | 10/min |
+| `POST /hydra/test` | 10/min |
+
+---
+
+## Addon Developer Integration
+
+This section is for addon developers who have a configure page and want users to install or refresh their addon in AIOManager with one click.
+
+### The problem it solves
+
+Your addon has a per-user manifest URL (e.g. `https://your-addon.example.com/stremio/<userConfig>/manifest.json`). When a user changes their config on your configure page (different providers, new catalogs, updated settings), the manifest URL reflects those changes.
+
+Without Hydra, the user has to manually copy the new manifest URL, go to AIOManager, remove the old addon, and add the new one. That's friction.
+
+With Hydra, you add a button to your configure page that calls one endpoint. The user's addon is updated in AIOManager and propagated to all their connected platforms (Stremio, Nuvio, RealStream, etc.) automatically.
+
+### What you need from the user
+
+Add two fields to your configure page:
+
+| Field | Example | Where the user finds it |
+|-------|---------|------------------------|
+| **AIOManager URL** | `https://aio.example.com` | Their AIOManager instance URL |
+| **API Key** | `a1b2c3d4-e5f6-...` | AIOManager account settings, under API access |
+
+Persist these alongside the user's addon config so they don't have to re-enter them.
+
+### The one call
+
+Use `POST /hydra/reinstall`. It handles both new installs and config refreshes:
+
+```
+POST {aioManagerUrl}/hydra/reinstall
+X-API-Key: {apiKey}
+Content-Type: application/json
+
+{
+  "addonUrl": "https://your-addon.example.com/stremio/{userUUID}/{compressedConfig}/manifest.json"
+}
+```
+
+**If the addon isn't installed:** it gets added to the end of their collection.
+
+**If the addon is already installed:** the manifest is re-fetched with the updated config and the addon stays in its current position.
+
+In both cases, AIOManager propagates the change to all the user's connected platforms.
+
+### Why /hydra/reinstall and not /hydra/addons
+
+| | `POST /hydra/addons` | `POST /hydra/reinstall` |
+|---|---|---|
+| New install | Installs it | Installs it |
+| Already installed | Deduplicates, returns existing collection | Re-fetches manifest, updates stored data |
+| User changed config | **Stale**: old config remains | **Fresh**: always fetches current manifest |
+
+If the user changed their config (different providers, new catalogs), `POST /hydra/addons` silently returns the old config. `POST /hydra/reinstall` always fetches the live manifest.
+
+### UI suggestion
+
+```
+AIOManager Integration
+┌─────────────────────────────────────────────┐
+│ Instance URL  [https://aio.example.com    ] │
+│ API Key       [a1b2c3d4-e5f6-...          ] │
+│                                             │
+│ [Push to AIOManager]                        │
+│                                             │
+│ Saves your current config as an addon in    │
+│ AIOManager. If you already have this addon  │
+│ installed, it will be refreshed in place.   │
+└─────────────────────────────────────────────┘
+```
+
+<Note>Need a native connector for your platform? Send your sync API docs (auth + addon read/write) and AIOManager can build a first-class native driver, the way Nuvio and RealStream are integrated.</Note>

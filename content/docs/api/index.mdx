@@ -1,0 +1,45 @@
+---
+title: API Reference
+description: Complete REST API documentation for AIOManager server integration.
+---
+
+The AIOManager API allows you to integrate with external applications or build custom workflows.
+
+## In This Section
+
+| Page | Description |
+|------|-------------|
+| [API Endpoints](/kronorium/api/endpoints) | Core API endpoints with health, sync, addon, and autopilot operations |
+| [Provider Endpoints](/kronorium/api/providers) | Connection management, reconciliation, and provider authentication |
+| [Hydra API](/kronorium/api/hydra) | Hydra addon management protocol for addon developers and platforms |
+
+## Authentication
+
+Most API endpoints require authentication. Three methods are supported:
+
+| Header | Description |
+|--------|-------------|
+| `x-sync-password` | Your sync password for Cloud Sync endpoints |
+| `x-autopilot-token` | Per-account token for Autopilot endpoints |
+| `x-sync-user` + `x-sync-password` | Provider endpoints use both user ID and derived password |
+
+## Quick Example
+
+```bash
+curl -X GET "https://your-server.com/api/health" \
+  -H "Content-Type: application/json"
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "2.0.0 (Build 2)",
+  "mode": "multi-tenant",
+  "optimized": true,
+  "database": { "type": "sqlite", "healthy": true },
+  "autopilot": { "lastRun": 1700000000000, "running": false }
+}
+```
+
+<Note>For detailed endpoint documentation, see [API Endpoints](/kronorium/api/endpoints).</Note>

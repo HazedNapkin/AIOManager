@@ -1,0 +1,69 @@
+---
+title: Connections
+description: Mirror addon configurations to external platforms and keep them in sync.
+---
+
+Connections let you mirror your AIOManager addon configuration to external platforms. When you add, remove, or reorder addons on any connected platform, the reconciler propagates those changes to all others.
+
+## Supported Platforms
+
+| Platform | Type | Description |
+|----------|------|-------------|
+| Stremio | Native | Direct Stremio API integration. Your primary account is the source of truth. |
+| Nuvio | Email/Password | Connect via email/password through Supabase. Supports multiple profiles per connection. Server-side token custody with automatic refresh. |
+| Hydra (Inbound) | API Key | Receive addon configurations from Hydra-compatible platforms. |
+| Hydra (Outbound) | API Key | Push addon configurations to Hydra-compatible platforms. |
+| RealStream | Email/Password | Native RealStream integration with server-side token custody. |
+
+## Setup
+
+### Connecting a Platform
+
+1. Open an account and navigate to the **Connections** tab.
+2. Click the connection card for the platform you want to connect.
+3. Enter the required credentials (API key, email/password, etc.).
+4. Click **Test** to verify connectivity before saving.
+
+Each account can have multiple connections to different platforms.
+
+### Connection Credentials
+
+Credentials are encrypted at rest on the server using AES-256-GCM. After initial setup, credentials are never exposed to the client. The server handles token refresh and session management automatically.
+
+<Warning>Connection credentials are per-account. Sharing credentials between accounts is not supported.</Warning>
+
+## Reconciler
+
+The bidirectional reconciler is the sync engine that keeps all connected platforms in agreement.
+
+### How It Works
+
+1. **Hub-First**: Your AIOManager account's addon list is the canonical truth. Connections are mirrors.
+2. **On Sync**: When a sync runs, the reconciler reads the addon list from each connected platform and compares it against the canonical list.
+3. **Change Detection**: Additions and removals detected on any platform are propagated to all others.
+4. **Conflict Resolution**: If an addon exists on a connected platform but not in the canonical list, it is added. If it was removed from the canonical list, it is removed from the connection.
+
+### Sync Triggers
+
+- Manual sync from the Connections panel
+- After addon install/remove operations
+- After profile switches
+
+### Connection States
+
+| State | Description |
+|-------|-------------|
+| `active` | Connection is healthy and syncing normally. |
+| `degraded` | Connection has intermittent failures but is still operational. |
+| `expired` | Authentication token has expired. Re-authenticate to resume syncing. |
+| `error` | Connection has persistent failures. Check credentials and platform availability. |
+
+## Troubleshooting
+
+**Connection shows `expired`**: The stored authentication token has expired. Click the connection card and re-authenticate with your credentials.
+
+**Sync not detecting changes on a platform**: The reconciler runs against the canonical addon list. If external changes were made outside AIOManager, trigger a manual sync to pull them in.
+
+**Nuvio profile not syncing**: Verify the correct profile is selected in the connection settings. Nuvio supports multiple profiles per account, and each connection targets a specific profile.
+
+**Hydra connection fails with `Provider unreachable`**: Check that the Hydra server is running and accessible from your AIOManager instance. Verify the base URL and API key are correct.

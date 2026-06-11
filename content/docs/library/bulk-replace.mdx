@@ -1,0 +1,18 @@
+---
+title: Bulk URL Replace
+description: Quickly migrate dozens of addons to a new domain or configuration.
+---
+
+The Bulk URL Replace tool is designed for situations where an addon provider changes their domain, or you want to update a configuration string (like a debrid API key) across many addons at once. Instead of editing each addon one by one, you can perform a find-and-replace across your entire saved library.
+
+## Using the Tool
+
+<Steps>
+  <Step>**Access the Tool:** Go to the Library tab and click the 🔄 Bulk Replace button in the toolbar.</Step>
+  <Step>**Enter Search String:** Type the part of the URL you want to change (e.g., the old domain name).</Step>
+  <Step>**Enter Replacement String:** Type the new value you want to replace it with.</Step>
+  <Step>**Review Changes:** AIOManager will show you a list of all addons that will be affected. Uncheck any you want to skip.</Step>
+  <Step>**Apply:** Confirm the changes. All affected addon URLs are updated in your Library. Use Reinstall or Refresh Addons on your accounts to push the updated URLs to Stremio.</Step>
+</Steps>
+
+<Note>Bulk Replace only affects the install URL. It does not touch your custom names, logos, or descriptions.</Note>

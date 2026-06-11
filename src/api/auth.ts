@@ -7,14 +7,6 @@ export async function loginWithCredentials(
   return stremioClient.login(email, password)
 }
 
-export async function validateAuthKey(authKey: string): Promise<boolean> {
-  try {
-    await stremioClient.getAddonCollection(authKey, 'New-Login-Check')
-    return true
-  } catch {
-    return false
-  }
-}
 
 export async function registerAccount(
   email: string,

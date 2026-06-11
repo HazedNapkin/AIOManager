@@ -12,15 +12,22 @@ import { useAddonStore } from '@/store/addonStore'
  * Reset all application stores to their initial state
  * Called during master password reset to ensure clean slate
  */
-export function resetAllStores(): void {
-  useAccountStore.getState().reset()
-  useAddonStore.getState().reset()
+export async function resetAllStores(options: { includeSync?: boolean } = {}): Promise<void> {
+  const { includeSync = true } = options
 
-  // New reset methods implemented for data safety
-  import('@/store/failoverStore').then(({ useFailoverStore }) => useFailoverStore.getState().reset())
-  import('@/store/profileStore').then(({ useProfileStore }) => useProfileStore.getState().reset())
-  import('@/store/activityStore').then(({ useActivityStore }) => useActivityStore.getState().reset()) // Fixed: Now exists
-  import('@/store/syncStore').then(({ useSyncStore }) => useSyncStore.getState().reset()) // Fixed: Now exists
+  const resets: Promise<unknown>[] = [
+    Promise.resolve(useAccountStore.getState().reset()),
+    Promise.resolve(useAddonStore.getState().reset()),
+    import('@/store/failoverStore').then(({ useFailoverStore }) => useFailoverStore.getState().reset()),
+    import('@/store/profileStore').then(({ useProfileStore }) => useProfileStore.getState().reset()),
+    import('@/store/libraryCache').then(({ useLibraryCache }) => useLibraryCache.getState().clear()),
+  ]
+
+  if (includeSync) {
+    resets.push(import('@/store/syncStore').then(({ useSyncStore }) => useSyncStore.getState().reset()))
+  }
+
+  await Promise.allSettled(resets)
 }
 
 /**

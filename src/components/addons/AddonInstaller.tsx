@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { ClipboardPaste, Zap } from 'lucide-react'
+import { useTheme } from '@/contexts/ThemeContext'
 
 export function AddonInstaller() {
   const isOpen = useUIStore((state) => state.isAddAddonDialogOpen)
@@ -24,6 +25,7 @@ export function AddonInstaller() {
   const [addonUrl, setAddonUrl] = useState('')
   const [error, setError] = useState('')
   const [isClipboardScanActive, setIsClipboardScanActive] = useState(false)
+  const { isLight } = useTheme()
 
   useEffect(() => {
     if (!isOpen) {
@@ -33,6 +35,7 @@ export function AddonInstaller() {
 
     const checkClipboard = async () => {
       try {
+        if (!navigator.clipboard) return
         const text = await navigator.clipboard.readText()
         if (text && (text.startsWith('stremio://') || (text.includes('/manifest.json') && text.startsWith('http')))) {
           setAddonUrl(text)
@@ -90,12 +93,13 @@ export function AddonInstaller() {
 
   const handlePaste = async () => {
     try {
+      if (!navigator.clipboard) return
       const text = await navigator.clipboard.readText()
       if (text) {
         setAddonUrl(text)
       }
     } catch (err) {
-      console.error('Failed to read clipboard:', err)
+      import.meta.env.DEV && console.error('Failed to read clipboard:', err)
     }
   }
 
@@ -117,10 +121,10 @@ export function AddonInstaller() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-6 px-2 text-xs"
+                className="h-6 gap-1.5 px-2 text-xs"
                 onClick={handlePaste}
               >
-                <ClipboardPaste className="h-3 w-3 mr-1" />
+                <ClipboardPaste className="h-3 w-3" />
                 Paste
               </Button>
             </div>
@@ -131,10 +135,11 @@ export function AddonInstaller() {
               onChange={(e) => setAddonUrl(e.target.value)}
               placeholder="https://example.com/addon/manifest.json"
               required
-              className={isClipboardScanActive ? "ring-2 ring-primary/50" : ""}
+              autoFocus
+              className={isClipboardScanActive ? `ring-2 ${isLight ? 'ring-primary/50' : 'ring-primary/25'}` : ""}
             />
             {isClipboardScanActive && (
-              <div className="flex items-center gap-1.5 text-[10px] text-primary font-bold animate-in fade-in slide-in-from-top-1">
+              <div className="flex items-center gap-1.5 text-xs text-primary font-semibold uppercase animate-in fade-in slide-in-from-top-1">
                 <Zap className="h-3 w-3" />
                 URL DETECTED FROM CLIPBOARD
               </div>
@@ -151,7 +156,7 @@ export function AddonInstaller() {
           )}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={handleClose}>
+            <Button type="button" variant="subtle" onClick={handleClose}>
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>

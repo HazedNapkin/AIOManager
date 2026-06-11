@@ -1,0 +1,241 @@
+---
+title: Self-Hosting
+description: Deploy AIOManager using Docker, Unraid, or directly on a Node.js server.
+---
+
+<Note>AIOManager requires a server to enable Autopilot, Health Checks, Cloud Sync, and Replay Sharing. A purely static deployment will not support these features.</Note>
+
+## Docker
+
+Docker is the recommended deployment method. Official images are published to GitHub Container Registry.
+
+### Docker Compose (Recommended)
+
+**Basic SQLite setup:**
+
+```yaml
+services:
+  aiomanager:
+    image: ghcr.io/sonicx161/aiomanager:latest
+    ports:
+      - "1610:1610"
+    environment:
+      - PORT=1610
+      - NODE_ENV=production
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+```
+
+**With PostgreSQL (recommended for production):**
+
+```yaml
+services:
+  aiomanager:
+    image: ghcr.io/sonicx161/aiomanager:latest
+    ports:
+      - "1610:1610"
+    environment:
+      - PORT=1610
+      - NODE_ENV=production
+      - DB_TYPE=postgres
+      - DATABASE_URL=postgresql://user:password@postgres:5432/aiomanager
+      - CORS_ORIGINS=https://aiomanager.yourdomain.com
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=aiomanager
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+```
+
+Start the container:
+```bash
+docker compose up -d
+```
+
+Open `http://localhost:1610` to access AIOManager.
+
+### Docker CLI
+
+```bash
+docker run -d \
+  -p 1610:1610 \
+  -e PORT=1610 \
+  -e NODE_ENV=production \
+  -v ./data:/app/data \
+  --restart unless-stopped \
+  ghcr.io/sonicx161/aiomanager:latest
+```
+
+## Unraid
+
+AIOManager includes a native Unraid template for manual installation (not in Community Apps).
+
+<Steps>
+  <Step>**Copy Template URL:** Copy the URL of the [unraid-template.xml](https://raw.githubusercontent.com/sonicx161/AIOManager/main/unraid-template.xml) file.</Step>
+  <Step>**Add Container:** In Unraid, go to **Docker** > **Add Container**.</Step>
+  <Step>**Paste Template URL:** Paste the template URL into the field.</Step>
+  <Step>**Configure the Container:** Set the host port to `1610`, app data path to `/mnt/user/appdata/aiomanager`, and Node Environment to `production`.</Step>
+</Steps>
+
+<Note>After installation, access AIOManager at `http://your-unraid-ip:1610`. Set up a reverse proxy for HTTPS access.</Note>
+
+## Manual (Node.js)
+
+<Steps>
+  <Step>
+    Clone and install:
+
+    ```bash
+    git clone https://github.com/sonicx161/AIOManager.git
+    cd AIOManager
+    npm install
+    ```
+  </Step>
+  <Step>**Configure:** Create a `.env` file based on `.env.example`. See the Environment Variables section below.</Step>
+  <Step>
+    Build and start:
+
+    ```bash
+    npm run build
+    npm run server
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+### Core Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `16100` (Docker overrides to `1610`) | Port the server listens on |
+| `NODE_ENV` | `development` | Set to `production` for production deployments |
+| `DATA_DIR` | `./data` | Directory for the database and encryption key file |
+| `HOST` | `0.0.0.0` | Network interface to bind to |
+
+### Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_TYPE` | `sqlite` | Database type. Options: `sqlite`, `postgres` |
+| `DATABASE_URL` | - | PostgreSQL connection string. Required when `DB_TYPE=postgres` |
+| `SQLITE_DB_PATH` | `DATA_DIR/aio.db` | Override the SQLite database file path |
+
+### Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENCRYPTION_KEY` | auto-generated | AES-256-GCM key for Autopilot rule encryption. Auto-generated on first boot. |
+| `CORS_ORIGINS` | localhost dev URLs | Comma-separated allowed origins. When unset, only localhost origins are allowed. Set to `*` to allow all. **Restrict this on public instances.** |
+| `MAX_SYNC_PAYLOAD_SIZE` | `15mb` (15728640 bytes) | Maximum size of a cloud sync payload |
+
+### Performance
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_CONCURRENCY_LIMIT` | `50` | Max concurrent Stremio proxy requests |
+| `LOG_PRETTY_PRINT` | `true` | Enable formatted log output. Set to `false` in production. |
+
+### Customization
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CUSTOM_HTML` | - | Raw HTML injected on the login page for hosted instances. Admin-controlled only. |
+
+<Warning>On public or shared instances, always set `CORS_ORIGINS` to your specific domain. When unset, only localhost origins are allowed.</Warning>
+
+<Note>If you set a new `ENCRYPTION_KEY` after initial setup, the server uses the new key for new data and automatically falls back to the old `server_secret.key` for existing data, so no one is ever locked out.</Note>
+
+## Reverse Proxy Examples
+
+### Nginx
+
+```nginx
+server {
+    listen 80;
+    server_name aiomanager.yourdomain.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name aiomanager.yourdomain.com;
+
+    ssl_certificate /etc/letsencrypt/live/aiomanager.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/aiomanager.yourdomain.com/privkey.pem;
+
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass http://127.0.0.1:1610;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+### Caddy
+
+```
+aiomanager.yourdomain.com {
+    reverse_proxy localhost:1610
+}
+```
+
+Caddy automatically handles HTTPS with Let's Encrypt.
+
+### Nginx Proxy Manager
+
+<Steps>
+  <Step>**Add Proxy Host:** Add a new Proxy Host.</Step>
+  <Step>**Set Domain:** Set Domain to `aiomanager.yourdomain.com`.</Step>
+  <Step>**Set Forward Host:** Set Forward Host to your server IP.</Step>
+  <Step>**Set Forward Port:** Set Forward Port to `1610`.</Step>
+  <Step>**Enable WebSockets:** Enable Websockets Support.</Step>
+  <Step>**Enable SSL:** Enable SSL with your certificate.</Step>
+</Steps>
+
+## HTTPS Requirement
+
+<Warning>AIOManager **must** be served over HTTPS or localhost. Browser security policies block the encryption APIs required for the Key Vault and Cloud Sync on plain HTTP remote connections.</Warning>
+
+If you can't set up a reverse proxy, you can force Chrome or Edge to treat your server's IP as secure:
+
+<Steps>
+  <Step>**Open Chrome flags:** Navigate to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`</Step>
+  <Step>**Add your server address:** Enter your server's address, e.g. `http://192.168.1.x:1610`</Step>
+  <Step>**Enable and relaunch:** Set the dropdown to Enabled and relaunch the browser.</Step>
+</Steps>
+
+## Post-Install Checklist
+
+| Step | Description |
+|------|-------------|
+| ✓ | Access AIOManager at your configured URL |
+| ✓ | Create your login credentials (UUID is auto-generated) |
+| ✓ | Set a display name in Settings |
+| ✓ | Add your first account (Stremio, local, or connect to a platform) |
+| ✓ | Configure your reverse proxy for HTTPS |
+| ✓ | (Optional) Set up PostgreSQL for production use |
+| ✓ | (Optional) Add API keys to the Vault |
+| ✓ | (Optional) Create your first Autopilot rule |

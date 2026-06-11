@@ -1,4 +1,4 @@
-import { AddonDescriptor } from '@/types/addon'
+import type { AddonDescriptor } from '@/types/addon'
 
 const OFFICIAL_ADDONS: Record<string, { name: string; logo?: string; description?: string }> = {
     'cinemeta': {
@@ -25,6 +25,18 @@ const OFFICIAL_ADDONS: Record<string, { name: string; logo?: string; description
         name: 'Local Files',
         logo: '📦',
         description: 'Files from your local computer'
+    },
+    'aiostreams': {
+        name: 'AIOStreams',
+        description: 'Unified stream aggregator'
+    },
+    'aiometadata': {
+        name: 'AIOMetadata',
+        description: 'Metadata enrichment addon'
+    },
+    'aiometedata': {
+        name: 'AIOMetadata',
+        description: 'Metadata enrichment addon'
     }
 }
 
@@ -34,8 +46,20 @@ const URL_PATTERNS = [
     { pattern: 'v3-channels.strem.io', key: 'youtube' },
     { pattern: 'opensubtitles-v3.strem.io', key: 'opensubtitles' },
     { pattern: '127.0.0.1:11470/local-addon', key: 'local' },
-    { pattern: 'localhost:11470/local-addon', key: 'local' }
+    { pattern: 'localhost:11470/local-addon', key: 'local' },
+    { pattern: 'aiostreams', key: 'aiostreams' },
+    { pattern: 'aio-streams', key: 'aiostreams' },
+    { pattern: 'aiometadata', key: 'aiometadata' },
+    { pattern: 'aio-metadata', key: 'aiometadata' },
+    { pattern: 'aiometedata', key: 'aiometedata' }
 ]
+
+const normalizeDisplayName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+function shouldUseCanonicalName(currentName: string, canonicalName: string): boolean {
+    if (!currentName || currentName === 'Unknown Addon') return true
+    return normalizeDisplayName(currentName) === normalizeDisplayName(canonicalName)
+}
 
 /**
  * Generates a readable name from a transport URL hostname.
@@ -62,33 +86,32 @@ export function identifyAddon(transportUrl: string, manifest?: Partial<AddonDesc
     const url = transportUrl.toLowerCase()
     const id = (manifest?.id || '').toLowerCase()
     const name = manifest?.name || ''
-    const isUnknown = !name || name === 'Unknown Addon'
+    const normalizedId = normalizeDisplayName(id)
+    const normalizedName = normalizeDisplayName(name)
 
-    // Helper to ensure core fields exist while preserving everything else
     const wrap = (meta: Partial<AddonDescriptor['manifest']>) => ({
         ...manifest,
         id: manifest?.id || meta.id || 'unknown',
-        name: isUnknown ? meta.name : (manifest?.name || meta.name),
+        name: shouldUseCanonicalName(name, meta.name || '') ? (meta.name || manifest?.name || 'Unknown Addon') : (manifest?.name || meta.name || 'Unknown Addon'),
         logo: manifest?.logo || meta.logo,
         description: manifest?.description || meta.description,
         version: manifest?.version || '0.0.0',
         types: manifest?.types || []
     } as AddonDescriptor['manifest'])
 
-    // 1. Check ID-based official matches
     for (const [key, meta] of Object.entries(OFFICIAL_ADDONS)) {
-        if (id.includes(key) || (name && name.toLowerCase() === meta.name.toLowerCase())) {
+        const normalizedKey = normalizeDisplayName(key)
+        const normalizedMetaName = normalizeDisplayName(meta.name)
+        if (normalizedId.includes(normalizedKey) || (name && normalizedName === normalizedMetaName)) {
             return wrap({ ...meta, id: key })
         }
     }
 
-    // 2. Check URL-based official matches
     for (const { pattern, key } of URL_PATTERNS) {
         if (url.includes(pattern)) {
             return wrap({ ...OFFICIAL_ADDONS[key], id: key })
         }
     }
 
-    // 3. Fallback: Return empty wrap (No baking of fallbacks into the manifest object)
-    return wrap({})
+    return wrap({ name: getHostnameIdentifier(transportUrl) })
 }

@@ -1,0 +1,250 @@
+---
+title: Account Management
+description: Manage your accounts and keep your data consistent across devices.
+---
+
+## What Is an Account in AIOManager?
+
+An account in AIOManager is a container for one set of addons. It can be a Stremio identity, a local account, or connected to external platforms like Nuvio or RealStream. Each account holds its installed addons, preferences, connections, and sync state.
+
+| Aspect | Stremio App | AIOManager |
+|--------|-------------|------------|
+| Primary purpose | Watch content | Manage addons |
+| Where it runs | Your device | Server/browser |
+| Account storage | Platform servers | Local + cloud sync |
+| Addon changes | Manual | Automated |
+
+### Account Card Anatomy
+
+Each account appears as a card with several components:
+
+| Element | Description |
+|---------|-------------|
+| **Avatar/Emoji** | Visual identifier you set |
+| **Account Name** | Custom name or email |
+| **Addon Count** | Number of installed addons |
+| **Status Badge** | Current connection state |
+| **Quick Actions** | Sync, Repair, Refresh buttons |
+
+---
+
+## Account Actions
+
+Three actions look similar but do very different things. Choosing the wrong one can cause unexpected behavior.
+
+### Action Comparison
+
+| Action | What it does | Data Direction | When to use |
+|--------|--------------|----------------|-------------|
+| **Sync** | Pulls latest from Stremio | Stremio → AIOManager | After changes in Stremio app |
+| **Repair** | Re-downloads manifests | Source URLs → AIOManager | Addons showing wrong versions |
+| **Refresh Addons** | Updates and pushes to Stremio | AIOManager ↔ Stremio | After addon config changes |
+
+<Note>Refresh Addons always preserves your custom names and logos. It's more thorough than Sync.</Note>
+
+### Sync: When and Why
+
+**What happens:**
+
+<Steps>
+  <Step>**Connect:** AIOManager connects to Stremio's servers.</Step>
+  <Step>**Download:** Downloads your current addon list.</Step>
+  <Step>**Compare:** Compares with local data.</Step>
+  <Step>**Update:** Updates local state to match Stremio.</Step>
+</Steps>
+
+| Use Case | Should You Sync? |
+|----------|------------------|
+| Installed addon in Stremio app | Yes |
+| Changed addon settings in AIOManager | No |
+| Haven't used AIOManager in a while | Yes |
+| Addon disappeared from AIOManager | Yes |
+
+### Repair: When and Why
+
+**What happens:**
+
+<Steps>
+  <Step>**Iterate:** AIOManager iterates through all addon URLs.</Step>
+  <Step>**Request:** Requests the `manifest.json` from each source.</Step>
+  <Step>**Validate:** Validates the response.</Step>
+  <Step>**Update:** Updates local addon metadata.</Step>
+</Steps>
+
+| Use Case | Should You Repair? |
+|----------|-------------------|
+| Addon version looks wrong | Yes |
+| Addon behavior unexpected | Yes |
+| Manifest says one version, shows another | Yes |
+| Just want to refresh data | No - use Sync |
+
+### Refresh Addons: When and Why
+
+**What happens:**
+
+<Steps>
+  <Step>**Re-fetch:** Re-fetches each addon's manifest.</Step>
+  <Step>**Preserve:** Preserves custom names and logos.</Step>
+  <Step>**Compile:** Compiles updated addon collection.</Step>
+  <Step>**Push:** Pushes the complete list to Stremio.</Step>
+</Steps>
+
+| Use Case | Should You Refresh? |
+|----------|---------------------|
+| Changed AIOStreams debrid settings | Yes |
+| Updated addon configuration | Yes |
+| Addons not appearing in Stremio | Yes |
+| Just want to see current state | No - use Sync |
+
+---
+
+## Multiple Devices
+
+You can use AIOManager on multiple devices with the same sync ID; switching between your PC and phone works fine.
+
+### How Sync Works Across Devices
+
+AIOManager encrypts your data client-side and pushes it to the server. When you open AIOManager on another device and log in with the same UUID and password, the encrypted blob is downloaded and decrypted locally. Both devices see the same data.
+
+### Conflict Resolution
+
+When two devices make changes simultaneously, AIOManager uses a "last write wins" model:
+
+| Scenario | Result |
+|----------|--------|
+| Device A saves, then Device B saves | Device B's changes persist |
+| Both save at same time | One overwrites the other unpredictably |
+| One device offline | Changes queue until reconnection |
+
+<Warning>Avoid having AIOManager open on two devices simultaneously with the same sync ID. Both instances will push their state to the server and the one that writes last wins, which can cause deleted addons to reappear or recent changes to be overwritten.</Warning>
+
+### Best Practices for Multiple Devices
+
+| Practice | How |
+|----------|-----|
+| Close before switching | Close AIOManager tab on device A before opening on device B |
+| Wait for sync | Give it 5-10 seconds after changes before switching |
+| Use one primary device | Designate one device as your main management interface |
+
+<Tip>If you change something on your phone, close the tab before opening AIOManager on your PC. A few seconds is enough for the sync to complete.</Tip>
+
+---
+
+## Account States
+
+Each account can be in one of several states, indicated by a badge or color:
+
+| State | Visual | Meaning | Action Needed |
+|-------|--------|---------|---------------|
+| **Connected** | Green/normal | AIOManager can reach Stremio | None |
+| **Syncing** | Spinner | Data transfer in progress | Wait |
+| **Error** | Red badge | Connection failed | Check credentials |
+| **Expired** | Orange/yellow | Auth needs refresh | Re-authenticate |
+
+### Troubleshooting Account States
+
+| Problem | Likely Cause | Solution |
+|---------|--------------|----------|
+| Stuck on "Syncing" | Network issue | Refresh page |
+| Shows "Error" | Invalid auth | Remove and re-add account |
+| Addons not updating | Sync not run | Manual Sync |
+| Changes not appearing in Stremio | Refresh not run | Run Refresh Addons |
+
+---
+
+## Profile Linking
+
+Profiles let you create custom labels that appear in your AIOManager sidebar, each linked to one or more accounts.
+
+### Why Use Profiles?
+
+| Use Case | Example Profile |
+|----------|-----------------|
+| Family management | "Kids", "Parents", "Guest" |
+| Testing | "Test", "Dev", "Staging" |
+| Different uses | "Movies", "Sports", "Anime" |
+
+### Creating a Profile
+
+<Steps>
+  <Step>**Open Account Edit:** Click the edit icon on any account card.</Step>
+  <Step>**Find Profile Section:** Look for the "Profile" or "Sidebar Profile" field.</Step>
+  <Step>**Select or Create:** Choose existing profile or click "Create New".</Step>
+  <Step>**Save:** Save changes to link the account.</Step>
+</Steps>
+
+---
+
+## Account Protection
+
+Protect accounts from accidental bulk operations.
+
+### How Protection Works
+
+| Protection Level | Effect |
+|------------------|--------|
+| **Unprotected** | Account can be included in bulk operations |
+| **Protected** | Account skipped during "Remove All" and similar bulk actions |
+
+### Managing Protection
+
+<Steps>
+  <Step>**Open Account Edit:** Click the account card to open it.</Step>
+  <Step>**Toggle Protection:** Find the Protection toggle in the account details.</Step>
+  <Step>**Confirm:** A "Protected" badge appears when enabled.</Step>
+</Steps>
+
+---
+
+## Common Issues and Solutions
+
+### Issue: "Authentication failed"
+
+| Cause | Solution |
+|-------|----------|
+| Password changed | Re-add the account |
+| Token expired | Re-authenticate with Email & Password for a refreshable token |
+| Stremio servers down | Wait and retry |
+
+### Issue: "Addons not appearing in Stremio"
+
+| Cause | Solution |
+|-------|----------|
+| Sync not run | Click Sync |
+| Refresh not run | Click Refresh Addons |
+| Network issue | Check internet connection |
+
+### Issue: "Changes reverting"
+
+| Cause | Solution |
+|-------|----------|
+| Two devices active | Close AIOManager on one device |
+| Sync conflict | Make changes on one device only |
+
+---
+
+## Account Management Reference
+
+| Task | Action | Frequency |
+|------|--------|-----------|
+| Check for new addons | Sync | After using Stremio app |
+| Fix addon metadata | Repair | When versions look wrong |
+| Push config changes | Refresh Addons | After addon configuration |
+| Update display name | Edit → Name change | Whenever |
+| Group accounts | Edit → Profile link | When organizing |
+
+---
+
+## Common Questions
+
+**Q: How often should I sync?**
+Sync when you've made changes directly in Stremio. Otherwise, AIOManager manages addons and syncs automatically.
+
+**Q: Will Repair delete my addons?**
+No. Repair only updates metadata. Your addons and configurations remain intact.
+
+**Q: Can I undo a Sync?**
+No. Sync overwrites local data. If you need to preserve changes, use the Library to save configurations first.
+
+**Q: What happens if I remove an account?**
+The Stremio account remains intact. Only the AIOManager connection is removed. You can re-add it anytime.

@@ -20,7 +20,6 @@ export async function loadAddonLibrary(): Promise<Record<string, SavedAddon>> {
       return {}
     }
 
-    // Convert date strings back to Date objects
     const library: Record<string, SavedAddon> = {}
     for (const [id, savedAddon] of Object.entries(stored)) {
       library[id] = {
@@ -33,7 +32,7 @@ export async function loadAddonLibrary(): Promise<Record<string, SavedAddon>> {
 
     return library
   } catch (error) {
-    console.error('Failed to load addon library from storage:', error)
+    import.meta.env.DEV && console.error('Failed to load addon library from storage:', error)
     return {}
   }
 }
@@ -47,7 +46,7 @@ export async function saveAddonLibrary(
   try {
     await localforage.setItem(STORAGE_KEYS.ADDON_LIBRARY, library)
   } catch (error) {
-    console.error('Failed to save addon library to storage:', error)
+    import.meta.env.DEV && console.error('Failed to save addon library to storage:', error)
     throw new Error('Failed to save addon library')
   }
 }
@@ -67,7 +66,6 @@ export async function loadAccountAddonStates(): Promise<
       return {}
     }
 
-    // Convert date strings back to Date objects
     const states: Record<string, AccountAddonState> = {}
     for (const [id, state] of Object.entries(stored)) {
       states[id] = {
@@ -82,7 +80,7 @@ export async function loadAccountAddonStates(): Promise<
 
     return states
   } catch (error) {
-    console.error('Failed to load account addon states from storage:', error)
+    import.meta.env.DEV && console.error('Failed to load account addon states from storage:', error)
     return {}
   }
 }
@@ -96,7 +94,7 @@ export async function saveAccountAddonStates(
   try {
     await localforage.setItem(STORAGE_KEYS.ACCOUNT_ADDONS, states)
   } catch (error) {
-    console.error('Failed to save account addon states to storage:', error)
+    import.meta.env.DEV && console.error('Failed to save account addon states to storage:', error)
     throw new Error('Failed to save account addon states')
   }
 }
@@ -109,17 +107,14 @@ export function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url)
 
-    // Sort query parameters for consistent comparison
     const params = new URLSearchParams(parsed.search)
     const sortedParams = new URLSearchParams(
       Array.from(params.entries()).sort(([a], [b]) => a.localeCompare(b))
     )
 
-    // Rebuild URL with normalized parts
     parsed.search = sortedParams.toString()
     let normalized = parsed.toString()
 
-    // Remove trailing slash
     if (normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1)
     }
@@ -131,20 +126,4 @@ export function normalizeUrl(url: string): string {
   }
 }
 
-/**
- * Find a saved addon by URL (normalized comparison)
- */
-export function findSavedAddonByUrl(
-  library: Record<string, SavedAddon>,
-  url: string
-): SavedAddon | null {
-  const normalizedUrl = normalizeUrl(url)
 
-  for (const savedAddon of Object.values(library)) {
-    if (normalizeUrl(savedAddon.installUrl) === normalizedUrl) {
-      return savedAddon
-    }
-  }
-
-  return null
-}

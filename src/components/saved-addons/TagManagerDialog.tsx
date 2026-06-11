@@ -1,6 +1,7 @@
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogHeader,
     DialogTitle,
     DialogFooter,
@@ -8,7 +9,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAddonStore } from '@/store/addonStore'
-import { Edit2, Trash2, Tag, Check, X } from 'lucide-react'
+import { Edit2, Trash2, Tag, Check, X, Search } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -23,15 +24,26 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
     const bulkUpdateSavedAddons = useAddonStore((state) => state.bulkUpdateSavedAddons)
 
     const allTags = useMemo(() => {
-        const tagsSet = new Set<string>()
+        const counts = new Map<string, number>()
         Object.values(library).forEach((savedAddon) => {
-            savedAddon.tags.forEach((tag) => tagsSet.add(tag))
+            savedAddon.tags.forEach((tag) => {
+                counts.set(tag, (counts.get(tag) || 0) + 1)
+            })
         })
-        return Array.from(tagsSet).sort()
+        return Array.from(counts.entries())
+            .map(([name, count]) => ({ name, count }))
+            .sort((a, b) => a.name.localeCompare(b.name))
     }, [library])
 
     const [editingTag, setEditingTag] = useState<string | null>(null)
     const [newName, setNewName] = useState('')
+    const [search, setSearch] = useState('')
+
+    const filteredTags = useMemo(() => {
+        const query = search.trim().toLowerCase()
+        if (!query) return allTags
+        return allTags.filter((tag) => tag.name.toLowerCase().includes(query))
+    }, [allTags, search])
 
     const handleRename = async (oldTag: string) => {
         if (!newName.trim() || newName === oldTag) {
@@ -49,8 +61,7 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
         }
     }
 
-    const handleDeleteTag = async (tag: string) => {
-        // Find all addons with this tag
+    const handleDeleteTag = async (tag: string, count: number) => {
         const addonIds = Object.values(library)
             .filter(a => a.tags.includes(tag))
             .map(a => a.id)
@@ -59,7 +70,10 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
 
         try {
             await bulkUpdateSavedAddons(addonIds, { tagsRemove: [tag] })
-            toast({ title: 'Tag Deleted', description: `Removed "${tag}" from ${addonIds.length} addons` })
+            toast({
+                title: 'Tag Deleted',
+                description: count > 0 ? `Removed "${tag}" from ${count} addon${count !== 1 ? 's' : ''}` : `Removed "${tag}"`,
+            })
         } catch (err) {
             toast({ title: 'Delete Failed', variant: 'destructive' })
         }
@@ -67,69 +81,104 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="max-h-[88dvh] sm:max-w-lg">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Tag className="h-5 w-5 text-primary" />
                         Global Tag Manager
                     </DialogTitle>
+                    <DialogDescription>
+                        Rename a tag everywhere it appears, or remove it from every saved addon.
+                    </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4 max-h-[400px] overflow-y-auto pr-2">
-                    {allTags.length === 0 && (
-                        <p className="text-center text-muted-foreground py-8">No tags found in library</p>
+                <div className="space-y-3 py-3">
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-muted/25 px-3 py-2">
+                        <div>
+                            <p className="text-sm font-semibold">{allTags.length} tag{allTags.length !== 1 ? 's' : ''}</p>
+                            <p className="text-xs text-muted-foreground">Changes apply across the whole library.</p>
+                        </div>
+                        <span className="rounded-full border border-border/45 bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
+                            Global
+                        </span>
+                    </div>
+
+                    {allTags.length > 0 && (
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search tags..."
+                                className="h-9 pl-9 text-sm"
+                            />
+                        </div>
                     )}
-                    {allTags.map((tag) => (
-                        <div key={tag} className="flex items-center justify-between gap-4 p-2 rounded-lg border bg-accent/10 hover:bg-accent/20 transition-colors">
-                            {editingTag === tag ? (
-                                <div className="flex-1 flex gap-2">
-                                    <Input
-                                        value={newName}
-                                        onChange={(e) => setNewName(e.target.value)}
-                                        className="h-8 py-0"
-                                        autoFocus
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleRename(tag)
-                                            if (e.key === 'Escape') setEditingTag(null)
-                                        }}
-                                    />
-                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-green-500" onClick={() => handleRename(tag)}>
-                                        <Check className="h-4 w-4" />
-                                    </Button>
-                                    <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground" onClick={() => setEditingTag(null)}>
-                                        <X className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            ) : (
-                                <>
-                                    <span className="font-medium truncate">{tag}</span>
-                                    <div className="flex gap-1">
-                                        <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-8 w-8 text-muted-foreground hover:text-primary"
-                                            onClick={() => {
-                                                setEditingTag(tag)
-                                                setNewName(tag)
+
+                    <div className="max-h-[min(52vh,24rem)] space-y-2 overflow-y-auto pr-1">
+                        {allTags.length === 0 && (
+                            <p className="text-center text-sm text-muted-foreground py-8">No tags found in library</p>
+                        )}
+                        {allTags.length > 0 && filteredTags.length === 0 && (
+                            <p className="text-center text-sm text-muted-foreground py-8">No tags match your search</p>
+                        )}
+                        {filteredTags.map(({ name: tag, count }) => (
+                            <div key={tag} className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-card/80 p-2.5 transition-colors hover:bg-muted/30">
+                                {editingTag === tag ? (
+                                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                                        <Input
+                                            value={newName}
+                                            onChange={(e) => setNewName(e.target.value)}
+                                            className="h-8 py-0"
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') handleRename(tag)
+                                                if (e.key === 'Escape') setEditingTag(null)
                                             }}
-                                        >
-                                            <Edit2 className="h-3.5 w-3.5" />
+                                        />
+                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-success" onClick={() => handleRename(tag)}>
+                                            <Check className="h-4 w-4" />
                                         </Button>
-                                        <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                            onClick={() => handleDeleteTag(tag)}
-                                        >
-                                            <Trash2 className="h-3.5 w-3.5" />
+                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground" onClick={() => setEditingTag(null)}>
+                                            <X className="h-4 w-4" />
                                         </Button>
                                     </div>
-                                </>
-                            )}
-                        </div>
-                    ))}
+                                ) : (
+                                    <>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-sm font-semibold">{tag}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                {count} addon{count !== 1 ? 's' : ''}
+                                            </div>
+                                        </div>
+                                        <div className="flex shrink-0 gap-1">
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                                onClick={() => {
+                                                    setEditingTag(tag)
+                                                    setNewName(tag)
+                                                }}
+                                            >
+                                                <Edit2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                                onClick={() => handleDeleteTag(tag, count)}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </div>
                 <DialogFooter>
-                    <Button variant="outline" onClick={onClose}>Close</Button>
+                    <Button variant="subtle" onClick={onClose}>Close</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

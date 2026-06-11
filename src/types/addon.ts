@@ -18,7 +18,7 @@ export interface AddonManifest {
   background?: string
   types?: string[]
   catalogs?: Catalog[]
-  resources?: unknown[]
+  resources?: Array<string | { name: string; types?: string[]; idPrefixes?: string[] }>
   idPrefixes?: string[]
   behaviorHints?: {
     adult?: boolean
@@ -44,8 +44,12 @@ export interface AddonDescriptor {
     lastUpdated?: number
     cinemetaConfig?: import('./cinemeta').CinemetaConfigState
   }
-  catalogOverrides?: {
-    removed: string[]
-  }
+  catalogOverrides?: CatalogOverrides
   syncToLibrary?: boolean
+  note?: string
+}
+
+export interface CatalogOverrides {
+  removed: string[]
+  catalogs?: Catalog[]
 }

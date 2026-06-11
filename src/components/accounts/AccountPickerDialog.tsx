@@ -1,4 +1,4 @@
-import { Button } from '@/components/ui/button'
+import { Button, type ButtonProps } from '@/components/ui/button'
 import {
     Dialog,
     DialogContent,
@@ -10,10 +10,12 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useAccountStore } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail } from '@/store/accountStore'
 import { User, Search, X } from 'lucide-react'
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
+import type { ReactNode } from 'react'
 import { Input } from '@/components/ui/input'
+import { useToast } from '@/hooks/use-toast'
 
 interface AccountPickerDialogProps {
     open: boolean
@@ -21,6 +23,9 @@ interface AccountPickerDialogProps {
     title: string
     description: string
     onConfirm: (accountIds: string[]) => Promise<void>
+    confirmLabel?: string
+    confirmVariant?: ButtonProps['variant']
+    renderPreview?: (accountIds: string[]) => ReactNode
 }
 
 export function AccountPickerDialog({
@@ -29,19 +34,36 @@ export function AccountPickerDialog({
     title,
     description,
     onConfirm,
+    confirmLabel = 'Confirm',
+    confirmVariant = 'default',
+    renderPreview,
 }: AccountPickerDialogProps) {
     const accounts = useAccountStore((state) => state.accounts)
+    const { toast } = useToast()
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [searchQuery, setSearchQuery] = useState('')
     const [loading, setLoading] = useState(false)
+
+    const resetDialogState = useCallback(() => {
+        setSelectedIds(new Set())
+        setSearchQuery('')
+    }, [])
+
+    useEffect(() => {
+        if (!open) {
+            resetDialogState()
+        }
+    }, [open, resetDialogState])
 
     const filteredAccounts = useMemo(() => {
         if (!searchQuery.trim()) return accounts
         return accounts.filter(acc =>
             acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (acc.email && acc.email.toLowerCase().includes(searchQuery.toLowerCase()))
+            (getAccountEmail(acc) && getAccountEmail(acc)!.toLowerCase().includes(searchQuery.toLowerCase()))
         )
     }, [accounts, searchQuery])
+
+    const selectedAccountIds = useMemo(() => Array.from(selectedIds), [selectedIds])
 
     const toggleAccount = (id: string) => {
         setSelectedIds(prev => {
@@ -60,19 +82,32 @@ export function AccountPickerDialog({
         }
     }
 
+    const handleOpenChange = (nextOpen: boolean) => {
+        if (!nextOpen) {
+            resetDialogState()
+        }
+        onOpenChange(nextOpen)
+    }
+
     const handleConfirm = async () => {
         setLoading(true)
         try {
             await onConfirm(Array.from(selectedIds))
-            onOpenChange(false)
+            handleOpenChange(false)
+        } catch (error) {
+            toast({
+                title: `${confirmLabel} failed`,
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            })
         } finally {
             setLoading(false)
         }
     }
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-md">
+        <Dialog open={open} onOpenChange={handleOpenChange}>
+            <DialogContent className="sm:max-w-lg">
                 <DialogHeader>
                     <DialogTitle>{title}</DialogTitle>
                     <DialogDescription>{description}</DialogDescription>
@@ -128,7 +163,7 @@ export function AccountPickerDialog({
                                                 {account.emoji && <span className="text-base shrink-0">{account.emoji}</span>}
                                                 <p className="text-sm font-medium truncate">{account.name}</p>
                                             </div>
-                                            <p className="text-xs text-muted-foreground truncate">{account.email}</p>
+                                            <p className="text-xs text-muted-foreground truncate">{getAccountEmail(account)}</p>
                                         </div>
                                     </div>
                                 </label>
@@ -140,14 +175,20 @@ export function AccountPickerDialog({
                             )}
                         </div>
                     </ScrollArea>
+
+                    {renderPreview && selectedAccountIds.length > 0 && (
+                        <div>
+                            {renderPreview(selectedAccountIds)}
+                        </div>
+                    )}
                 </div>
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                    <Button variant="subtle" onClick={() => handleOpenChange(false)} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button onClick={handleConfirm} disabled={selectedIds.size === 0 || loading}>
-                        Confirm Deployment
+                    <Button variant={confirmVariant} onClick={handleConfirm} disabled={selectedIds.size === 0 || loading}>
+                        {confirmLabel}
                     </Button>
                 </DialogFooter>
             </DialogContent>

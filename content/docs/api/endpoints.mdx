@@ -1,0 +1,348 @@
+---
+title: API Endpoints
+description: Complete reference for the AIOManager REST API.
+---
+
+All endpoints return JSON. Sync endpoints require the `x-sync-password` header with your sync password. Autopilot endpoints require the per-account derived token.
+
+## Authentication
+
+| Header | Required For | Description |
+|--------|--------------|-------------|
+| `x-sync-password` | `/api/sync/*` | Your AIOManager sync password |
+| `x-autopilot-token` | `/api/autopilot/*` | Per-account derived token (stored client-side) |
+| `Content-Type` | POST/PUT | Must be `application/json` |
+
+## Health & Configuration
+
+### GET /api/health
+
+Server health check. Returns status, version, and database connectivity.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "2.0.0 (Build 2)",
+  "mode": "multi-tenant",
+  "optimized": true,
+  "database": { "type": "sqlite", "healthy": true },
+  "autopilot": { "lastRun": 1700000000000, "running": false }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `ok` or `degraded` |
+| `version` | string | Server version with build number |
+| `mode` | string | Server mode (`multi-tenant`) |
+| `database.type` | string | `sqlite` or `postgres` |
+| `database.healthy` | boolean | Database connectivity |
+| `autopilot.lastRun` | number | Timestamp of last Autopilot scan |
+| `autopilot.running` | boolean | Whether Autopilot scan is in progress |
+
+### GET /api/config
+
+Returns public server configuration.
+
+**Response:**
+```json
+{
+  "customHtml": null
+}
+```
+
+## Cloud Sync
+
+### GET /api/sync/:id
+
+Fetch encrypted cloud sync data for a UUID.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | Your AIOManager UUID |
+
+**Headers:**
+```
+x-sync-password: your-password-here
+```
+
+**Response (200):**
+```json
+{
+  "data": "encrypted-base64-string",
+  "timestamp": "2024-01-15T12:00:00.000Z",
+  "checksum": "sha256-hash"
+}
+```
+
+**Response (404):**
+```json
+{
+  "error": "No sync data found"
+}
+```
+
+**Response (401):**
+```json
+{
+  "error": "Invalid sync password"
+}
+```
+
+### POST /api/sync/:id
+
+Write encrypted cloud sync data for a UUID.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | Your AIOManager UUID |
+
+**Headers:**
+```
+x-sync-password: your-password-here
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "data": "encrypted-base64-string",
+  "checksum": "sha256-hash"
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "timestamp": "2024-01-15T12:00:00.000Z"
+}
+```
+
+**Response (413):**
+```json
+{
+  "error": "Payload exceeds maximum size"
+}
+```
+
+### DELETE /api/sync/:id
+
+Delete all sync data for a UUID.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | Your AIOManager UUID |
+
+**Headers:**
+```
+x-sync-password: your-password-here
+```
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+## Addon Operations
+
+### GET /api/addon-health
+
+Check health of an addon URL.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Full addon manifest URL |
+
+**Response (200):**
+```json
+{
+  "healthy": true,
+  "responseTime": 245,
+  "statusCode": 200,
+  "lastChecked": "2024-01-15T12:00:00.000Z"
+}
+```
+
+**Response (addon unhealthy):**
+```json
+{
+  "healthy": false,
+  "responseTime": 5000,
+  "statusCode": null,
+  "error": "Connection timeout",
+  "lastChecked": "2024-01-15T12:00:00.000Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `healthy` | boolean | Whether the addon responded successfully |
+| `responseTime` | number | Response time in milliseconds |
+| `statusCode` | number \| null | HTTP status code, null if unreachable |
+| `error` | string | Error message if unhealthy |
+| `lastChecked` | string | ISO timestamp of the check |
+
+### GET /api/meta-proxy
+
+Proxy a manifest/metadata URL. SSRF-protected.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | URL to proxy |
+| `type` | string | No | `manifest` or `catalog` |
+
+**Response:**
+Returns the proxied content directly. Blocked URLs return 403.
+
+**Blocked Patterns:**
+- Private IP ranges (10.x, 172.16-31.x, 192.168.x)
+- Localhost (127.0.0.1, localhost)
+- Internal AWS/GCP metadata endpoints
+
+## Autopilot
+
+### POST /api/autopilot/sync
+
+Create or update an Autopilot rule on the server.
+
+**Headers:**
+```
+x-autopilot-token: derived-token-here
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "ruleId": "rule-uuid",
+  "accountId": "stremio-account-id",
+  "chain": [
+    {
+      "addonId": "addon-1-id",
+      "addonUrl": "https://addon1.example.com/manifest.json",
+      "priority": 1
+    },
+    {
+      "addonId": "addon-2-id", 
+      "addonUrl": "https://addon2.example.com/manifest.json",
+      "priority": 2
+    }
+  ],
+  "cooldownMinutes": 5,
+  "webhookUrl": "https://discord.com/api/webhooks/...",
+  "enabled": true
+}
+```
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "ruleId": "rule-uuid"
+}
+```
+
+### GET /api/autopilot/state/:accountId
+
+Get the current Autopilot state for an account.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `accountId` | string | Stremio account ID |
+
+**Headers:**
+```
+x-autopilot-token: derived-token-here
+```
+
+**Response:**
+```json
+{
+  "rules": [
+    {
+      "ruleId": "rule-uuid",
+      "name": "Movies & Shows",
+      "enabled": true,
+      "activeAddonId": "addon-1-id",
+      "activePriority": 1,
+      "lastFailover": "2024-01-10T08:30:00.000Z",
+      "reliabilityScores": {
+        "addon-1-id": 156,
+        "addon-2-id": 42
+      }
+    }
+  ],
+  "lastSync": "2024-01-15T12:00:00.000Z"
+}
+```
+
+### DELETE /api/autopilot/:id
+
+Delete a specific Autopilot rule.
+
+**Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | string | Rule UUID |
+
+**Headers:**
+```
+x-autopilot-token: derived-token-here
+```
+
+**Response (200):**
+```json
+{
+  "success": true
+}
+```
+
+## Error Responses
+
+All endpoints follow a consistent error format:
+
+| Code | Description |
+|------|-------------|
+| 400 | Bad Request - Invalid parameters |
+| 401 | Unauthorized - Missing or invalid auth header |
+| 403 | Forbidden - SSRF protection triggered |
+| 404 | Not Found - Resource doesn't exist |
+| 413 | Payload Too Large - Exceeds `MAX_SYNC_PAYLOAD_SIZE` |
+| 429 | Too Many Requests - Rate limited |
+| 500 | Internal Server Error - Server-side failure |
+
+**Error Response Format:**
+```json
+{
+  "error": "Human-readable error message",
+  "code": "ERROR_CODE"
+}
+```
+
+## Rate Limits
+
+Rate limiting is enforced based on `PROXY_CONCURRENCY_LIMIT`. When exceeded:
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "retryAfter": 60
+}
+```

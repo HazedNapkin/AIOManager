@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import localforage from 'localforage'
-import axios from 'axios'
+import { deriveSyncToken } from '@/lib/crypto'
+import { resilientFetch } from '@/lib/api-resilience'
 
 const STORAGE_KEY = 'stremio-manager:failover-history'
 const MAX_LOGS = 25
@@ -10,10 +11,11 @@ export interface HistoryLog {
     timestamp: Date
     type: 'failover' | 'recovery' | 'self-healing' | 'info'
     ruleId: string
+    accountId?: string
     primaryName?: string
     backupName?: string
     message: string
-    metadata?: any
+    metadata?: Record<string, unknown>
 }
 
 interface HistoryStore {
@@ -35,45 +37,57 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
             let allLogs: HistoryLog[] = []
 
-            // 1. Load from Local Cache
             const storedLogs = await localforage.getItem<HistoryLog[]>(STORAGE_KEY)
             if (storedLogs) {
                 allLogs = storedLogs.map(l => ({ ...l, timestamp: new Date(l.timestamp) }))
             }
 
-            // 2. Fetch from Server if authenticated
+
             if (auth.isAuthenticated) {
                 try {
                     const baseUrl = serverUrl || ''
                     const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
 
-                    // Fetch for all accounts via Promise.all
                     const accountStore = (await import('@/store/accountStore')).useAccountStore.getState()
-                    const promiseResults = await Promise.all(accountStore.accounts.map(account =>
-                        axios.get(`${apiPath}/autopilot/history/${account.id}`).catch(() => null)
-                    ))
+                    const syncToken = await deriveSyncToken(auth.password)
+                    const BATCH = 5
+                    const promiseResults: { response: Record<string, unknown> | null, accountId: string }[] = []
+                    for (let i = 0; i < accountStore.accounts.length; i += BATCH) {
+                        const batch = accountStore.accounts.slice(i, i + BATCH)
+                        const results = await Promise.all(batch.map(account =>
+                            resilientFetch(`${apiPath}/autopilot/history/${account.id}`, {
+                                headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
+                            }).then(r => r.ok ? r.json() : null).catch(() => null)
+                            .then(response => ({ response, accountId: account.id }))
+                        ))
+                        promiseResults.push(...results)
+                        if (i + BATCH < accountStore.accounts.length) {
+                            await new Promise(r => setTimeout(r, 500))
+                        }
+                    }
 
-                    promiseResults.forEach((response) => {
-                        if (response?.data?.history) {
-                            const serverLogs = response.data.history.map((h: any) => ({
-                                id: h.id,
+                        promiseResults.forEach(({ response, accountId }) => {
+                        if (response?.history) {
+                            const serverLogs = (response.history as Record<string, unknown>[]).map((h): HistoryLog => ({
+                                id: h.id as string,
                                 timestamp: new Date(Number(h.timestamp)),
-                                type: h.type,
-                                ruleId: h.rule_id,
-                                primaryName: h.primary_name,
-                                backupName: h.backup_name,
-                                message: h.message,
-                                metadata: h.metadata ? JSON.parse(h.metadata) : undefined
+                                type: h.type as HistoryLog['type'],
+                                ruleId: h.rule_id as string,
+                                accountId,
+                                primaryName: h.primary_name as string,
+                                backupName: h.backup_name as string,
+                                message: h.message as string,
+                                metadata: h.metadata ? JSON.parse(h.metadata as string) : undefined
                             }))
                             allLogs = [...allLogs, ...serverLogs]
                         }
                     })
                 } catch (serverErr) {
-                    console.error('Failed to fetch server history logs:', serverErr)
+                    import.meta.env.DEV && console.error('Failed to fetch server history logs:', serverErr)
                 }
             }
 
-            // 3. Deduplicate and Sort
+
             const logMap = new Map<string, HistoryLog>()
             allLogs.forEach(l => logMap.set(l.id, l))
             const sortedLogs = Array.from(logMap.values())
@@ -83,7 +97,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
             set({ logs: sortedLogs })
             await localforage.setItem(STORAGE_KEY, sortedLogs)
         } catch (error) {
-            console.error('Failed to initialize history logs:', error)
+            import.meta.env.DEV && console.error('Failed to initialize history logs:', error)
         }
     },
 
@@ -95,7 +109,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         }
 
         const currentLogs = get().logs
-        const newLogs = [newLog, ...currentLogs].slice(0, MAX_LOGS) // Limit to MAX_LOGS
+        const newLogs = [newLog, ...currentLogs].slice(0, MAX_LOGS)
 
         set({ logs: newLogs })
         await localforage.setItem(STORAGE_KEY, newLogs)
@@ -111,17 +125,26 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
                 const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
 
                 const accountStore = (await import('@/store/accountStore')).useAccountStore.getState()
-                await Promise.all(accountStore.accounts.map(account =>
-                    axios.delete(`${apiPath}/autopilot/history/${account.id}`, {
-                        headers: { 'x-sync-password': auth.password }
-                    }).catch(console.warn)
-                ))
+                const syncToken = await deriveSyncToken(auth.password)
+                const BATCH = 5
+                for (let i = 0; i < accountStore.accounts.length; i += BATCH) {
+                    const batch = accountStore.accounts.slice(i, i + BATCH)
+                    await Promise.all(batch.map(account =>
+                        resilientFetch(`${apiPath}/autopilot/history/${account.id}`, {
+                            method: 'DELETE',
+                            retries: 1,
+                            headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
+                        }).catch(e => { if (import.meta.env.DEV) console.warn(e) })
+                    ))
+                    if (i + BATCH < accountStore.accounts.length) {
+                        await new Promise(r => setTimeout(r, 300))
+                    }
+                }
             }
         } catch (err) {
-            console.warn('Server log clear failed, clearing locally anyway:', err)
+            import.meta.env.DEV && console.warn('Server log clear failed, clearing locally anyway:', err)
         }
 
-        // Always clear local state
         set({ logs: [] })
         await localforage.setItem(STORAGE_KEY, [])
     }

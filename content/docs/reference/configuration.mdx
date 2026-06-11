@@ -1,0 +1,176 @@
+---
+title: Configuration Reference
+description: Every AIOManager setting and environment variable documented.
+---
+
+## Environment Variables
+
+Set these in your `.env` file or Docker environment. All are optional unless noted.
+
+### Core Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `16100` (Docker overrides to `1610`) | Port the server listens on |
+| `NODE_ENV` | `development` | Set to `production` for production deployments |
+| `DATA_DIR` | `./data` | Directory for database and encryption key |
+
+### Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_TYPE` | `sqlite` | Database type: `sqlite` or `postgres` |
+| `DATABASE_URL` | - | PostgreSQL connection string. Required if `DB_TYPE=postgres` |
+| `SQLITE_DB_PATH` | `DATA_DIR/aio.db` | SQLite database file path |
+
+**PostgreSQL Connection String Format:**
+```
+postgresql://[user]:[password]@[host]:[port]/[database]?sslmode=require
+```
+
+### Security
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENCRYPTION_KEY` | auto-generated | AES-256-GCM key for server-side encryption |
+| `CORS_ORIGINS` | localhost dev URLs | Comma-separated allowed origins. When unset, only localhost origins are allowed. Set to `*` to allow all. |
+| `MAX_SYNC_PAYLOAD_SIZE` | `100mb` | Maximum sync payload size |
+
+**CORS Origins Examples:**
+```bash
+# Single origin
+CORS_ORIGINS=https://aiomanager.example.com
+
+# Multiple origins
+CORS_ORIGINS=https://aiomanager.example.com,https://backup.example.com
+
+# Allow all origins (not recommended for production)
+CORS_ORIGINS=*
+```
+
+When `CORS_ORIGINS` is not set, the server defaults to allowing localhost development URLs only (`localhost:3000`, `localhost:5173`, etc.).
+
+### Performance & Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY_CONCURRENCY_LIMIT` | `50` | Max concurrent proxy requests |
+| `LOG_PRETTY_PRINT` | `true` | Formatted logs. Set `false` for production |
+
+### Customization
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CUSTOM_HTML` | - | Custom HTML for login page |
+
+---
+
+## Autopilot Configuration
+
+### Rule Settings
+
+User-configurable per-rule fields:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| Name | string | - | Human-readable rule name |
+| Enabled | boolean | `true` | Whether the rule is active |
+| Notification Cooldown | number | - | Minutes between webhook notifications for this rule (leave blank for no cooldown) |
+| Webhook URL | string | - | Per-rule Discord, Slack, or JSON webhook URL (overrides the global webhook) |
+
+### Health Check Behavior
+
+System-level constants - not user-configurable.
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Check Method | HTTP GET | Requests manifest.json |
+| Timeout | 10s | Request timeout |
+| Retry Count | 2 | Retries before marking unhealthy |
+| Retry Delay | 2s | Delay between retries |
+| Failover Threshold | 2 | Consecutive failed checks before switching to a backup |
+| Recovery Threshold | 2 | Consecutive successful checks before switching back to primary |
+
+---
+
+## Provider Configuration (Vault)
+
+### Supported Debrid Providers
+
+| Provider | API Key Location | Key Format | Expiry Check |
+|----------|-----------------|------------|--------------|
+| Real-Debrid | Settings → API Token | 32 chars alphanumeric | Yes |
+| AllDebrid | Settings → API Key | 32 chars alphanumeric | Yes |
+| Premiumize | Settings → API Key | 32 chars alphanumeric | Yes |
+| Debrid-Link | Settings → API Token | JWT format | Yes |
+| TorBox | Settings → API Key | 32 chars alphanumeric | Yes |
+| Other/Custom | N/A | Any format | Manual date |
+
+### API Key Formats
+
+| Provider | Format Example | Length | Notes |
+|----------|---------------|--------|-------|
+| Real-Debrid | `ABC123DEF456GHI789JKL012MNO` | 32 | Case-sensitive |
+| AllDebrid | `abcdefghijklmno1234567890` | 32 | Lowercase |
+| Premiumize | `0123456789abcdef0123456789abcdef` | 32 | Hex string |
+| Debrid-Link | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` | Variable | JWT format |
+| TorBox | `ABCDEFGHIJKLMNOPQRSTUVWXYZ123456` | 32 | Uppercase |
+
+### Dashboard URLs
+
+| Provider | Dashboard URL |
+|----------|---------------|
+| Real-Debrid | `https://real-debrid.com/apitoken` |
+| AllDebrid | `https://alldebrid.com/apisettings/` |
+| Premiumize | `https://premiumize.me/account` |
+| Debrid-Link | `https://debrid-link.com/account/api` |
+| TorBox | `https://torbox.app/settings` |
+
+---
+
+## Database Schemas
+
+### SQLite
+
+Default mode. Single file at `DATA_DIR/aiomanager.db`.
+
+**Tables:**
+- `kv_store`: Encrypted cloud sync payloads
+- `server_credentials`: Encrypted connection credentials
+- `account_canonical_addons`: Server-readable addon lists
+- `account_api_keys`: Hydra API key hashes
+- `autopilot_rules`: Autopilot rule definitions
+- `autopilot_rule_stats`: Runtime Autopilot state
+- `autopilot_state`: Autopilot state tracking
+- `failover_history`: Failover event history
+- `health_history`: Addon health check history
+- `hydra_subscribers`: Registered Hydra pull subscribers
+- `activity_events`: Watch activity events
+- `activity_snapshots`: Watch activity snapshots
+
+### PostgreSQL
+
+Recommended for production. Requires `DB_TYPE=postgres` and `DATABASE_URL`.
+
+**Additional Configuration:**
+```bash
+DATABASE_URL=postgresql://aiomanager:password@localhost:5432/aiomanager?sslmode=require
+```
+
+**Connection Pool:**
+- Max connections: 20 (configurable via `DB_POOL_SIZE`)
+- Connection timeout: 10s (configurable via `DB_CONNECTION_TIMEOUT`)
+
+---
+
+## File Structure
+
+```
+data/
+├── aio.db                 # SQLite database (if using SQLite)
+├── server_secret.key      # Auto-generated encryption key
+└── logs/
+    └── server.log         # Server logs (if enabled)
+```
+
+<Warning>Back up `server_secret.key` regularly. Losing it means losing access to any server-encrypted data.</Warning>

@@ -1,0 +1,68 @@
+---
+title: Technical Reference
+description: Environment variables, keyboard shortcuts, and API documentation.
+---
+
+## Environment Variables
+
+Set these in your `.env` file. All are optional unless noted.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `16100` (Docker: `1610`) | Port the server listens on |
+| `ENCRYPTION_KEY` | auto-generated | AES-256-GCM key for Autopilot rule encryption. Auto-generated on first boot. |
+| `DATA_DIR` | `./data` | Directory for the SQLite database and server_secret.key |
+| `DB_TYPE` | `sqlite` | Set to `postgres` to use PostgreSQL. Requires `DATABASE_URL`. |
+| `DATABASE_URL` | - | PostgreSQL connection string. Required when `DB_TYPE=postgres`. |
+| `CORS_ORIGINS` | localhost dev URLs | Comma-separated allowed origins. When unset, only localhost origins are allowed. |
+| `MAX_SYNC_PAYLOAD_SIZE` | `15mb` (15728640 bytes) | Maximum size of a cloud sync payload |
+| `LOG_PRETTY_PRINT` | `true` | Enable formatted log output. Set to `false` in production. |
+| `PROXY_CONCURRENCY_LIMIT` | `50` | Max concurrent Stremio proxy requests |
+| `SQLITE_DB_PATH` | `DATA_DIR/aio.db` | Override the SQLite database file path |
+| `CUSTOM_HTML` | - | Raw HTML injected on the login page for hosted instances. Admin-controlled only. |
+
+<Warning>On public or shared instances, always set `CORS_ORIGINS` to your specific domain. When unset, only localhost origins are allowed.</Warning>
+
+## Keyboard Shortcuts
+
+| Shortcut | Action | Context |
+|----------|--------|---------|
+| `Ctrl+K` / `Cmd+K` | Open Command Palette | Global |
+| `Esc` | Exit selection mode / close dialog | Global |
+| `Ctrl+A` | Select all visible items | Selection mode |
+| `S` | Save selected addons to Library | Addon selection mode |
+
+Middle-click any addon's Configure button to open its configuration page in a background tab.
+
+## API Endpoints
+
+Sync endpoints require the `x-sync-password` header. Autopilot endpoints require the per-account derived token.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/health` | Server health check. Returns status, version, and database connectivity. |
+| `GET` | `/api/config` | Returns public server configuration. |
+| `GET` | `/api/sync/:id` | Fetch encrypted cloud sync data for a UUID. |
+| `POST` | `/api/sync/:id` | Write encrypted cloud sync data for a UUID. |
+| `DELETE` | `/api/sync/:id` | Delete all data for a UUID. |
+| `GET` | `/api/addon-health` | Check health of an addon URL. |
+| `GET` | `/api/meta-proxy` | Proxy a manifest/metadata URL. SSRF-protected. |
+| `POST` | `/api/autopilot/sync` | Create or update an Autopilot rule on the server. |
+| `GET` | `/api/autopilot/state/:accountId` | Get the current Autopilot state for an account. |
+| `DELETE` | `/api/autopilot/:id` | Delete a specific Autopilot rule. |
+| `POST` | `/api/providers/sync/:accountId` | Trigger bidirectional reconciliation for an account. |
+| `GET` | `/api/providers/status/:accountId` | Get connection states for an account. |
+| `POST` | `/api/providers/connections/:id/credentials` | Store encrypted credentials for a connection. |
+| `DELETE` | `/api/providers/connections/:id/credentials` | Remove stored credentials for a connection. |
+| `POST` | `/api/providers/connections/:id/token` | Refresh and retrieve an access token. |
+| `POST` | `/api/providers/connections/:id/profile` | Switch active profile for a Nuvio connection. |
+| `POST` | `/api/providers/nuvio/auth` | Authenticate with Nuvio. |
+| `POST` | `/api/providers/nuvio/signup` | Create a new Nuvio account. |
+| `POST` | `/api/providers/realstream/auth` | Authenticate with RealStream. |
+| `POST` | `/api/providers/realstream/signup` | Create a new RealStream account. |
+| `POST` | `/api/providers/hydra/test` | Test connectivity to a Hydra-compatible provider. |
+| `GET` | `/api/providers/subscribers/:accountId` | List Hydra subscribers for an account. |
+| `DELETE` | `/api/providers/subscribers/:accountId` | Remove a Hydra subscriber. |
+| `GET` | `/api/providers/canonical` | Read canonical addon lists for all owned accounts. |
+
+<Note>All API endpoints respect the rate limits configured at the server level. See `PROXY_CONCURRENCY_LIMIT` in Environment Variables.</Note>

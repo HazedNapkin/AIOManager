@@ -1,3 +1,4 @@
+import { triggerSync } from '@/lib/sync-trigger'
 import { Profile } from '@/types/profile'
 import localforage from 'localforage'
 import { create } from 'zustand'
@@ -30,7 +31,6 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             const stored = await localforage.getItem<Profile[]>(STORAGE_KEY)
             if (stored) {
-                // Convert date strings back to Date objects
                 const parsed = stored.map(p => ({
                     ...p,
                     createdAt: new Date(p.createdAt),
@@ -39,7 +39,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
                 set({ profiles: parsed })
             }
         } catch (err) {
-            console.error('Failed to load profiles:', err)
+            import.meta.env.DEV && console.error('Failed to load profiles:', err)
             set({ error: 'Failed to load profiles' })
         } finally {
             set({ loading: false })
@@ -56,56 +56,56 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
             updatedAt: new Date()
         }
 
-        set(state => {
-            const updated = [...state.profiles, newProfile]
-            localforage.setItem(STORAGE_KEY, updated)
-            // Sync to cloud immediately
-            import('./syncStore').then(({ useSyncStore }) => {
-                useSyncStore.getState().syncToRemote(true).catch(console.error)
-            })
-            return { profiles: updated, error: null }
-        })
+        const updated = [...get().profiles, newProfile]
+        try {
+            await localforage.setItem(STORAGE_KEY, updated)
+        } catch (err) {
+            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist createProfile:', err)
+            throw new Error('Failed to save profile. Please try again.')
+        }
+        set({ profiles: updated, error: null })
+        triggerSync()
 
         return newProfile
     },
 
     updateProfile: async (id: string, updates: Partial<Omit<Profile, 'id' | 'createdAt'>>) => {
-        set(state => {
-            const updated = state.profiles.map(p =>
-                p.id === id
-                    ? { ...p, ...updates, updatedAt: new Date() }
-                    : p
-            )
-            localforage.setItem(STORAGE_KEY, updated)
-            // Sync to cloud immediately
-            import('./syncStore').then(({ useSyncStore }) => {
-                useSyncStore.getState().syncToRemote(true).catch(console.error)
-            })
-            return { profiles: updated, error: null }
-        })
+        const updated = get().profiles.map(p =>
+            p.id === id
+                ? { ...p, ...updates, updatedAt: new Date() }
+                : p
+        )
+        try {
+            await localforage.setItem(STORAGE_KEY, updated)
+        } catch (err) {
+            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist updateProfile:', err)
+            throw new Error('Failed to save profile. Please try again.')
+        }
+        set({ profiles: updated, error: null })
+        triggerSync()
     },
 
     deleteProfile: async (id: string) => {
-        set(state => {
-            const updated = state.profiles.filter(p => p.id !== id)
-            localforage.setItem(STORAGE_KEY, updated)
-            // Sync to cloud immediately
-            import('./syncStore').then(({ useSyncStore }) => {
-                useSyncStore.getState().syncToRemote(true).catch(console.error)
-            })
-            return { profiles: updated, error: null }
-        })
+        const updated = get().profiles.filter(p => p.id !== id)
+        try {
+            await localforage.setItem(STORAGE_KEY, updated)
+        } catch (err) {
+            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist deleteProfile:', err)
+            throw new Error('Failed to delete profile. Please try again.')
+        }
+        set({ profiles: updated, error: null })
+        triggerSync()
     },
 
     reorderProfiles: async (newOrder: Profile[]) => {
-        set(() => {
-            localforage.setItem(STORAGE_KEY, newOrder)
-            // Sync to cloud immediately
-            import('./syncStore').then(({ useSyncStore }) => {
-                useSyncStore.getState().syncToRemote(true).catch(console.error)
-            })
-            return { profiles: newOrder, error: null }
-        })
+        try {
+            await localforage.setItem(STORAGE_KEY, newOrder)
+        } catch (err) {
+            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist reorderProfiles:', err)
+            throw new Error('Failed to save profile order. Please try again.')
+        }
+        set({ profiles: newOrder, error: null })
+        triggerSync()
     },
 
     getProfile: (id: string) => {
@@ -118,11 +118,15 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
         if (newProfiles.length === 0) return
 
-        set(state => {
-            const updated = [...state.profiles, ...newProfiles]
-            localforage.setItem(STORAGE_KEY, updated)
-            return { profiles: updated, error: null }
-        })
+        const updated = [...get().profiles, ...newProfiles]
+        try {
+            await localforage.setItem(STORAGE_KEY, updated)
+        } catch (err) {
+            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist importProfiles:', err)
+            throw new Error('Failed to import profiles. Please try again.')
+        }
+        set({ profiles: updated, error: null })
+        triggerSync()
     },
 
     reset: () => {

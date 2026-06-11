@@ -1,0 +1,43 @@
+---
+title: Cloud Sync
+description: Keep your library and settings in sync across all your devices securely.
+---
+
+By default AIOManager stores all data locally in your browser. Cloud Sync backs up this data to your AIOManager server and syncs it across other browsers or devices. If you clear your browser cache or switch to a new machine, Cloud Sync restores everything automatically.
+
+## What Gets Synced
+
+| Data | What's included |
+|------|----------------|
+| Accounts | All accounts with encrypted auth keys, addon lists, custom names, emojis, accent colors, connections, profiles, and tombstones |
+| Saved Library | All saved addons, install URLs, manifests, tags, and profile assignments |
+| Account Addon States | Which addons are disabled, protected, and their sync-to-library flags |
+| Failover Rules | All Autopilot rules including priority chains, webhook configs, cooldowns, and active states |
+| Autopilot History | Failover event history per rule |
+| Profiles | Library profile names, order, and addon assignments |
+| Settings | Selected theme, privacy mode, library view mode, accounts view mode, addon list view mode, and hide-disabled preference |
+| Custom Themes | All custom themes you've created |
+| Changelog | Recent addon install/remove/reorder history (last 100 entries) |
+| Key Vault | Vault keys and vault tombstones |
+| Notes | All notes and notes trash |
+| Watch Events | Activity feed events and watch history snapshots |
+| Canonical Addon Lists | Server-readable addon lists for accounts without Stremio auth keys (local, Nuvio-only) |
+| Account API Keys | Per-account API key hashes for Hydra access |
+
+## Handling Conflicts
+
+AIOManager uses a **last-write-wins** strategy. When multiple devices push changes to the same account or addon, the version with the most recent timestamp is preserved.
+
+<Tip>If deleted addons keep reappearing, ensure AIOManager is closed on your other devices before making changes. The last device to push its state wins.</Tip>
+
+## Security & Encryption
+
+Cloud Sync uses **client-side AES-256-GCM encryption**. Your data is encrypted in the browser using your Master Key before it leaves your device. The server stores only ciphertext; it never sees your raw data or your Master Key.
+
+<Warning>If you lose your Master Key, your synced data is permanently unrecoverable. We cannot reset your password or recover your keys. Write it down and store it safely.</Warning>
+
+## Restoring Data
+
+On a new device, log into your AIOManager server and provide your Master Key. AIOManager decrypts the remote data and merges it with any local state. Accounts, Library, Autopilot rules, themes, and settings are all restored.
+
+<Note>Cloud Sync requires a running AIOManager server. Make sure your Server URL is correctly configured in General Settings before syncing.</Note>

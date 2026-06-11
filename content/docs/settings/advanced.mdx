@@ -1,0 +1,20 @@
+---
+title: Advanced & Danger Zone
+description: Irreversible data operations for resetting or wiping AIOManager data.
+---
+
+The Advanced tab contains irreversible data operations. All actions require toggling **Unlock Actions** before any button becomes active.
+
+<Warning>These actions cannot be undone. Export a backup from Settings → Data & Sync before proceeding.</Warning>
+
+## Actions
+
+**Wipe Accounts:** Removes all accounts from AIOManager. Does not delete anything from connected platforms (Stremio, Nuvio, RealStream, etc.); those accounts and their addons are untouched.
+
+**Wipe Library:** Deletes all saved addons from your Library.
+
+**Purge Autopilot:** Deletes all Autopilot rules and their history from both local storage and the server.
+
+**Factory Reset:** Wipes everything (accounts, library, autopilot, themes, settings) and reloads the app fresh. Your AIOManager login credentials (UUID + password) are not affected.
+
+<Tip>Always export a backup before using any Danger Zone action.</Tip>

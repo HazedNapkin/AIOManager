@@ -20,19 +20,19 @@ import { TagInput } from '@/components/ui/tag-input'
 import { TagSelector } from '@/components/ui/tag-selector'
 import { useAddonStore } from '@/store/addonStore'
 import { useProfileStore } from '@/store/profileStore'
-import { Loader2, Tags, User } from 'lucide-react'
-import { useEffect, useState, useMemo } from 'react'
+import { Loader2, Tags, User, RefreshCw } from 'lucide-react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 
 interface BulkEditDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     selectedCount: number
     availableTags: string[]
-    onSave: (data: { tags?: string[]; tagsRemove?: string[]; profileId?: string | null }) => Promise<void>
+    onSave: (data: { tags?: string[]; tagsRemove?: string[]; profileId?: string | null; syncWithInstalled?: boolean }) => Promise<void>
 }
 
 export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTags, onSave }: BulkEditDialogProps) {
-    const { profiles } = useProfileStore()
+    const profiles = useProfileStore(s => s.profiles)
     const library = useAddonStore(s => s.library)
 
     const allKnownTags = useMemo(() => {
@@ -49,6 +49,8 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
     const [tagsToAdd, setTagsToAdd] = useState<string[]>([])
     const [tagsToRemove, setTagsToRemove] = useState<string[]>([])
     const [selectedProfileId, setSelectedProfileId] = useState<string>('no-change')
+    const [syncWithInstalled, setSyncWithInstalled] = useState<'no-change' | boolean>('no-change')
+    const syncCardRef = useRef<HTMLDivElement>(null)
 
     // Reset state when dialog opens
     useEffect(() => {
@@ -56,13 +58,14 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
             setTagsToAdd([])
             setTagsToRemove([])
             setSelectedProfileId('no-change')
+            setSyncWithInstalled('no-change')
         }
     }, [open])
 
     const handleSave = async () => {
         setLoading(true)
         try {
-            const data: { tags?: string[]; tagsRemove?: string[]; profileId?: string | null } = {}
+            const data: { tags?: string[]; tagsRemove?: string[]; profileId?: string | null; syncWithInstalled?: boolean } = {}
 
             if (tagsToAdd.length > 0) {
                 data.tags = tagsToAdd
@@ -76,10 +79,14 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                 data.profileId = selectedProfileId === 'unassigned' ? null : selectedProfileId
             }
 
+            if (syncWithInstalled !== 'no-change') {
+                data.syncWithInstalled = syncWithInstalled
+            }
+
             await onSave(data)
             onOpenChange(false)
         } catch (error) {
-            console.error(error)
+            import.meta.env.DEV && console.error(error)
         } finally {
             setLoading(false)
         }
@@ -88,8 +95,8 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-xl">
-                <DialogHeader className="pb-4 border-b">
-                    <DialogTitle>Bulk Edit {selectedCount} Addon{selectedCount !== 1 ? 's' : ''}</DialogTitle>
+                <DialogHeader>
+                    <DialogTitle>Edit {selectedCount} Addon{selectedCount !== 1 ? 's' : ''}</DialogTitle>
                     <DialogDescription>
                         Configure tags and profile assignment for all selected library items.
                     </DialogDescription>
@@ -99,7 +106,7 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                     {/* Tag Management Card */}
                     <Card className="border shadow-none">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+                            <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
                                 <Tags className="h-4 w-4" />
                                 Tag Management
                             </CardTitle>
@@ -113,7 +120,7 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                                     placeholder="Type and press Enter to add..."
                                     suggestions={allKnownTags}
                                 />
-                                <p className="text-[10px] text-muted-foreground">
+                                <p className="text-xs text-muted-foreground">
                                     These tags will be appended to the selection.
                                 </p>
                             </div>
@@ -126,7 +133,7 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                                     options={availableTags}
                                     placeholder="Select tags to remove..."
                                 />
-                                <p className="text-[10px] text-muted-foreground">
+                                <p className="text-xs text-muted-foreground">
                                     Only tags currently present in the selection are shown here.
                                 </p>
                             </div>
@@ -136,7 +143,7 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                     {/* Profile Card */}
                     <Card className="border shadow-none">
                         <CardHeader className="pb-3">
-                            <CardTitle className="text-sm font-semibold flex items-center gap-2 uppercase tracking-wide text-muted-foreground">
+                            <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
                                 <User className="h-4 w-4" />
                                 Profile Migration
                             </CardTitle>
@@ -162,9 +169,37 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                         </CardContent>
                     </Card>
 
+                    {/* Sync Card */}
+                    <Card ref={syncCardRef} className="border shadow-none">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
+                                <RefreshCw className="h-4 w-4" />
+                                Version Sync
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="space-y-0.5">
+                                    <Label className="text-xs font-medium">Keep in sync with installed versions</Label>
+                                    <p className="text-xs text-muted-foreground">Automatically updates library entries when installed addons are updated.</p>
+                                </div>
+                                <Select value={String(syncWithInstalled)} onValueChange={(v) => setSyncWithInstalled(v === 'no-change' ? 'no-change' : v === 'true')}>
+                                    <SelectTrigger className="bg-background w-32 shrink-0">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="no-change"><i>No change</i></SelectItem>
+                                        <SelectItem value="true">Enable</SelectItem>
+                                        <SelectItem value="false">Disable</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </CardContent>
+                    </Card>
+
                     {/* Change Preview */}
                     <div className="bg-muted/30 border border-dashed rounded-lg p-3 space-y-2">
-                        <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Change Preview</h4>
+                        <h4 className="text-xs font-bold uppercase text-muted-foreground">Change Preview</h4>
                         <div className="text-xs space-y-1">
                             {tagsToAdd.length > 0 && (
                                 <p>• Will add <b>{tagsToAdd.length}</b> tag{tagsToAdd.length !== 1 ? 's' : ''}: <span className="text-primary">{tagsToAdd.join(', ')}</span></p>
@@ -175,19 +210,22 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                             {selectedProfileId !== 'no-change' && (
                                 <p>• Will move to <b>{selectedProfileId === 'unassigned' ? 'Unassigned' : profiles.find(p => p.id === selectedProfileId)?.name}</b> profile.</p>
                             )}
-                            {tagsToAdd.length === 0 && tagsToRemove.length === 0 && selectedProfileId === 'no-change' && (
+                            {syncWithInstalled !== 'no-change' && (
+                                <p>• Will <b>{syncWithInstalled ? 'enable' : 'disable'}</b> version sync.</p>
+                            )}
+                            {tagsToAdd.length === 0 && tagsToRemove.length === 0 && selectedProfileId === 'no-change' && syncWithInstalled === 'no-change' && (
                                 <p className="italic text-muted-foreground">No changes configured.</p>
                             )}
                         </div>
                     </div>
                 </div>
 
-                <DialogFooter className="pt-4 border-t">
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                <DialogFooter>
+                    <Button variant="subtle" onClick={() => onOpenChange(false)} disabled={loading}>
                         Cancel
                     </Button>
-                    <Button onClick={handleSave} disabled={loading}>
-                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    <Button onClick={handleSave} disabled={loading} className="gap-2">
+                        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                         Apply Changes
                     </Button>
                 </DialogFooter>

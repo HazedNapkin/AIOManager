@@ -2,6 +2,9 @@ import { AddonDescriptor } from '@/types/addon'
 import { SavedAddon, MergeResult } from '@/types/saved-addon'
 import { fetchAddonManifest } from '@/api/addons'
 import { normalizeAddonUrl } from './utils'
+import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
+import { mapConcurrent } from './concurrency'
+import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
 
 /**
  * Addon Merger
@@ -16,6 +19,14 @@ import { normalizeAddonUrl } from './utils'
  * @param savedAddons - Saved addons to apply
  * @returns Updated addon collection and merge result
  */
+async function getManifestWithCache(installUrl: string, accountId: string): Promise<any> {
+  const cached = getCachedManifest(installUrl)
+  if (cached) return cached
+  const { manifest } = await fetchAddonManifest(installUrl, accountId)
+  setCachedManifest(installUrl, manifest)
+  return manifest
+}
+
 export async function mergeAddons(
   currentAddons: AddonDescriptor[],
   savedAddons: SavedAddon[],
@@ -29,14 +40,19 @@ export async function mergeAddons(
     protected: [],
   }
 
-  // Start with current addons
   const updatedAddons = [...currentAddons]
+
+  const urlsToFetch = [...new Set(savedAddons.filter(s => !s.manifest).map(s => s.installUrl))]
+  if (urlsToFetch.length > 0) {
+    await mapConcurrent(urlsToFetch, 5, async (url) => {
+      try { await getManifestWithCache(url, accountId) } catch { /* best effort; loop handles misses */ }
+    })
+  }
 
   for (const savedAddon of savedAddons) {
     const addonId = savedAddon.manifest.id
     const installUrl = savedAddon.installUrl
 
-    // 0. Pre-calculate effective metadata for this saved addon
     // This handles the backward compatibility case where customName wasn't set in metadata
     // We check against savedAddon.manifest.name because that's the baseline the user renamed FROM
     const effectiveMetadata = { ...savedAddon.metadata }
@@ -44,11 +60,10 @@ export async function mergeAddons(
       effectiveMetadata.customName = savedAddon.name
     }
 
-    // 1. Smart Swap: Check for same Addon ID OR normalized same-URL 
     // This prevents duplicates if the URL protocol/trailing-slash changed
-    const normInstallUrl = normalizeAddonUrl(installUrl).toLowerCase()
+    const normInstallUrl = normalizeAddonUrl(installUrl)
     const existingIndex = updatedAddons.findIndex((a) => {
-      const normA = normalizeAddonUrl(a.transportUrl).toLowerCase()
+      const normA = normalizeAddonUrl(a.transportUrl)
       // STRICT: Match ONLY by URL to support multiple instances of same Manifest ID
       return normA === normInstallUrl
     })
@@ -56,7 +71,6 @@ export async function mergeAddons(
     if (existingIndex >= 0) {
       const existing = updatedAddons[existingIndex]
 
-      // Skip protected addons unless explicitly allowed
       if (existing.flags?.protected && !allowProtected) {
         result.protected.push({
           addonId,
@@ -65,27 +79,27 @@ export async function mergeAddons(
         continue
       }
 
-      // Update existing instance
       try {
-        const manifestToApply = savedAddon.manifest || (await fetchAddonManifest(installUrl, accountId)).manifest
+        const manifestToApply = savedAddon.manifest || (await getManifestWithCache(installUrl, accountId))
 
         const updatedDescriptor: AddonDescriptor = {
-          transportUrl: installUrl, // Ensure we use the latest installUrl
+          transportUrl: installUrl,
           manifest: manifestToApply,
-          metadata: effectiveMetadata
+          flags: existing.flags,
+          metadata: { ...existing.metadata, ...effectiveMetadata },
+          catalogOverrides: savedAddon.catalogOverrides || existing.catalogOverrides,
+          note: existing.note,
         }
 
         updatedAddons[existingIndex] = updatedDescriptor
         result.updated.push({
           addonId,
           oldUrl: existing.transportUrl,
-          newUrl: installUrl, // We already have the installUrl
+          newUrl: installUrl,
         })
       } catch (error) {
-        // ... fallback logic ...
-        console.warn(`[Merger] Update fetch failed for ${savedAddon.name}, keeping current/cached`, error)
+        if (import.meta.env.DEV) console.warn(`[Merger] Update fetch failed for ${savedAddon.name}, keeping current/cached`, error)
 
-        // Even if fetch fails, we still apply the metadata from the library
         updatedAddons[existingIndex] = {
           ...updatedAddons[existingIndex],
           metadata: effectiveMetadata
@@ -97,14 +111,14 @@ export async function mergeAddons(
         })
       }
     } else {
-      // 2. New instance (Additive)
       try {
-        const manifestToApply = savedAddon.manifest || (await fetchAddonManifest(installUrl, accountId)).manifest
+        const manifestToApply = savedAddon.manifest || (await getManifestWithCache(installUrl, accountId))
 
         const newDescriptor: AddonDescriptor = {
-          transportUrl: installUrl, // Ensure we use the latest installUrl
+          transportUrl: installUrl,
           manifest: manifestToApply,
-          metadata: effectiveMetadata
+          metadata: effectiveMetadata,
+          catalogOverrides: savedAddon.catalogOverrides,
         }
 
         updatedAddons.push(newDescriptor)
@@ -115,8 +129,7 @@ export async function mergeAddons(
           installUrl: installUrl,
         })
       } catch (error) {
-        // Fallback to cached manifest
-        console.warn(`[Merger] Fresh fetch failed for ${savedAddon.name}, using cached`, error)
+        if (import.meta.env.DEV) console.warn(`[Merger] Fresh fetch failed for ${savedAddon.name}, using cached`, error)
 
         updatedAddons.push({
           transportUrl: installUrl,
@@ -133,7 +146,7 @@ export async function mergeAddons(
     }
   }
 
-  return { addons: updatedAddons, result }
+  return { addons: dedupeAddonsByTransportUrl(updatedAddons), result }
 }
 
 /**
@@ -158,15 +171,15 @@ export function removeAddons(
 
   const updatedAddons = currentAddons.filter((addon) => {
     // Check if the addon's ID OR its transport URL is in the removal list
-    const normA = normalizeAddonUrl(addon.transportUrl).toLowerCase()
+    const normA = normalizeAddonUrl(addon.transportUrl)
     const shouldRemove = idsOrUrls.some(target => {
       // If target looks like a URL, match ONLY by URL to support multiple instances of same manifest ID
       if (target.includes('://') || target.startsWith('stremio://')) {
-        const normTarget = normalizeAddonUrl(target).toLowerCase()
+        const normTarget = normalizeAddonUrl(target)
         return normA === normTarget
       }
       // Otherwise match by ID (legacy/bulk ID removal)
-      return addon.manifest.id === target || normA === normalizeAddonUrl(target).toLowerCase()
+      return addon.manifest.id === target || normA === normalizeAddonUrl(target)
     })
 
     if (shouldRemove) {
@@ -186,23 +199,4 @@ export function removeAddons(
   return { addons: updatedAddons, removed, protectedAddons }
 }
 
-/**
- * Preview what will happen when merging saved addons
- * (same as merge but doesn't actually apply)
- */
-export async function previewMerge(
-  currentAddons: AddonDescriptor[],
-  savedAddons: SavedAddon[],
-  accountId: string = 'Unknown'
-): Promise<MergeResult> {
-  const { result } = await mergeAddons(currentAddons, savedAddons, accountId)
-  return result
-}
 
-/**
- * Check if two addon URLs are equivalent
- * (normalize and compare)
- */
-export function areUrlsEquivalent(url1: string, url2: string): boolean {
-  return normalizeAddonUrl(url1).toLowerCase() === normalizeAddonUrl(url2).toLowerCase()
-}

@@ -27,7 +27,6 @@ const DropdownMenu = ({ children, open: controlledOpen, onOpenChange }: Dropdown
     onOpenChange?.(newValue)
   }, [isControlled, open, onOpenChange])
 
-  // We maintain the effect just in case, but onOpenChange is now called in setOpen directly
   React.useEffect(() => {
     if (!isControlled) {
       onOpenChange?.(open)
@@ -93,21 +92,34 @@ interface DropdownMenuContentProps extends React.HTMLAttributes<HTMLDivElement> 
 }
 
 const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContentProps>(
-  ({ className, align = 'end', sideOffset, collisionPadding, children, ...props }, _ref) => {
+  ({ className, align = 'end', sideOffset, collisionPadding: _collisionPadding, children, ...props }, _ref) => {
     const context = React.useContext(DropdownMenuContext)
     if (!context) throw new Error('DropdownMenuContent must be used within DropdownMenu')
 
     const menuRef = React.useRef<HTMLDivElement>(null)
+    const [visible, setVisible] = React.useState(false)
+    const [mounted, setMounted] = React.useState(false)
+
+    React.useEffect(() => {
+      if (context.open) {
+        setMounted(true)
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => setVisible(true))
+        })
+      } else {
+        setVisible(false)
+        const timer = setTimeout(() => setMounted(false), 150)
+        return () => clearTimeout(timer)
+      }
+    }, [context.open])
 
     React.useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
         if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-          // Check if click is on the trigger
           const parent = menuRef.current.parentElement
           if (parent && !parent.contains(event.target as Node)) {
             context.setOpen(false)
           } else {
-            // If click is within parent but not menu, likely on trigger - let trigger handle it
             setTimeout(() => context.setOpen(false), 0)
           }
         }
@@ -119,15 +131,19 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [context.open, context])
 
-    if (!context.open) return null
+    if (!mounted) return null
 
     return (
       <div
         ref={menuRef}
-        style={{ marginTop: sideOffset ? `${sideOffset}px` : undefined }}
+        style={{
+          marginTop: sideOffset ? `${sideOffset}px` : undefined,
+          willChange: 'transform, opacity',
+        }}
         className={cn(
-          'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md',
-          'animate-in fade-in-0 zoom-in-95',
+          'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border border-border/40 bg-card p-1 text-card-foreground shadow-lg',
+          'transition-[transform,opacity,box-shadow] duration-150 ease-out origin-top',
+          visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-1',
           align === 'end' && 'right-0',
           align === 'start' && 'left-0',
           align === 'center' && 'left-1/2 -translate-x-1/2',
@@ -177,12 +193,9 @@ const DropdownMenuItem = React.forwardRef<HTMLButtonElement, DropdownMenuItemPro
 )
 DropdownMenuItem.displayName = 'DropdownMenuItem'
 
-const DropdownMenuSeparator = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn('-mx-1 my-1 h-px bg-muted', className)} {...props} />
-))
+const DropdownMenuSeparator = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+  ({ className, ...props }, ref) => (<div ref={ref} className={cn('-mx-1 my-1 h-px bg-muted', className)} {...props} />)
+)
 DropdownMenuSeparator.displayName = 'DropdownMenuSeparator'
 
 export {

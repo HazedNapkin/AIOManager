@@ -40,7 +40,8 @@ export function ProfileReorderDialog({
     open,
     onOpenChange,
 }: ProfileReorderDialogProps) {
-    const { profiles, reorderProfiles } = useProfileStore()
+    const profiles = useProfileStore(s => s.profiles)
+    const reorderProfiles = useProfileStore(s => s.reorderProfiles)
     const [items, setItems] = useState<Profile[]>([])
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -136,7 +137,7 @@ export function ProfileReorderDialog({
                 {error && <p className="text-sm text-destructive">{error}</p>}
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={handleCancel} disabled={saving}>
+                    <Button variant="subtle" onClick={handleCancel} disabled={saving}>
                         Cancel
                     </Button>
                     <Button onClick={handleSave} disabled={saving}>

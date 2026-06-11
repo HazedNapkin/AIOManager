@@ -1,361 +1,548 @@
-import { Link, useLocation } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useMemo, useState, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useSyncStore } from '@/store/syncStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { LogOut, LayoutDashboard, Package, Activity, BarChart3, Settings, HelpCircle, Zap, ZapOff, ShieldCheck, ExternalLink } from 'lucide-react'
-import { SyncStatus } from '@/components/SyncStatus'
+import { LogOut, Users, Package, Activity, BarChart3, Settings, HelpCircle, KeyRound, StickyNote, MoreHorizontal, X, Search, CloudOff, RefreshCw, Cloud, Zap, ZapOff } from 'lucide-react'
 import { useVaultStore } from '@/store/vaultStore'
 import { useProviderStore } from '@/store/providerStore'
-import { PROVIDERS } from '@/lib/constants'
+import { useAccountStore } from '@/store/accountStore'
+import { useAddonStore } from '@/store/addonStore'
+import { PROVIDERS, getKeyAbbr } from '@/lib/constants'
+import { Tooltip } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
+import { formatDistanceToNow } from 'date-fns'
+import { cn, safeHref } from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export function Header() {
+const PRIMARY_NAV = [
+  { to: '/', icon: Users, label: 'Accounts', match: (p: string) => p === '/' || p.startsWith('/account/') },
+  { to: '/saved-addons', icon: Package, label: 'Addons', match: (p: string) => p === '/saved-addons' },
+  { to: '/notes', icon: StickyNote, label: 'Notes', match: (p: string) => p === '/notes' },
+  { to: '/vault', icon: KeyRound, label: 'Vault', match: (p: string) => p === '/vault' || p.startsWith('/vault/') },
+]
+
+const MORE_NAV = [
+  { to: '/activity', icon: Activity, label: 'Activity', match: (p: string) => p === '/activity' },
+  { to: '/metrics', icon: BarChart3, label: 'Metrics', match: (p: string) => p === '/metrics' },
+  { to: '/replay', icon: null, label: 'Replay', match: (p: string) => p === '/replay' },
+  { to: '/kronorium', icon: HelpCircle, label: 'Docs', match: (p: string) => p.startsWith('/kronorium') },
+  { to: '/settings', icon: Settings, label: 'Settings', match: (p: string) => p === '/settings' },
+]
+
+interface MobileMoreTriggerProps {
+  moreOpen: boolean
+  setMoreOpen: (v: boolean | ((prev: boolean) => boolean)) => void
+  isMoreActive: boolean
+}
+
+function MobileMoreTrigger({ moreOpen, setMoreOpen, isMoreActive }: MobileMoreTriggerProps) {
+  return (
+    <button
+      onClick={() => setMoreOpen(v => !v)}
+      className={`relative flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isMoreActive || moreOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+      aria-label="More options"
+    >
+      <AnimatePresence>
+        {isMoreActive && !moreOpen && (
+          <motion.div
+            layoutId="mobile-nav-dot"
+            className="absolute top-1 w-1 h-1 rounded-full bg-primary"
+            initial={{ opacity: 0, scale: 0 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0 }}
+            transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+          />
+        )}
+      </AnimatePresence>
+      <MoreHorizontal className="h-5 w-5 mb-0.5" />
+      <span className="text-xs font-medium tracking-tight">More</span>
+    </button>
+  )
+}
+
+export function MobileBottomNav() {
   const location = useLocation()
-  const { theme } = useTheme()
-  const isInverted = theme === 'light' || theme === 'hoth'
-  const { auth, logout } = useSyncStore()
-  const { rules, lastWorkerRun } = useFailoverStore()
-
-  const { keys } = useVaultStore()
-  const { health } = useProviderStore()
-
-  const activeRulesCount = rules.filter(r => r.isActive).length
-  const hasRules = rules.length > 0
-  const isServerLive = lastWorkerRun && (Date.now() - new Date(lastWorkerRun).getTime()) < 90000
-
-  const autopilotStatus = !isServerLive ? 'Offline' :
-    !hasRules ? 'Standby' :
-      activeRulesCount > 0 ? 'Live' : 'Paused'
-
-  const statusColor = autopilotStatus === 'Live' ? 'text-amber-500 border-amber-500/20 bg-amber-500/10' :
-    autopilotStatus === 'Paused' ? 'text-amber-500/60 border-amber-500/10 bg-amber-500/5' :
-      autopilotStatus === 'Standby' ? 'text-blue-500/60 border-blue-500/10 bg-blue-500/5' :
-        'text-muted-foreground opacity-60 border-muted-foreground/10 bg-muted/30'
-
-  const providerKeys = keys
-    .filter(k => ['real-debrid', 'torbox', 'premiumize', 'alldebrid', 'debrid-link'].includes(k.provider))
-
-  const getProviderAbbr = (provider: string) => {
-    switch (provider) {
-      case 'real-debrid': return 'RD'
-      case 'torbox': return 'TB'
-      case 'premiumize': return 'PM'
-      case 'alldebrid': return 'AD'
-      case 'debrid-link': return 'DL'
-      default: return provider.substring(0, 2).toUpperCase()
-    }
-  }
-
-  const getStatusRingColor = (h: any) => {
-    if (!h) return 'border-muted-foreground/20 opacity-40'
-    if (h.loading) return 'border-blue-500 animate-pulse ring-2 ring-blue-500/20'
-    if (h.status === 'active') return 'border-green-500/60 ring-1 ring-green-500/10 shadow-[0_0_8px_rgba(34,197,94,0.1)]'
-    if (h.status === 'expired') return 'border-amber-500/60 ring-1 ring-amber-500/10 shadow-[0_0_8px_rgba(245,158,11,0.1)]'
-    if (h.status === 'error') return 'border-destructive/60 ring-1 ring-destructive/10'
-    return 'border-muted-foreground/20 opacity-60'
-  }
+  const [moreOpen, setMoreOpen] = useState(false)
+  const isMoreActive = MORE_NAV.some(item => item.match(location.pathname))
 
   return (
-    <header className="border-b bg-card/95 sticky top-0 z-50">
-      <div className="container mx-auto px-4 py-4 md:py-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center justify-between w-full md:w-auto">
-            <Link to="/" className="flex items-center gap-2 md:gap-3 hover:opacity-90 transition-opacity shrink-0">
-              <img
-                src="/logo.png"
-                alt="AIOManager Logo"
-                className={`h-8 w-8 md:h-12 md:w-12 object-contain transition-all ${isInverted ? 'invert' : ''}`}
+    <div className="md:hidden flex-shrink-0 bg-card/95 backdrop-blur-lg border-t border-border flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
+      {PRIMARY_NAV.map((item) => {
+        const isActive = item.match(location.pathname)
+        const Icon = item.icon
+        return (
+          <Link
+            key={item.to}
+            to={item.to}
+            className={`relative flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <AnimatePresence>
+              {isActive && (
+                <motion.div
+                  layoutId="mobile-nav-dot-bottom"
+                  className="absolute top-1 w-1 h-1 rounded-full bg-primary"
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+            </AnimatePresence>
+            <Icon className="h-5 w-5 mb-0.5" />
+            <span className="text-xs font-medium tracking-tight">{item.label}</span>
+          </Link>
+        )
+      })}
+      <MobileMoreTrigger moreOpen={moreOpen} setMoreOpen={setMoreOpen} isMoreActive={isMoreActive} />
+
+      {createPortal(
+        <AnimatePresence>
+          {moreOpen && (
+            <>
+              <motion.div
+                className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setMoreOpen(false)}
               />
-              <div>
-                <h1 className="text-lg md:text-2xl font-bold tracking-tight">
-                  AIOManager
-                </h1>
-                <p className="hidden xl:block text-sm text-muted-foreground">
-                  Manage multiple Stremio accounts, addons and more
-                </p>
-              </div>
-            </Link>
-
-            {/* Mobile Logout (Shows next to logo on tiny screens) */}
-            {auth.isAuthenticated && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  logout();
-                }}
-                className="md:hidden text-muted-foreground hover:text-destructive transition-colors p-2 rounded-md hover:bg-muted"
-                title="Logout"
+              <motion.div
+                className="fixed bottom-[100px] left-4 right-4 z-[100] bg-card/98 backdrop-blur-xl border border-border shadow-[0_-10px_40px_hsl(var(--background)/0.6)] rounded-2xl pb-2"
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 35 }}
               >
-                <LogOut className="h-5 w-5" />
-              </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Provider Health Badges */}
-            {providerKeys.length > 0 && (
-              <>
-                {/* Desktop: Full Badges */}
-                <div className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-full border bg-card/30 shadow-sm border-border/50">
-                  {providerKeys.map((key) => {
-                    const h = health[key.id]
+                <div className="flex items-center justify-between px-5 pt-4 pb-2">
+                  <span className="text-xs font-medium uppercase text-foreground/60">More</span>
+                  <Button variant="ghost" onClick={() => setMoreOpen(false)} className="min-h-[44px] min-w-[44px] p-1 text-muted-foreground/60 hover:text-foreground" aria-label="Close menu">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-1 px-3 pb-3">
+                  {MORE_NAV.map((item) => {
+                    const isActive = item.match(location.pathname)
+                    const Icon = item.icon
                     return (
-                      <DropdownMenu key={key.id}>
-                        <DropdownMenuTrigger asChild>
-                          <div className="flex items-center justify-center p-0.5 rounded-full hover:bg-muted/50 transition-colors cursor-pointer">
-                            <button className={`relative flex items-center justify-center w-8 h-8 rounded-full bg-background/50 border-2 transition-all group overflow-hidden ${getStatusRingColor(h)} hover:scale-110 active:scale-90`}>
-                              <span className="text-[10px] font-black tracking-tight text-muted-foreground group-hover:text-foreground">
-                                {getProviderAbbr(key.provider)}
-                              </span>
-                            </button>
-                          </div>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-56 p-3 space-y-2 mt-2 z-50">
-                          <div className="flex items-center gap-2 mb-1">
-                            <ShieldCheck className="h-4 w-4 text-primary" />
-                            <span className="font-bold text-sm">
-                              {key.name}
-                            </span>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="text-muted-foreground">Status</span>
-                              <span className={`font-bold uppercase ${h?.status === 'active' ? 'text-green-500' : h?.status === 'expired' ? 'text-amber-500' : 'text-destructive'}`}>
-                                {h?.status || 'UNKNOWN'}
-                              </span>
-                            </div>
-                            {h?.error && (
-                              <p className="text-[10px] text-destructive leading-tight italic">
-                                {h.error}
-                              </p>
-                            )}
-                            {h?.daysRemaining !== null && h?.daysRemaining !== undefined && (() => {
-                              const total = h.daysRemaining
-                              const years = Math.floor(total / 365)
-                              const months = Math.floor((total % 365) / 30)
-                              const days = total % 30
-                              const parts = []
-                              if (years > 0) parts.push(`${years}y`)
-                              if (months > 0) parts.push(`${months}mo`)
-                              if (days > 0 || parts.length === 0) parts.push(`${days}d`)
-                              return (
-                                <>
-                                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                                    <span>Remaining</span>
-                                    <span className="font-medium text-foreground">{parts.join(' ')}</span>
-                                  </div>
-                                  {h?.expiresAt && (
-                                    <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                                      <span>Expires</span>
-                                      <span className="font-medium text-foreground">
-                                        {new Date(h.expiresAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
-                                      </span>
-                                    </div>
-                                  )}
-                                </>
-                              )
-                            })()}
-                            <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/50">
-                              <span>Last Checked</span>
-                              <span>{h?.lastChecked ? new Date(h.lastChecked).toLocaleTimeString() : 'Never'}</span>
-                            </div>
-                            {PROVIDERS.find(p => p.value === key.provider)?.url && (
-                              <a
-                                href={PROVIDERS.find(p => p.value === key.provider)!.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center justify-between text-[10px] text-primary hover:underline pt-1 border-t border-border/50"
-                              >
-                                <span>API Dashboard</span>
-                                <ExternalLink className="h-2.5 w-2.5" />
-                              </a>
-                            )}
-                          </div>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        onClick={() => setMoreOpen(false)}
+                        className={`flex flex-col items-center justify-center py-3 px-2 rounded-xl transition-colors gap-1.5 ${isActive ? 'bg-primary/12 text-primary' : 'text-foreground/70 hover:bg-muted/50 hover:text-foreground'}`}
+                      >
+                        {item.to === '/replay' ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m11 19-9-7 9-7v14z" opacity="0.5" />
+                            <path d="m22 19-9-7 9-7v14z" />
+                          </svg>
+                        ) : (
+                          Icon && <Icon className="h-5 w-5" />
+                        )}
+                        <span className="text-xs font-bold">{item.label}</span>
+                      </Link>
                     )
                   })}
                 </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
+    </div>
+  )
+}
 
+const NAV_ITEMS = [
+  { to: '/', icon: Users, label: 'Accounts', badge: 'count' as const, match: (p: string) => p === '/' || p.startsWith('/account/') },
+  { to: '/saved-addons', icon: Package, label: 'Addons', badge: 'count' as const, match: (p: string) => p === '/saved-addons' },
+  { to: '/notes', icon: StickyNote, label: 'Notes', match: (p: string) => p === '/notes' },
+  { to: '/vault', icon: KeyRound, label: 'Vault', match: (p: string) => p === '/vault' || p.startsWith('/vault/') },
+  { to: '/activity', icon: Activity, label: 'Activity', match: (p: string) => p === '/activity' },
+  { to: '/metrics', icon: BarChart3, label: 'Metrics', match: (p: string) => p === '/metrics' },
+  { to: '/replay', icon: null, label: 'Replay', match: (p: string) => p === '/replay' },
+  { to: '/kronorium', icon: HelpCircle, label: 'Docs', match: (p: string) => p.startsWith('/kronorium') },
+  { to: '/settings', icon: Settings, label: 'Settings', match: (p: string) => p === '/settings' },
+]
 
-              </>
-            )}
+function TabBadge({ count, dotColor, isActive, glow }: { count?: number; dotColor?: string; isActive: boolean; glow?: boolean }) {
+  const { isLight } = useTheme()
+  if (count !== undefined) {
+    return (
+      <span className={cn(
+        'ml-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1 text-[10px] font-semibold tabular-nums',
+        isLight
+          ? (isActive || glow ? 'bg-muted text-foreground' : 'bg-muted/60 text-muted-foreground')
+          : (isActive || glow ? 'bg-white/[0.10] text-foreground' : 'bg-white/[0.06] text-muted-foreground')
+      )}>{count}</span>
+    )
+  }
+  if (dotColor) {
+    return <span className="ml-0.5 w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />
+  }
+  return null
+}
 
-            {/* Autopilot Status Badge */}
-            <div
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border shadow-sm transition-all cursor-help ${statusColor}`}
-              title={
-                !isServerLive ? 'Autopilot Server is offline or heartbeat lost' :
-                  !hasRules ? 'Autopilot Live: No rules configured' :
-                    activeRulesCount > 0 ? `Autopilot Monitoring: ${activeRulesCount} active rules` :
-                      'Autopilot Paused: All rules are disabled'
-              }
+export function Header() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { isLight } = useTheme()
+  const auth = useSyncStore(s => s.auth)
+  const logout = useSyncStore(s => s.logout)
+  const isSyncing = useSyncStore(s => s.isSyncing)
+  const isRefreshingFromCloud = useSyncStore(s => s.isRefreshingFromCloud)
+  const lastSyncedAt = useSyncStore(s => s.lastSyncedAt)
+  const syncHistory = useSyncStore(s => s.history)
+  const syncToRemote = useSyncStore(s => s.syncToRemote)
+  const rules = useFailoverStore(s => s.rules)
+  const lastWorkerRun = useFailoverStore(s => s.lastWorkerRun)
+
+  const keys = useVaultStore(s => s.keys)
+  const health = useProviderStore(s => s.health)
+  const accounts = useAccountStore(s => s.accounts)
+  const library = useAddonStore(s => s.library)
+
+  const activeRulesCount = useMemo(() => rules.filter(r => r.isActive).length, [rules])
+  const hasRules = useMemo(() => rules.length > 0, [rules])
+  const isServerLive = useMemo(() => lastWorkerRun && (Date.now() - new Date(lastWorkerRun).getTime()) < 180000, [lastWorkerRun])
+
+  const autopilotStatus = useMemo(() => !isServerLive ? 'Offline' :
+    !hasRules ? 'Standby' :
+      activeRulesCount > 0 ? 'Live' : 'Paused'
+  , [isServerLive, hasRules, activeRulesCount])
+
+  const providerKeys = useMemo(() => keys
+    .filter(k => ['real-debrid', 'torbox', 'premiumize', 'alldebrid', 'debrid-link'].includes(k.provider) || k.provider === 'other'),
+  [keys])
+
+  const addonCount = useMemo(() => Object.keys(library).length, [library])
+
+  const syncTimeAgo = useMemo(() => {
+    if (!lastSyncedAt) return ''
+    return formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: false })
+  }, [lastSyncedAt])
+
+  const syncDotColor = useMemo(() => {
+    const isOnline = auth.isAuthenticated
+    if (!isOnline || (!isSyncing && !isRefreshingFromCloud && !lastSyncedAt)) return 'bg-red-500'
+    if (isSyncing || isRefreshingFromCloud) return 'bg-yellow-500 animate-pulse'
+    const lastSync = lastSyncedAt ? new Date(lastSyncedAt).getTime() : 0
+    const lastError = syncHistory.find(h => h.status === 'error')
+    const hasRecentError = lastError && (Date.now() - new Date(lastError.timestamp).getTime()) < 5 * 60 * 1000
+    if (hasRecentError) return 'bg-red-500'
+    if (Date.now() - lastSync > 5 * 60 * 1000) return 'bg-red-500'
+    return 'bg-green-500'
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, syncHistory])
+
+  const [syncLabel, setSyncLabel] = useState('')
+  useEffect(() => {
+    const update = () => {
+      if (!auth.isAuthenticated) { setSyncLabel('Offline'); return }
+      if (isSyncing) { setSyncLabel('Syncing'); return }
+      if (isRefreshingFromCloud) { setSyncLabel('Refreshing'); return }
+      if (lastSyncedAt) { setSyncLabel(syncTimeAgo); return }
+      setSyncLabel('Offline')
+    }
+    update()
+    const interval = setInterval(update, 60000)
+    return () => clearInterval(interval)
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, syncTimeAgo])
+
+  const formatExpDate = useCallback((isoDate: string | null | undefined) => {
+    if (!isoDate) return null
+    const d = new Date(isoDate)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  }, [])
+
+  const [vaultOpen, setVaultOpen] = useState(false)
+
+  const getBadgeData = useCallback((item: typeof NAV_ITEMS[number]): { count?: number; dotColor?: string } => {
+    if (item.badge === 'count' && item.to === '/') return { count: accounts.length }
+    if (item.badge === 'count' && item.to === '/saved-addons') return { count: addonCount }
+
+    return {}
+  }, [accounts.length, addonCount])
+
+  const openCommandPalette = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('open-command-palette'))
+  }, [])
+
+  return (
+    <>
+    <header className="flex-shrink-0 md:sticky md:top-0 md:z-50">
+
+      {/* Tier 1 - Brand strip (attached) */}
+      <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header'}`}>
+        <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
+            <img
+              src="/logo.png"
+              alt="AIOManager"
+              className={`h-6 w-6 object-contain transition-[transform,opacity,box-shadow] ${isLight ? 'invert' : ''}`}
+            />
+            <span className="text-[13px] font-bold tracking-tight text-foreground/90">AIOManager</span>
+          </Link>
+
+           {auth.isAuthenticated && (
+            <Tooltip content="Logout" side="bottom">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={(e) => { e.preventDefault(); logout() }}
+                className="md:hidden text-muted-foreground hover:text-destructive p-1.5 h-8 w-8 ml-auto"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </Tooltip>
+          )}
+
+          <div className="hidden md:flex items-center gap-2 ml-auto">
+            <button
+              onClick={openCommandPalette}
+              className="h-8 w-72 rounded-lg bg-muted/40 hover:bg-muted/60 border border-border/40 flex items-center px-2.5 gap-2 transition-colors"
+              aria-label="Search"
             >
-              <div className="relative flex items-center justify-center">
-                {autopilotStatus === 'Live' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-[ping_2s_ease-in-out_infinite] mr-1.5" />
-                )}
-                {autopilotStatus === 'Live' ? (
-                  <Zap className="h-3.5 w-3.5 fill-amber-500" />
-                ) : (
-                  <ZapOff className="h-3.5 w-3.5" />
-                )}
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-widest whitespace-nowrap">
-                Autopilot: {autopilotStatus}
-              </span>
-            </div>
+              <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-[12px] text-muted-foreground flex-1 text-left">Search accounts, addons, keys...</span>
+              <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground/60 shrink-0">⌘K</kbd>
+            </button>
 
-            <SyncStatus />
+            <div className="relative flex items-center h-8 rounded-lg bg-muted/30 border border-border/40">
+              <DropdownMenu open={vaultOpen} onOpenChange={setVaultOpen}>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="flex items-center gap-1.5 px-2.5 h-full rounded-l-lg hover:bg-muted/20 transition-colors"
+                    aria-label="Vault keys"
+                  >
+                    <KeyRound className="h-3 w-3 text-muted-foreground" />
+                    <span className="text-[10px] font-bold text-foreground/80 tabular-nums">{providerKeys.length}</span>
+                  </button>
+                </DropdownMenuTrigger>
 
-            {/* Desktop User Identity & Logout */}
-            {auth.isAuthenticated && (
-              <div className="hidden md:flex items-center gap-2 border border-border pl-1.5 pr-3 py-1 rounded-full bg-muted/30 hover:bg-muted/50 hover:border-border transition-all cursor-pointer">
-                {/* Avatar initial */}
-                <div className="w-6 h-6 rounded-full bg-amber-500/20 border border-amber-500/25 flex items-center justify-center text-[11px] font-bold text-amber-400 shadow-[0_0_8px_rgba(245,200,66,0.08)] flex-shrink-0">
-                  {(auth.name || auth.id).charAt(0).toUpperCase()}
-                </div>
-                {/* Text */}
-                <div className="flex flex-col leading-none gap-[2px]">
-                  <span className="hidden xl:block text-[9px] text-muted-foreground/60 uppercase tracking-[0.5px] font-medium">Logged in as</span>
-                  <span className="text-[12px] font-semibold text-foreground" title={auth.id}>
-                    {auth.name || `${auth.id.split('-')[0]}...`}
+                <DropdownMenuContent
+                  align="end"
+                  sideOffset={8}
+                  className="w-[min(360px,90vw)] p-0 rounded-2xl overflow-hidden shadow-2xl border-border/40"
+                  style={{
+                    background: 'hsl(var(--card))',
+                  }}
+                >
+                  <div className="flex items-center gap-2 px-4 py-3 border-b border-border/30 bg-muted/20">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Vault</div>
+                    <div className="text-[13px] font-bold ml-auto">{providerKeys.length} key{providerKeys.length !== 1 ? 's' : ''}</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { navigate('/vault'); setVaultOpen(false); }}
+                      className="h-7 px-2.5 ml-2 text-[11px] font-bold text-primary hover:bg-primary/10"
+                    >
+                      View all
+                    </Button>
+                  </div>
+                  <div className="max-h-[320px] overflow-y-auto py-1 custom-scrollbar">
+                    {providerKeys.length === 0 ? (
+                      <div className="py-8 text-center px-4">
+                        <KeyRound className="h-8 w-8 text-muted-foreground/60 mx-auto mb-2" />
+                        <p className="text-xs text-muted-foreground">No keys in your vault</p>
+                      </div>
+                    ) : (
+                      providerKeys.map((key) => {
+                        const h = health[key.id]
+                        const total = h?.daysRemaining
+                        let remaining = ''
+                        if (total !== null && total !== undefined) {
+                          const years = Math.floor(total / 365)
+                          const months = Math.floor((total % 365) / 30)
+                          const days = total % 30
+                          const parts: string[] = []
+                          if (years > 0) parts.push(`${years}y`)
+                          if (months > 0) parts.push(`${months}mo`)
+                          if (days > 0 || parts.length === 0) parts.push(`${days}d`)
+                          remaining = parts.join(' ')
+                        }
+                        const expDate = formatExpDate(h?.expiresAt)
+                        const dashboardUrl = key.customDashboardUrl || PROVIDERS.find(p => p.value === key.provider)?.url
+                        const isExpired = h?.status === 'expired'
+                        const isExpiring = h?.status === 'active' && h.daysRemaining !== null && h.daysRemaining !== undefined && h.daysRemaining <= 30
+                        const dotColor = isExpired ? 'bg-destructive' : isExpiring ? 'bg-warning' : h?.status === 'active' ? 'bg-success' : 'bg-muted-foreground/30'
+                        return (
+                          <button
+                            key={key.id}
+                            type="button"
+                            className="flex items-center gap-3 w-full px-4 py-3 text-left transition-[transform,opacity,box-shadow] hover:bg-primary/5 group"
+                            onClick={() => {
+                              if (dashboardUrl) window.open(safeHref(dashboardUrl), '_blank', 'noopener,noreferrer');
+                              setVaultOpen(false);
+                            }}
+                          >
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
+                            <div className="h-8 w-8 rounded-lg bg-muted/50 border border-border/40 flex items-center justify-center text-[10px] font-bold text-muted-foreground group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                              {getKeyAbbr(key)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <span className="block text-[13px] font-semibold text-foreground truncate">{key.name}</span>
+                              {expDate ? (
+                                <span className={cn("block text-[11px] mt-0.5 text-muted-foreground", isExpired ? "text-destructive" : isExpiring ? "text-warning" : "")}>
+                                  {isExpired ? `Expired · ${expDate}` : `${remaining} left · ${expDate}`}
+                                </span>
+                              ) : remaining ? (
+                                <span className="block text-[11px] mt-0.5 text-muted-foreground">{remaining} left</span>
+                              ) : null}
+                            </div>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Tooltip
+                content={
+                  !isServerLive ? 'Autopilot Server is offline' :
+                    !hasRules ? 'Autopilot: No rules configured' :
+                      activeRulesCount > 0 ? `Monitoring ${activeRulesCount} active rule${activeRulesCount !== 1 ? 's' : ''}` :
+                        'Autopilot Paused'
+                }
+                side="bottom"
+              >
+                <div className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full cursor-default">
+                  {autopilotStatus === 'Live' && (
+                    <span className="relative flex w-1.5 h-1.5">
+                      <span className="absolute inline-flex w-full h-full rounded-full bg-warning opacity-60 animate-ping" />
+                      <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-warning" />
+                    </span>
+                  )}
+                  {autopilotStatus === 'Live'
+                    ? <Zap className="h-3 w-3 text-warning" />
+                    : <ZapOff className="h-3 w-3 text-muted-foreground" />
+                  }
+                  <span className={`text-[10px] font-bold tabular-nums ${
+                    autopilotStatus === 'Live' ? 'text-warning' : 'text-foreground/60'
+                  }`}>
+                    {autopilotStatus === 'Live' ? activeRulesCount : autopilotStatus === 'Offline' ? 'Off' : autopilotStatus.charAt(0)}
                   </span>
                 </div>
-                {/* Divider + logout */}
-                <div className="h-4 w-px bg-border mx-0.5" />
+              </Tooltip>
+
+              <Tooltip content={syncLabel === 'Offline' ? 'Offline mode' : `Synced ${syncTimeAgo} ago`} side="bottom">
                 <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); logout(); }}
-                  className="text-muted-foreground/50 hover:text-destructive transition-colors p-0.5"
-                  title="Logout"
+                  onClick={() => auth.isAuthenticated && syncToRemote(false)}
+                  className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full rounded-r-lg hover:bg-muted/20 transition-colors"
+                  aria-label="Sync status"
                 >
-                  <LogOut className="h-3.5 w-3.5" />
+                  {!auth.isAuthenticated ? (
+                    <CloudOff className="h-3 w-3 text-muted-foreground" />
+                  ) : isSyncing || isRefreshingFromCloud ? (
+                    <RefreshCw className="h-3 w-3 text-primary animate-spin" />
+                  ) : (
+                    <Cloud className="h-3 w-3 text-muted-foreground" />
+                  )}
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${syncDotColor}`} />
+                  <span className="text-[10px] font-bold text-foreground/60 tabular-nums">{syncLabel}</span>
                 </button>
+              </Tooltip>
+
+            </div>
+
+            {auth.isAuthenticated && (
+              <div className="flex items-center gap-1.5">
+                <Tooltip content={auth.id} side="bottom">
+                  <div className="h-7 w-7 rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary cursor-default">
+                    {(auth.name || auth.id).charAt(0).toUpperCase()}
+                  </div>
+                </Tooltip>
+                <Tooltip content="Logout" side="bottom">
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); logout() }}
+                    className="text-muted-foreground/60 hover:text-destructive min-h-[44px] min-w-[44px] p-1"
+                    aria-label="Sign out"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </Button>
+                </Tooltip>
               </div>
             )}
           </div>
         </div>
-        {/* Desktop Navigation Tabs */}
-        <div className="hidden md:flex gap-1 mt-4 border-b overflow-x-auto scrollbar-hide whitespace-nowrap -mx-4 px-4 sm:mx-0 sm:px-0">
-          <Link
-            to="/"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/' || location.pathname.startsWith('/account/')
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <LayoutDashboard className="h-3.5 w-3.5" />
-            <span className="text-[13px]">Accounts</span>
-          </Link>
-          <Link
-            to="/saved-addons"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/saved-addons'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <Package className="h-3.5 w-3.5" />
-            <span className="text-[13px]">Addons</span>
-          </Link>
+      </div>
 
-          <Link
-            to="/activity"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/activity'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <Activity className="h-3.5 w-3.5" />
-            <span className="text-[13px]">Activity</span>
-          </Link>
-          <Link
-            to="/metrics"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/metrics'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <BarChart3 className="h-3.5 w-3.5" />
-            <span className="text-[13px]">Metrics</span>
-          </Link>
-          <Link
-            to="/replay"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/replay'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <motion.div initial="initial" animate="animate" className="flex items-center justify-center">
-              <motion.svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <motion.path d="m11 19-9-7 9-7v14z" variants={{ initial: { opacity: 0.4 }, animate: { opacity: [0.4, 1, 0.4], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
-                <motion.path d="m22 19-9-7 9-7v14z" variants={{ initial: { opacity: 1 }, animate: { opacity: [1, 0.4, 1], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
-              </motion.svg>
-            </motion.div>
-            <span className="text-[13px]">Replay</span>
-          </Link>
-          <Link
-            to="/settings"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/settings'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <Settings className="h-3.5 w-3.5" />
-            <span className="text-[13px]">Settings</span>
-          </Link>
-          <Link
-            to="/faq"
-            className={`pb-2 px-3 border-b-2 transition-colors duration-150 shrink-0 flex items-center gap-2 ${location.pathname === '/faq'
-              ? 'border-primary text-foreground font-semibold [filter:drop-shadow(0_2px_6px_hsl(var(--primary)/0.4))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-          >
-            <HelpCircle className="h-3.5 w-3.5" />
-            <span className="text-[13px]">FAQ</span>
-          </Link>
+      <div className="md:hidden flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
+        <span className="flex items-center gap-1 text-[10px]">
+          <KeyRound className="h-3 w-3" />
+          <span className="font-semibold tabular-nums">{providerKeys.length}</span>
+        </span>
+        <span className="flex items-center gap-1 text-[10px]">
+          {autopilotStatus === 'Live' ? <Zap className="h-3 w-3 text-warning" /> : <ZapOff className="h-3 w-3" />}
+          <span className={`font-semibold ${autopilotStatus === 'Live' ? 'text-warning' : ''}`}>{autopilotStatus === 'Live' ? `Live · ${activeRulesCount}` : autopilotStatus}</span>
+        </span>
+        <span className="flex items-center gap-1 text-[10px]">
+          {!auth.isAuthenticated ? <CloudOff className="h-3 w-3" /> : isSyncing || isRefreshingFromCloud ? <RefreshCw className="h-3 w-3 text-primary animate-spin" /> : <Cloud className="h-3 w-3" />}
+          <span className={`w-1.5 h-1.5 rounded-full ${syncDotColor}`} />
+          <span className="font-semibold">{syncLabel}</span>
+        </span>
+      </div>
+
+      {/* Tier 2 - Floating glass capsule */}
+      <div className="hidden md:block">
+        <div className="max-w-[1800px] mx-auto w-full px-4">
+          <nav className="flex justify-center mt-1.5">
+            <div className={cn(
+              'inline-flex h-auto w-fit max-w-[calc(100%-1rem)] flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card/92 p-1.5 text-muted-foreground shadow-sm backdrop-blur-xl',
+              !isLight && 'border-white/10 bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
+            )}>
+              {NAV_ITEMS.map((item) => {
+                const isActive = item.match(location.pathname)
+                const Icon = item.icon
+                const badgeData = getBadgeData(item)
+                const useGlow = isActive && !isLight
+
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    onClick={() => setVaultOpen(false)}
+                    className={cn(
+                      'relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-[13px] font-medium transition-[transform,opacity,box-shadow]',
+                      isActive
+                        ? (isLight
+                          ? 'border border-border/40 bg-background text-foreground shadow-sm'
+                          : 'border border-white/10 bg-white/[0.08] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]')
+                        : (isLight
+                          ? 'text-muted-foreground hover:bg-background/45 hover:text-foreground'
+                          : 'text-muted-foreground hover:bg-white/[0.055] hover:text-foreground')
+                    )}
+                  >
+                    {item.to === '/replay' ? (
+                      <motion.div initial="initial" animate="animate" className="flex items-center justify-center">
+                        <motion.svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <motion.path d="m11 19-9-7 9-7v14z" variants={{ initial: { opacity: 0.4 }, animate: { opacity: [0.4, 1, 0.4], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
+                          <motion.path d="m22 19-9-7 9-7v14z" variants={{ initial: { opacity: 1 }, animate: { opacity: [1, 0.4, 1], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
+                        </motion.svg>
+                      </motion.div>
+                    ) : (
+                      Icon && <Icon className="w-[15px] h-[15px]" strokeWidth={isActive ? 2.2 : 1.7} />
+                    )}
+                    <span>{item.label}</span>
+                    <TabBadge count={badgeData.count} dotColor={badgeData.dotColor} isActive={isActive} glow={useGlow} />
+                  </Link>
+                )
+              })}
+            </div>
+          </nav>
         </div>
       </div>
-
-      {/* Mobile Bottom Navigation Bar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-lg border-t border-border flex items-center justify-around min-h-[76px] pb-[calc(env(safe-area-inset-bottom,0px)+8px)] shadow-[0_-10px_40px_rgba(0,0,0,0.15)]">
-        {[
-          { to: '/', icon: LayoutDashboard, label: 'Accounts' },
-          { to: '/saved-addons', icon: Package, label: 'Addons' },
-          { to: '/activity', icon: Activity, label: 'Activity' },
-          { to: '/metrics', icon: BarChart3, label: 'Metrics' },
-          { to: '/replay', icon: null, label: 'Replay' },
-          { to: '/settings', icon: Settings, label: 'Settings' },
-        ].map((item) => {
-          const isActive = location.pathname === item.to || (item.to === '/' && location.pathname.startsWith('/account/'));
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={`flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {item.to === '/replay' ? (
-                <motion.div initial="initial" animate="animate" className="flex items-center justify-center mb-0.5">
-                  <motion.svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <motion.path d="m11 19-9-7 9-7v14z" variants={{ initial: { opacity: 0.4 }, animate: { opacity: [0.4, 1, 0.4], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
-                    <motion.path d="m22 19-9-7 9-7v14z" variants={{ initial: { opacity: 1 }, animate: { opacity: [1, 0.4, 1], transition: { repeat: Infinity, duration: 1.5, ease: 'linear' } } }} />
-                  </motion.svg>
-                </motion.div>
-              ) : (
-                Icon && <Icon className="h-5 w-5 mb-0.5" />
-              )}
-              <span className="text-[10px] font-black uppercase tracking-tighter opacity-80">{item.label}</span>
-            </Link>
-          );
-        })}
-      </div>
     </header>
+  </>
   )
 }

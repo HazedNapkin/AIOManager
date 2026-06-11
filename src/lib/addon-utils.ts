@@ -1,13 +1,11 @@
-import { AddonDescriptor, AddonManifest } from '@/types/addon'
+import { AddonManifest, CatalogOverrides } from '@/types/addon'
+import { CinemetaManifest, CinemetaConfigState } from '@/types/cinemeta'
+import { applyCinemetaConfiguration } from '@/lib/cinemeta-utils'
 
-/**
- * Returns a manifest for the addon with active overrides applied.
- * Currently supports filtering out removed catalogs and applying custom metadata.
- */
 export function getEffectiveManifest(addon: {
     manifest?: AddonManifest;
-    metadata?: { customName?: string; customLogo?: string; customDescription?: string };
-    catalogOverrides?: { removed: string[] };
+    metadata?: { customName?: string; customLogo?: string; customDescription?: string; cinemetaConfig?: CinemetaConfigState };
+    catalogOverrides?: CatalogOverrides;
 }): AddonManifest {
     const baseManifest = addon.manifest || {
         id: 'unknown',
@@ -20,43 +18,27 @@ export function getEffectiveManifest(addon: {
     const manifest = {
         ...baseManifest,
         types: baseManifest.types || [],
-        resources: baseManifest.resources || []
+        resources: baseManifest.resources || [],
+        catalogs: baseManifest.catalogs || []
     } as AddonManifest
 
-    // 1. Apply Metadata Overrides (Name, Logo, Description)
     if (addon.metadata?.customName) manifest.name = addon.metadata.customName
     if (addon.metadata?.customLogo) manifest.logo = addon.metadata.customLogo
     if (addon.metadata?.customDescription) manifest.description = addon.metadata.customDescription
 
-    // 2. Apply Catalog Overrides (Removed Catalogs)
-    if (addon.catalogOverrides?.removed && manifest.catalogs) {
+    if (addon.catalogOverrides?.catalogs) {
+        manifest.catalogs = addon.catalogOverrides.catalogs.map(catalog => ({
+            ...catalog,
+            extra: catalog.extra?.map(extra => ({ ...extra })),
+        }))
+    } else if (addon.catalogOverrides?.removed && manifest.catalogs) {
         const removedIds = new Set(addon.catalogOverrides.removed)
         manifest.catalogs = manifest.catalogs.filter(cat => !removedIds.has(cat.id))
     }
 
-
+    if (addon.metadata?.cinemetaConfig) {
+        return applyCinemetaConfiguration(manifest as CinemetaManifest, addon.metadata.cinemetaConfig) as AddonManifest
+    }
 
     return manifest
-}
-
-/**
- * Transforms an addon descriptor into the format expected by Stremio, 
- * applying all local customizations.
- */
-export function transformAddonForStremio(addon: AddonDescriptor): AddonDescriptor {
-    if (!addon) return addon
-    return {
-        ...addon,
-        manifest: getEffectiveManifest(addon)
-    }
-}
-
-/**
- * Prepares a list of addons for syncing to Stremio.
- * Filters out disabled addons and applies customizations.
- */
-export function prepareAddonsForSync(addons: AddonDescriptor[]): AddonDescriptor[] {
-    return (addons || [])
-        .filter(addon => addon.flags?.enabled !== false)
-        .map(transformAddonForStremio)
 }

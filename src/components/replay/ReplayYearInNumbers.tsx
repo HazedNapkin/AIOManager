@@ -56,7 +56,7 @@ export function ReplayYearInNumbers({ data }: ReplayYearInNumbersProps) {
                 <div className="text-center mb-8">
                     <span
                         style={{
-                            fontFamily: '"DM Mono", monospace',
+                            fontFamily: '"Inter", monospace',
                             fontSize: '11px',
                             letterSpacing: '0.3em',
                             textTransform: 'uppercase',
@@ -89,9 +89,9 @@ export function ReplayYearInNumbers({ data }: ReplayYearInNumbersProps) {
                             <span style={{ fontSize: '18px', lineHeight: 1 }}>{item.icon}</span>
                             <span
                                 style={{
-                                    fontFamily: '"DM Sans", sans-serif',
+                                    fontFamily: '"Inter", sans-serif',
                                     fontSize: item.text && item.text.length > 6 ? 'clamp(12px, 2.2vw, 18px)' : 'clamp(18px, 3vw, 26px)',
-                                    fontWeight: 900,
+                                    fontWeight: 700,
                                     color: 'white',
                                     letterSpacing: '-0.03em',
                                     lineHeight: 1.1,
@@ -106,7 +106,7 @@ export function ReplayYearInNumbers({ data }: ReplayYearInNumbersProps) {
                             </span>
                             <span
                                 style={{
-                                    fontFamily: '"DM Mono", monospace',
+                                    fontFamily: '"Inter", monospace',
                                     fontSize: '10px',
                                     fontWeight: 700,
                                     letterSpacing: '0.2em',

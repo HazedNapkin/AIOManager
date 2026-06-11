@@ -8,6 +8,8 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
 } from '@dnd-kit/core'
 import {
   arrayMove,
@@ -28,8 +30,9 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { AddonDescriptor } from '@/types/addon'
-import { SortableAddonItem } from './SortableAddonItem'
+import { AddonReorderRow, SortableAddonItem } from './SortableAddonItem'
 import { useAccountStore } from '@/store/accountStore'
+import { createPortal } from 'react-dom'
 
 interface AddonReorderDialogProps {
   accountId: string
@@ -45,9 +48,11 @@ export function AddonReorderDialog({
   onOpenChange,
 }: AddonReorderDialogProps) {
   const [items, setItems] = useState<(AddonDescriptor & { uniqueId: string })[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reorderAddons = useAccountStore((state) => state.reorderAddons)
+  const activeAddon = activeId ? items.find((item) => item.uniqueId === activeId) : null
 
   // Initialize items when dialog opens or addons change
   useEffect(() => {
@@ -75,6 +80,10 @@ export function AddonReorderDialog({
     })
   )
 
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(String(event.active.id))
+  }
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
 
@@ -85,6 +94,11 @@ export function AddonReorderDialog({
         return arrayMove(items, oldIndex, newIndex)
       })
     }
+    setActiveId(null)
+  }
+
+  const handleDragCancel = () => {
+    setActiveId(null)
   }
 
   const handleSave = async () => {
@@ -119,7 +133,9 @@ export function AddonReorderDialog({
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
             modifiers={[restrictToVerticalAxis]}
           >
             <SortableContext
@@ -132,13 +148,19 @@ export function AddonReorderDialog({
                 ))}
               </div>
             </SortableContext>
+            {createPortal(
+              <DragOverlay adjustScale={false} dropAnimation={null}>
+                {activeAddon ? <AddonReorderRow addon={activeAddon} isOverlay /> : null}
+              </DragOverlay>,
+              document.body
+            )}
           </DndContext>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleCancel} disabled={saving}>
+          <Button variant="subtle" onClick={handleCancel} disabled={saving}>
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={saving}>

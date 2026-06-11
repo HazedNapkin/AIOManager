@@ -27,13 +27,13 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                     viewport={{ once: true, margin: "-100px" }}
                     className="mb-16 text-center"
                 >
-                    <h2 className="text-5xl md:text-7xl font-black text-white tracking-[-0.04em] leading-tight">Milestones</h2>
-                    <p className="text-white/70 font-bold mt-2 uppercase tracking-[0.2em] text-[12px]">
+                    <h2 className="text-5xl md:text-7xl font-bold text-white tracking-[-0.04em] leading-tight">Milestones</h2>
+                    <p className="text-white/70 font-bold mt-2 uppercase text-sm">
                         {unlocked.length} of {data.milestones.length} achievements unlocked
                     </p>
                 </motion.div>
 
-                {/* Unlocked Milestones */}
+
                 {sortedUnlocked.length > 0 && (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-12">
                         {sortedUnlocked.map((milestone, i) => (
@@ -53,21 +53,21 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                                     textAlign: 'center',
                                 }}
                             >
-                                {/* Glow effect */}
+
                                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                                     style={{ background: 'radial-gradient(circle at center, rgba(99,102,241,0.15) 0%, transparent 70%)' }}
                                 />
                                 <div className="relative z-10">
                                     <div style={{ fontSize: '36px', lineHeight: 1 }} className="mb-3">{milestone.icon}</div>
                                     <div style={{
-                                        fontFamily: '"DM Sans", sans-serif',
+                                        fontFamily: '"Inter", sans-serif',
                                         fontSize: '14px',
-                                        fontWeight: 900,
+                                        fontWeight: 700,
                                         color: 'white',
                                         letterSpacing: '-0.02em',
                                     }}>{milestone.title}</div>
                                     <div style={{
-                                        fontFamily: '"DM Mono", monospace',
+                                        fontFamily: '"Inter", monospace',
                                         fontSize: '11px',
                                         fontWeight: 600,
                                         color: 'rgba(255,255,255,0.65)',
@@ -81,7 +81,7 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                     </div>
                 )}
 
-                {/* Next Up - Locked Milestones */}
+
                 {nextUp.length > 0 && (
                     <>
                         <motion.div
@@ -91,7 +91,7 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                             className="mb-6 text-center"
                         >
                             <span style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 letterSpacing: '0.2em',
@@ -121,13 +121,13 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                                             <div style={{ fontSize: '28px', opacity: 0.4, marginTop: '2px' }}>{milestone.icon}</div>
                                             <div className="flex-1 min-w-0">
                                                 <div style={{
-                                                    fontFamily: '"DM Sans", sans-serif',
+                                                    fontFamily: '"Inter", sans-serif',
                                                     fontSize: '14px',
-                                                    fontWeight: 800,
+                                                    fontWeight: 700,
                                                     color: 'rgba(255,255,255,0.8)',
                                                 }}>{milestone.title}</div>
                                                 <div style={{
-                                                    fontFamily: '"DM Sans", sans-serif',
+                                                    fontFamily: '"Inter", sans-serif',
                                                     fontSize: '12px',
                                                     fontWeight: 500,
                                                     color: 'rgba(255,255,255,0.6)',
@@ -135,7 +135,7 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                                                     lineHeight: 1.4,
                                                 }}>{milestone.description}</div>
                                                 <div style={{
-                                                    fontFamily: '"DM Mono", monospace',
+                                                    fontFamily: '"Inter", monospace',
                                                     fontSize: '11px',
                                                     fontWeight: 600,
                                                     color: 'rgba(255,255,255,0.5)',
@@ -143,7 +143,7 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                                                     textTransform: 'uppercase',
                                                     marginTop: '6px',
                                                 }}>{milestone.value} / {milestone.threshold}</div>
-                                                {/* Progress bar */}
+
                                                 <div className="mt-3 h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
                                                     <motion.div
                                                         initial={{ width: 0 }}
@@ -155,9 +155,9 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                                                 </div>
                                             </div>
                                             <div style={{
-                                                fontFamily: '"DM Mono", monospace',
+                                                fontFamily: '"Inter", monospace',
                                                 fontSize: '12px',
-                                                fontWeight: 900,
+                                                fontWeight: 700,
                                                 color: 'rgba(255,255,255,0.6)',
                                             }}>{progress}%</div>
                                         </div>
@@ -169,7 +169,7 @@ export function ReplayMilestones({ data }: ReplayMilestonesProps) {
                 )}
 
                 {unlocked.length === 0 && (
-                    <div className="text-center py-20 text-white/20 font-black italic">
+                    <div className="text-center py-20 text-white/20 font-bold italic">
                         Keep watching to unlock your first milestone!
                     </div>
                 )}

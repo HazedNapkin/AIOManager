@@ -2,7 +2,6 @@ import Database from 'better-sqlite3'
 import pg from 'pg'
 const { Pool, types } = pg
 
-// Force BIGINT (INT8) to be returned as numbers instead of strings
 types.setTypeParser(types.builtins.INT8, (val) => parseInt(val, 10))
 
 class DB {
@@ -32,10 +31,14 @@ class DB {
                 connectionString.includes('127.0.0.1') ||
                 connectionString.includes('@db:') ||
                 connectionString.includes('aiomanager-db')
+            const rejectUnauthorized = String(process.env.DB_SSL_REJECT_UNAUTHORIZED || 'false').toLowerCase() !== 'false'
+            if (!isLocalDb && !rejectUnauthorized) {
+                console.warn('[Database] PostgreSQL SSL certificate verification is disabled by DB_SSL_REJECT_UNAUTHORIZED=false.')
+            }
 
             this.pool = new Pool({
                 connectionString,
-                ssl: isLocalDb ? false : { rejectUnauthorized: false }, // SSL for cloud providers only
+                ssl: isLocalDb ? false : { rejectUnauthorized },
                 max: parseInt(process.env.DB_POOL_SIZE, 10) || 20,
                 idleTimeoutMillis: 30000,
                 connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT, 10) || 10000,
@@ -87,10 +90,13 @@ class DB {
             if (this.type === 'postgres') {
                 if (!this.pool) return false
                 const client = await this.pool.connect()
-                await client.query('SELECT 1')
-                client.release()
-                this.isHealthy = true
-                return true
+                try {
+                    await client.query('SELECT 1')
+                    this.isHealthy = true
+                    return true
+                } finally {
+                    client.release()
+                }
             } else {
                 if (!this.client) return false
                 this.client.prepare('SELECT 1').get()
@@ -135,10 +141,54 @@ class DB {
         }
     }
 
+    async tx(fn) {
+        if (this.type === 'postgres') {
+            const client = await this.pool.connect()
+            try {
+                await client.query('BEGIN')
+                const result = await fn({
+                    query: (sql, params) => client.query(sql, params).then(r => r.rows),
+                    get: (sql, params) => client.query(sql, params).then(r => r.rows[0]),
+                    run: (sql, params) => client.query(sql, params).then(r => ({ changes: r.rowCount })),
+                })
+                await client.query('COMMIT')
+                return result
+            } catch (err) {
+                await client.query('ROLLBACK').catch(() => {})
+                throw err
+            } finally {
+                client.release()
+            }
+        } else {
+            this.client.exec('BEGIN')
+            try {
+                const sqliteFns = {
+                    query: (sql, params = []) => {
+                        const sqliteSql = sql.replace(/\$\d+/g, '?')
+                        return this.client.prepare(sqliteSql).all(params)
+                    },
+                    get: (sql, params = []) => {
+                        const sqliteSql = sql.replace(/\$\d+/g, '?')
+                        return this.client.prepare(sqliteSql).get(params)
+                    },
+                    run: (sql, params = []) => {
+                        const sqliteSql = sql.replace(/\$\d+/g, '?')
+                        const info = this.client.prepare(sqliteSql).run(params)
+                        return { changes: info.changes }
+                    },
+                }
+                const result = await fn(sqliteFns)
+                this.client.exec('COMMIT')
+                return result
+            } catch (err) {
+                this.client.exec('ROLLBACK')
+                throw err
+            }
+        }
+    }
+
     async exec(sql) {
         if (this.type === 'postgres') {
-            // node-postgres handles multi-statement queries in a single string 
-            // but it returns an array of results. We just need it to execute.
             await this.pool.query(sql)
         } else {
             this.client.exec(sql)
@@ -149,7 +199,6 @@ class DB {
         if (this.type === 'sqlite') {
             return this.client.pragma(sql)
         }
-        // PostgreSQL doesn't use pragmas, ignore or map if needed
         return null
     }
 

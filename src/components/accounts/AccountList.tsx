@@ -1,47 +1,42 @@
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { useState, useRef, useMemo, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { AccountCard } from './AccountCard'
+import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { BatchOperationsDialog } from './BatchOperationsDialog'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
+import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useToast } from '@/hooks/use-toast'
+import { EmptyState } from '@/components/common/EmptyState'
+import { FloatingActionBar } from '@/components/ui/floating-action-bar'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
+import { AnimatedRefreshIcon } from '@/components/ui/AnimatedIcons'
 import { checkAddonUpdates } from '@/api/addons'
 import { useAddonStore } from '@/store/addonStore'
-import { isNewerVersion } from '@/lib/utils'
-import { useAccountStore } from '@/store/accountStore'
-import {
-  DndContext,
-  closestCenter,
-  MouseSensor,
-  TouchSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  rectSortingStrategy,
-} from '@dnd-kit/sortable'
-import { SortableAccountCard } from './SortableAccountCard'
+import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
+import { getPlatformEntry } from '@/lib/platform-registry'
+import { useAccountStore, getAccountAuthKey, getAccountEmail } from '@/store/accountStore'
+
+import { Tooltip } from '@/components/ui/tooltip'
+import { Skeleton } from '@/components/ui/skeleton'
+import { AccountListRow } from './AccountListRow'
+import { AccountReorderDialog } from './AccountReorderDialog'
 
 export function AccountList() {
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
-  const { accounts, error, clearError, syncAllAccounts, removeAccount, loading, reorderAccounts } = useAccounts()
+  const { accounts, error, clearError, syncAllAccounts, removeAccount, loading } = useAccounts()
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
@@ -66,6 +61,7 @@ export function AccountList() {
       const updateInfoList = await checkAddonUpdates(allAddons, 'All-Accounts-Update-Check')
       const versions: Record<string, string> = {}
       updateInfoList.forEach((info) => {
+        versions[info.versionKey] = info.latestVersion
         versions[info.addonId] = info.latestVersion
       })
       useAddonStore.getState().updateLatestVersions(versions)
@@ -82,11 +78,17 @@ export function AccountList() {
   const totalUpdateCount = useMemo(() =>
     accounts.reduce((total, account) =>
       total + account.addons.filter(addon => {
-        const latest = latestVersions[addon.manifest.id]
+        const latest = getLatestAddonVersion(latestVersions, addon)
         return latest && isNewerVersion(addon.manifest.version, latest)
       }).length,
       0),
     [accounts, latestVersions])
+
+  const totalChangelogCount = useAccountStore(
+    useShallow((state) => state.changelog.filter(
+      e => Date.now() - new Date(e.timestamp).getTime() < 24 * 60 * 60 * 1000
+    ).length)
+  )
 
   const [updatingAll, setUpdatingAll] = useState(false)
 
@@ -94,29 +96,48 @@ export function AccountList() {
     if (updatingAll) return
     setUpdatingAll(true)
     try {
-      let successCount = 0
+      const updatableUrls = new Set<string>()
+      const accountsWithUpdates: { id: string; authKey: string }[] = []
+
       for (const account of accounts) {
         const addonsToUpdate = account.addons.filter(addon => {
-          const latest = latestVersions[addon.manifest.id]
+          const latest = getLatestAddonVersion(latestVersions, addon)
           return latest && isNewerVersion(addon.manifest.version, latest)
         })
-        for (const addon of addonsToUpdate) {
-          try {
-            await useAccountStore.getState().reinstallAddon(account.id, addon.transportUrl)
-            successCount++
-          } catch (err) {
-            console.warn(`[AccountList] Failed to update ${addon.manifest.name}:`, err)
-          }
+        if (addonsToUpdate.length > 0) {
+          accountsWithUpdates.push({ id: account.id, authKey: getAccountAuthKey(account) })
+          addonsToUpdate.forEach(a => updatableUrls.add(a.transportUrl))
         }
       }
+
+      if (updatableUrls.size === 0) {
+        toast({ title: 'No Updates', description: 'All addons are up to date.' })
+        return
+      }
+
+      const result = await useAddonStore.getState().bulkReinstallAddons(
+        Array.from(updatableUrls),
+        accountsWithUpdates,
+        true
+      )
+
       toast({
         title: 'Updates Complete',
-        description: `Updated ${successCount} addon${successCount !== 1 ? 's' : ''} across all accounts`,
+        description: `Updated ${result.success} account${result.success !== 1 ? 's' : ''}${result.failed > 0 ? ` (${result.failed} failed)` : ''}`,
       })
     } catch (err) {
       toast({ title: 'Update Failed', variant: 'destructive' })
     } finally {
       setUpdatingAll(false)
+    }
+  }
+
+  const handleClearAllChangelog = async () => {
+    try {
+      await useAccountStore.getState().clearChangelog(undefined, 24 * 60 * 60 * 1000)
+      toast({ title: 'Notifications Cleared', description: 'All changelog notifications have been dismissed.' })
+    } catch {
+      toast({ title: 'Clear Failed', variant: 'destructive' })
     }
   }
 
@@ -128,7 +149,7 @@ export function AccountList() {
     }, 150)
   }
   const [showBulkActions, setShowBulkActions] = useState(false)
-  const [isReorderMode, setIsReorderMode] = useState(false)
+  const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     open: boolean;
     accountIds: string[];
@@ -136,6 +157,24 @@ export function AccountList() {
 
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
+  const accountsView = useUIStore((state) => state.accountsView)
+  const setAccountsView = useUIStore((state) => state.setAccountsView)
+  const expiredAccounts = useMemo(() => accounts.filter(account => account.status === 'expired'), [accounts])
+  const isSessionExpiredError = error ? /session does not exist|session.*expired|invalid.*auth|auth.*expired|unauthorized/i.test(error) : false
+  const firstExpiredAccount = expiredAccounts[0]
+  const expiredPlatformLabel = useMemo(() => {
+    const names = new Set<string>()
+    for (const account of expiredAccounts) {
+      const failing = (account.connections || []).filter(c => c.status === 'expired' || c.status === 'error')
+      if (failing.length === 0) {
+        names.add('Stremio')
+      } else {
+        for (const c of failing) names.add(getPlatformEntry(c.platform)?.name || c.platform)
+      }
+    }
+    return names.size === 1 ? [...names][0] : null
+  }, [expiredAccounts])
+  const isStremioExpiry = expiredPlatformLabel === 'Stremio' || expiredPlatformLabel === null
 
   const toggleAccountSelection = useCallback((accountId: string) => {
     setSelectedAccountIds((prev) => {
@@ -150,8 +189,9 @@ export function AccountList() {
   }, [])
 
   const toggleSelectionMode = () => {
-    setIsSelectionMode(!isSelectionMode)
-    if (isSelectionMode) {
+    const nextSelectionMode = !(isSelectionMode || selectedAccountIds.size > 0)
+    setIsSelectionMode(nextSelectionMode)
+    if (!nextSelectionMode) {
       setSelectedAccountIds(new Set())
     }
   }
@@ -168,6 +208,10 @@ export function AccountList() {
     setSelectedAccountIds(new Set())
   }
 
+  const handleDeleteSingle = useCallback((accountId: string) => {
+    setDeleteConfirmation({ open: true, accountIds: [accountId] })
+  }, [])
+
   const handleDeleteSelected = () => {
     setDeleteConfirmation({
       open: true,
@@ -182,49 +226,19 @@ export function AccountList() {
     clearSelection()
   }
 
-  const sensors = useSensors(
-    useSensor(MouseSensor, {
-      activationConstraint: {
-        distance: 3,
-      },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: {
-        delay: 200,
-        tolerance: 5,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  )
 
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
 
-    if (over && active.id !== over.id) {
-      const oldIndex = accounts.findIndex((a) => a.id === active.id)
-      const newIndex = accounts.findIndex((a) => a.id === over.id)
-
-      const newAccounts = arrayMove(accounts, oldIndex, newIndex)
-
-      // Optimistic update handled by store if we pass new order immediately
-      const newOrderIds = newAccounts.map(a => a.id)
-      await reorderAccounts(newOrderIds)
-    }
-  }
-
-  const filteredAccounts = accounts.filter((a) => {
+  const filteredAccounts = useMemo(() => {
     const query = debouncedSearchQuery.toLowerCase().trim()
-    if (!query) return true
-    return (
+    if (!query) return accounts
+    return accounts.filter(a =>
       a.name.toLowerCase().includes(query) ||
-      a.email?.toLowerCase().includes(query)
+      getAccountEmail(a)?.toLowerCase().includes(query)
     )
-  })
-
+  }, [accounts, debouncedSearchQuery])
 
   const checkRules = useFailoverStore((state) => state.checkRules)
+  const isSelectionActive = isSelectionMode || selectedAccountIds.size > 0
 
   const handleRefreshAll = async () => {
     await syncAllAccounts()
@@ -232,18 +246,35 @@ export function AccountList() {
     await checkRules()
   }
 
+  if (loading && accounts.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-40 rounded-xl" />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (accounts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 px-4 text-center animate-in fade-in slide-in-from-bottom-4">
-        <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-6">
-          <Users className="h-10 w-10 text-muted-foreground" />
+        <div className="relative w-20 h-20 flex items-center justify-center mb-6">
+          <SquircleOverlay />
+          <Users className="relative z-10 h-9 w-9 text-muted-foreground" />
         </div>
         <h2 className="text-3xl font-bold tracking-tight mb-2">No accounts connected</h2>
         <p className="text-muted-foreground max-w-sm mb-8">
-          Manage multiple Stremio accounts from a single dashboard. Securely add your first account to get started.
+          Manage all your streaming platforms from a single dashboard. Securely add your first account to get started.
         </p>
         <Button size="lg" onClick={() => openAddAccountDialog()} className="px-8">
-          Add Stremio Account
+          Add Account
         </Button>
       </div>
     )
@@ -252,27 +283,54 @@ export function AccountList() {
   return (
     <div className="space-y-4">
       {error && (
-        <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-md flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={clearError} className="text-destructive hover:text-destructive/80">
-            ✕
-          </button>
+        <div className={`${isSessionExpiredError ? 'border-warning/35 bg-warning/10 text-warning' : 'border-destructive/35 bg-destructive/10 text-destructive'} rounded-xl border px-4 py-3`}>
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-semibold">
+                {isSessionExpiredError ? (expiredPlatformLabel ? `${expiredPlatformLabel} session expired` : 'Session expired') : 'Account sync failed'}
+              </p>
+              <p className="text-xs opacity-85">
+                {isSessionExpiredError
+                  ? (isStremioExpiry
+                    ? 'Stremio rejected a stored token. Use Email & Password for persistent auto-refresh, or paste a fresh OAuth/AuthKey token if you prefer not to store the password.'
+                    : `${expiredPlatformLabel} rejected a stored token. Re-authenticate this connection from the account's Connections tab.`)
+                  : error}
+              </p>
+              {isSessionExpiredError && isStremioExpiry && firstExpiredAccount && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    clearError()
+                    openAddAccountDialog(firstExpiredAccount)
+                  }}
+                  className="mt-2 h-8 border-warning/35 bg-background/60 text-warning hover:bg-warning/10"
+                >
+                  Fix {expiredAccounts.length > 1 ? `${expiredAccounts.length} expired accounts` : 'expired account'}
+                </Button>
+              )}
+            </div>
+            <button onClick={clearError} className="rounded-full p-1 opacity-70 transition-opacity hover:opacity-100" aria-label="Dismiss account error">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {isSessionExpiredError && !firstExpiredAccount && (
+            <p className="mt-2 text-xs opacity-75">If this keeps appearing, run Refresh and re-authenticate any account that changes to Session expired.</p>
+          )}
         </div>
       )}
 
-      {/* Bulk Actions Toolbar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-card border rounded-md p-3 gap-3">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
-          {isSelectionMode && (
-            <span className="text-sm font-medium whitespace-nowrap text-foreground">
-              {selectedAccountIds.size} of {accounts.length} selected
-            </span>
-          )}
-          <div className="relative w-full sm:w-64 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+
+      <ToolbarShell contentClassName="gap-2 sm:gap-3">
+
+        <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2 sm:flex sm:w-auto sm:flex-none">
+          <div className="relative flex-1 sm:w-72 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               placeholder="Search accounts..."
-              className="pl-10 pr-10 h-10 bg-background/50 border-muted"
+              className="pl-9 pr-9 h-8 text-xs bg-muted/30 border border-border/40 focus:bg-muted/40 transition-colors w-full"
               value={searchQuery}
               onChange={(e) => handleSearchChange(e.target.value)}
               data-search-focus
@@ -280,85 +338,76 @@ export function AccountList() {
             {searchQuery && (
               <button
                 onClick={() => handleSearchChange('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-accent rounded-full transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus:outline-none"
               >
-                <X className="h-4 w-4 text-muted-foreground" />
+                <X className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
             )}
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          {isSelectionMode && (
-            <Button variant="outline" size="sm" onClick={selectAll} className="flex-1 sm:flex-none">
-              {selectedAccountIds.size === accounts.length && accounts.length > 0 ? 'Deselect All' : `Select All (${accounts.length})`}
+          <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 w-8 rounded-lg p-0 ${accountsView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setAccountsView('grid')}
+              aria-label="Grid view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
             </Button>
-          )}
-          {selectedAccountIds.size > 0 && (
-            <>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={handleDeleteSelected}
-                className="flex-1 sm:flex-none"
-              >
-                <Trash2 className="h-4 w-4 mr-1.5" />
-                Delete ({selectedAccountIds.size})
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => setShowBulkActions(true)}
-                className="flex-1 sm:flex-none"
-              >
-                <Layers className="h-4 w-4 mr-1.5" />
-                Bulk Actions
-              </Button>
-            </>
-          )}
-          {!isSelectionMode && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 w-8 rounded-lg p-0 ${accountsView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setAccountsView('list')}
+              aria-label="List view"
+            >
+              <List className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+
+
+        <div className="grid w-full grid-cols-2 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap shrink-0">
+          {!isSelectionActive && (
             <>
               <DropdownMenu open={refreshMenuOpen || checkingUpdates} onOpenChange={(o) => { if (!checkingUpdates) setRefreshMenuOpen(o) }}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1 flex-1 sm:flex-none"
+                    className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto"
                     disabled={loading || accounts.length === 0}
                   >
-                    <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    Refresh
-                    <ChevronDown className="h-4 w-4" />
+                    <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={loading} />
+                    <span>Refresh</span>
+                    <ChevronDown className="h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-72 p-1.5">
-                  <DropdownMenuItem
-                    onClick={handleRefreshAll}
-                    disabled={loading}
-                    className="py-2.5 px-3 rounded-lg"
-                  >
-                    <RefreshCw className={`h-4 w-4 mr-3 shrink-0 ${loading ? 'animate-spin' : ''}`} />
-                    <div>
-                      <p className="text-sm font-medium">Refresh Addon Lists</p>
-                      <p className="text-xs text-muted-foreground">Re-fetch addons from Stremio for all accounts</p>
-                    </div>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="my-1.5" />
-                  <DropdownMenuItem
-                    onClick={handleCheckAllAddonUpdates}
-                    disabled={checkingUpdates}
-                    onSelect={(e) => e.preventDefault()}
-                    className="py-2.5 px-3 rounded-lg"
-                  >
-                    {checkingUpdates
-                      ? <Loader2 className="h-4 w-4 mr-3 shrink-0 animate-spin" />
-                      : <ArrowUpCircle className="h-4 w-4 mr-3 shrink-0" />
-                    }
-                    <div>
-                      <p className="text-sm font-medium">
-                        {checkingUpdates ? 'Checking for updates...' : 'Check for Addon Updates'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Compare installed versions across all accounts</p>
-                    </div>
-                  </DropdownMenuItem>
+                <DropdownMenuContent align="start" collisionPadding={16} className="w-64 max-w-[calc(100vw-2rem)] p-1.5">
+                  <Tooltip content="Re-fetch addons from Stremio for all accounts" side="right">
+                    <DropdownMenuItem
+                      onClick={handleRefreshAll}
+                      disabled={loading}
+                      className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
+                    >
+                      <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
+                      Refresh Addon Lists
+                    </DropdownMenuItem>
+                  </Tooltip>
+                  <Tooltip content="Compare installed versions across all accounts" side="right">
+                    <DropdownMenuItem
+                      onClick={handleCheckAllAddonUpdates}
+                      disabled={checkingUpdates}
+                      onSelect={(e) => e.preventDefault()}
+                      className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
+                    >
+                      {checkingUpdates
+                        ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                        : <ArrowUpCircle className="h-4 w-4 shrink-0" />
+                      }
+                      {checkingUpdates ? 'Checking for updates...' : 'Check for Addon Updates'}
+                    </DropdownMenuItem>
+                  </Tooltip>
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -368,107 +417,164 @@ export function AccountList() {
                   variant="outline"
                   onClick={handleUpdateAll}
                   disabled={updatingAll}
-                  className="gap-1.5 flex-1 sm:flex-none border-primary/50 text-primary hover:bg-primary/10"
+                  className="order-first col-span-full w-full gap-1.5 h-8 text-xs font-medium sm:order-none sm:col-span-auto sm:w-auto sm:flex-none"
                 >
                   {updatingAll
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <ArrowUpCircle className="h-4 w-4" />
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <ArrowUpCircle className="h-3.5 w-3.5" />
                   }
                   {updatingAll ? 'Updating...' : `Update All (${totalUpdateCount})`}
                 </Button>
               )}
+
+              {totalChangelogCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleClearAllChangelog}
+                  className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  Clear All ({totalChangelogCount})
+                </Button>
+              )}
               <Button
                 size="sm"
-                variant={isReorderMode ? "secondary" : "outline"}
-                onClick={() => {
-                  setIsReorderMode(!isReorderMode)
-                  if (isSelectionMode) toggleSelectionMode()
-                }}
+                variant="outline"
+                className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto"
+                onClick={() => setReorderDialogOpen(true)}
                 disabled={accounts.length < 2}
-                className="flex-1 sm:flex-none"
               >
-                <GripHorizontal className="h-4 w-4 mr-2" />
-                {isReorderMode ? 'Done' : 'Reorder'}
+                <GripHorizontal className="h-3.5 w-3.5" />
+                <span>Reorder</span>
               </Button>
             </>
           )}
+
           <Button
             size="sm"
-            variant={isSelectionMode ? "secondary" : "outline"}
+            variant="outline"
             onClick={toggleSelectionMode}
-            className="flex-1 sm:flex-none"
+            className={`ml-0 w-full gap-1.5 h-8 text-xs font-medium ${isSelectionActive ? 'col-span-full' : ''} sm:w-auto sm:col-span-auto`}
           >
-            <Check className="h-4 w-4 mr-2" />
-            {isSelectionMode ? 'Cancel' : 'Select'}
+            {isSelectionActive ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+            <span>{isSelectionActive ? 'Cancel' : 'Select'}</span>
           </Button>
-          {!isSelectionMode && (
-            <Button size="sm" onClick={() => openAddAccountDialog()} className="flex-1 sm:flex-none">
-              Add Account
+          {!isSelectionActive && (
+            <Button size="sm" className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto" onClick={() => openAddAccountDialog()}>
+              <Plus className="h-3.5 w-3.5" />
+              <span className="sm:hidden">Add</span>
+              <span className="hidden sm:inline">Add Account</span>
             </Button>
           )}
         </div>
-      </div>
+      </ToolbarShell>
 
-      {isReorderMode ? (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext items={filteredAccounts.map(a => a.id)} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredAccounts.map((account) => (
-                <SortableAccountCard
-                  key={account.id}
-                  account={account}
-                  isSelected={selectedAccountIds.has(account.id)}
-                  onToggleSelect={toggleAccountSelection}
-                  onLongPress={toggleAccountSelection}
-                  onDelete={() => setDeleteConfirmation({ open: true, accountIds: [account.id] })}
-                  isSelectionMode={isSelectionMode}
-                  isPrivacyMode={isPrivacyModeEnabled}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+
+      <FloatingActionBar
+        open={selectedAccountIds.size > 0}
+        selectedCount={selectedAccountIds.size}
+        totalCount={accounts.length}
+        onClearSelection={() => { setSelectedAccountIds(new Set()); setIsSelectionMode(false) }}
+        actions={[
+          {
+            label: selectedAccountIds.size === accounts.length ? 'Deselect All' : 'Select All',
+            onClick: selectAll,
+            variant: 'outline',
+            icon: <Check className="h-4 w-4" />,
+          },
+          {
+            label: 'Bulk Actions',
+            onClick: () => setShowBulkActions(true),
+            variant: 'outline',
+            icon: <Layers className="h-4 w-4" />,
+          },
+          {
+            label: `Delete (${selectedAccountIds.size})`,
+            onClick: handleDeleteSelected,
+            variant: 'destructive',
+            icon: <Trash2 className="h-4 w-4" />,
+          },
+        ]}
+      />
+
+      {accountsView === 'list' ? (
+        <div className="flex flex-col gap-2">
           {filteredAccounts.length === 0 && searchQuery ? (
-            <div className="col-span-full py-20 text-center animate-in fade-in zoom-in-95">
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-                <Search className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <h3 className="text-lg font-semibold">No accounts found</h3>
-              <p className="text-sm text-muted-foreground">No matches for "{searchQuery}"</p>
-              <Button variant="link" onClick={() => handleSearchChange('')} className="mt-2">
-                Clear search
-              </Button>
-            </div>
+            <EmptyState
+              className="animate-in fade-in zoom-in-95"
+              icon={<Search className="text-muted-foreground" />}
+              title="No accounts found"
+              description={`No matches for "${searchQuery}"`}
+              action={
+                <Button variant="link" onClick={() => handleSearchChange('')}>
+                  Clear search
+                </Button>
+              }
+            />
+          ) : (
+            filteredAccounts.map((account) => (
+              <AccountListRow
+                key={account.id}
+                account={account}
+                isPrivacyMode={isPrivacyModeEnabled}
+                isSelected={selectedAccountIds.has(account.id)}
+                isSelectionMode={isSelectionActive}
+                onToggleSelect={toggleAccountSelection}
+                onDelete={handleDeleteSingle}
+              />
+            ))
+          )}
+        </div>
+      ) : (
+        <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredAccounts.length === 0 && searchQuery ? (
+            <EmptyState
+              className="col-span-full animate-in fade-in zoom-in-95"
+              icon={<Search className="text-muted-foreground" />}
+              title="No accounts found"
+              description={`No matches for "${searchQuery}"`}
+              action={
+                <Button variant="link" onClick={() => handleSearchChange('')}>
+                  Clear search
+                </Button>
+              }
+            />
           ) : (
             <>
               {filteredAccounts.map((account) => (
-                <AccountCard
-                  key={account.id}
-                  account={account}
-                  isSelected={selectedAccountIds.has(account.id)}
-                  onToggleSelect={toggleAccountSelection}
-                  onLongPress={toggleAccountSelection}
-                  onDelete={() => setDeleteConfirmation({ open: true, accountIds: [account.id] })}
-                  isSelectionMode={isSelectionMode}
-                  isPrivacyMode={isPrivacyModeEnabled}
-                />
+                <StaggerItem key={account.id}>
+                  <AccountCard
+                    account={account}
+                    isSelected={selectedAccountIds.has(account.id)}
+                    onToggleSelect={toggleAccountSelection}
+                    onLongPress={toggleAccountSelection}
+                    onDelete={handleDeleteSingle}
+                    isSelectionMode={isSelectionActive}
+                    isPrivacyMode={isPrivacyModeEnabled}
+                  />
+                </StaggerItem>
               ))}
             </>
           )}
-        </div>
+        </StaggerContainer>
       )}
 
-      {/* Bulk Actions Dialog */}
+      <AccountReorderDialog
+        accounts={accounts}
+        open={reorderDialogOpen}
+        onOpenChange={setReorderDialogOpen}
+        isPrivacyMode={isPrivacyModeEnabled}
+      />
+
+
       <Dialog open={showBulkActions} onOpenChange={setShowBulkActions}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Bulk Actions</DialogTitle>
+        <DialogContent className="max-h-[92vh] max-w-5xl flex flex-col overflow-hidden p-0 gap-0">
+          <DialogHeader className="px-6 pb-2 pt-6 pr-16 sm:pr-6">
+            <DialogTitle className="text-2xl tracking-tight">Bulk Actions</DialogTitle>
+            <DialogDescription>
+              Apply installs, syncs, removals, and protection changes across selected accounts.
+            </DialogDescription>
           </DialogHeader>
           <BatchOperationsDialog
             selectedAccounts={accounts.filter((a) => selectedAccountIds.has(a.id))}

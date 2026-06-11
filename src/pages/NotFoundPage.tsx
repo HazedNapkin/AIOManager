@@ -1,55 +1,59 @@
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/contexts/ThemeContext'
-import { Home } from 'lucide-react'
+import { ArrowLeft, Home } from 'lucide-react'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { cn } from '@/lib/utils'
 
 export function NotFoundPage() {
-  const { theme } = useTheme()
-  const isInverted = theme === 'light' || theme === 'hoth'
+  useDocumentTitle('404')
+  const { isLight } = useTheme()
+  const location = useLocation()
 
   return (
     <div className="min-h-[70vh] flex items-center justify-center p-4">
-      <div className="max-w-md w-full text-center space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="relative inline-block">
-          <img
-            src="/logo.png"
-            alt="AIOManager Logo"
-            className={`h-24 w-24 md:h-32 md:w-32 mx-auto object-contain transition-all mb-4 ${isInverted ? 'invert' : ''}`}
-          />
-          <div className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
-            Error
-          </div>
-        </div>
+      <section
+        className="w-full max-w-lg rounded-xl border border-border/40 bg-card p-6 text-center shadow-sm animate-in fade-in zoom-in-95 duration-300 sm:p-8"
+        aria-labelledby="not-found-title"
+      >
+        <img
+          src="/logo.png"
+          alt="AIOManager"
+          loading="lazy"
+          className={cn('mx-auto h-20 w-20 object-contain', isLight && 'invert')}
+        />
 
-        <div className="space-y-4">
-          <h1 className="text-6xl md:text-8xl font-black tracking-tighter text-muted-foreground/20 italic select-none">
-            404
+        <div className="mt-6 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground uppercase">404</p>
+          <h1 id="not-found-title" className="text-2xl font-bold tracking-tight">
+            This page is not available.
           </h1>
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">
-            You've reached a dead end.
-          </h2>
-          <p className="text-muted-foreground text-sm md:text-base text-balance italic">
-            "Even the best aggregators sometimes lose a stream. The page you're looking for has been purged or moved."
+          <p className="mx-auto max-w-sm text-sm text-muted-foreground">
+            The link may have moved, expired, or never existed.
+          </p>
+          <p className="mx-auto max-w-sm truncate rounded-lg border border-border/40 bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground">
+            {location.pathname}
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 pt-4 sm:justify-center">
-          <Button asChild variant="default" size="lg" className="w-full sm:w-auto">
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
+          <Button asChild variant="default" size="lg" className="w-full gap-2 rounded-full sm:w-auto">
             <Link to="/">
-              <Home className="mr-2 h-4 w-4" />
-              Return Home
+              <Home className="h-4 w-4" />
+              Return home
             </Link>
           </Button>
           <Button
-            variant="ghost"
+            variant="outline"
             size="lg"
-            className="w-full sm:w-auto"
+            className="w-full gap-2 rounded-full sm:w-auto"
             onClick={() => window.history.back()}
           >
-            Go Back
+            <ArrowLeft className="h-4 w-4" />
+            Go back
           </Button>
         </div>
-      </div>
+      </section>
     </div>
   )
 }

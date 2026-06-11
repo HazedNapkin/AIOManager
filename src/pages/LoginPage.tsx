@@ -1,26 +1,45 @@
 import { useState, useEffect } from 'react'
-import { useSyncStore } from '@/store/syncStore'
+import { useSyncStore, savePasswordToSession } from '@/store/syncStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert, Copy, Check, ExternalLink } from 'lucide-react'
+import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams, useNavigate, Link } from 'react-router-dom'
+import { useTheme } from '@/contexts/ThemeContext'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { clearLocalAuthSecrets, restoreLocalAuthSecrets } from '@/lib/crypto'
+
+import { CopyButton } from '@/components/ui/copy-button'
+import { useConfetti } from '@/components/ui/confetti'
+import { BorderBeam } from '@/components/ui/border-beam'
+import { TypingText } from '@/components/ui/typing-text'
+import { useDocumentTitle } from '@/hooks/use-document-title'
+import { cn } from '@/lib/utils'
 import pkg from '../../package.json'
 
-export function LoginPage() {
-    const { auth, register, login, logout } = useSyncStore()
+interface LoginPageProps {
+    initialMode?: 'login' | 'register'
+}
+
+export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
+    useDocumentTitle('Login')
+    const auth = useSyncStore(s => s.auth)
+    const register = useSyncStore(s => s.register)
+    const login = useSyncStore(s => s.login)
+    const logout = useSyncStore(s => s.logout)
     const { isLocked, unlock } = useAuthStore()
+    const { isLight } = useTheme()
+
+    const confetti = useConfetti()
     const [searchParams] = useSearchParams()
     const navigate = useNavigate()
 
-    // State
-    const [mode, setMode] = useState<'login' | 'register'>('login')
+    const [mode, setMode] = useState<'login' | 'register'>(initialMode)
     const [showPassword, setShowPassword] = useState(false)
     const [customHtml, setCustomHtml] = useState<string | null>(null)
     const [isUnlocking, setIsUnlocking] = useState(false)
@@ -29,49 +48,53 @@ export function LoginPage() {
     const [registeredId, setRegisteredId] = useState('')
     const [hasCopied, setHasCopied] = useState(false)
 
-    // Login Fields
     const [loginId, setLoginId] = useState(auth.id || '')
     const [loginPass, setLoginPass] = useState('')
 
-    // Register Fields
     const [regPass, setRegPass] = useState('')
     const [regPassConfirm, setRegPassConfirm] = useState('')
     const [isRegistering, setIsRegistering] = useState(false)
 
-    // Shared
     const [loading, setLoading] = useState(false)
     const [loginError, setLoginError] = useState<string | null>(null)
 
     const passwordsMatch = regPass === regPassConfirm || !regPassConfirm
+    const normalizedLoginError = loginError?.toLowerCase() ?? ''
+    const notFoundError = normalizedLoginError.includes('not found')
+    const sessionRestoreError = loginError ? /database is locked|vault is locked|session expired|app is not initialized|encryption metadata|unlock (?:the )?app/i.test(loginError) : false
+    const passwordError = loginError ? /password|decrypt/i.test(loginError) && !sessionRestoreError : false
 
-    // Fetch custom HTML from server config
     useEffect(() => {
         fetch('/api/config')
             .then(res => res.json())
             .then(data => {
                 if (data.customHtml) setCustomHtml(data.customHtml)
             })
-            .catch(() => { /* Silently fail - optional feature */ })
+            .catch(() => {})
     }, [])
 
-    // Auto-fill ID from URL
     useEffect(() => {
         const idParam = searchParams.get('id')
         if (idParam) {
             setLoginId(idParam)
             setMode('login')
-            toast({ title: "Account Detected", description: "Please enter your password to unlock." })
+            toast({ title: "Account detected", description: "Enter your password to sign in." })
         }
     }, [searchParams])
 
     const handleRegister = async () => {
         if (!regPass) {
-            toast({ variant: "destructive", title: "Password Required", description: "Please choose a password." })
+            toast({ variant: "destructive", title: "Password required", description: "Choose a password." })
+            return
+        }
+
+        if (regPass.length < 8) {
+            toast({ variant: "destructive", title: "Password too short", description: "Use at least 8 characters so your session can be restored reliably." })
             return
         }
 
         if (regPass !== regPassConfirm) {
-            toast({ variant: "destructive", title: "Passwords Mismatch", description: "Please ensure both passwords match." })
+            toast({ variant: "destructive", title: "Passwords do not match", description: "Enter the same password twice." })
             return
         }
 
@@ -81,9 +104,9 @@ export function LoginPage() {
             const newId = useSyncStore.getState().auth.id
             setRegisteredId(newId)
             setShowRegSuccess(true)
+            confetti.fire({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } })
         } catch (e) {
-            console.error("Registration error:", e)
-            // Toast handled in store
+            if (import.meta.env.DEV) console.error("Registration error:", e)
         } finally {
             setIsRegistering(false)
         }
@@ -91,7 +114,7 @@ export function LoginPage() {
 
     const handleUnlock = async () => {
         if (!loginPass) {
-            toast({ variant: "destructive", title: "Password Required", description: "Please enter your master password." })
+            toast({ variant: "destructive", title: "Password required", description: "Enter your master password." })
             return
         }
 
@@ -101,25 +124,29 @@ export function LoginPage() {
         try {
             const success = await unlock(loginPass)
             if (!success) {
-                setLoginError('Invalid Password')
+                setLoginError('Invalid password')
             } else {
-                toast({ title: "Welcome Back", description: "Vault unlocked successfully." })
+                if (auth.isAuthenticated && auth.id) {
+                    savePasswordToSession(loginPass)
+                    useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass } }))
+                }
+                toast({ title: "Welcome back", description: "Signed in successfully." })
             }
         } catch (e) {
             const msg = (e as Error).message
 
             if (msg.includes('not initialized')) {
-                console.log('[Auth] Local DB empty. Attempting Cloud Restore...')
+                if (import.meta.env.DEV) console.log('[Auth] Local DB empty. Attempting Cloud Restore...')
                 try {
-                    await login(auth.id, loginPass, true) // Silent login to restore
+                    await login(auth.id, loginPass, true)
                     toast({ title: "Restored", description: "Session restored from cloud." })
                 } catch (restoreErr) {
-                    console.error('[Auth] Cloud restore failed:', restoreErr)
-                    setLoginError("No local data found and cloud restore failed. Please log in from your original browser to sync first.")
+                    if (import.meta.env.DEV) console.error('[Auth] Cloud restore failed:', restoreErr)
+                    setLoginError("This browser session could not be restored. Log in from your original browser to sync first.")
                 }
             } else {
                 setLoginError(msg)
-                console.error("Unlock error:", e)
+                if (import.meta.env.DEV) console.error("Unlock error:", e)
             }
         } finally {
             setIsUnlocking(false)
@@ -128,7 +155,7 @@ export function LoginPage() {
 
     const handleLogin = async () => {
         if (!loginId || !loginPass) {
-            toast({ variant: "destructive", title: "Missing Credentials", description: "ID and Password are required." })
+            toast({ variant: "destructive", title: "Missing credentials", description: "Enter your UUID and password." })
             return
         }
 
@@ -138,16 +165,36 @@ export function LoginPage() {
             await login(loginId, loginPass)
         } catch (e) {
             setLoginError((e as Error).message)
-            console.error("Login error:", e)
+            if (import.meta.env.DEV) console.error("Login error:", e)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleCloudRecoveryLogin = async () => {
+        if (!loginId || !loginPass) {
+            toast({ variant: "destructive", title: "Missing credentials", description: "Enter your UUID and password." })
+            return
+        }
+
+        setLoading(true)
+        setLoginError(null)
+        const localAuthBackup = clearLocalAuthSecrets()
+        try {
+            await login(loginId, loginPass, false, true)
+            toast({ title: "Signed in", description: "This browser session was reset and your cloud data was restored." })
+        } catch (e) {
+            restoreLocalAuthSecrets(localAuthBackup)
+            setLoginError((e as Error).message)
+            if (import.meta.env.DEV) console.error("Cloud recovery login error:", e)
         } finally {
             setLoading(false)
         }
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-background p-4 animate-in fade-in zoom-in-95 duration-300">
-            <div className="max-w-md w-full space-y-8">
-                {/* Custom HTML Injection (for hosted deployments) */}
+        <div className="min-h-screen flex items-center justify-center bg-background p-4 animate-in fade-in duration-500">
+            <div className="max-w-md w-full space-y-5">
                 {customHtml && (
                     <div
                         className="custom-html-container"
@@ -155,72 +202,77 @@ export function LoginPage() {
                     />
                 )}
 
-                {/* Branding */}
-                <div className="text-center space-y-2">
-                    <div className="flex justify-center mb-6">
-                        <img
-                            src="/logo.png"
-                            alt="AIOManager"
-                            className="h-24 w-24 object-contain transition-all hover:scale-110 duration-500"
-                        />
+                <div className="text-center space-y-4">
+                    <div className="flex justify-center">
+                        <div className="flex h-20 w-20 items-center justify-center">
+                            <img
+                                src="/logo.png"
+                                alt="AIOManager"
+                                className={cn('h-20 w-20 object-contain', isLight && 'invert')}
+                            />
+                        </div>
                     </div>
-                    <h1 className="text-3xl font-bold tracking-tight">AIOManager</h1>
-                    <p className="text-muted-foreground">One manager to rule them all.</p>
+                    <div className="space-y-1">
+                        <h1 className="text-3xl font-bold tracking-tighter">AIOManager</h1>
+                        <div className="text-sm text-muted-foreground">
+                            <TypingText text="One manager to rule them all." delay={40} hideCursorOnComplete grow />
+                        </div>
+                    </div>
                 </div>
 
                 {!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && (
                     <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
-                        <div className="flex items-center gap-2 text-destructive font-semibold">
+                        <div className="flex items-center gap-2 text-sm text-destructive font-semibold">
                             <ShieldAlert className="h-5 w-5" />
-                            <span>Insecure Connection Detected</span>
+                            <span>Secure connection required</span>
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                            AIOManager <strong>only works</strong> over a <strong>Secure Context (HTTPS)</strong>.
-                            Encryption and Sync APIs are disabled by your browser on insecure connections.
-                            Please use a reverse proxy or access via <code>localhost</code>.
+                            AIOManager needs HTTPS for browser encryption and sync APIs. Use a reverse proxy or access it from <code>localhost</code>.
                         </p>
                         <div className="pt-1">
                             <a
                                 href="https://github.com/Sonicx161/AIOManager#secure-context-https-required"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[10px] text-destructive/80 hover:text-destructive underline flex items-center gap-1"
+                                className="text-xs text-destructive/80 hover:text-destructive underline flex items-center gap-1"
                             >
-                                Advanced: Remote HTTP Workaround
+                                Open setup guide
                             </a>
                         </div>
                     </div>
                 )}
 
-                <Tabs value={mode} onValueChange={(v) => { setMode(v as any); setShowPassword(false); }} className="w-full">
-                    <TabsList className="grid w-full grid-cols-2 mb-6 h-12">
-                        <TabsTrigger value="register" className="h-10">New Account</TabsTrigger>
-                        <TabsTrigger value="login" className="h-10">Login</TabsTrigger>
+                <Tabs value={mode} onValueChange={(v) => { setMode(v as 'login' | 'register'); setShowPassword(false); }} className="w-full">
+                    <TabsList className="mb-4 grid w-full grid-cols-2">
+                        <TabsTrigger value="login" className="h-8">Login</TabsTrigger>
+                        <TabsTrigger value="register" className="h-8">New Account</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="register">
-                        <Card className="border-2 shadow-sm">
+                        <Card className="relative overflow-hidden border border-border/60 bg-card shadow-sm">
+                            <BorderBeam duration={14} />
                             <CardHeader>
-                                <CardTitle>Create Identity</CardTitle>
-                                <CardDescription>Generate a unique UUID to store your configuration.</CardDescription>
+                                <CardTitle className="text-lg font-bold tracking-tight">Create account</CardTitle>
+                                <CardDescription>Generate a private UUID for your encrypted workspace.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label>Account UUID</Label>
-                                    <div className="p-3 bg-muted rounded-md border border-dashed text-center">
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
+                                    <div className="p-3 bg-muted/20 rounded-lg border border-border/40 text-center">
                                         <p className="text-xs text-muted-foreground">
-                                            A unique UUID key will be generated for you automatically upon creation.
+                                            A unique UUID will be generated automatically.
                                         </p>
                                     </div>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Choose a Password</Label>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase">Password</Label>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
                                             type={showPassword ? "text" : "password"}
                                             placeholder="••••••••"
-                                            className="pl-9 pr-10"
+                                            className={`h-11 pl-10 pr-12 ${regPass && regPass.length < 8 ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                            autoComplete="new-password"
                                             value={regPass}
                                             onChange={(e) => setRegPass(e.target.value)}
                                         />
@@ -228,22 +280,27 @@ export function LoginPage() {
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="absolute right-0 top-0 h-9 w-9 text-muted-foreground hover:text-foreground"
+                                            className="absolute right-0 top-0 h-11 w-11 text-muted-foreground hover:text-foreground"
                                             onClick={() => setShowPassword(!showPassword)}
+                                            aria-label={showPassword ? "Hide password" : "Show password"}
                                         >
                                             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                         </Button>
                                     </div>
+                                    {regPass && regPass.length < 8 && (
+                                        <p className="text-xs text-destructive mt-1">At least 8 characters required ({regPass.length}/8)</p>
+                                    )}
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label>Confirm Password</Label>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase">Confirm password</Label>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
                                             type={showPassword ? "text" : "password"}
                                             placeholder="••••••••"
-                                            className={`pl-9 pr-10 ${!passwordsMatch ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                            className={`h-11 pl-10 pr-12 ${!passwordsMatch ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                            autoComplete="new-password"
                                             value={regPassConfirm}
                                             onChange={(e) => setRegPassConfirm(e.target.value)}
                                             onKeyDown={(e) => e.key === 'Enter' && handleRegister()}
@@ -252,73 +309,78 @@ export function LoginPage() {
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="absolute right-0 top-0 h-9 w-9 text-muted-foreground hover:text-foreground"
+                                            className="absolute right-0 top-0 h-11 w-11 text-muted-foreground hover:text-foreground"
                                             onClick={() => setShowPassword(!showPassword)}
+                                            aria-label={showPassword ? "Hide password" : "Show password"}
                                         >
                                             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                         </Button>
                                     </div>
                                     {!passwordsMatch && (
-                                        <p className="text-[10px] text-destructive font-medium animate-in slide-in-from-top-1">
+                                        <p className="text-xs text-destructive font-medium animate-in slide-in-from-top-1">
                                             Passwords do not match
                                         </p>
                                     )}
-                                    <p className="text-[11px] text-muted-foreground pt-1">
+                                    <p className="text-xs text-muted-foreground pt-1">
                                         This password is the <strong>only key</strong> to your data. Do not lose it.
                                     </p>
                                 </div>
                             </CardContent>
                             <CardFooter>
-                                <Button className="w-full h-11 text-base" onClick={handleRegister} disabled={isRegistering}>
+                                <Button className="w-full gap-2" size="xl" onClick={handleRegister} disabled={isRegistering || (regPass.length > 0 && regPass.length < 8) || !passwordsMatch}>
                                     {isRegistering ? (
-                                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
                                     ) : (
-                                        <Rocket className="mr-2 h-4 w-4" />
+                                        <Rocket className="h-4 w-4" />
                                     )}
-                                    {isRegistering ? 'Creating...' : 'Create & Enter'}
+                                    {isRegistering ? 'Creating account' : 'Create account'}
                                 </Button>
                             </CardFooter>
                         </Card>
                     </TabsContent>
 
                     <TabsContent value="login">
-                        <Card className="border-2 shadow-sm">
+                        <Card className="relative overflow-hidden border border-border/60 bg-card shadow-sm">
+                            <BorderBeam duration={14} />
                             <CardHeader>
-                                <CardTitle>{isLocked && auth.isAuthenticated ? 'Unlock Vault' : 'Welcome Back'}</CardTitle>
+                                <CardTitle className="text-lg font-bold tracking-tight">Welcome Back</CardTitle>
                                 <CardDescription>
                                     {isLocked && auth.isAuthenticated
-                                        ? 'Enter your master password to access your encrypted session.'
-                                        : 'Enter your UUID to access your session.'}
+                                        ? 'Your session ended. Sign in again to continue.'
+                                        : 'Enter your UUID and password to sign in.'}
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label>UUID</Label>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase">UUID</Label>
                                     <div className="relative">
-                                        <Key className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
                                             placeholder="uuid-string..."
-                                            className={`pl-9 font-mono text-sm ${loginError === 'Account ID not found' ? 'border-destructive' : ''}`}
+                                            className={`h-11 pl-10 font-mono text-sm ${notFoundError ? 'border-destructive' : ''}`}
                                             value={loginId}
                                             onChange={(e) => { setLoginId(e.target.value.trim()); setLoginError(null); }}
+                                            onKeyDown={(e) => e.key === 'Enter' && (isLocked && auth.isAuthenticated ? handleUnlock() : handleLogin())}
                                             disabled={isLocked && auth.isAuthenticated}
+                                            autoFocus
                                         />
                                     </div>
-                                    {loginError === 'Account ID not found' && (
-                                        <p className="text-[11px] text-destructive font-medium animate-in slide-in-from-top-1">
-                                            We couldn't find an account with this UUID. Please make sure you copied the entire string correctly.
+                                    {notFoundError && (
+                                        <p className="text-xs text-destructive font-medium animate-in slide-in-from-top-1">
+                                            We couldn't find an account with this UUID. Make sure you copied the entire string correctly.
                                         </p>
                                     )}
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label>Password</Label>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase">Password</Label>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
                                             type={showPassword ? "text" : "password"}
                                             placeholder="••••••••"
-                                            className={`pl-9 pr-10 ${loginError === 'Invalid Password' ? 'border-destructive' : ''}`}
+                                            className={`h-11 pl-10 pr-12 ${passwordError ? 'border-destructive' : ''}`}
+                                            autoComplete="current-password"
                                             value={loginPass}
                                             onChange={(e) => { setLoginPass(e.target.value); setLoginError(null); }}
                                             onKeyDown={(e) => e.key === 'Enter' && (isLocked && auth.isAuthenticated ? handleUnlock() : handleLogin())}
@@ -327,39 +389,57 @@ export function LoginPage() {
                                             type="button"
                                             variant="ghost"
                                             size="icon"
-                                            className="absolute right-0 top-0 h-9 w-9 text-muted-foreground hover:text-foreground"
+                                            className="absolute right-0 top-0 h-11 w-11 text-muted-foreground hover:text-foreground"
                                             onClick={() => setShowPassword(!showPassword)}
+                                            aria-label={showPassword ? "Hide password" : "Show password"}
                                         >
                                             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                         </Button>
                                     </div>
-                                    {loginError === 'Invalid Password' && (
-                                        <p className="text-[11px] text-destructive font-medium animate-in slide-in-from-top-1">
-                                            The password you entered is incorrect. Please try again or check your Caps Lock.
+                                    {passwordError && (
+                                        <p className="text-xs text-destructive font-medium animate-in slide-in-from-top-1">
+                                            The password you entered is incorrect. Try again or check your Caps Lock.
                                         </p>
                                     )}
-                                    {loginError && loginError !== 'Account ID not found' && loginError !== 'Invalid Password' && (
-                                        <p className="text-[11px] text-destructive font-medium animate-in slide-in-from-top-1">
-                                            {loginError === 'Server error, please try again later.'
-                                                ? 'Something went wrong on our end. Please wait a moment and try again.'
+                                    {loginError && !notFoundError && !passwordError && !sessionRestoreError && (
+                                        <p className="text-xs text-destructive font-medium animate-in slide-in-from-top-1">
+                                            {loginError === 'Server error, try again later.'
+                                                ? 'Something went wrong on our end. Wait a moment and try again.'
                                                 : loginError}
                                         </p>
+                                    )}
+                                    {sessionRestoreError && (
+                                        <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning space-y-2 animate-in slide-in-from-top-1">
+                                            <p className="font-medium">This browser session could not be restored.</p>
+                                            <p className="text-warning/90">Sign in from cloud with this UUID/password to continue.</p>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-8 w-full border-warning/30 bg-background/60 text-warning hover:bg-warning/10"
+                                                onClick={handleCloudRecoveryLogin}
+                                                disabled={loading || isUnlocking}
+                                            >
+                                                Sign in from cloud
+                                            </Button>
+                                        </div>
                                     )}
                                 </div>
                             </CardContent>
                             <CardFooter className="flex flex-col gap-3">
                                 <Button
-                                    className="w-full h-11 text-base"
+                                    className="w-full gap-2"
+                                    size="xl"
                                     variant="default"
                                     onClick={isLocked && auth.isAuthenticated ? handleUnlock : handleLogin}
                                     disabled={loading || isUnlocking}
                                 >
                                     {loading || isUnlocking ? (
-                                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
                                     ) : (
-                                        isLocked && auth.isAuthenticated ? <Lock className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />
+                                        <LogIn className="h-4 w-4" />
                                     )}
-                                    {loading ? 'Syncing...' : isUnlocking ? 'Unlocking...' : isLocked && auth.isAuthenticated ? 'Unlock System' : 'Login'}
+                                    {loading || isUnlocking ? 'Signing in' : 'Login'}
                                 </Button>
 
                                 {isLocked && auth.isAuthenticated && (
@@ -368,7 +448,7 @@ export function LoginPage() {
                                         className="text-xs text-muted-foreground"
                                         onClick={() => setShowSwitchConfirm(true)}
                                     >
-                                        Switch Account?
+                                        Switch account
                                     </Button>
                                 )}
                             </CardFooter>
@@ -379,8 +459,8 @@ export function LoginPage() {
                 <ConfirmationDialog
                     open={showSwitchConfirm}
                     onOpenChange={setShowSwitchConfirm}
-                    title="Switch Account?"
-                    description="Clear local session and switch accounts?"
+                    title="Switch account?"
+                    description="Clear the local session and switch accounts?"
                     confirmText="Switch"
                     cancelText="Cancel"
                     isDestructive={true}
@@ -390,71 +470,76 @@ export function LoginPage() {
                     }}
                 />
 
-                <Dialog open={showRegSuccess} onOpenChange={() => { }}>
+                <Dialog open={showRegSuccess} onOpenChange={(open) => { if (!open) setShowRegSuccess(false) }}>
                     <DialogContent className="sm:max-w-md">
                         <DialogHeader>
                             <div className="flex justify-center mb-4">
-                                <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
-                                    <Rocket className="h-6 w-6 text-green-500" />
+                                <div className="h-12 w-12 rounded-full bg-success/10 flex items-center justify-center">
+                                    <Rocket className="h-6 w-6 text-success" />
                                 </div>
                             </div>
-                            <DialogTitle className="text-center text-xl">Account Created Successfully!</DialogTitle>
+                            <DialogTitle className="text-center">Account created</DialogTitle>
                             <DialogDescription className="text-center pt-2">
-                                Your unique Account UUID has been generated. <br />
-                                <span className="text-destructive font-bold uppercase text-[10px] tracking-wider">Crucial:</span> You <strong>MUST</strong> save this ID. It is the only way to log back into your account.
+                                Save this UUID. It is the only way to sign in again.
                             </DialogDescription>
                         </DialogHeader>
 
                         <div className="space-y-4 py-4">
                             <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground uppercase tracking-widest">Your Account UUID</Label>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
                                 <div className="relative group">
-                                    <div className="p-4 bg-muted/50 rounded-lg border-2 border-dashed border-green-500/30 flex items-center justify-between gap-3 group-hover:border-green-500/50 transition-colors">
-                                        <code className="text-sm font-mono font-bold break-all text-emerald-500">
+                                    <div className="p-4 bg-success/10 rounded-lg border border-success/20 flex items-center justify-between gap-3 group-hover:border-success/40 transition-colors">
+                                        <code className="text-sm font-mono font-bold break-all text-success">
                                             {registeredId}
                                         </code>
-                                        <Button
-                                            size="icon"
-                                            variant="ghost"
+                                        <CopyButton
+                                            value={registeredId}
                                             className="shrink-0 h-10 w-10"
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(registeredId)
-                                                setHasCopied(true)
-                                                setTimeout(() => setHasCopied(false), 2000)
-                                            }}
-                                        >
-                                            {hasCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-                                        </Button>
+                                            iconSize={16}
+                                            onCopied={() => setHasCopied(true)}
+                                        />
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3 space-y-2">
-                                <div className="flex items-center gap-2 text-amber-500 font-semibold text-xs text uppercase tracking-tight">
+                            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center gap-2 text-warning font-semibold text-xs uppercase">
                                     <ShieldAlert className="h-4 w-4" />
-                                    Zero-Knowledge Warning
+                                    No password reset
                                 </div>
-                                <p className="text-[11px] text-muted-foreground leading-relaxed italic">
-                                    AIOManager does not store your password or provide "Password Reset" services. If you lose this UUID or your password, your data is <strong>permanently gone</strong>.
+                                <p className="text-xs text-muted-foreground leading-relaxed">
+                                    AIOManager does not store your password. If you lose this UUID or password, the encrypted data cannot be recovered.
                                 </p>
                             </div>
                         </div>
 
-                        <DialogFooter className="sm:justify-center">
+                        <DialogFooter className="sm:justify-center flex-col gap-2">
                             <Button
-                                className="w-full h-11 text-base font-semibold"
+                                className="w-full font-semibold"
+                                size="xl"
                                 onClick={() => navigate('/')}
                                 disabled={!hasCopied}
                             >
-                                <ExternalLink className="mr-2 h-4 w-4" />
-                                Enter Dashboard
+                                Enter dashboard
                             </Button>
+                            {!hasCopied && (
+                                <p className="text-xs text-muted-foreground text-center">Copy your UUID above before continuing.</p>
+                            )}
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
 
-                <p className="text-center text-xs text-muted-foreground">
-                    AIOManager v{pkg.version}{(pkg as any).build ? ` (Build ${(pkg as any).build})` : ''}
+                <div className="text-center mt-4">
+                    <Link
+                        to="/kronorium"
+                        className="text-xs text-muted-foreground hover:text-primary transition-colors"
+                    >
+                        Read the Kronorium →
+                    </Link>
+                </div>
+
+                <p className="text-center text-xs text-muted-foreground font-mono">
+                    v{pkg.version}{(pkg as Record<string, unknown>).build ? ` · Build ${(pkg as Record<string, unknown>).build}` : ''}
                 </p>
             </div>
         </div>

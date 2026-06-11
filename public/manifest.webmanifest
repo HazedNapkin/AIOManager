@@ -1,7 +1,9 @@
 {
     "name": "AIOManager",
     "short_name": "AIOManager",
+    "version": "2.0.0",
     "description": "Multi-account Stremio manager with cloud sync and autopilot.",
+    "id": "/",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#09090b",

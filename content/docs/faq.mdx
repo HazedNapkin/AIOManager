@@ -1,0 +1,226 @@
+---
+title: FAQ
+description: Answers to the most commonly asked questions about AIOManager.
+---
+
+Answers to frequently asked questions about AIOManager.
+
+## General
+
+<Accordions>
+  <Accordion title="What is AIOManager?">
+    AIOManager is an addon manager that lets you organize, configure, and manage addons across Stremio, Nuvio, RealStream, Hydra, and local accounts from a single dashboard. It supports Autopilot (automatic addon failover), Cloud Sync, Replay Sharing, Health Checks, and more.
+  </Accordion>
+  <Accordion title="Why should I use AIOManager?">
+    - **Multi-account management:** switch between Stremio accounts without logging out
+    - **Addons across accounts:** view and manage addons for all your accounts in one place
+    - **Autopilot:** automatically switch addons when one goes down
+    - **Cloud Sync:** sync your configuration across devices
+    - **Health Checks:** monitor addon uptime and performance
+  </Accordion>
+  <Accordion title="Is AIOManager free?">
+    Yes, AIOManager is completely free and open source. You can use a [public instance](/kronorium/getting-started/public-instances) or [self-host](/kronorium/getting-started/installation) it yourself.
+  </Accordion>
+  <Accordion title="Do you need my Stremio password?">
+    No. OAuth and AuthKey setup avoid your Stremio password entirely. Email/password setup stores the password encrypted in your local vault so AIOManager can refresh expired Stremio auth tokens; it is never stored in plaintext.
+  </Accordion>
+  <Accordion title="Can I use the same Stremio account on multiple AIOManager instances?">
+    No. Each Stremio account can only be connected to one AIOManager instance at a time.
+  </Accordion>
+  <Accordion title="Do addon changes sync back to Stremio?">
+    Yes. When you install, remove, or configure addons in AIOManager, the changes are reflected in your Stremio account immediately.
+  </Accordion>
+  <Accordion title="Does AIOManager have a mobile app?">
+    No, AIOManager is a web application. It works in mobile browsers, but there is no native app.
+  </Accordion>
+</Accordions>
+
+---
+
+## Autopilot
+
+<Accordions>
+  <Accordion title="What is Autopilot?">
+    Autopilot is AIOManager's automated failover system. It monitors your streaming addons and automatically switches to a backup when the primary goes down, keeping your streams available without manual intervention.
+  </Accordion>
+  <Accordion title="How many Autopilot rules can I create?">
+    Unlimited. Create as many rules as you need. Each account can have its own set of rules.
+  </Accordion>
+  <Accordion title="How fast is Autopilot?">
+    Failover happens within one cooldown period (default 5 minutes) plus the time for the health check to complete.
+  </Accordion>
+  <Accordion title="Does Autopilot work offline?">
+    No. Autopilot requires the AIOManager server to be running to evaluate health checks and apply rules.
+  </Accordion>
+  <Accordion title="Why does Autopilot keep re-enabling an addon I disabled?">
+    The addon is part of an active failover chain. Autopilot detects manual overrides and pauses the rule, but if you re-enable the rule it resumes managing the addon. Delete the Autopilot rule first, then disable the addon.
+  </Accordion>
+</Accordions>
+
+---
+
+## Cloud Sync
+
+<Accordions>
+  <Accordion title="What is Cloud Sync?">
+    Cloud Sync backs up your AIOManager configuration to your server and syncs it across devices. It covers accounts, addons, Autopilot rules, themes, and settings.
+  </Accordion>
+  <Accordion title="Is Cloud Sync required?">
+    No, it is optional but recommended for backing up your configuration and moving between devices.
+  </Accordion>
+  <Accordion title="What happens if I reset sync?">
+    Your local data is cleared. You will need to reconfigure everything or restore from a backup.
+  </Accordion>
+  <Accordion title="Why do deleted addons reappear after syncing?">
+    This is a race condition when two devices push conflicting changes simultaneously. The last write wins. Close AIOManager on other devices before making deletions to avoid this.
+  </Accordion>
+</Accordions>
+
+---
+
+## Security
+
+<Accordions>
+  <Accordion title="Where is my data stored?">
+    | Data | Storage |
+    |------|---------|
+    | Addons | Server database (self-hosted) or browser IndexedDB |
+    | API Keys | Encrypted in browser via the Vault |
+    | Credentials | Stored encrypted in the local Vault for token refresh; never stored in plaintext |
+  </Accordion>
+  <Accordion title="How is my data encrypted?">
+    AIOManager uses AES-256-GCM encryption for sensitive data. The encryption key is derived from your Master Password using PBKDF2 and never leaves your browser.
+  </Accordion>
+  <Accordion title="What about privacy on public instances?">
+    Public instances are run by third parties - your data is stored on their servers. For maximum privacy and control, [self-host](/kronorium/getting-started/installation).
+  </Accordion>
+  <Accordion title="What if I forget my Master Password?">
+    There is no recovery. AIOManager's client-side encryption means the server never sees your key. You will need to clear the vault and re-add your keys from scratch.
+  </Accordion>
+</Accordions>
+
+---
+
+## Self-Hosting
+
+<Accordions>
+  <Accordion title="What hardware do I need?">
+    | Component | Minimum |
+    |-----------|---------|
+    | CPU | 1 core |
+    | RAM | 512 MB |
+    | Storage | Depends on database size |
+  </Accordion>
+  <Accordion title="Which database should I use?">
+    | Database | Best For |
+    |----------|---------|
+    | SQLite | Personal use, testing. Single file, easy to back up. |
+    | PostgreSQL | Production, multi-user. Better performance at scale. |
+  </Accordion>
+  <Accordion title="Does AIOManager work with Unraid?">
+    Yes. Use the [Unraid template](https://raw.githubusercontent.com/sonicx161/AIOManager/main/unraid-template.xml). AIOManager is not in the Community Apps store - install manually via the template URL.
+  </Accordion>
+  <Accordion title="How do I migrate from SQLite to PostgreSQL?">
+    Export your data from Settings → Data & Sync. Set up PostgreSQL and set `DATABASE_URL` in your environment. Start a fresh AIOManager instance with `DB_TYPE=postgres`. Import your backup data.
+  </Accordion>
+  <Accordion title="Can I use AIOManager behind Cloudflare?">
+    Yes. Ensure WebSocket support is enabled in Cloudflare. If sync fails, increase the request timeout or bypass Cloudflare for `/api/*` routes.
+  </Accordion>
+</Accordions>
+
+---
+
+## Terminology
+
+A glossary of the jargon you'll see throughout AIOManager.
+
+<Accordions>
+  <Accordion title="UUID">
+    Your AIOManager account ID. A 36-character string like `a1b2c3d4-…` that uniquely identifies your AIOManager profile on this server. Separate from your Stremio account. Used together with your password to log in. Cannot be reset - write it down.
+  </Accordion>
+  <Accordion title="Master Password / Master Key">
+    The password you set when creating your AIOManager account. Encrypts your Vault and your cloud-synced state before it leaves your browser. The server never sees this in plaintext, so there is no password reset. If you lose it, you lose access to your encrypted data.
+  </Accordion>
+  <Accordion title="Stremio Auth Key">
+    A long token issued by Stremio's API that proves you're logged into a particular Stremio account. AIOManager stores this encrypted at rest so it can install/remove addons on your behalf without your Stremio password.
+  </Accordion>
+  <Accordion title="Addon">
+    A Stremio plugin that provides catalogs, streams, subtitles, or metadata. Each addon has a manifest URL ending in `manifest.json`. Examples: Cinemeta (metadata), Torrentio (streams), AIOStreams (aggregator).
+  </Accordion>
+  <Accordion title="Manifest">
+    The `manifest.json` file an addon serves. Describes what the addon does - its name, version, supported types, catalogs, and resources. AIOManager fetches the manifest to display the addon and to run health checks.
+  </Accordion>
+  <Accordion title="Transport URL">
+    The full URL of an addon's manifest, including any config baked into the path. For configurable addons (like AIOStreams or Torrentio), changing the config produces a new transport URL. AIOManager identifies addons by this URL.
+  </Accordion>
+  <Accordion title="Autopilot / Failover Chain">
+    AIOManager's automated failover system. A *chain* is an ordered list of addons (primary first, backups after). Autopilot health-checks the primary; if it fails, the chain's next addon is enabled and the primary is disabled. When the primary recovers, Autopilot switches back.
+  </Accordion>
+  <Accordion title="Reliability Score">
+    A counter Autopilot keeps for each addon in a chain - the number of consecutive successful health checks since the last failure. Used to prevent flapping: a recovered addon must pass several checks in a row before Autopilot trusts it again.
+  </Accordion>
+  <Accordion title="Recovery Threshold">
+    The number of consecutive successful health checks required before Autopilot switches back to a recovered primary. Currently fixed at 2 - two clean checks in a row before a recovered addon is trusted again. The matching failure threshold (also 2) determines how many failed checks happen before a primary is replaced.
+  </Accordion>
+  <Accordion title="Cooldown">
+    The minimum time Autopilot waits between sending notifications for the same rule. Prevents alert spam during repeated failovers (an addon flapping up/down). Set per-rule in minutes.
+  </Accordion>
+  <Accordion title="Webhook">
+    A URL Autopilot sends a notification to when a failover happens. AIOManager auto-detects Discord, Slack, and generic JSON webhooks from the URL pattern and formats the payload accordingly.
+  </Accordion>
+  <Accordion title="Debrid Service">
+    A premium subscription service (Real-Debrid, AllDebrid, Premiumize, TorBox, Debrid-Link) that caches files on fast servers. Streaming addons use your debrid API key to serve cached, high-speed streams instead of slow torrents.
+  </Accordion>
+  <Accordion title="Vault">
+    AIOManager's encrypted storage for your debrid API keys and other tokens. Locally encrypted with your Master Password - keys never leave your browser. Monitors expiry dates per provider and warns before keys expire.
+  </Accordion>
+  <Accordion title="Library">
+    Your personal collection of saved addon configurations. Save an addon once, deploy it to any account in one click. Organized by Profiles (groupings) and Tags (free-form labels for filtering and bulk operations).
+  </Accordion>
+  <Accordion title="Profile">
+    A named group inside the Library used to organise saved addons (e.g. "Main", "Backups", "Kids"). You can deploy an entire profile to an account at once. Library profiles are different from Stremio's per-account profile slots.
+  </Accordion>
+  <Accordion title="Sync / Cloud Sync">
+    Optional encrypted cloud backup of your AIOManager state (accounts, library, autopilot rules, settings). Encrypted client-side with AES-256-GCM before leaving your browser; server stores ciphertext only.
+  </Accordion>
+  <Accordion title="Privacy Mode">
+    A toggle that masks emails and other sensitive identifiers across the UI. Useful for screenshots, screen-sharing, or running AIOManager on a shared display. Persists across reloads.
+  </Accordion>
+  <Accordion title="Health Check">
+    A short HTTP request AIOManager sends to an addon's manifest URL to verify it's responding correctly. Used by Autopilot to decide if a primary addon needs to be replaced by a backup.
+  </Accordion>
+  <Accordion title="Mirror">
+    A bulk action that copies one account's addon list to other accounts. *Append* mode adds source addons without removing existing ones; *Destructive Mirror* wipes all non-protected addons on the targets first, producing an exact copy. Protected addons are always kept.
+  </Accordion>
+  <Accordion title="Protection">
+    A flag on individual addons that prevents them from being removed by bulk operations (Mirror, Remove by Tag, etc.). Use it on addons you never want a sweep to delete.
+  </Accordion>
+  <Accordion title="Connection">
+    A link between an AIOManager account and an external platform (Stremio, Nuvio, Hydra, RealStream). Connections mirror your addon configuration to that platform and keep it in sync via the Reconciler.
+  </Accordion>
+  <Accordion title="Reconciler">
+    The bidirectional sync engine behind Connections. It reads the addon list from each connected platform, compares it against the canonical AIOManager list, and propagates additions and removals to keep everything in agreement.
+  </Accordion>
+  <Accordion title="Discover">
+    An in-app tab for browsing and installing community addons. Searchable catalog with categories and one-click install to your accounts.
+  </Accordion>
+  <Accordion title="Hydra">
+    An addon management protocol. Hydra Inbound receives addon configurations from external platforms. Hydra Outbound pushes your addon configuration to Hydra-compatible platforms.
+  </Accordion>
+  <Accordion title="Nuvio">
+    A streaming platform that AIOManager can connect to. Supports multiple profiles per account, with server-side token custody and automatic refresh.
+  </Accordion>
+  <Accordion title="RealStream">
+    A streaming platform integrated with AIOManager via email/password auth. Server-side token custody handles refresh automatically.
+  </Accordion>
+  <Accordion title="Tombstone">
+    A marker placed on a deleted addon to prevent it from being accidentally re-added during sync. Tombstones self-heal when an addon is legitimately re-added and expire after a configurable TTL.
+  </Accordion>
+  <Accordion title="Canonical Addon List">
+    The authoritative addon list for an account in AIOManager. All connections are mirrors of this list. The reconciler uses it as the source of truth for bidirectional sync.
+  </Accordion>
+</Accordions>
+
+---
+
+Have a specific issue? Check the [Troubleshooting guide](/kronorium/troubleshooting).

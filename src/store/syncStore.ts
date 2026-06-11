@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { v4 as uuidv4 } from 'uuid'
 
-import { useAccountStore } from './accountStore'
+import { useAccountStore, getAccountAuthKey } from './accountStore'
+import type { AddonDescriptor } from '@/types/addon'
 import { useAddonStore } from './addonStore'
 import { useProfileStore } from './profileStore'
 import { useFailoverStore } from './failoverStore'
@@ -11,10 +11,41 @@ import { useVaultStore } from './vaultStore'
 import { toast } from '@/hooks/use-toast'
 import { deriveSyncToken } from '@/lib/crypto'
 import { resilientFetch } from '@/lib/api-resilience'
+import { decompressSyncPayload } from '@/lib/utils'
+import { applySyncedSettings } from '@/lib/synced-settings'
+import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
+import { createSafeStorage } from './safe-storage'
 
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
 let _appReady = false
 setTimeout(() => { _appReady = true }, 3000)
+
+let _lastPushedState: string | null = null
+let _pendingRetry = false
+let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let _accountsHydrated = false
+let _syncLock: Promise<void> | null = null
+let _onlineHandler: (() => void) | null = null
+let _syncBC: BroadcastChannel | null = null
+
+async function acquireSyncLock(): Promise<() => void> {
+    while (_syncLock) {
+        await _syncLock
+    }
+    let resolve!: () => void
+    _syncLock = new Promise<void>(r => { resolve = r })
+    let released = false
+    return () => {
+        if (released) return
+        released = true
+        _syncLock = null
+        resolve()
+    }
+}
+
+export function markAccountsHydrated() {
+    _accountsHydrated = true
+}
 
 export interface SyncHistoryEntry {
     id: string
@@ -35,14 +66,14 @@ interface SyncState {
     serverUrl: string
     lastSyncedAt: string | null
     isSyncing: boolean
-    isRefreshingFromCloud: boolean  // true only during the post-unlock pull — separate from write syncs
+    isRefreshingFromCloud: boolean  // true only during the post-unlock pull - separate from write syncs
     isInitialSyncCompleted: boolean // Safety flag to prevent stale devices from pushing before they've pulled
     lastActionTimestamp: number
     lastSeenVersion: string | null
-    _syncDebounceTimer: any // Internal use only, not persisted
+    syncSaltB64: string | null
     history: SyncHistoryEntry[]
-    // Actions
     setLastSeenVersion: (version: string) => void
+    addLogEntry: (data: Omit<SyncHistoryEntry, 'id' | 'timestamp'>) => void
     register: (password: string, name?: string) => Promise<void>
     login: (id: string, password: string, isSilent?: boolean, bypassGuard?: boolean) => Promise<void>
     logout: () => void
@@ -59,6 +90,27 @@ interface SyncState {
 
 const DEFAULT_SERVER = '/api'
 
+const SYNC_PASSWORD_KEY = 'stremio-sync-password'
+
+function getSyncApiPath(serverUrl: string | undefined): string {
+    const base = (serverUrl || DEFAULT_SERVER).trim().replace(/\/+$/, '')
+    if (!base) return DEFAULT_SERVER
+    if (!base.startsWith('http')) return base
+    return base.endsWith('/api') ? base : `${base}/api`
+}
+
+export const savePasswordToSession = (password: string) => {
+    try { sessionStorage.setItem(SYNC_PASSWORD_KEY, password) } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}
+
+const loadPasswordFromSession = (): string => {
+    try { return sessionStorage.getItem(SYNC_PASSWORD_KEY) || '' } catch (e) { if (import.meta.env.DEV) console.error(e); return '' }
+}
+
+const clearPasswordFromSession = () => {
+    try { sessionStorage.removeItem(SYNC_PASSWORD_KEY) } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}
+
 export const useSyncStore = create<SyncState>()(
     persist(
         (set, get) => ({
@@ -72,21 +124,20 @@ export const useSyncStore = create<SyncState>()(
             lastSyncedAt: null,
             isSyncing: false,
             isRefreshingFromCloud: false,
-            isInitialSyncCompleted: false, // Reset on every boot or logout
+            isInitialSyncCompleted: false,
             lastActionTimestamp: 0,
             lastSeenVersion: null,
-            _syncDebounceTimer: null,
+            syncSaltB64: null,
             history: [],
 
             setLastSeenVersion: (version: string) => {
                 set({ lastSeenVersion: version })
-                get().syncToRemote(true).catch(console.error)
             },
 
             addLogEntry: (data: Omit<SyncHistoryEntry, 'id' | 'timestamp'>) => {
                 const entry: SyncHistoryEntry = {
                     ...data,
-                    id: uuidv4(),
+                    id: crypto.randomUUID(),
                     timestamp: new Date().toISOString()
                 }
                 set(state => ({
@@ -100,15 +151,13 @@ export const useSyncStore = create<SyncState>()(
                 set((state) => ({
                     auth: { ...state.auth, name }
                 }))
-                // Immediate sync
-                get().syncToRemote(true).catch(console.error)
+                get().syncToRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
             },
 
             // Helper to manually trigger a pull (useful for re-hydration)
             syncFromRemote: async (isSilent: boolean = true) => {
                 const { auth } = get()
                 if (!auth.isAuthenticated) return
-                // Reuse login logic which performs the fetch & merge
                 await get().login(auth.id, auth.password, isSilent)
             },
 
@@ -121,18 +170,16 @@ export const useSyncStore = create<SyncState>()(
             refreshFromCloud: async () => {
                 const { auth, isSyncing } = get()
                 if (!auth.isAuthenticated || !auth.id || !auth.password) return
-
-                // Safety: Don't trigger if already syncing or if we haven't even finished basic initialization
                 if (isSyncing) return
+
+                const releaseSyncLock = await acquireSyncLock()
 
                 set({ isRefreshingFromCloud: true })
                 try {
-                    // This call might throw if decryption fails (e.g. wrong password or corrupt data)
                     await get().login(auth.id, auth.password, true, true)
                     set({ isInitialSyncCompleted: true })
                 } catch (e) {
-                    console.error('[Sync] Post-unlock cloud refresh failed:', e)
-                    // Only show alert if it's NOT a silent failure (decryption/auth issues are never silent)
+                    if (import.meta.env.DEV) console.error('[Sync] Post-unlock cloud refresh failed:', e)
                     const message = e instanceof Error ? e.message : 'Unknown sync error'
                     if (message.toLowerCase().includes('decrypt') || message.toLowerCase().includes('password')) {
                         toast({
@@ -141,7 +188,6 @@ export const useSyncStore = create<SyncState>()(
                             description: message
                         })
                     } else {
-                        // Generic network/server failure - less alarming
                         toast({
                             variant: 'destructive',
                             title: 'Refresh Failed',
@@ -150,14 +196,18 @@ export const useSyncStore = create<SyncState>()(
                     }
                 } finally {
                     set({ isRefreshingFromCloud: false })
+                    releaseSyncLock()
                 }
             },
 
             register: async (password: string, name: string = '') => {
+                if (password.length < 8) {
+                    throw new Error('Password must be at least 8 characters.')
+                }
+
                 // Generate new Identity
-                const newId = uuidv4()
+                const newId = crypto.randomUUID()
                 const { serverUrl } = get()
-                const baseUrl = serverUrl || DEFAULT_SERVER
 
                 // We perform an initial specific sync to "Claim" the ID
                 // In this model, we just save the empty state (or default state) to the server
@@ -165,49 +215,72 @@ export const useSyncStore = create<SyncState>()(
 
                 // For v1, we assume success if we can generate it locally. 
                 // The first 'syncToRemote' will actually write it to DB.
-                // But to be safe/correct, let's write an empty init state.
+
 
                 try {
-                    const apiPath = baseUrl.startsWith('http') ? `${baseUrl}/api` : baseUrl
-                    const { loadSalt } = await import('@/lib/crypto')
-                    const salt = loadSalt()
-                    const saltBase64 = salt ? btoa(String.fromCharCode(...salt)) : undefined
+                    const apiPath = getSyncApiPath(serverUrl)
+                    const { generateSalt } = await import('@/lib/crypto')
+                    const salt = generateSalt()
+                    const saltBase64 = btoa(String.fromCharCode(...salt))
+                    const syncSalt = crypto.getRandomValues(new Uint8Array(16))
+                    const syncSaltB64 = btoa(String.fromCharCode(...syncSalt))
 
                     const emptyState = {
                         accounts: [],
                         addons: { version: '1.0', savedAddons: [] },
                         profiles: [],
                         failover: [],
+                        vault: [],
+                        vaultTombstones: [],
+                        notes: [],
+                        notesTrash: [],
+                        watchEvents: [],
+                        watchSnapshot: {},
                         salt: saltBase64,
                         syncedAt: new Date().toISOString()
                     }
+                    const syncToken = await deriveSyncToken(password)
 
                     const res = await resilientFetch(`${apiPath}/sync/${newId}`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'x-sync-password': await deriveSyncToken(password)
+                            'x-sync-password': syncToken
                         },
                         body: JSON.stringify(emptyState)
                     })
 
                     if (!res.ok) throw new Error("Failed to register account on server.")
 
-                    // Parity Fix: Also initialize the local Master Password using the same password
-                    // This ensures local storage (IndexedDB) encryption key is ready immediately.
+                    // Parity Fix: Also initialize the local Master Password using the same password.
+                    // If this fails, do not continue into an authenticated-but-unusable session.
                     try {
-                        await useAuthStore.getState().setupMasterPassword(password)
-                    } catch (e) {
-                        console.error("Local password setup during sync registration failed:", e)
+                        await useAuthStore.getState().setupMasterPassword(password, salt, { resetSyncStore: false })
+                    } catch (setupError) {
+                        try {
+                            const cleanupRes = await resilientFetch(`${apiPath}/sync/${newId}`, {
+                                method: 'DELETE',
+                                headers: { 'x-sync-password': syncToken }
+                            })
+                            if (!cleanupRes.ok) throw new Error(`cleanup failed (${cleanupRes.status})`)
+                        } catch (cleanupError) {
+                            if (import.meta.env.DEV) console.error("Failed to clean up incomplete sync registration:", cleanupError)
+                            throw new Error(`Local session setup failed after account reservation. Save this UUID before retrying: ${newId}`)
+                        }
+                        throw setupError
                     }
 
+                    savePasswordToSession(password)
                     set({
                         auth: { id: newId, password, name, isAuthenticated: true },
-                        lastSyncedAt: new Date().toISOString()
+                        lastSyncedAt: new Date().toISOString(),
+                        isInitialSyncCompleted: true,
+                        syncSaltB64,
                     })
 
                     // Set flag to show post-login reminder (Since the registration dialog is hidden too fast)
                     localStorage.setItem('aiom_show_sync_id_reminder', 'true')
+                    await get().syncToRemote(false)
 
                     toast({ title: "Account Created", description: "Welcome to AIOManager." })
                 } catch (e) {
@@ -220,8 +293,7 @@ export const useSyncStore = create<SyncState>()(
                 if (get().isSyncing && !bypassGuard) return
                 set({ isSyncing: true })
                 const { serverUrl } = get()
-                const baseUrl = serverUrl || DEFAULT_SERVER
-                const apiPath = baseUrl.startsWith('http') ? `${baseUrl}/api` : baseUrl
+                const apiPath = getSyncApiPath(serverUrl)
 
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${id}`, {
@@ -229,8 +301,8 @@ export const useSyncStore = create<SyncState>()(
                     })
 
                     if (res.status === 401) throw new Error("Incorrect Password. If you've forgotten it, you may need to reset your account.")
-                    if (res.status === 404) throw new Error("Cloud Account not found. Please check the ID or Register a new one.")
-                    if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status}). Please try again later.`)
+                    if (res.status === 404) throw new Error("Cloud Account not found. Check the ID or Register a new one.")
+                    if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status}). Try again later.`)
 
                     const text = await res.text()
                     if (!text || text.trim() === "") {
@@ -238,33 +310,40 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     if (text.includes('[object Object]')) {
-                        console.warn("[Sync] Server returned '[object Object]'. Treating as corrupted/empty.")
-                        throw new Error("Server returned corrupted data ([object Object]). Please reset your account.")
+                        if (import.meta.env.DEV) console.warn("[Sync] Server returned '[object Object]'. Treating as corrupted/empty.")
+                        throw new Error("Server returned corrupted data ([object Object]). Reset your account.")
                     }
 
-                    let data: any
+                    let data: unknown
                     try {
-                        const raw = JSON.parse(text)
-                        // Encryption Support (Privacy Update)
+                        const raw = JSON.parse(text) as Record<string, unknown>
                         if (raw.isEncrypted && raw.data) {
-                            const { AES, enc } = await import('crypto-js')
-                            const bytes = AES.decrypt(raw.data, password)
-                            const decryptedStr = bytes.toString(enc.Utf8)
-
-                            if (!decryptedStr) throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
-
-                            // Ultra-Resilience: Attempt parsing first, don't just nuke everything on a partial match
+                            const { decryptSyncPayload } = await import('@/lib/crypto')
+                            let decryptedStr: string
+                            let remoteSyncSalt: Uint8Array | undefined
+                            if (raw.syncSalt && typeof raw.syncSalt === 'string') {
+                                remoteSyncSalt = Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
+                                if (!get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
+                            }
                             try {
-                                data = JSON.parse(decryptedStr)
+                                decryptedStr = await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
+                            } catch {
+                                throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
+                            }
+
+                            const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+
+                            try {
+                                data = JSON.parse(payloadStr)
 
                                 // Post-Parse Check: If it PARSED into a literal string "[object Object]", then it's bad.
                                 // But if it's a valid object that happens to CONTAIN that string somewhere, we keep it.
                                 if (data === '[object Object]') {
-                                    console.warn('[Sync] Decrypted data IS "[object Object]". Discarding.')
+                                    if (import.meta.env.DEV) console.warn('[Sync] Decrypted data IS "[object Object]". Discarding.')
                                     data = {}
                                 }
                             } catch (parseErr) {
-                                console.error('[Sync] Parsing failed for decrypted string. Length:', decryptedStr.length)
+                                if (import.meta.env.DEV) console.error('[Sync] Parsing failed for decrypted string. Length:', decryptedStr.length)
                                 // Only logic to rescue if it WAS a double-serialized object? 
                                 // No, standard parse error handling is safer.
                                 throw parseErr // Let the outer catch handle it (which prompts wrong password)
@@ -273,55 +352,107 @@ export const useSyncStore = create<SyncState>()(
                             // Legacy: Plain text
                             data = raw
                         }
+                        if (raw.syncedAt && data && typeof data === 'object' && !Array.isArray(data)) {
+                            (data as Record<string, unknown>).syncedAt = raw.syncedAt
+                        }
 
-                        // Final Sanity Check: Ensure all components are what we expect
+                        const d = (data || {}) as Record<string, unknown>
+                        const dSettings = (d.settings || {}) as Record<string, unknown>
                         data = {
-                            accounts: data?.accounts || [], // Support direct array or object
-                            addons: data?.addons || { version: '1.0', savedAddons: [] },
-                            profiles: Array.isArray(data?.profiles) ? data.profiles : [],
-                            failover: data?.failover || [],
-                            vault: data?.vault || [],
-                            salt: data?.salt,
-                            name: data?.name,
-                            syncedAt: data?.syncedAt,
-                            lastSeenVersion: data?.lastSeenVersion || null
+                            accounts: d.accounts ?? undefined,
+                            addons: d.addons || { version: '1.0', savedAddons: [] },
+                            profiles: Array.isArray(d.profiles) ? d.profiles : [],
+                            failover: d.failover || [],
+                            vault: Array.isArray(d.vault) ? d.vault : [],
+                            vaultTombstones: Array.isArray(d.vaultTombstones) ? d.vaultTombstones : [],
+                            notes: Array.isArray(d.notes) ? d.notes : [],
+                            notesTrash: Array.isArray(d.notesTrash) ? d.notesTrash : [],
+                            salt: d.salt,
+                            name: d.name,
+                            syncedAt: d.syncedAt,
+                            lastSeenVersion: d.lastSeenVersion || null,
+                            settings: d.settings ? {
+                                ...dSettings,
+                                changelog: dSettings.changelog || []
+                            } : { changelog: [] },
+                            changelog: Array.isArray(d.changelog) ? d.changelog : [],
+                            customThemes: Array.isArray(d.customThemes) ? d.customThemes : [],
+                            accountTombstones: Array.isArray(d.accountTombstones) ? d.accountTombstones : [],
+                            watchEvents: Array.isArray(d.watchEvents) ? d.watchEvents : [],
+                            watchSnapshot: d.watchSnapshot || {},
+                            apiKeys: d.apiKeys,
                         }
 
                     } catch (e) {
-                        console.error("[Sync] Decryption/Parsing Error:", e)
+                        if (import.meta.env.DEV) console.error("[Sync] Decryption/Parsing Error:", e)
                         // If it's a JSON parse error (likely from getting HTML instead of JSON), show a better message
                         if (e instanceof SyntaxError) {
-                            throw new Error("Invalid server response. Please make sure the backend is running correctly.")
+                            throw new Error("Invalid server response. Make sure the backend is running correctly.")
                         }
-                        throw new Error("Failed to decrypt cloud data. Please verify your password.")
+                        throw new Error("Failed to decrypt cloud data. Verify your password.")
                     }
 
-                    // 1. Extract salt and unlock app first
-                    // This creates the encryptionKey needed for AccountStore imports
-                    let saltToUse = data.salt
-                    if (!saltToUse) {
-                        // Fallback to local salt for users who haven't pushed their salt to cloud yet
-                        const { loadSalt } = await import('@/lib/crypto')
+                    // This ensures we can still decrypt local account authKeys for reconciliation
+                    // even if the cloud salt differs from the local salt.
+                    let preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
+
+                    // If no in-memory key (fresh page load / re-login after corruption),
+                    // try to derive one from the local salt + password so we can still
+                    // decrypt existing local account authKeys during reconciliation.
+                    if (!preUnlockEncryptionKey) {
+                        const { loadSalt, deriveKey } = await import('@/lib/crypto')
                         const localSalt = loadSalt()
                         if (localSalt) {
-                            saltToUse = btoa(String.fromCharCode(...localSalt))
-                        }
-                    }
-
-                    if (saltToUse) {
-                        try {
-                            await useAuthStore.getState().unlockFromSync(password, saltToUse)
-                        } catch (e) {
-                            console.error("Failed to unlock from sync:", e)
-                            if (!isSilent) {
-                                throw new Error("Could not unlock app with this password. (Encryption Mismatch)")
+                            try {
+                                preUnlockEncryptionKey = await deriveKey(password, localSalt)
+                                if (import.meta.env.DEV) console.log('[Sync] Derived pre-unlock key from local salt for reconciliation')
+                            } catch (e) {
+                                if (import.meta.env.DEV) console.warn('[Sync] Could not derive pre-unlock key from local salt:', e)
                             }
                         }
                     }
 
-                    // 2. Import Data: Timestamp Conflict Resolution
+                    // This creates the encryptionKey needed for AccountStore imports
+                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
+                    let localSaltBase64: string | undefined
+                    {
+                        const { loadSalt } = await import('@/lib/crypto')
+                        const localSalt = loadSalt()
+                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
+                    }
+                    const norm = data as Record<string, unknown>
+                    const hasEncryptedData =
+                        (Array.isArray(norm.accounts) && norm.accounts.length > 0) ||
+                        (Array.isArray(norm.vault) && norm.vault.length > 0)
+                    const saltPolicy = resolveRestoreSaltPolicy({ cloudSalt, localSalt: localSaltBase64, hasEncryptedData })
+
+                    // Never fabricate a salt for a record that already holds encrypted data: a fresh salt
+                    // derives a different key, silently corrupting every authKey/vault entry. If no salt is
+                    // recoverable, the data can only be restored from the device that created the account.
+                    if (saltPolicy.refuse) {
+                        throw new Error("Encryption metadata is missing from this account's cloud backup. Sign in once from the device or browser where you created it to finish setup.")
+                    }
+
+                    let unlockOk = false
+                    try {
+                        await useAuthStore.getState().unlockFromSync(password, saltPolicy.saltToUse, { allowGenerate: saltPolicy.allowGenerate })
+                        unlockOk = true
+                    } catch (e) {
+                        if (import.meta.env.DEV) console.error("Failed to restore session from sync:", e)
+                        if (!isSilent) {
+                            throw new Error("Could not sign in with this password. (Encryption Mismatch)")
+                        }
+                        // Silent path: don't attempt data import without an encryption key
+                    }
+
+                    // Guard: skip all encrypted store operations if unlock failed
+                    if (!unlockOk) {
+                        if (import.meta.env.DEV) console.warn('[Sync] Skipping data import - encryption key not available.')
+                        return
+                    }
+                    const syncData = data as Record<string, unknown>
                     const localLastSync = get().lastSyncedAt
-                    const remoteLastSync = data.syncedAt
+                    const remoteLastSync = syncData.syncedAt as string | undefined
 
                     const remoteTime = remoteLastSync ? new Date(remoteLastSync).getTime() : 0
                     const localTime = localLastSync ? new Date(localLastSync).getTime() : 0
@@ -332,100 +463,159 @@ export const useSyncStore = create<SyncState>()(
 
                     let decision = 'passive merge'
 
-                    if (data.accounts) {
+                    // We NEVER mirror (replace local with remote). We always merge (union).
+                    // This prevents the class of bugs where cloud state overwrites and drops
+                    // local accounts. Merge = keep local-only + add remote-only + match overlapping.
+                    if (syncData.accounts) {
                         const localAccounts = useAccountStore.getState().accounts
-                        // Handle potential array vs object wrapper (legacy compatibility)
-                        const remoteAccountsRaw = Array.isArray(data.accounts) ? data.accounts : (data.accounts as any)?.accounts || []
-                        const remoteAccounts = remoteAccountsRaw as any[]
+                        const remoteAccountsRaw = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | undefined)?.accounts || []
+                        const remoteAccounts = remoteAccountsRaw as Record<string, unknown>[]
 
                         const hasRemoteData = remoteAccounts.length > 0
                         const hasLocalData = localAccounts.length > 0
 
-                        // SIMPLIFIED SYNC: Source of Truth Model
-                        // We compare timestamps. Newest timestamp is the 1:1 state.
                         if (!hasRemoteData && hasLocalData) {
                             decision = 'Seed Cloud (local data exists, cloud is empty)'
-                            // Seed the cloud with local data
-                            await useAccountStore.getState().importAccounts(JSON.stringify(data), true, 'merge')
+                            await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             setTimeout(() => get().syncToRemote(true), 1500)
-                        } else if (isLocalNewer) {
+                        } else if (isLocalNewer && hasLocalData) {
                             decision = 'Push Local (local is newer)'
-                            // Keep local, push to remote
                             setTimeout(() => get().syncToRemote(true), 1500)
-                        } else if (isEqual) {
-                            decision = 'Synchronized'
-                        } else {
-                            // Remote is newer OR both empty -> MIRROR
-                            decision = 'Mirror Cloud (cloud is source of truth)'
-                            await useAccountStore.getState().importAccounts(JSON.stringify(data), true, 'mirror')
-                        }
-                    }
-
-                    if (data.addons) {
-                        const localAddons = Object.keys(useAddonStore.getState().library).length
-                        const remoteAddons = Array.isArray(data.addons) ? data.addons : (data.addons as any)?.savedAddons || []
-
-                        if ((!remoteAddons || remoteAddons.length === 0) && localAddons > 0) {
-                            console.warn(`[Sync] Remote has 0 addons (Safety net triggered). Switching to MERGE + PUSH.`)
-                            await useAddonStore.getState().importLibrary(data, true, false, true)
-                            setTimeout(() => get().syncToRemote(true), 1500)
-                        } else if (isLocalNewer) {
-                            console.log("[Sync] Local addons are fresher. Merging & Pushing.")
-                            await useAddonStore.getState().importLibrary(data, true, false, true)
-                            // Force push to update the stale server
-                            setTimeout(() => get().syncToRemote(true), 2000)
-                        } else if (isEqual) {
-                            console.log("[Sync] Addons synchronized. Passive import.")
-                            await useAddonStore.getState().importLibrary(data, true, true, true)
-                        } else {
-                            // Mirror
-                            await useAddonStore.getState().importLibrary(data, false, true, true)
-                        }
-                        await useAddonStore.getState().initialize()
-                    }
-                    if (data.profiles && Array.isArray(data.profiles)) {
-                        await useProfileStore.getState().importProfiles(data.profiles)
-                    }
-                    if (data.failover) {
-                        if (Array.isArray(data.failover)) {
-                            // Legacy format: just rules
-                            await useFailoverStore.getState().importRules(data.failover, isRemoteNewer ? 'mirror' : 'merge', true)
-                        } else if (typeof data.failover === 'object') {
-                            // New format: { rules, webhook }
-                            const strategy = isRemoteNewer ? 'mirror' : 'merge'
-                            if (data.failover.rules) await useFailoverStore.getState().importRules(data.failover.rules, strategy, true)
-                            if (data.failover.webhook) {
-                                await useFailoverStore.getState().importWebhook(data.failover.webhook, true)
+                        } else if (hasRemoteData) {
+                            decision = 'Merge (always-merge policy)'
+                            await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
+                            if (isRemoteNewer) {
+                                setTimeout(() => get().syncToRemote(true), 1500)
                             }
                         }
                     }
 
-                    if (data.vault) {
-                        const { useVaultStore } = await import('./vaultStore')
-                        if (!isLocalNewer) {
-                            await useVaultStore.getState().importVault(data.vault)
+                    if (syncData.addons) {
+                        const localAddons = Object.keys(useAddonStore.getState().library).length
+                        const remoteAddons = Array.isArray(syncData.addons) ? syncData.addons : ((syncData.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
+
+                        if ((!remoteAddons || remoteAddons.length === 0) && localAddons > 0) {
+                            if (import.meta.env.DEV) console.warn(`[Sync] Remote has 0 addons (Safety net triggered). Switching to MERGE + PUSH.`)
+                            await useAddonStore.getState().importLibrary(syncData, true, false, true)
+                            setTimeout(() => get().syncToRemote(true), 1500)
+                        } else if (isLocalNewer) {
+                            if (import.meta.env.DEV) console.log("[Sync] Local addons are fresher. Merging & Pushing.")
+                            await useAddonStore.getState().importLibrary(syncData, true, false, true)
+                            setTimeout(() => get().syncToRemote(true), 2000)
+                        } else if (isEqual) {
+                            if (import.meta.env.DEV) console.log("[Sync] Addons synchronized. Passive import.")
+                            await useAddonStore.getState().importLibrary(syncData, true, true, true)
+                        } else {
+                            await useAddonStore.getState().importLibrary(syncData, false, true, true)
+                        }
+                        await useAddonStore.getState().initialize()
+                    }
+                    if (syncData.profiles && Array.isArray(syncData.profiles)) {
+                        await useProfileStore.getState().importProfiles(syncData.profiles)
+                    }
+                    if (syncData.failover) {
+                        const fo = syncData.failover as Record<string, unknown>
+                        if (Array.isArray(syncData.failover)) {
+                            await useFailoverStore.getState().importRules(syncData.failover, 'merge', true)
+                        } else if (typeof syncData.failover === 'object') {
+                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, 'merge', true)
+                            if (fo.webhook) {
+                                await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true)
+                            }
                         }
                     }
 
+                    if (syncData.notes && Array.isArray(syncData.notes)) {
+                        const { useNotesStore } = await import('@/store/notesStore')
+                        await useNotesStore.getState().importNotes(syncData.notes)
+                        if (Array.isArray(syncData.notesTrash)) {
+                            await useNotesStore.getState().importTrash(syncData.notesTrash)
+                        }
+                    }
+                    if (Array.isArray(syncData.vault) || Array.isArray(syncData.vaultTombstones)) {
+                        const { useVaultStore } = await import('./vaultStore')
+                        await useVaultStore.getState().initialize()
+                        await useVaultStore.getState().importVault((syncData.vault || []) as import('@/types/vault').VaultKey[], (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
+                    }
+
+                    if (syncData.settings) {
+                        applySyncedSettings(syncData.settings as Record<string, unknown>, !isLocalNewer)
+                    }
+
+                    {
+                        const { useWatchEventStore } = await import('@/store/watchEventStore')
+                        const local = useWatchEventStore.getState()
+                        const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
+                        const merged = new Map<string, Record<string, unknown>>()
+                        ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
+                        const mergedEvents = Array.from(merged.values())
+                            .sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
+                        const mergedSnapshot = { ...(syncData.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+                    }
+
+                    if (Array.isArray(syncData.customThemes) && syncData.customThemes.length > 0) {
+                        applySyncedSettings({ customThemes: syncData.customThemes }, true)
+                    }
+
+                    {
+                        const remote = Array.isArray(syncData.accountTombstones) ? syncData.accountTombstones as { id: string; deletedAt: number }[] : []
+                        const local = useAccountStore.getState().tombstones
+                        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+                        const tsMap = new Map<string, { id: string; deletedAt: number }>()
+                        ;[...remote, ...local].forEach(t => {
+                            if (t.deletedAt < cutoff) return
+                            const existing = tsMap.get(t.id)
+                            if (!existing || t.deletedAt > existing.deletedAt) tsMap.set(t.id, t)
+                        })
+                        useAccountStore.setState({ tombstones: Array.from(tsMap.values()) })
+                    }
+
+                    savePasswordToSession(password)
                     set({
-                        auth: { id, password, name: data.name || '', isAuthenticated: true },
-                        lastSyncedAt: data.syncedAt || new Date().toISOString(),
-                        lastSeenVersion: data.lastSeenVersion || get().lastSeenVersion
+                        auth: { id, password, name: (syncData.name as string) || '', isAuthenticated: true },
+                        lastSyncedAt: (syncData.syncedAt as string) || new Date().toISOString(),
+                        lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
+                        isInitialSyncCompleted: true
                     })
 
-                        ; (get() as any).addLogEntry({
-                            type: remoteTime === 0 ? 'pull' : 'pull',
-                            status: 'success',
-                            message: `Fetched cloud state. Decision: ${decision}`,
-                            isAuto: isSilent
-                        })
+                    // Heal a salt-less cloud record only with a definitively-correct salt (a freshly
+                    // minted one for an empty account). A device-local fallback for a record that has
+                    // data is left for a normal sync to push, so a foreign salt can't corrupt the record.
+                    if (saltPolicy.backfill) {
+                        setTimeout(() => get().syncToRemote(true), 1500)
+                    }
+
+                    get().addLogEntry({
+                        type: 'pull',
+                        status: 'success',
+                        message: `Fetched cloud state. Decision: ${decision}`,
+                        isAuto: isSilent
+                    })
 
                     if (!isSilent) {
-                        toast({ title: "Login Successful", description: "Your data has been loaded." })
+                        toast({ title: "Login Successful", description: "Data loaded." })
                     }
+
+                    setTimeout(() => {
+                        import('@/lib/activity-server').then(async m => {
+                            try { await m.pushCredentialsToServer() } catch (e) { if (import.meta.env.DEV) console.error('[Sync] Credential push failed:', e) }
+                            m.fetchAndMergeServerEvents().catch(e => { if (import.meta.env.DEV) console.error('[Sync] Server event fetch failed:', e) })
+                        }).catch(e => { if (import.meta.env.DEV) console.error('[Sync] Activity server import failed:', e) })
+                    }, 2000)
+
+                    // App-open: fold in any inbound canonical writes (AIOStreams) that landed
+                    // while this client was away, then push if a Hub actually changed. Without
+                    // a local change to trigger a push, this is what reflects inbound writes.
+                    setTimeout(() => {
+                        import('@/store/account/accountCanonical')
+                            .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
+                            .then(changed => { if (changed) get().syncToRemote(true) })
+                            .catch(() => {})
+                    }, 2500)
                 } catch (e) {
                     const msg = (e as Error).message
-                        ; (get() as any).addLogEntry({
+                        ; get().addLogEntry({
                             type: 'pull',
                             status: 'error',
                             message: `Pull Failed: ${msg}`,
@@ -441,17 +631,28 @@ export const useSyncStore = create<SyncState>()(
             },
 
             logout: async () => {
+                _lastPushedState = null
+                _pendingRetry = false
+                _accountsHydrated = false
+                if (_syncDebounceTimer) { clearTimeout(_syncDebounceTimer); _syncDebounceTimer = null }
+                if (_onlineHandler) { window.removeEventListener('online', _onlineHandler); _onlineHandler = null }
+                if (_syncBC) { _syncBC.close(); _syncBC = null }
+                clearPasswordFromSession()
+                import('@/lib/canonical-base').then(({ clearCanonicalBases }) => clearCanonicalBases()).catch(() => {})
                 set({
                     auth: { id: '', password: '', name: '', isAuthenticated: false },
-                    lastSyncedAt: null
+                    lastSyncedAt: null,
+                    isInitialSyncCompleted: false
                 })
 
                 // Clear ALL local data on logout to prevent state leakage
-                await Promise.all([
+                const { useWatchEventStore } = await import('@/store/watchEventStore')
+                await Promise.allSettled([
                     useAccountStore.getState().reset(),
                     useAddonStore.getState().reset(),
                     useProfileStore.getState().reset?.(),
-                    useFailoverStore.getState().reset?.()
+                    useFailoverStore.getState().reset?.(),
+                    useWatchEventStore.getState().reset()
                 ])
 
                 toast({ title: "Logged Out", description: "See you next time." })
@@ -462,11 +663,24 @@ export const useSyncStore = create<SyncState>()(
                 const { isLocked } = useAuthStore.getState()
                 if (!auth.isAuthenticated || isSyncing || isLocked) return
 
+                const { useWatchEventStore } = await import('@/store/watchEventStore')
+                if (!useWatchEventStore.getState().initialized) {
+                    if (isAuto) {
+                        if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for watch history hydration")
+                        return
+                    }
+                    await get().refreshFromCloud()
+                    if (!useWatchEventStore.getState().initialized) {
+                        if (import.meta.env.DEV) console.log("[Sync] Push cancelled: watch history is not hydrated")
+                        return
+                    }
+                }
+
                 // SAFETY LOCK: If we haven't successfully synced FROM the cloud yet, 
                 // we are NOT allowed to sync TO the cloud. This prevents stale clients 
                 // from overwriting the source of truth with their old local state.
-                if (isAuto && !isInitialSyncCompleted) {
-                    console.log("[Sync] Skipping auto-push: Initial pull not yet completed (Source of Truth Protection)")
+                if (isAuto && (!_accountsHydrated || !isInitialSyncCompleted)) {
+                    if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for hydration and initial pull")
                     return
                 }
 
@@ -475,69 +689,119 @@ export const useSyncStore = create<SyncState>()(
                 // Server Protection: Strict Debounce check for auto-syncs
                 // Instead of dropping, we defer the sync so the *last* change always pushes
                 if (isAuto) {
-                    if (get()._syncDebounceTimer) clearTimeout(get()._syncDebounceTimer)
-                    const timer = setTimeout(() => {
-                        set({ _syncDebounceTimer: null })
-                        get().syncToRemote(false, true) // Fire actual real sync, marked as debounced
+                    if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer)
+                    _syncDebounceTimer = setTimeout(() => {
+                        _syncDebounceTimer = null
+                        get().syncToRemote(false, true)
                     }, 1500)
-                    set({ _syncDebounceTimer: timer, isSyncing: false })
+                    set({ isSyncing: false })
                     return
                 }
 
                 set({ lastActionTimestamp: Date.now() })
-                const baseUrl = serverUrl || DEFAULT_SERVER
-                const apiPath = baseUrl.startsWith('http') ? `${baseUrl}/api` : baseUrl
+
+                // Fold inbound canonical-store writes (e.g. AIOStreams) into non-Stremio
+                // Hubs before we build the push body, so the blob + canonical both reflect
+                // the three-way merge. The client is the single merger (D2). isSyncing is
+                // already true here, so this cannot re-enter syncToRemote; best-effort, so
+                // a failure never blocks the push.
+                try {
+                    const { reconcileInboundCanonical } = await import('@/store/account/accountCanonical')
+                    await reconcileInboundCanonical()
+                } catch (e) { if (import.meta.env.DEV) console.error('[Sync] Inbound canonical reconcile failed:', e) }
+
+                const releaseSyncLock = await acquireSyncLock()
+
+                const apiPath = getSyncApiPath(serverUrl)
 
                 try {
                     const { loadSalt } = await import('@/lib/crypto')
                     const salt = loadSalt()
                     const saltBase64 = salt ? btoa(String.fromCharCode(...salt)) : undefined
 
-                    // Standardize: Ensure all exported components are objects before final stringification
                     const rawAccounts = await useAccountStore.getState().exportAccounts(true)
                     const rawAddons = useAddonStore.getState().exportLibrary()
 
-                    const safeParse = (val: any) => {
+                    const safeParse = (val: unknown): Record<string, unknown> => {
                         if (!val) return {}
-                        if (typeof val === 'object') return val
+                        if (typeof val === 'object') return val as Record<string, unknown>
                         if (typeof val === 'string') {
-                            if (val.includes('[object Object]')) {
-                                console.warn(`[Sync] Discarding corrupted data checking for [object Object]`)
+                            if ((val as string).includes('[object Object]')) {
+                                if (import.meta.env.DEV) console.warn(`[Sync] Discarding corrupted data checking for [object Object]`)
                                 return {}
                             }
                             try {
-                                return JSON.parse(val)
+                                return JSON.parse(val as string) as Record<string, unknown>
                             } catch (e) {
-                                console.error(`[Sync] Failed to parse exported data:`, val.substring(0, 50))
+                                if (import.meta.env.DEV) console.error(`[Sync] Failed to parse exported data:`, val.substring(0, 50))
                                 return {}
                             }
                         }
                         return {}
                     }
 
+                    const exportedAccounts = safeParse(rawAccounts)
+                    if (useVaultStore.getState().isLocked && useAuthStore.getState().encryptionKey) {
+                        await useVaultStore.getState().initialize()
+                    }
+                    const watchExport = useWatchEventStore.getState().export()
                     const state = {
-                        accounts: safeParse(rawAccounts),
+                        accounts: exportedAccounts.accounts || exportedAccounts,
                         addons: safeParse(rawAddons),
-                        profiles: useProfileStore.getState().profiles,
+                        profiles: exportedAccounts.profiles || useProfileStore.getState().profiles,
                         failover: {
                             rules: useFailoverStore.getState().rules,
                             webhook: useFailoverStore.getState().webhook
                         },
                         vault: useVaultStore.getState().keys,
+                        vaultTombstones: useVaultStore.getState().tombstones,
+                        notes: await (await import('@/store/notesStore')).useNotesStore.getState().getAllNotesWithContent(),
+                        notesTrash: (await import('@/store/notesStore')).useNotesStore.getState().trash,
+                        settings: exportedAccounts.settings,
+                        changelog: exportedAccounts.changelog,
+                        watchEvents: watchExport.events,
+                        watchSnapshot: watchExport.snapshot,
                         salt: saltBase64,
                         name: auth.name,
                         syncedAt: new Date().toISOString(),
-                        lastSeenVersion: get().lastSeenVersion
+                        lastSeenVersion: get().lastSeenVersion,
+                        customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
+                        accountTombstones: useAccountStore.getState().tombstones,
                     }
 
-                    const { AES } = await import('crypto-js')
+                    const { encryptSyncPayload } = await import('@/lib/crypto')
                     const stringifiedState = JSON.stringify(state)
 
                     if (stringifiedState === '[object Object]') {
                         throw new Error('Sync corruption detected: State is not an object.')
                     }
 
-                    const encryptedState = AES.encrypt(stringifiedState, auth.password).toString()
+                    const payloadBytes = new TextEncoder().encode(stringifiedState).length
+                    if (payloadBytes > 12 * 1024 * 1024) {
+                        const mb = (payloadBytes / 1024 / 1024).toFixed(1)
+                        console.error(`[Sync] Payload is ${mb}MB - exceeds safe threshold (12MB). Aborting push.`)
+                        throw new Error(`Sync payload too large (${mb}MB). Remove some accounts or data.`)
+                    }
+
+                    if (_lastPushedState !== null && stringifiedState === _lastPushedState) {
+                        return
+                    }
+
+                    // Keep the primary sync blob readable by the current public build.
+                    // New clients still support compressed records if they already exist.
+                    const { syncSaltB64 } = get()
+                    const syncSalt = syncSaltB64 ? Uint8Array.from(atob(syncSaltB64), c => c.charCodeAt(0)) : undefined
+                    const encryptedState = await encryptSyncPayload(stringifiedState, auth.password, syncSalt)
+
+                    // Canonical addon lists for Hubs the server can't otherwise read
+                    // (no Stremio authKey; Nuvio-only or local-only). Stremio accounts are
+                    // already server-readable and served Stremio-first, so they're excluded:
+                    // minimises both new server-side exposure and sync payload size. Captured
+                    // so it can become the merge base on a CONFIRMED push (see success branch).
+                    const canonicalPayload = useAccountStore.getState().accounts.reduce<Record<string, AddonDescriptor[]>>((map, a) => {
+                        if (!getAccountAuthKey(a)) map[a.id] = a.addons || []
+                        return map
+                    }, {})
 
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
                         method: 'POST',
@@ -545,41 +809,87 @@ export const useSyncStore = create<SyncState>()(
                             'Content-Type': 'application/json',
                             'x-sync-password': await deriveSyncToken(auth.password)
                         },
-                        body: JSON.stringify({ data: encryptedState, isEncrypted: true })
+                        body: JSON.stringify({
+                            data: encryptedState,
+                            isEncrypted: true,
+                            syncSalt: syncSaltB64,
+                            syncedAt: get().lastSyncedAt,
+                            apiKeys: useAccountStore.getState().accounts.reduce<Record<string, string>>((map, a) => {
+                                if (a.apiKey) map[a.id] = a.apiKey
+                                return map
+                            }, {}),
+                            canonicalAddons: canonicalPayload,
+                        })
                     })
 
+                    if (res.status === 401) {
+                        set({ auth: { id: '', password: '', name: '', isAuthenticated: false }, isInitialSyncCompleted: false })
+                        clearPasswordFromSession()
+                        throw new Error('Sync session expired')
+                    }
+
                     if (!res.ok) {
-                        const errorData = await res.json().catch(() => ({}))
+                        const errorData = await res.text().then(t => { try { return JSON.parse(t) } catch { return {} } }).catch(() => ({}))
                         throw new Error(errorData.message || `Server Error: ${res.status}`)
                     }
 
-                    const resData = await res.json()
+                    const resData = await res.text().then(t => { try { return JSON.parse(t) } catch { return {} } })
+
+                    if (resData.conflict) {
+                        if (import.meta.env.DEV) console.log('[Sync] Server reported conflict. Triggering pull.')
+                        import('@/hooks/use-toast').then(({ toast }) => {
+                            toast({
+                                variant: 'warning',
+                                title: 'Cloud was newer',
+                                description: 'Your changes were not pushed because another device synced more recently. Pulling the newer state now.',
+                            })
+                        }).catch(() => {})
+                        get().refreshFromCloud().catch(e => { if (import.meta.env.DEV) console.error(e) })
+                        return
+                    }
+
+                    _lastPushedState = stringifiedState
+
+                    // Advance the merge base ONLY on a confirmed push; base is "what the
+                    // server confirmed it received," never "what we hoped to send." If the
+                    // push had failed, leaving the base stale would make the next merge
+                    // mistake a just-deleted addon for an inbound add and resurrect it.
+                    import('@/lib/canonical-base')
+                        .then(({ setCanonicalBases }) => setCanonicalBases(canonicalPayload))
+                        .catch(() => {})
 
                     // TRUST THE SERVER CLOCK (Fixes Clock Drift)
                     // If server returns a timestamp, use it. Fallback to local only if missing.
                     const serverTime = resData.syncedAt
                     if (serverTime) {
                         set({ lastSyncedAt: serverTime })
-                        console.log(`[Sync] Synced with server clock: ${serverTime}`)
+                        if (import.meta.env.DEV) console.log(`[Sync] Synced with server clock: ${serverTime}`)
                     } else {
                         set({ lastSyncedAt: new Date().toISOString() })
                     }
 
-                    (get() as any).addLogEntry({
+                    get().addLogEntry({
                         type: 'push',
                         status: 'success',
                         message: 'Sync successful',
                         isAuto
                     })
+                    _pendingRetry = false
+
+                    try {
+                        const bc = new BroadcastChannel('aio-sync')
+                        bc.postMessage({ type: 'sync-complete', timestamp: Date.now() })
+                        bc.close()
+                    } catch (e) { if (import.meta.env.DEV) console.error(e) }
 
                     if (!isAuto && !isDebounced && _appReady) {
-                        // Removed repetitive "Saved" toast notification as requested by users.
                         // The top-right Cloud Sync header icon already provides this feedback natively.
                     }
                 } catch (e) {
                     const message = (e as Error).message
-                    console.error("Sync error:", apiPath, e)
-                        ; (get() as any).addLogEntry({
+                    if (import.meta.env.DEV) console.error("Sync error:", apiPath, e)
+                    if (isAuto) _pendingRetry = true
+                        ; get().addLogEntry({
                             type: 'push',
                             status: 'error',
                             message: `Push Failed: ${message}`,
@@ -590,6 +900,7 @@ export const useSyncStore = create<SyncState>()(
                     }
                 } finally {
                     set({ isSyncing: false })
+                    releaseSyncLock()
                 }
             },
 
@@ -597,18 +908,15 @@ export const useSyncStore = create<SyncState>()(
                 const { auth } = get()
                 if (!auth.isAuthenticated) return
 
-                // 1. Artificially inflate the local timestamp to ensure server accepts it
                 set({ lastActionTimestamp: Date.now() + 10000 })
 
-                    // 2. Add log entry
-                    ; (get() as any).addLogEntry({
+                    ; get().addLogEntry({
                         type: 'force-push',
                         status: 'success',
                         message: 'Force push initiated (timestamp inflated)',
                         isAuto: false
                     })
 
-                // 3. Trigger standard sync
                 await get().syncToRemote(false)
             },
 
@@ -617,8 +925,7 @@ export const useSyncStore = create<SyncState>()(
                 if (!auth.isAuthenticated) return
                 set({ isSyncing: true })
 
-                const baseUrl = serverUrl || DEFAULT_SERVER
-                const apiPath = baseUrl.startsWith('http') ? `${baseUrl}/api` : baseUrl
+                const apiPath = getSyncApiPath(serverUrl)
 
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
@@ -628,20 +935,21 @@ export const useSyncStore = create<SyncState>()(
                     if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status})`)
 
                     const text = await res.text()
-                    let data: any
-                    const raw = JSON.parse(text)
+                    let data: Record<string, unknown>
+                    const raw = JSON.parse(text) as Record<string, unknown>
 
                     if (raw.isEncrypted && raw.data) {
-                        const { AES, enc } = await import('crypto-js')
-                        const bytes = AES.decrypt(raw.data, auth.password)
-                        const decryptedStr = bytes.toString(enc.Utf8)
-                        if (!decryptedStr) throw new Error("Decryption failed")
-                        data = JSON.parse(decryptedStr)
+                        const { decryptSyncPayload: decryptPayload } = await import('@/lib/crypto')
+                        const remoteSyncSalt = raw.syncSalt && typeof raw.syncSalt === 'string'
+                            ? Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
+                            : undefined
+                        const decryptedStr = await decryptPayload(raw.data as string, auth.password, remoteSyncSalt)
+                        const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+                        data = JSON.parse(payloadStr) as Record<string, unknown>
                     } else {
                         data = raw
                     }
 
-                    // Strict Mirror: No timestamp comparisons
                     if (data.accounts) {
                         await useAccountStore.getState().importAccounts(JSON.stringify(data), true, 'mirror')
                     }
@@ -657,14 +965,56 @@ export const useSyncStore = create<SyncState>()(
                         if (Array.isArray(data.failover)) {
                             await useFailoverStore.getState().importRules(data.failover, strategy, true)
                         } else if (typeof data.failover === 'object') {
-                            if (data.failover.rules) await useFailoverStore.getState().importRules(data.failover.rules, strategy, true)
-                            if (data.failover.webhook) await useFailoverStore.getState().importWebhook(data.failover.webhook, true)
+                            const fo = data.failover as Record<string, unknown>
+                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, strategy, true)
+                            if (fo.webhook) await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true)
                         }
                     }
+                    if (data.settings) {
+                        applySyncedSettings(data.settings as Record<string, unknown>, true)
+                    }
+                    if (data.notes && Array.isArray(data.notes)) {
+                        const { useNotesStore } = await import('@/store/notesStore')
+                        await useNotesStore.getState().importNotes(data.notes)
+                    }
+                    if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
+                        await useVaultStore.getState().initialize()
+                        await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
+                    }
+                    if (Array.isArray(data.watchEvents)) {
+                        const { useWatchEventStore } = await import('@/store/watchEventStore')
+                        const local = useWatchEventStore.getState()
+                        const merged = new Map<string, Record<string, unknown>>()
+                        ;[...(data.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
+                        const mergedEvents = Array.from(merged.values()).sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
+                        const mergedSnapshot = { ...((data.watchSnapshot || {}) as Record<string, unknown>), ...local.snapshot }
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+                    }
+                    if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
+                        applySyncedSettings({ customThemes: data.customThemes }, true)
+                    }
+                    if (Array.isArray(data.accountTombstones)) {
+                        const local = useAccountStore.getState().tombstones
+                        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+                        const tsMap = new Map<string, { id: string; deletedAt: number }>()
+                        ;[...(data.accountTombstones as { id: string; deletedAt: number }[]), ...local].forEach(t => {
+                            if (t.deletedAt < cutoff) return
+                            const existing = tsMap.get(t.id)
+                            if (!existing || t.deletedAt > existing.deletedAt) tsMap.set(t.id, t)
+                        })
+                        useAccountStore.getState().saveTombstones(Array.from(tsMap.values()))
+                    }
+                    if (Array.isArray(data.notesTrash)) {
+                        const { useNotesStore } = await import('@/store/notesStore')
+                        await useNotesStore.getState().importTrash(data.notesTrash)
+                    }
+                    if (data.lastSeenVersion) {
+                        set({ lastSeenVersion: data.lastSeenVersion as string | null })
+                    }
 
-                    set({ lastSyncedAt: data.syncedAt || new Date().toISOString() })
+                    set({ lastSyncedAt: (data.syncedAt as string) || new Date().toISOString() })
 
-                        ; (get() as any).addLogEntry({
+                        ; get().addLogEntry({
                             type: 'force-mirror',
                             status: 'success',
                             message: 'Cloud state mirrored verbatim (bypassed merge)',
@@ -675,7 +1025,7 @@ export const useSyncStore = create<SyncState>()(
                 } catch (e) {
                     const msg = (e as Error).message
                     toast({ variant: "destructive", title: "Mirror Failed", description: msg })
-                        ; (get() as any).addLogEntry({
+                        ; get().addLogEntry({
                             type: 'force-mirror',
                             status: 'error',
                             message: `Mirror Failed: ${msg}`,
@@ -692,8 +1042,7 @@ export const useSyncStore = create<SyncState>()(
             deleteRemoteAccount: async () => {
                 const { auth, serverUrl } = get()
                 if (!auth.isAuthenticated) return
-                const baseUrl = serverUrl || DEFAULT_SERVER
-                const apiPath = baseUrl.startsWith('http') ? `${baseUrl}/api` : baseUrl
+                const apiPath = getSyncApiPath(serverUrl)
 
                 const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
                     method: 'DELETE',
@@ -705,13 +1054,15 @@ export const useSyncStore = create<SyncState>()(
             },
 
             reset: () => {
+                _accountsHydrated = false
                 set({
                     auth: { id: '', password: '', name: '', isAuthenticated: false },
                     serverUrl: '',
                     lastSyncedAt: null,
                     isSyncing: false,
                     isRefreshingFromCloud: false,
-                    lastActionTimestamp: 0
+                    lastActionTimestamp: 0,
+                    isInitialSyncCompleted: false
                 })
             }
         }),
@@ -719,13 +1070,60 @@ export const useSyncStore = create<SyncState>()(
             name: 'stremio-manager-sync',
             storage: createSafeStorage(),
             partialize: (state) => ({
-                auth: state.auth,
+                auth: {
+                    id: state.auth.id,
+                    name: state.auth.name,
+                    isAuthenticated: state.auth.isAuthenticated,
+                    password: '',
+                },
                 lastSyncedAt: state.lastSyncedAt,
                 serverUrl: state.serverUrl,
                 lastActionTimestamp: state.lastActionTimestamp,
-                lastSeenVersion: state.lastSeenVersion
+                lastSeenVersion: state.lastSeenVersion,
+                syncSaltB64: state.syncSaltB64,
+            }),
+            merge: (persistedState, currentState) => ({
+                ...currentState,
+                ...(persistedState as Partial<SyncState>),
+                isSyncing: false,
+                isRefreshingFromCloud: false,
+                isInitialSyncCompleted: false,
             }),
         }
     )
 )
-import { createSafeStorage } from './safe-storage'
+
+if (typeof window !== 'undefined') {
+    const restorePassword = () => {
+        const state = useSyncStore.getState()
+        if (state.auth.isAuthenticated && !state.auth.password) {
+            const savedPassword = loadPasswordFromSession()
+            if (savedPassword) {
+                useSyncStore.setState({ auth: { ...state.auth, password: savedPassword } })
+            }
+        }
+    }
+    restorePassword()
+    localStorage.removeItem('aio-pending-sync')
+
+    _onlineHandler = () => {
+        if (_pendingRetry) {
+            _pendingRetry = false
+            useSyncStore.getState().syncToRemote(true).catch(() => {})
+        }
+    }
+    window.addEventListener('online', _onlineHandler)
+
+    try {
+        _syncBC = new BroadcastChannel('aio-sync')
+        _syncBC.onmessage = (event) => {
+            if (event.data?.type === 'sync-complete') {
+                const state = useSyncStore.getState()
+                if (!state.auth.isAuthenticated) return
+                const lastSync = state.lastSyncedAt
+                if (lastSync && Date.now() - new Date(lastSync).getTime() < 30_000) return
+                state.syncFromRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
+            }
+        }
+    } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}

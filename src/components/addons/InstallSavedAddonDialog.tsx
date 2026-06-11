@@ -1,7 +1,9 @@
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -20,10 +22,10 @@ import { useUIStore } from '@/store/uiStore'
 import { useProfileStore } from '@/store/profileStore'
 import { AddonDescriptor } from '@/types/addon'
 import { useState, useMemo } from 'react'
-import { Search, Filter, Check, AlertCircle, Package, LayoutGrid, List, ShieldCheck } from 'lucide-react'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Search, Filter, Check, AlertCircle, Package, LayoutGrid, List, ShieldCheck, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AddonTag } from './AddonTag'
+import { AddonIcon } from '@/components/ui/addon-icon'
 
 interface InstallSavedAddonDialogProps {
   accountId: string
@@ -42,7 +44,9 @@ export function InstallSavedAddonDialog({
   onSuccess,
   installedAddons = [],
 }: InstallSavedAddonDialogProps) {
-  const { library, bulkApplySavedAddons, loading } = useAddonStore()
+  const library = useAddonStore(s => s.library)
+  const bulkApplySavedAddons = useAddonStore(s => s.bulkApplySavedAddons)
+  const loading = useAddonStore(s => s.loading)
   const syncAccount = useAccountStore((state) => state.syncAccount)
 
   const [selectedSavedAddonIds, setSelectedSavedAddonIds] = useState<Set<string>>(new Set())
@@ -50,14 +54,15 @@ export function InstallSavedAddonDialog({
   const [success, setSuccess] = useState(false)
 
   // View State
-  const { libraryViewMode: viewMode, setLibraryViewMode: setViewMode } = useUIStore()
+  const viewMode = useUIStore(s => s.libraryViewMode)
+  const setViewMode = useUIStore(s => s.setLibraryViewMode)
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('')
   const [tagFilter, setTagFilter] = useState<string>('all')
   const [profileFilter, setProfileFilter] = useState<string>('all')
 
-  const { profiles } = useProfileStore()
+  const profiles = useProfileStore(s => s.profiles)
 
   // Memoized data
   const savedAddons = useMemo(() =>
@@ -92,6 +97,15 @@ export function InstallSavedAddonDialog({
       return matchesSearch && matchesTag && matchesProfile
     })
   }, [savedAddons, searchTerm, tagFilter, profileFilter])
+
+  const installedSavedCount = useMemo(() => {
+    return savedAddons.filter(addon => installedAddons.some(installed => {
+      const installedUrl = installed.transportUrl.replace(/\/$/, '')
+      const savedUrl = addon.installUrl.replace(/\/$/, '')
+      return installedUrl === savedUrl
+    })).length
+  }, [installedAddons, savedAddons])
+  const allFilteredSelected = filteredAddons.length > 0 && selectedSavedAddonIds.size === filteredAddons.length
 
 
   const toggleSavedAddon = (savedAddonId: string) => {
@@ -128,7 +142,7 @@ export function InstallSavedAddonDialog({
 
   const handleInstall = async () => {
     if (selectedSavedAddonIds.size === 0) {
-      setError('Please select at least one saved addon')
+      setError('Select at least one saved addon')
       return
     }
 
@@ -160,100 +174,137 @@ export function InstallSavedAddonDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="p-6 pb-4 border-b">
-          <DialogTitle className="text-xl">Install from Library</DialogTitle>
-          <DialogDescription>
-            Choose addons from your saved library to install on this account.
-          </DialogDescription>
-
-          {/* Toolbar */}
-          <div className="flex flex-wrap gap-2 mt-4">
-            <div className="relative min-w-[160px] flex-1">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search saved addons..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9"
-              />
+      <DialogContent className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[92vh]">
+        <DialogHeader className="p-5 pb-2 pr-14 sm:p-6 sm:pb-3 sm:pr-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 space-y-1">
+              <DialogTitle className="text-2xl tracking-tight">Install from Library</DialogTitle>
+              <DialogDescription>
+                Pick saved addons and deploy them to this account in one pass.
+              </DialogDescription>
             </div>
-            <Select value={tagFilter} onValueChange={setTagFilter}>
-              <SelectTrigger className="w-[160px] shrink-0">
-                <div className="flex items-center gap-2 text-muted-foreground min-w-0 flex-1">
-                  <Filter className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate text-foreground text-left">{tagFilter === 'all' ? 'All Tags' : tagFilter}</span>
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Tags</SelectItem>
-                {allTags.map(tag => (
-                  <SelectItem key={tag} value={tag}>{tag}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select value={profileFilter} onValueChange={setProfileFilter}>
-              <SelectTrigger className="w-[180px] shrink-0">
-                <div className="flex items-center gap-2 text-muted-foreground min-w-0 flex-1">
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate text-foreground text-left">
-                    {profileFilter === 'all' ? 'All Profiles' : profiles.find(p => p.id === profileFilter)?.name || 'Unknown'}
-                  </span>
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Profiles</SelectItem>
-                {profiles.map(profile => (
-                  <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex bg-muted/50 rounded-lg p-1 gap-1 shrink-0">
-              <Button
-                variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => setViewMode('grid')}
-                title="Grid View"
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => setViewMode('list')}
-                title="List View"
-              >
-                <List className="h-4 w-4" />
-              </Button>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                {filteredAddons.length} shown
+              </span>
+              <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                {installedSavedCount} installed
+              </span>
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={selectAll}
-              className="shrink-0 min-w-[105px]"
-              disabled={filteredAddons.length === 0}
-            >
-              <Check className={cn("mr-2 h-3.5 w-3.5", selectedSavedAddonIds.size === filteredAddons.length ? "opacity-100" : "opacity-0")} />
-              {selectedSavedAddonIds.size === filteredAddons.length && filteredAddons.length > 0 ? "Deselect All" : "Select All"}
-            </Button>
           </div>
+
         </DialogHeader>
 
         {/* Content Area */}
-        <ScrollArea className="h-[50vh] sm:h-[60vh] min-h-[300px] p-0 border-b">
-          <div className="p-6 pt-2 space-y-4">
+        <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
+          <aside className="shrink-0 border-b border-border/40 bg-card/40 p-4 lg:border-b-0 lg:border-r">
+            <div className="grid gap-2 sm:grid-cols-2 lg:sticky lg:top-0 lg:block lg:space-y-3">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter Library</p>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search saved addons..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="h-9 bg-background/70 pl-9"
+                  />
+                </div>
+              </div>
+
+              <Select value={tagFilter} onValueChange={setTagFilter}>
+                <SelectTrigger className="h-9 w-full bg-background/70">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground">
+                    <Filter className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate text-left text-foreground">{tagFilter === 'all' ? 'All Tags' : tagFilter}</span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Tags</SelectItem>
+                  {allTags.map(tag => (
+                    <SelectItem key={tag} value={tag}>{tag}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={profileFilter} onValueChange={setProfileFilter}>
+                <SelectTrigger className="h-9 w-full bg-background/70">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 text-muted-foreground">
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate text-left text-foreground">
+                      {profileFilter === 'all' ? 'All Profiles' : profiles.find(p => p.id === profileFilter)?.name || 'Unknown'}
+                    </span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Profiles</SelectItem>
+                  {profiles.map(profile => (
+                    <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="grid grid-cols-[1fr_auto] gap-2 sm:col-span-2 lg:col-span-auto">
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  onClick={selectAll}
+                  className="h-9 gap-2"
+                  disabled={filteredAddons.length === 0}
+                >
+                  <Check className={cn("h-3.5 w-3.5", allFilteredSelected ? "opacity-100" : "opacity-0")} />
+                  {allFilteredSelected ? "Deselect" : "Select All"}
+                </Button>
+
+                <div className="flex items-center rounded-xl border border-border/40 bg-background/70 p-0.5">
+                  <Tooltip content="Grid View" side="top">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`h-8 w-8 rounded-lg p-0 ${viewMode === 'grid' ? 'bg-muted shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                      onClick={() => setViewMode('grid')}
+                      aria-label="Grid view"
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="List View" side="top">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`h-8 w-8 rounded-lg p-0 ${viewMode === 'list' ? 'bg-muted shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                      onClick={() => setViewMode('list')}
+                      aria-label="List view"
+                    >
+                      <List className="h-3.5 w-3.5" />
+                    </Button>
+                  </Tooltip>
+                </div>
+              </div>
+
+              <div className="hidden rounded-2xl border border-border/35 bg-background/35 p-3 text-xs text-muted-foreground sm:block lg:block">
+                <div className="flex justify-between gap-2">
+                  <span>Selected</span>
+                  <span className="font-semibold tabular-nums text-foreground">{selectedSavedAddonIds.size}</span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2">
+                  <span>Matching</span>
+                  <span className="font-semibold tabular-nums text-foreground">{filteredAddons.length}</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <div className="h-[34dvh] min-h-[220px] flex-1 overflow-y-auto overscroll-contain p-0 sm:h-[45vh] lg:h-[58vh]">
+            <div className="space-y-4 p-4 sm:p-6">
 
             {/* Addon Grid/List */}
             <div className={cn(
               "grid gap-3",
-              viewMode === 'grid' ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1"
+              viewMode === 'grid' ? "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1"
             )}>
               {filteredAddons.length === 0 ? (
-                <div className="col-span-full text-center py-12 text-muted-foreground">
+                <div className="col-span-full rounded-[1.75rem] border border-dashed border-border/50 bg-muted/10 py-14 text-center text-muted-foreground">
                   <Package className="h-12 w-12 mx-auto mb-3 opacity-20" />
                   <p>No saved addons match your filters.</p>
                 </div>
@@ -264,53 +315,40 @@ export function InstallSavedAddonDialog({
                     <div
                       key={addon.id}
                       className={cn(
-                        "relative transition-all cursor-pointer group hover:border-primary/50 hover:shadow-sm",
+                        "group relative cursor-pointer border transition-[transform,opacity,box-shadow] hover:border-primary/45 hover:shadow-md",
                         viewMode === 'grid'
-                          ? "flex flex-col p-4 rounded-xl border"
-                          : "flex items-center gap-4 p-3 rounded-lg border",
+                          ? "flex min-h-[112px] flex-col rounded-[1.35rem] p-4 sm:min-h-[128px]"
+                          : "grid grid-cols-[auto_1fr_auto] items-center gap-4 rounded-2xl p-3",
                         isSelected
-                          ? "border-primary bg-primary/5 ring-1 ring-primary"
-                          : "bg-card",
-                        isInstalled && !isSelected && "opacity-60 bg-muted/30 border-dashed"
+                          ? "border-primary/25 bg-primary/12 ring-1 ring-primary/25"
+                          : "border-border/40 bg-card/70",
+                        isInstalled && !isSelected && "border-dashed bg-muted/20 opacity-70"
                       )}
                       onClick={() => toggleSavedAddon(addon.id)}
                     >
                       {/* Selection Indicator */}
                       <div className={cn(
-                        "rounded-full border border-primary/20 flex items-center justify-center transition-all z-10 shrink-0",
-                        viewMode === 'grid' ? "absolute top-3 right-3 h-5 w-5" : "h-5 w-5",
+                        "rounded-full border border-primary/20 flex items-center justify-center transition-[transform,opacity,box-shadow] z-10 shrink-0",
+                        viewMode === 'grid' ? "absolute top-3 right-3 h-6 w-6" : "h-6 w-6",
                         isSelected ? "bg-primary border-primary scale-110" : "bg-background group-hover:border-primary/50"
                       )}>
                         {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
                       </div>
 
                       {/* Header: Logo + Name */}
-                      <div className={cn("flex items-start gap-3 min-w-0 flex-1", viewMode === 'grid' ? "mb-3 pr-6" : "")}>
-                        <div className="shrink-0">
-                          {addon.manifest.logo ? (
-                            <img
-                              src={addon.manifest.logo}
-                              alt=""
-                              className={cn(
-                                "rounded-lg object-contain bg-background border p-0.5",
-                                viewMode === 'grid' ? "h-12 w-12" : "h-10 w-10"
-                              )}
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className={cn(
-                              "rounded-lg bg-muted flex items-center justify-center border font-bold text-muted-foreground",
-                              viewMode === 'grid' ? "h-12 w-12" : "h-10 w-10"
-                            )}>
-                              {addon.name.charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                        </div>
+                      <div className={cn("flex min-w-0 flex-1 items-start gap-3", viewMode === 'grid' ? "mb-3 pr-6" : "")}>
+                        <AddonIcon
+                          name={addon.name}
+                          logo={addon.metadata?.customLogo || addon.manifest.logo}
+                          alt={addon.name}
+                          className={viewMode === 'grid' ? 'h-12 w-12' : 'h-10 w-10'}
+                          textClassName="text-sm"
+                        />
                         <div className="min-w-0 flex-1">
-                          <h4 className="font-semibold leading-tight truncate" title={addon.name}>
+                          <h4 className="truncate font-semibold leading-tight tracking-tight" title={addon.name}>
                             {addon.name}
                           </h4>
-                          <p className="text-xs text-muted-foreground truncate mt-1">
+                          <p className="mt-1 truncate text-xs text-muted-foreground">
                             v{addon.manifest.version}
                           </p>
                         </div>
@@ -321,17 +359,17 @@ export function InstallSavedAddonDialog({
                         "flex items-center gap-2",
                         viewMode === 'grid' ? "mt-auto justify-between w-full" : "justify-end shrink-0"
                       )}>
-                        <div className="flex flex-wrap gap-1 justify-end">
+                        <div className="flex flex-wrap justify-end gap-1">
                           {addon.tags.slice(0, viewMode === 'grid' ? 2 : 3).map(tag => (
                             <AddonTag key={tag} tag={tag} />
                           ))}
                           {addon.tags.length > (viewMode === 'grid' ? 2 : 3) && (
-                            <span className="text-[10px] text-muted-foreground px-1">+{addon.tags.length - (viewMode === 'grid' ? 2 : 3)}</span>
+                            <span className="text-xs text-muted-foreground px-1">+{addon.tags.length - (viewMode === 'grid' ? 2 : 3)}</span>
                           )}
                         </div>
 
                         {isInstalled && (
-                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-normal bg-muted text-muted-foreground border-transparent">
+                          <Badge variant="outline" className="text-xs h-5 px-1.5 font-normal bg-muted text-muted-foreground border-transparent">
                             Installed
                           </Badge>
                         )}
@@ -341,13 +379,14 @@ export function InstallSavedAddonDialog({
                 })
               )}
             </div>
+            </div>
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Footer */}
-        <div className="p-4 border-t bg-muted/5">
+        <div className="px-4 pb-4 pt-2">
           {selectedSavedAddonIds.size > 0 && (
-            <div className="mb-4 p-3 rounded-md bg-background border shadow-sm">
+            <div className="mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-3 shadow-sm">
               <p className="text-sm font-medium">Ready to install</p>
               <p className="text-xs text-muted-foreground">
                 {selectedSavedAddonIds.size} addon{selectedSavedAddonIds.size !== 1 ? 's' : ''} will be installed to {accountId === 'all' ? 'all accounts' : 'this account'}.
@@ -356,37 +395,33 @@ export function InstallSavedAddonDialog({
           )}
 
           {error && (
-            <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm flex items-center gap-2">
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="h-4 w-4" />
               {error}
             </div>
           )}
 
           {success && (
-            <div className="mb-4 p-3 rounded-md bg-green-500/10 text-emerald-500 text-sm flex items-center gap-2">
+            <div className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success/10 p-3 text-sm text-success">
               <Check className="h-4 w-4" />
               Installation successful!
             </div>
           )}
 
-          <div className="flex flex-col-reverse sm:flex-row gap-4 items-center justify-between">
-
-            <div className="w-full sm:w-auto" />
-
-
-            <div className="flex gap-2 w-full sm:w-auto justify-end">
-              <Button variant="outline" onClick={handleClose} disabled={loading && !success}>
-                {success ? 'Close' : 'Cancel'}
-              </Button>
-              <Button
-                onClick={handleInstall}
-                disabled={selectedSavedAddonIds.size === 0 || loading || success}
-                className="min-w-[100px]"
-              >
-                {loading ? 'Installing...' : success ? 'Installed' : 'Install Selected'}
-              </Button>
-            </div>
-          </div>
+          <DialogFooter className="grid grid-cols-2 gap-3 p-0 sm:grid-cols-2">
+            <Button variant="subtle" onClick={handleClose} disabled={loading && !success} ripple={false}>
+              {success ? 'Close' : 'Cancel'}
+            </Button>
+            <Button
+              onClick={handleInstall}
+              disabled={selectedSavedAddonIds.size === 0 || loading || success}
+              className="gap-2"
+              ripple={false}
+            >
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {loading ? 'Installing...' : success ? 'Installed' : 'Install Selected'}
+            </Button>
+          </DialogFooter>
         </div>
       </DialogContent>
     </Dialog>

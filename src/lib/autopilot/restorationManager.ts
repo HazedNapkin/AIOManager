@@ -15,7 +15,7 @@ class RestorationManager {
     private readonly CIRCUIT_COOLDOWN = 30 * 60 * 1000; // 30 mins
 
     private getState(addonUrl: string): RestorationState {
-        const normalized = normalizeAddonUrl(addonUrl).toLowerCase();
+        const normalized = normalizeAddonUrl(addonUrl);
         if (!this.states.has(normalized)) {
             this.states.set(normalized, {
                 status: 'idle',

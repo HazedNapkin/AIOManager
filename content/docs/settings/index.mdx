@@ -1,0 +1,46 @@
+---
+title: Settings Overview
+description: A map of everything in the Settings page and what each tab controls.
+---
+
+## General
+
+**Display Name:** Your name shown in the header and Replay. Defaults to your UUID prefix.
+
+**Privacy Mode:** Masks account emails and sensitive data across the UI. Persists across reloads. Useful for screenshots or screen sharing.
+
+**Hide Disabled Addons:** Hides disabled addons from the installed list globally. A toggle appears in the addon toolbar when any addons are off. Syncs across devices.
+
+**Global Webhook URL:** A Discord, Slack, or JSON webhook URL used by all Autopilot rules set to "Use global webhook". Changing it updates all rules at once.
+
+**Notifications:** Toggle individual notification events on or off (Autopilot triggers, sync events, addon updates). Notifications are sent to the Global Webhook URL when enabled.
+
+For theme settings see [Appearance & Themes](/kronorium/settings/appearance). For vault settings see [Key Vault](/kronorium/settings/vault).
+
+## Data & Sync
+
+**Push to Cloud:** Immediately uploads your current local state to the server.
+
+**Pull from Cloud:** Downloads the latest state from the server and replaces your local data. Use when switching devices.
+
+**Export Data:** Downloads a single `.json` file containing all your accounts, profiles, library, autopilot rules, themes, and settings. Keep this as a backup before any Danger Zone operation.
+
+**Import Data:** Restores a previously exported `.json` file. Incoming data is merged with your current state; existing accounts and addons are preserved unless overwritten by the import.
+
+**Clear Activity:** Deletes your local watch history cache. The next sync re-fetches it from your connected accounts.
+
+<Note>Avoid using AIOManager on two devices simultaneously with the same sync ID. Both will push their state and the last write wins.</Note>
+
+## Advanced & Danger Zone
+
+The Advanced tab contains irreversible data operations. All actions require toggling **Unlock Actions** before any button becomes active.
+
+**Wipe Accounts:** Removes all accounts from AIOManager. Does not delete anything from connected platforms.
+
+**Wipe Library:** Deletes all saved addons from your Library.
+
+**Purge Autopilot:** Deletes all Autopilot rules and their history from both local storage and the server.
+
+**Factory Reset:** Wipes everything (accounts, library, autopilot, themes, settings) and reloads the app fresh. Your AIOManager login credentials are not affected.
+
+<Tip>Always export a backup before using any Danger Zone action.</Tip>

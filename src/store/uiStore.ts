@@ -1,3 +1,4 @@
+import { triggerSync } from '@/lib/sync-trigger'
 import { StremioAccount } from '@/types/account'
 import { create } from 'zustand'
 
@@ -8,6 +9,8 @@ interface UIStore {
   isPrivacyModeEnabled: boolean
   isWhatsNewOpen: boolean
   libraryViewMode: 'grid' | 'list'
+  accountsView: 'grid' | 'list'
+  addonListView: 'grid' | 'list'
 
   openAddAccountDialog: (account?: StremioAccount) => void
   closeAddAccountDialog: () => void
@@ -17,6 +20,8 @@ interface UIStore {
   setWhatsNewOpen: (open: boolean) => void
   togglePrivacyMode: () => void
   setLibraryViewMode: (mode: 'grid' | 'list') => void
+  setAccountsView: (mode: 'grid' | 'list') => void
+  setAddonListView: (mode: 'grid' | 'list') => void
   initialize: () => void
   editingAccount: StremioAccount | null
   selectedAccountId: string | null
@@ -24,6 +29,12 @@ interface UIStore {
 
 const PRIVACY_MODE_KEY = 'stremio-manager:privacy-mode'
 const VIEW_MODE_KEY = 'stremio-manager:library-view-mode'
+const ACCOUNTS_VIEW_KEY = 'stremio-manager:accounts-view'
+const ADDON_LIST_VIEW_KEY = 'stremio-manager:addon-list-view'
+
+const syncSettings = () => {
+  triggerSync()
+}
 
 export const useUIStore = create<UIStore>((set, get) => ({
   isAddAccountDialogOpen: false,
@@ -39,6 +50,18 @@ export const useUIStore = create<UIStore>((set, get) => ({
   libraryViewMode: (() => {
     try {
       const stored = localStorage.getItem(VIEW_MODE_KEY)
+      return stored === 'grid' || stored === 'list' ? stored as 'grid' | 'list' : 'grid'
+    } catch { return 'grid' }
+  })(),
+  accountsView: (() => {
+    try {
+      const stored = localStorage.getItem(ACCOUNTS_VIEW_KEY)
+      return stored === 'grid' || stored === 'list' ? stored as 'grid' | 'list' : 'grid'
+    } catch { return 'grid' }
+  })(),
+  addonListView: (() => {
+    try {
+      const stored = localStorage.getItem(ADDON_LIST_VIEW_KEY)
       return stored === 'grid' || stored === 'list' ? stored as 'grid' | 'list' : 'grid'
     } catch { return 'grid' }
   })(),
@@ -58,13 +81,25 @@ export const useUIStore = create<UIStore>((set, get) => ({
     const newValue = !get().isPrivacyModeEnabled
     set({ isPrivacyModeEnabled: newValue })
     localStorage.setItem(PRIVACY_MODE_KEY, JSON.stringify(newValue))
+    syncSettings()
   },
   setLibraryViewMode: (mode) => {
     set({ libraryViewMode: mode })
     localStorage.setItem(VIEW_MODE_KEY, mode)
+    syncSettings()
+  },
+  setAccountsView: (mode) => {
+    set({ accountsView: mode })
+    localStorage.setItem(ACCOUNTS_VIEW_KEY, mode)
+    syncSettings()
+  },
+  setAddonListView: (mode) => {
+    set({ addonListView: mode })
+    localStorage.setItem(ADDON_LIST_VIEW_KEY, mode)
+    syncSettings()
   },
   initialize: () => {
     // Privacy mode and viewMode are now eagerly loaded at store creation.
-    // This function is kept as a no-op for backwards compatibility.
+    // No-op: retained for backward compat
   },
 }))

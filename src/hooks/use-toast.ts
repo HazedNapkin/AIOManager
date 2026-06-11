@@ -4,11 +4,10 @@ export interface Toast {
   id: string
   title: string
   description?: React.ReactNode
-  variant?: 'default' | 'destructive'
+  variant?: 'default' | 'destructive' | 'warning'
   className?: string
 }
 
-// Simple toast state management - in a real app you'd use a more robust solution
 let toastListeners: ((toasts: Toast[]) => void)[] = []
 let toasts: Toast[] = []
 

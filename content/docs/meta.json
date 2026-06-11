@@ -1,0 +1,18 @@
+{
+  "title": "Kronorium",
+  "pages": [
+    "index",
+    "getting-started",
+    "faq",
+    "troubleshooting",
+    "accounts",
+    "addons",
+    "library",
+    "autopilot",
+    "metrics",
+    "settings",
+    "reference",
+    "api",
+    "project"
+  ]
+}

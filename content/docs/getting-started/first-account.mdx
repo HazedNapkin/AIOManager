@@ -1,0 +1,167 @@
+---
+title: Adding Your First Account
+description: How to add accounts to AIOManager using Email, OAuth, AuthKey, or as local-only identities.
+---
+
+AIOManager uses its own account system separate from Stremio. Your UUID and password are your login credentials, generated when you first set up AIOManager. Add as many accounts as you need from the Accounts page using any of the methods below.
+
+<Note>Your UUID + password combination is required to log in. There's no password reset, so keep it somewhere safe.</Note>
+
+## Understanding AIOManager vs Stremio Accounts
+
+| Concept | AIOManager Account | Stremio Account |
+|---------|-------------------|-----------------|
+| What it does | Lets you access AIOManager | Your streaming identity |
+| Credentials | UUID + password (you create) | Email + password (with Stremio) |
+| Storage | AIOManager server | Stremio's servers |
+| Purpose | Manage multiple Stremio accounts | Watch content, sync watch history |
+
+**Why separate them?** AIOManager acts as a control panel. One AIOManager login can manage dozens of Stremio accounts, which is useful for families, shared setups, or testing.
+
+## Adding an Account
+
+<Steps>
+  <Step>**Navigate to Accounts:** Click **Accounts** in the sidebar or press `G` then `A`.</Step>
+  <Step>**Open Add Dialog:** Click the **Add Account** button in the top-right corner.</Step>
+  <Step>**Choose Method:** Select from Email/Password, OAuth, AuthKey, or Local.</Step>
+</Steps>
+
+---
+
+## Method 1: OAuth
+
+The quickest no-password method. AIOManager generates a temporary code, you authorize it on Stremio's website, and then choose whether to save it as OAuth-only or make it persistent with your Stremio password.
+
+<Warning>Stremio may revoke OAuth link tokens when you sign out of the Stremio Web session that approved the link. For long-lived unattended sync, use Email & Password instead.</Warning>
+
+### Step-by-Step Instructions
+
+<Steps>
+  <Step>**Start OAuth Flow:** In the Add Account dialog, choose **OAuth** and generate a link.</Step>
+  <Step>**Note Your Code:** AIOManager displays a 6-character code (e.g., `ABC123`). Keep this visible.</Step>
+  <Step>**Open Authorization URL:** Click the provided link or go to `https://www.stremio.com/activate` manually.</Step>
+  <Step>**Log Into Stremio:** If not already logged in, enter your Stremio email and password.</Step>
+  <Step>**Enter the Code:** Type the 6-character code from step 2 into the Stremio page.</Step>
+  <Step>**Confirm:** Click **Activate** or **Confirm** on Stremio's page.</Step>
+  <Step>**Choose Persistence:** AIOManager detects the authorization. Enter your Stremio password to enable auto-refresh, or continue with OAuth-only.</Step>
+</Steps>
+
+### Troubleshooting OAuth
+
+| Problem | Solution |
+|---------|----------|
+| "Code expired" | Codes expire after 10 minutes. Generate a fresh OAuth code. |
+| "Authorization failed" | You may have entered the wrong code. Start over with a new code. |
+| "Account not found" | Wait 30 seconds after authorizing. AIOManager polls Stremio periodically. |
+| Code doesn't work on Stremio | Ensure you're typing it exactly - codes are case-sensitive. |
+| Account expires after logout | Re-authenticate with Email & Password for a separate long-lived AIOManager token. |
+
+---
+
+## Method 2: Email & Password (Recommended for Persistent Sync)
+
+Standard login using your Stremio credentials.
+
+<Steps>
+  <Step>**Select Email/Password:** In the Add Account dialog, choose the Email & Password option.</Step>
+  <Step>**Enter Credentials:** Type your Stremio email address and password exactly as you would in the Stremio app.</Step>
+  <Step>**Submit:** Click **Add Account** to connect.</Step>
+</Steps>
+
+| Scenario | Result |
+|----------|--------|
+| Existing account | AIOManager logs in and imports your addons and settings |
+| New email (no account) | Stremio creates a new account automatically with your credentials |
+| Wrong password | AIOManager shows an error - verify credentials and retry |
+
+<Warning>AIOManager stores Stremio passwords encrypted in your local vault so it can refresh expired auth tokens. They are never stored in plaintext.</Warning>
+
+---
+
+## Method 3: AuthKey (Advanced)
+
+For advanced users who can access browser developer tools. This method extracts your authentication key directly from Stremio's web app.
+
+| Advantage | Disadvantage |
+|-----------|--------------|
+| Works without Stremio password | Requires browser access |
+| Fast for bulk account adding | Technical to retrieve |
+| Can be copied from an existing session | Cannot auto-refresh if Stremio ever invalidates it |
+
+### Step-by-Step Instructions
+
+<Steps>
+  <Step>**Open Stremio Web:** Navigate to `https://web.stremio.com` and log in.</Step>
+  <Step>**Open Developer Tools:** Press `F12` on your keyboard, or right-click and select **Inspect**.</Step>
+  <Step>**Switch to Console Tab:** Click the **Console** tab in the developer tools panel.</Step>
+  <Step>
+    **Run the Extraction Command:** Type or paste this and press Enter:
+
+    ```
+    JSON.parse(localStorage.getItem("profile")).auth.key
+    ```
+  </Step>
+  <Step>**Copy the Result:** The console displays your AuthKey, a long string like `eyJhbGciOi...`. Select and copy it.</Step>
+  <Step>**Paste in AIOManager:** Return to AIOManager's Add Account dialog, select AuthKey method, and paste the key.</Step>
+</Steps>
+
+### Troubleshooting AuthKey
+
+| Problem | Solution |
+|---------|----------|
+| "null" or "undefined" returned | You're not logged into Stremio Web. Log in first. |
+| "Unexpected token" error | The profile data is corrupted. Clear browser cache and log in again. |
+| AuthKey rejected | Re-log into Stremio Web and get a fresh key. |
+
+---
+
+## Method 4: Local Account
+
+A local account has no connection to Stremio or any external platform. Use it to organize addons locally, save configurations to your library, or as a sandbox for testing.
+
+<Steps>
+  <Step>**Select Local:** In the Add Account dialog, choose the Local option.</Step>
+  <Step>**Name the Account:** Give it a descriptive name so you can identify it later.</Step>
+  <Step>**Add Account:** Click **Add Account** to create it.</Step>
+</Steps>
+
+<Note>Local accounts can still have Connections added later. Open the account and navigate to the Connections tab to connect it to Nuvio, Hydra, or RealStream.</Note>
+
+---
+
+## After Adding Your Account
+
+Once added, your account appears as a card on the Accounts page.
+
+### Adding Connections
+
+Any account (including local accounts) can be connected to external platforms. Open the account and navigate to the **Connections** tab to set up:
+
+| Platform | Authentication | What it does |
+|----------|---------------|-------------|
+| Stremio | Built-in (OAuth/Email/AuthKey) | Sync addons with your Stremio account |
+| Nuvio | Email/Password | Mirror addons to Nuvio profiles |
+| Hydra (Inbound) | API Key | Receive addon configurations from Hydra |
+| Hydra (Outbound) | API Key | Push addon configurations to Hydra |
+| RealStream | Email/Password | Sync addons with your RealStream instance |
+
+See the [Connections guide](/kronorium/accounts/connections) for detailed setup instructions.
+
+### Customize Your Account
+
+| Action | How | Why |
+|--------|-----|-----|
+| Rename | Click the edit icon, enter a custom name | Identify accounts easily (e.g., "Kids", "Main") |
+| Add Emoji | Click the emoji picker in edit dialog | Visual identification at a glance |
+| Set Color | Choose a color in edit dialog | Color-code for family members or purposes |
+
+---
+
+## Quick Reference
+
+| Method | Difficulty | Speed | Best For |
+|--------|------------|-------|----------|
+| Email/Password | Easy | Fast | Persistent unattended sync |
+| OAuth | Easy | Medium | Quick one-time setup without sharing a password |
+| AuthKey | Hard | Fast | Power users, bulk adding |
+| Local | Easy | Instant | Testing, organizing, sandbox use |

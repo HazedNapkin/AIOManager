@@ -1,8 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Sparkles, ExternalLink, Loader2 } from 'lucide-react'
+import { CheckCircle2, ExternalLink, Loader2, Sparkles } from 'lucide-react'
 import { useEffect, useState, useCallback } from 'react'
 import pkg from '../../package.json'
 import { useUIStore } from '@/store/uiStore'
@@ -20,94 +19,50 @@ const GITHUB_RELEASES_URL = 'https://api.github.com/repos/sonicx161/AIOManager/r
 
 const FALLBACK_RELEASE: Release = {
     tag_name: `v${pkg.version}`,
-    name: `v${pkg.version} - Performance, Autopilot & UI`,
+    name: `v${pkg.version}`,
     published_at: new Date().toISOString(),
     html_url: `https://github.com/sonicx161/AIOManager/releases/tag/v${pkg.version}`,
-    body: `# v1.8.5 — Performance, Autopilot & UI
+    body: `### Connections
 
-A deep maintenance release focused on fixing silent failures that have been building up under the hood since v1.8.0. No flashy new pages this time. There were just a lot of things that were quietly broken and are now quietly fixed, plus a new Refresh & Cache management system, a webhook notification system rework for Autopilot, and a full visual pass on the Saved Addons page.
+- **Multi-platform connections** - Mirror your addon configuration to Stremio, Nuvio, Hydra (inbound and outbound), and RealStream from a single account.
 
----
+- **Bidirectional reconciler** - The sync engine detects changes on both sides and propagates them. Addons added or removed on any connected platform sync to all others.
 
-## 🌟 New Features
+- **Connection API keys** - Credentials are encrypted at rest on the server using AES-256-GCM and never exposed to the client after initial setup.
 
-**Refresh Choice Dropdown.** The old single-purpose refresh button on the Accounts page has been upgraded to a full management dropdown. You now have granular control over your local data: trigger a global addon update check for all accounts with a live loading spinner for progress, or prune specific local caches without needing a full session reset.
----
+- **RealStream driver** - Native RealStream integration with server-side token custody and automatic refresh.
 
-## ⚡ Autopilot Database Optimization
+### Discover
 
-The Autopilot worker was previously triggering unconditional database writes on every heartbeat cycle, even when no state had changed. This was caused by three compounding logic errors that are now resolved.
+- **New Discover tab** - Browse and install community addons directly from the addon page.
 
-All three bugs are now fixed:
+### Security
 
-- The worker was encrypting the stabilization state to compare it to the stored value. Because the encryption uses a random IV, two encryptions of identical plaintext always produce different ciphertext — so the "did anything change?" check was always returning yes, always writing.
-- Even after fixing that, the success/failure counters inside the stabilization object would keep incrementing every cycle on a healthy instance, meaning the JSON would change anyway (\`{successes: 1}\` → \`{successes: 2}\` → ...) and the early-return would never fire.
-- A 5-minute forced heartbeat write was also running unconditionally as a fallback.
+- **SSRF protection with DNS resolution** - Server-side URL validation now resolves DNS to block private IP ranges, preventing internal network scanning.
 
-With all three fixed: **on a stable, healthy instance, the worker now produces zero database writes per cycle.** Writes only happen when something actually changes — a failover, a recovery, or a rule violation. For most users this means the worker runs silently for hours or days at a time without touching the database at all.
+- **Per-record sync salt** - Each sync payload uses a unique salt, preventing key derivation attacks across users.
 
----
+- **Race condition mutexes** - Profile switching and sync writes are serialized to prevent data corruption under concurrent access.
 
-## 🔔 Autopilot Webhook Notifications
+- **Tombstone system** - Deleted addons are tracked with tombstones to prevent accidental resurrection during sync.
 
-Autopilot can now send you a notification when it does something.
+- **Backfill episode recovery** - Watch history repair now recovers missing episode data from available sources.
 
-Set a **Global Webhook** in the Webhooks tab inside any account's Failover Manager. AIOManager auto-detects whether the URL is a Discord webhook, Slack incoming webhook, or a generic JSON endpoint and formats the payload accordingly. The global webhook is the fallback for all rules — if a rule doesn't have its own, it inherits this one.
+- **Anti-wipe guard** - Bulk addon removal is blocked unless triggered by a legitimate profile switch.
 
-Each rule can also have its own **custom webhook URL** that overrides the global one, a **per-rule notification cooldown** so you don't get spammed during flapping events, and can be set to off entirely if you want that rule to stay silent.
+### UI
 
-A **Test button** is available directly on the global webhook config, inside the rule creation dialog, and on any rule row that has a custom URL set.
+- **Container patterns** - Consistent card and wrapper styling across the app with proper border, shadow, and background treatment.
 
----
+- **Button variants** - Toolbar and action buttons now use the \`outline\` variant for visual hierarchy. Dialog actions use \`subtle\`.
 
-## 🐛 Autopilot: Two Silent Failures Fixed
+- **Connection cards** - Connections are displayed as clickable cards with hover lift and chevron indicators. No more three-dot menus.
 
-**Manual-only rules were running as automatic.** The worker's SELECT query was missing the \`is_automatic\` column. Since it never loaded, the manual-only guard never fired — every rule ran on the automatic schedule regardless of how you configured it.
+### Fixes
 
-**Live Mode syncs were silently broken for self-hosted users.** A stray space in the API path construction was generating a URL like \`/base /api/autopilot/rules\` instead of \`/base/api/autopilot/rules\`. The server returned 404 and the sync failed silently — no error shown, rules just never propagated. If you're running a remote sync server and noticed your Autopilot rules weren't sticking, this was why.
+- **Replay share links** - Share links for watch history replays now generate correctly.
 
----
-
-## 🐛 Other Bug Fixes
-
-**Global webhook went stale after saving.** Updating the global webhook URL in the UI looked like it worked, but the server kept using the old URL until the next restart. Rules that use the default webhook now re-sync immediately when you save a new global URL.
-
-**Update checks were causing 429 bursts on self-hosted addon servers.** When you clicked "Check for Addon Updates," the app was firing a separate manifest fetch pass per account — so if you have 8 accounts all running the same AIOStreams instance, it would hit that server 8 times in rapid succession. The check now deduplicates addon URLs globally before fetching, so each unique addon server is hit exactly once per check run regardless of how many accounts share it.
-
-**Health checks were making network requests to local/private-IP addons.** If you had addons with local addresses (192.168.x.x, 10.x.x.x, etc.) in your library, the app was making live network requests that were guaranteed to fail with \`ERR_CONNECTION_REFUSED\`. These are now skipped before the request is made.
-
-**OpenSubtitles v1 console spam.** The deprecated \`opensubtitles.strem.io\` endpoint returns an HTML error page instead of JSON, causing a \`SyntaxError: Unexpected token '<'\` on every single update check for anyone who has it installed. These are now silently skipped.
-
-**Test webhook endpoint had no SSRF protection.** The \`/api/autopilot/test-webhook\` endpoint would fire an outbound request to any URL without validation. It now runs through the same \`isSafeUrl\` guard as all other proxied requests.
-
----
-
-## 🎨 Saved Addon Library — Visual Overhaul
-
-The Addons page got a full visual pass to bring it in line with the rest of the app.
-
-**Sidebar** was rebuilt as a proper panel — \`bg-muted/30\` container with rounded-2xl border, primary active states, and a clean PROFILES label. The old flat ghost button list is gone.
-
-**Toolbar** was decluttered. Health indicators (Online · Offline) sit on the left, action buttons on the right in a consistent h-8 row. No more floating stats-in-a-box.
-
-**Cards** — hover state now uses Tailwind instead of \`onMouseEnter\`/\`onMouseLeave\` inline style manipulation. Footer got a proper \`border-t\` separator with profile name left and relative timestamp right.
-
-**Profile section headers** now use the full divider-line treatment with a collapse chevron, matching the rest of the app's section language.
-
----
-
-## 🔔 Tabs No Longer Require Swiping on Mobile
-
-Every pill-tab row in the app (Accounts, Activity, Failover Manager, Settings, Addons) now wraps to a second line on small screens instead of scrolling horizontally. The Metrics page already had this correct behavior — everything else now matches it.
-
----
-
-## 🔧 Smaller Fixes
-
-- Button height inconsistency between "New Rule" (h-8) and "Copy Rules From…" (h-7) in Failover Manager — both are now h-8
-- "Update All" button on the Accounts page was hardcoded blue — now uses your active theme's primary color like every other button
-- Selection toolbar on the Addons page was clipping through the app header on scroll — now correctly offsets below it
-- \`latestVersions\` map was growing unboundedly in localforage, writing a larger payload on every update check as you uninstalled addons over time — now pruned after each merge
+- **Binge streak fixes** - Streak calculations now properly handle midnight boundaries and timezone offsets.
 `
 }
 
@@ -122,8 +77,10 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
     onOpenChange?: (open: boolean) => void
 }) {
     const currentVersion = pkg.version
-    const { isWhatsNewOpen: open, setWhatsNewOpen: setOpen } = useUIStore()
-    const { lastSeenVersion, setLastSeenVersion } = useSyncStore()
+    const open = useUIStore(s => s.isWhatsNewOpen)
+    const setOpen = useUIStore(s => s.setWhatsNewOpen)
+    const lastSeenVersion = useSyncStore(s => s.lastSeenVersion)
+    const setLastSeenVersion = useSyncStore(s => s.setLastSeenVersion)
     const [releases, setReleases] = useState<Release[]>([])
     const [loading, setLoading] = useState(false)
 
@@ -187,10 +144,13 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
         const elements: React.ReactNode[] = []
 
         function applyInlineFormatting(text: string): string {
-            return text
-                .replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground font-medium">$1</strong>')
-                .replace(/`(.*?)`/g, '<code class="text-xs bg-muted px-1 py-0.5 rounded break-all">$1</code>')
-                .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">$1</a>')
+            // Strip any raw HTML tags from input before processing -
+            // release note content should only contain markdown, not HTML.
+            const stripped = text.replace(/<[^>]*>/g, '')
+            return stripped
+                .replace(/\*\*(.*?)\*\*/g, '<strong class="text-foreground font-semibold">$1</strong>')
+                .replace(/`(.*?)`/g, '<code class="text-[11px] bg-muted/70 border border-border/40 px-1.5 py-0.5 rounded-md break-all">$1</code>')
+                .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">$1</a>')
                 .replace(/(^|[\s])((https?:\/\/)[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline break-all">$2</a>')
         }
 
@@ -206,7 +166,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             // ## Header
             if (line.startsWith('## ')) {
                 elements.push(
-                    <h3 key={i} className="text-sm font-semibold text-foreground mt-3 mb-1 break-words leading-tight">
+                    <h3 key={i} className="mt-4 text-sm font-bold text-foreground break-words leading-tight">
                         {line.replace('## ', '')}
                     </h3>
                 )
@@ -216,7 +176,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             // ### Subheader
             if (line.startsWith('### ')) {
                 elements.push(
-                    <h4 key={i} className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-2 mb-1 break-words leading-tight">
+                    <h4 key={i} className="mt-4 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-[0.14em] break-words leading-tight">
                         {line.replace('### ', '')}
                     </h4>
                 )
@@ -227,7 +187,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             if (line.startsWith('> ')) {
                 const text = line.replace('> ', '').replace('[!NOTE]', '<strong>NOTE</strong>')
                 elements.push(
-                    <blockquote key={i} className="border-l-2 border-primary/30 pl-3 py-1.5 my-2 text-sm text-muted-foreground italic break-all bg-muted/30 rounded-r min-w-0">
+                    <blockquote key={i} className="my-2 rounded-r-xl border-l-2 border-primary/30 bg-muted/30 py-2 pl-3 text-sm text-muted-foreground italic break-words min-w-0">
                         <span dangerouslySetInnerHTML={{
                             __html: applyInlineFormatting(text)
                         }} />
@@ -240,9 +200,9 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             if (line.match(/^\s*[-*] /)) {
                 const text = line.replace(/^\s*[-*] /, '')
                 elements.push(
-                    <div key={i} className="flex gap-2 text-sm text-muted-foreground pl-2 min-w-0">
-                        <span className="text-primary mt-0.5 flex-shrink-0">•</span>
-                        <span className="break-all min-w-0 flex-1" dangerouslySetInnerHTML={{
+                    <div key={i} className="flex gap-2.5 text-sm leading-6 text-muted-foreground min-w-0">
+                        <span className="mt-2 h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
+                        <span className="break-words min-w-0 flex-1" dangerouslySetInnerHTML={{
                             __html: applyInlineFormatting(text)
                         }} />
                     </div>
@@ -252,7 +212,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
 
             // Regular text
             elements.push(
-                <p key={i} className="text-sm text-muted-foreground break-all" dangerouslySetInnerHTML={{
+                <p key={i} className="text-sm leading-6 text-muted-foreground break-words" dangerouslySetInnerHTML={{
                     __html: applyInlineFormatting(line)
                 }} />
             )
@@ -263,37 +223,41 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
 
     return (
         <Dialog open={open} onOpenChange={handleOpenChange}>
-            <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
-                {/* Header */}
-                <DialogHeader className="px-6 pt-6 pb-4 border-b bg-gradient-to-b from-primary/5 to-transparent flex-shrink-0">
-                    <DialogTitle className="flex items-center gap-2 text-lg">
-                        <Sparkles className="h-5 w-5 text-primary" />
-                        What's New
-                    </DialogTitle>
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                        Latest updates and improvements
-                    </p>
+            <DialogContent className="flex max-h-[88vh] min-h-0 w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+
+                <DialogHeader className="flex-shrink-0 border-b border-border/30 bg-card px-6 pb-4 pt-6">
+                    <div className="flex items-start gap-3 pr-10">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-muted/25 text-primary">
+                            <Sparkles className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0">
+                            <DialogTitle className="text-xl tracking-tight">What's New</DialogTitle>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Latest updates, fixes, and quality-of-life improvements.
+                            </p>
+                        </div>
+                    </div>
                 </DialogHeader>
 
-                {/* Content */}
-                <ScrollArea className="flex-1 overflow-auto">
-                    <div className="px-6 py-4 space-y-6">
+
+                <div className="min-h-0 flex-1 overflow-y-auto bg-card">
+                    <div className="space-y-1 px-5 py-5 sm:px-7">
                         {loading && (
-                            <div className="flex items-center justify-center py-12 text-muted-foreground">
-                                <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                            <div className="flex items-center justify-center gap-2 py-14 text-sm text-muted-foreground">
+                                <Loader2 className="h-5 w-5 animate-spin" />
                                 Loading releases...
                             </div>
                         )}
 
                         {!loading && releases.length === 0 && (
-                            <div className="text-center py-12 text-muted-foreground text-sm">
+                            <div className="py-14 text-center text-sm text-muted-foreground">
                                 No release notes available.
                             </div>
                         )}
 
-                        {!loading && releases.map((release, idx) => {
+                        {!loading && releases.map((release) => {
                             const build = (pkg as any).build as number | undefined
-                            const currentVersionStr = `${pkg.version}${build ? `+build.${build}` : ''} `
+                            const currentVersionStr = `${pkg.version}${build ? `+build.${build}` : ''}`
                             const isCurrentVersion = release.tag_name.replace('v', '') === currentVersionStr
                             const date = new Date(release.published_at).toLocaleDateString('en-US', {
                                 year: 'numeric',
@@ -302,51 +266,46 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                             })
 
                             return (
-                                <div key={release.tag_name}>
-                                    {/* Version header */}
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Badge
-                                            variant={isCurrentVersion ? 'default' : 'secondary'}
-                                            className={isCurrentVersion ? 'bg-primary/15 text-primary border-primary/20' : ''}
-                                        >
+                                <section key={release.tag_name} className="relative border-l border-border/35 py-4 pl-5 first:pt-0 last:pb-0">
+                                    <span className="absolute -left-[4.5px] top-6 h-2 w-2 rounded-full bg-primary ring-4 ring-card" />
+
+                                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                                        <Badge variant={isCurrentVersion ? 'default' : 'secondary'} className={isCurrentVersion ? 'border-primary/25 bg-primary/10 text-primary' : 'border-border/40 bg-muted/20 text-muted-foreground'}>
                                             {release.tag_name}
                                         </Badge>
+                                        <span className="text-sm font-semibold text-foreground">{release.name || release.tag_name}</span>
+                                        <span className="ml-auto text-xs text-muted-foreground">{date}</span>
                                         {isCurrentVersion && (
-                                            <span className="text-[10px] uppercase tracking-wider text-primary font-semibold">
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-success">
+                                                <CheckCircle2 className="h-3 w-3" />
                                                 Current
                                             </span>
                                         )}
-                                        <span className="text-xs text-muted-foreground ml-auto">{date}</span>
                                     </div>
 
-                                    {/* Release body */}
-                                    <div className="space-y-1">
+
+                                    <div className="space-y-1.5">
                                         {renderBody(release.body || 'No release notes provided.')}
                                     </div>
-
-                                    {/* Separator between releases */}
-                                    {idx < releases.length - 1 && (
-                                        <div className="border-t mt-4" />
-                                    )}
-                                </div>
+                                </section>
                             )
                         })}
                     </div>
-                </ScrollArea>
+                </div>
 
-                {/* Footer */}
-                <div className="px-6 py-3 border-t flex-shrink-0 flex items-center justify-between bg-card/50">
-                    <Button variant="ghost" size="sm" asChild>
+
+                <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-border/30 bg-card px-4 py-3 sm:px-6">
+                    <Button variant="ghost" size="sm" asChild className="gap-1.5 rounded-xl">
                         <a
                             href="https://github.com/sonicx161/AIOManager/releases"
                             target="_blank"
                             rel="noopener noreferrer"
                         >
-                            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                            <ExternalLink className="h-3.5 w-3.5" />
                             All Releases
                         </a>
                     </Button>
-                    <Button size="sm" onClick={() => handleOpenChange(false)}>
+                    <Button size="sm" onClick={() => handleOpenChange(false)} className="rounded-xl px-5">
                         Got it
                     </Button>
                 </div>

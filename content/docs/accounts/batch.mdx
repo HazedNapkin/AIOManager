@@ -1,0 +1,40 @@
+---
+title: Batch Operations
+description: Perform complex actions across multiple accounts in one operation.
+---
+
+Batch Operations lets you select multiple accounts and run a single action across all of them. Access it via the **Batch Operations** button in the Accounts toolbar. Every operation shows a preview of what's about to happen before you execute.
+
+<Note>Protected addons are respected during batch operations: they won't be removed unless you explicitly unprotect them first.</Note>
+
+## Installing Addons
+
+**Install from Library:** Apply a saved Library profile or tag to the selected accounts. All addons in that profile or with that tag are installed at once.
+
+**Install Saved Addons:** Manually pick individual saved addons from your Library and install them across the selected accounts.
+
+**Install from URLs:** Paste a list of addon URLs (one per line) and install them across all selected accounts simultaneously.
+
+## Account Synchronization
+
+**Mirror from Account:** Copy all addons from one source account to the selected target accounts. Choose to append (keep existing addons) or fully overwrite.
+
+**Sync Addon Order:** Copy the addon order from a source account and apply it to all selected accounts. The addons themselves are unchanged, and only their position in the list is updated.
+
+## Mass Management
+
+**Reinstall Addons:** Pick specific addons and reinstall just those across the selected accounts from their source URLs. Useful for refreshing individual configs without touching everything else.
+
+**Remove by Tags:** Remove all addons that carry a specific tag from the selected accounts at once.
+
+**Reinstall All:** Force-refresh every addon on every selected account from its source URL. The equivalent of running Refresh Addons on each account individually.
+
+**Remove Addons:** Delete specific addons from the selected accounts. You choose which addons to target.
+
+<Warning>Remove Addons and Reinstall All are irreversible. Always review the preview before confirming.</Warning>
+
+## Access Control
+
+**Protect All:** Mark every addon on the selected accounts as protected. Protected addons show a shield badge and are skipped during bulk removal operations.
+
+**Unprotect All:** Remove protection from every addon on the selected accounts.

@@ -3,15 +3,16 @@ import {
     Dialog,
     DialogContent,
     DialogDescription,
-    DialogFooter,
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { AddonIcon } from '@/components/ui/addon-icon'
 import { AddonDescriptor } from '@/types/addon'
-import { RotateCcw } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useUIStore } from '@/store/uiStore'
+import { SourceUrlBox } from './SourceUrlBox'
 
 interface AddonMetadataDialogProps {
     open: boolean
@@ -19,7 +20,7 @@ interface AddonMetadataDialogProps {
     addon: AddonDescriptor
     accountId: string
     onSave: (metadata: { customName?: string; customLogo?: string; customDescription?: string }) => Promise<void>
-    onReplaceUrl?: (newUrl: string) => Promise<void>
+    onReplaceUrl?: (newUrl: string, descriptor?: AddonDescriptor) => Promise<{ failedAccounts?: string[] } | void>
 }
 
 export function AddonMetadataDialog({
@@ -35,9 +36,7 @@ export function AddonMetadataDialog({
     const [customDescription, setCustomDescription] = useState('')
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [showAdvanced, setShowAdvanced] = useState(false)
-    const [newUrl, setNewUrl] = useState('')
-    const [replacingUrl, setReplacingUrl] = useState(false)
+    const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
 
 
     // Initialize form with existing metadata
@@ -46,11 +45,6 @@ export function AddonMetadataDialog({
             setCustomName(addon.metadata?.customName || '')
             setCustomLogo(addon.metadata?.customLogo || '')
             setCustomDescription(addon.metadata?.customDescription || '')
-            setNewUrl(addon.transportUrl)
-
-
-
-            setShowAdvanced(false)
             setError(null)
         }
     }, [open, addon, accountId])
@@ -66,7 +60,7 @@ export function AddonMetadataDialog({
             })
             onOpenChange(false)
         } catch (err) {
-            console.error(err)
+            if (import.meta.env.DEV) console.error(err)
             setError('Failed to save changes.')
         } finally {
             setSaving(false)
@@ -88,26 +82,24 @@ export function AddonMetadataDialog({
             setCustomDescription('')
             onOpenChange(false) // Close dialog so parent re-renders with fresh addon data
         } catch (err) {
-            console.error(err)
+            if (import.meta.env.DEV) console.error(err)
             setError('Failed to reset defaults.')
         } finally {
             setSaving(false)
         }
     }
 
-    const handleReplaceUrl = async () => {
-        if (!onReplaceUrl || !newUrl.trim() || newUrl === addon.transportUrl) return
-        setReplacingUrl(true)
+    const handleReplaceUrl = async (descriptor: AddonDescriptor, requestedUrl: string) => {
+        if (!onReplaceUrl) return
         setError(null)
         try {
-            await onReplaceUrl(newUrl.trim())
-            // Success toast is handled by parent, we just clear error
-            setError(null)
-            onOpenChange(false)
+            const result = await onReplaceUrl(descriptor.transportUrl || requestedUrl, descriptor)
+            if (!result?.failedAccounts?.length) onOpenChange(false)
+            return result
         } catch (err: any) {
-            setError(err.message || 'Failed to replace URL.')
-        } finally {
-            setReplacingUrl(false)
+            const message = err.message || 'Failed to replace URL.'
+            setError(message)
+            throw new Error(message)
         }
     }
 
@@ -123,7 +115,7 @@ export function AddonMetadataDialog({
 
                 <div className="md:grid md:grid-cols-2 gap-6 py-4">
                     <div className="space-y-4">
-                        {/* Display Name */}
+
                         <div className="space-y-2">
                             <Label htmlFor="name">Display Name</Label>
                             <div className="flex gap-2">
@@ -135,17 +127,17 @@ export function AddonMetadataDialog({
                                 />
                                 <Button
                                     variant="ghost"
-                                    size="icon"
-                                    title="Reset Name"
+                                    size="sm"
                                     onClick={() => setCustomName('')}
                                     disabled={!customName}
+                                    className="text-xs text-muted-foreground shrink-0"
                                 >
-                                    <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                                    Reset
                                 </Button>
                             </div>
                         </div>
 
-                        {/* Custom Logo */}
+
                         <div className="space-y-2">
                             <Label htmlFor="logo">Logo URL</Label>
                             <div className="flex gap-2">
@@ -157,17 +149,17 @@ export function AddonMetadataDialog({
                                 />
                                 <Button
                                     variant="ghost"
-                                    size="icon"
-                                    title="Reset Logo"
+                                    size="sm"
                                     onClick={() => setCustomLogo('')}
                                     disabled={!customLogo}
+                                    className="text-xs text-muted-foreground shrink-0"
                                 >
-                                    <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                                    Reset
                                 </Button>
                             </div>
                         </div>
 
-                        {/* Custom Description */}
+
                         <div className="space-y-2">
                             <Label htmlFor="description">Description</Label>
                             <div className="flex gap-2">
@@ -180,38 +172,35 @@ export function AddonMetadataDialog({
                                 />
                                 <Button
                                     variant="ghost"
-                                    size="icon"
-                                    title="Reset Description"
+                                    size="sm"
                                     onClick={() => setCustomDescription('')}
                                     disabled={!customDescription}
-                                    className="mt-1 shrink-0"
+                                    className="text-xs text-muted-foreground shrink-0 mt-1"
                                 >
-                                    <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                                    Reset
                                 </Button>
                             </div>
                         </div>
 
 
 
-                        {/* Error Message */}
+
                         {error && <p className="text-sm text-destructive font-medium">{error}</p>}
                     </div>
 
                     <div className="space-y-4 pt-4 md:pt-0">
-                        {/* Preview Section */}
+
                         <div className="border rounded-md p-4 bg-muted/20 flex flex-col items-center justify-start gap-4 h-full min-h-[250px] overflow-hidden">
-                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Dashboard Preview</span>
+                            <span className="text-xs font-medium text-muted-foreground uppercase">Dashboard Preview</span>
 
                             <div className="flex flex-col items-center gap-3 w-full">
-                                <div className="bg-background p-2 rounded-xl shadow-sm border shrink-0">
-                                    <img
-                                        key={customLogo || addon.manifest.logo}
-                                        src={customLogo || addon.manifest.logo || "https://placehold.co/80x80?text=?"}
-                                        className="w-16 h-16 sm:w-20 sm:h-20 object-contain rounded-lg"
-                                        alt="Logo Preview"
-                                        onError={(e) => { e.currentTarget.style.display = 'none' }}
-                                    />
-                                </div>
+                                <AddonIcon
+                                    name={customName || addon.manifest.name}
+                                    logo={customLogo || addon.manifest.logo}
+                                    alt="Logo Preview"
+                                    className="h-16 w-16 sm:h-20 sm:w-20"
+                                    textClassName="text-2xl"
+                                />
                                 <span className="font-bold text-base sm:text-lg text-center break-words w-full px-2 line-clamp-2">
                                     {customName || addon.manifest.name}
                                 </span>
@@ -220,7 +209,7 @@ export function AddonMetadataDialog({
                                         {customDescription || addon.manifest.description}
                                     </p>
                                 </div>
-                                <span className="text-[10px] sm:text-xs text-muted-foreground px-2 py-1 bg-muted rounded-full mt-2 shrink-0">
+                                <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded-full mt-2 shrink-0">
                                     v{addon.manifest.version}
                                 </span>
                             </div>
@@ -228,7 +217,7 @@ export function AddonMetadataDialog({
                     </div>
                 </div>
 
-                {/* Info Footer */}
+
                 <div className="bg-muted/50 -mx-6 px-6 py-4 mt-2 border-t text-xs text-muted-foreground grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <span className="font-semibold block mb-1">Developer Info</span>
@@ -237,65 +226,36 @@ export function AddonMetadataDialog({
                     </div>
                     <div>
                         <span className="font-semibold block mb-1">Technical Details</span>
-                        <p className="break-all line-clamp-2" title={addon.transportUrl}>URL: {addon.transportUrl}</p>
+                        {onReplaceUrl ? (
+                            <SourceUrlBox
+                                addon={addon}
+                                accountId={accountId}
+                                privacyMode={isPrivacyModeEnabled}
+                                variant="compact"
+                                onReplace={handleReplaceUrl}
+                                successDescription="Addon URL updated successfully."
+                                className="mt-1 bg-background/45"
+                            />
+                        ) : (
+                            <p className="break-all line-clamp-2" title={addon.transportUrl}>URL: {isPrivacyModeEnabled ? '********' : addon.transportUrl}</p>
+                        )}
                         <p>Status: {addon.flags?.protected ? 'Protected' : 'Standard'}</p>
                     </div>
                 </div>
 
-                {onReplaceUrl && (
-                    <div className="bg-muted/30 -mx-6 px-6 py-4 bg-destructive/5 border-t border-b">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-[10px] uppercase font-bold tracking-widest opacity-50 hover:opacity-100 p-0 h-auto"
-                            onClick={() => setShowAdvanced(!showAdvanced)}
-                        >
-                            {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings'}
-                        </Button>
-
-                        {showAdvanced && (
-                            <div className="mt-4 p-4 border rounded-md bg-destructive/5 border-destructive/20 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                                <div className="space-y-1">
-                                    <h4 className="text-sm font-semibold text-destructive uppercase tracking-tight">Replace Transport URL</h4>
-                                    <p className="text-xs text-muted-foreground">
-                                        Swap the underlying manifest URL. This will also update any Autopilot rules using this addon.
-                                    </p>
-                                </div>
-                                <div className="flex flex-col sm:flex-row gap-2">
-                                    <Input
-                                        value={newUrl}
-                                        onChange={(e) => setNewUrl(e.target.value)}
-                                        placeholder="https://..."
-                                        className="text-xs bg-background flex-1 min-w-0"
-                                    />
-                                    <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        onClick={handleReplaceUrl}
-                                        disabled={replacingUrl || !newUrl.trim() || newUrl === addon.transportUrl}
-                                        className="shrink-0"
-                                    >
-                                        {replacingUrl ? 'Updating...' : 'Replace'}
-                                    </Button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                <DialogFooter className="gap-2 sm:gap-0 mt-4 pb-4 flex-col-reverse sm:flex-row">
-                    <Button type="button" variant="secondary" onClick={handleReset} className="w-full sm:w-auto sm:mr-auto" disabled={saving}>
+                <div className="mt-4 flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between [&_button]:h-11 [&_button]:w-full [&_button]:rounded-full [&_button]:px-5 sm:[&_button]:w-auto">
+                    <Button type="button" variant="subtle" onClick={handleReset} disabled={saving}>
                         Reset Details
                     </Button>
-                    <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                        <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving} className="w-full sm:w-auto">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                        <Button variant="subtle" onClick={() => onOpenChange(false)} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button onClick={handleSave} disabled={saving} className="w-full sm:w-auto">
+                        <Button onClick={handleSave} disabled={saving}>
                             {saving ? 'Syncing...' : 'Save & Sync'}
                         </Button>
                     </div>
-                </DialogFooter>
+                </div>
             </DialogContent>
         </Dialog>
     )

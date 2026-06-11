@@ -13,19 +13,16 @@ class AutopilotManager {
      */
     handleManualToggle(accountId: string, transportUrl: string) {
         const { rules, updateRule } = useFailoverStore.getState()
-        const normalizedUrl = normalizeAddonUrl(transportUrl).toLowerCase()
+        const normalizedUrl = normalizeAddonUrl(transportUrl)
 
-        // Find any active rule for this account that includes this addon
         const activeRules = rules.filter(r => r.accountId === accountId && r.isActive)
 
         for (const rule of activeRules) {
             const chain = rule.priorityChain || []
-            const normalizedChain = chain.map((u: string) => normalizeAddonUrl(u).toLowerCase())
+            const normalizedChain = chain.map((u: string) => normalizeAddonUrl(u))
 
             if (normalizedChain.includes(normalizedUrl)) {
-                // The user is manually messing with a chain that is under Autopilot control.
-
-                console.log(`[Autopilot] Manual override detected for rule ${rule.id}. Disabling automatic mode and deactivating rule.`)
+                if (import.meta.env.DEV) console.log(`[Autopilot] Manual override detected for rule ${rule.id}. Disabling automatic mode and deactivating rule.`)
 
                 updateRule(rule.id, {
                     isActive: false,

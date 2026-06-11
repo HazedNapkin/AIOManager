@@ -1,0 +1,38 @@
+---
+title: Webhooks
+description: Get notified when a failover triggers via Discord, Slack, or any JSON webhook.
+---
+
+Autopilot can send a notification whenever it performs a failover, whether switching from a primary to a backup or switching back when the primary recovers. Discord, Slack, and generic JSON webhook endpoints are all supported. The platform is detected automatically from the URL format.
+
+You can set a **global webhook** in Settings > General that applies to all rules, or override it per rule with a custom webhook. You can also disable notifications for specific rules entirely.
+
+## Notification Modes
+
+| Mode | Behavior |
+|------|----------|
+| **Use global webhook** | Sends to the URL configured in Settings > General. Changing the global URL updates all rules using this mode. |
+| **Custom webhook** | Provide a specific URL for this rule only. Useful for different channels per rule. |
+| **Off** | No notifications regardless of global setting. |
+
+## Supported Platforms
+
+| Platform | URL Pattern | Payload Format |
+|----------|-------------|----------------|
+| Discord | `discord.com/api/webhooks/...` | Discord embed with rule name, addon, timestamp |
+| Slack | `hooks.slack.com/...` | Slack-formatted message block |
+| Generic | Any other URL | JSON object with event details |
+
+<Note>Webhook platform is detected automatically. Paste a Discord webhook URL and AIOManager formats the payload as a Discord embed. Paste a Slack URL and it sends a Slack-formatted message. Any other URL receives a generic JSON payload.</Note>
+
+## Cooldown
+
+Cooldown sets the minimum time (in minutes) between notifications for a rule. If an addon is flapping (going up and down repeatedly), cooldown prevents your Discord from being spammed.
+
+| Cooldown | Behavior |
+|----------|----------|
+| Empty / None | Notification on every failover event |
+| 5-10 minutes | Reasonable for most setups |
+| 15+ minutes | Quiet operation, only notify on sustained issues |
+
+<Tip>A cooldown of 10-15 minutes is a sensible default for most setups. Leave it blank to receive a notification on every failover event.</Tip>

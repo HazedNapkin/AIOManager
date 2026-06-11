@@ -1,10 +1,16 @@
-import { AddonDescriptor } from '@/types/addon'
+import { AddonDescriptor, AddonManifest } from '@/types/addon'
 import { stremioClient } from './stremio-client'
 import { checkAddonHealth, HealthStatus, isLocalOrPrivateUrl } from '@/lib/addon-health'
-import { isNewerVersion, normalizeAddonUrl } from '@/lib/utils'
+import { getAddonVersionKey, isNewerVersion, normalizeAddonUrl } from '@/lib/utils'
 import { getEffectiveManifest } from '@/lib/addon-utils'
+import { getPendingFetch, setPendingFetch } from '@/lib/manifest-cache'
+import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
+import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
+import { compareManifestShape } from '@/lib/addon-manifest-diff'
+import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 
 const KNOWN_DEAD_DOMAINS = ['opensubtitles.strem.io']
+const MAX_ADDON_COLLECTION_SIZE = 250
 
 function isKnownDeadDomain(url: string): boolean {
   try {
@@ -14,76 +20,203 @@ function isKnownDeadDomain(url: string): boolean {
   }
 }
 
-export async function getAddons(authKey: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
-  return stremioClient.getAddonCollection(authKey, accountContext)
+const knownAddonCounts = new Map<string, number>()
+
+const addonCollectionCache = new Map<string, { data: AddonDescriptor[], ts: number }>()
+const addonCollectionPending = new Map<string, { version: number; promise: Promise<AddonDescriptor[]> }>()
+const addonCollectionVersions = new Map<string, number>()
+const COLLECTION_CACHE_TTL = 60000
+
+interface UpdateAddonOptions {
+  bypassEmptyGuard?: boolean
+  allowCollectionShrink?: boolean
+  previousCollection?: AddonDescriptor[]
 }
 
-export async function updateAddons(authKey: string, addons: AddonDescriptor[], accountContext: string = 'Unknown'): Promise<void> {
-  // CRITICAL: Apply manifest customizations (Raven fix)
-  // This ensures that custom names, logos, and descriptions are pushed to Stremio.
-  // We FILTER OUT disabled addons here so they are "hidden" in Stremio.
-  const preparedAddons = (addons || [])
-    .filter(addon => addon.flags?.enabled !== false)
-    .map((addon) => ({
-      ...addon,
-      manifest: getEffectiveManifest(addon)
-    }))
+export async function getAddons(authKey: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
+  const cached = addonCollectionCache.get(authKey)
+  if (cached && Date.now() - cached.ts < COLLECTION_CACHE_TTL) {
+    return cached.data
+  }
+  const version = addonCollectionVersions.get(authKey) || 0
+  const pending = addonCollectionPending.get(authKey)
+  if (pending && pending.version === version) {
+    return pending.promise
+  }
 
-  return stremioClient.setAddonCollection(authKey, preparedAddons, accountContext)
+  const promise = (async () => {
+    const addons = await stremioClient.getAddonCollection(authKey, accountContext)
+    const knownCount = knownAddonCounts.get(authKey) || 0
+    if (knownCount > 0 && addons.length < Math.ceil(knownCount * 0.25)) {
+      if (cached?.data?.length) {
+        if (import.meta.env.DEV) console.warn(`[AddonCollection] Suspicious collection shrink (${knownCount} → ${addons.length}); using cached last-good collection.`)
+        return cached.data
+      }
+      throw new Error(`Safety guard: Stremio returned a suspicious addon collection shrink (${knownCount} → ${addons.length}).`)
+    }
+    if ((addonCollectionVersions.get(authKey) || 0) === version) {
+      if (addons.length > 0) {
+        knownAddonCounts.set(authKey, addons.length)
+      }
+      addonCollectionCache.set(authKey, { data: addons, ts: Date.now() })
+    }
+    return addons
+  })()
+
+  addonCollectionPending.set(authKey, { version, promise })
+  try {
+    return await promise
+  } finally {
+    const current = addonCollectionPending.get(authKey)
+    if (current?.promise === promise) {
+      addonCollectionPending.delete(authKey)
+    }
+  }
+}
+
+function invalidateAddonCache(authKey: string) {
+  addonCollectionVersions.set(authKey, (addonCollectionVersions.get(authKey) || 0) + 1)
+  addonCollectionCache.delete(authKey)
+  addonCollectionPending.delete(authKey)
+}
+
+function prepareAddonForStremio(addon: AddonDescriptor): AddonDescriptor {
+  const effectiveManifest = getEffectiveManifest(addon)
+  const identifiedManifest = identifyAddon(addon.transportUrl, effectiveManifest)
+  const fallbackName = getHostnameIdentifier(addon.transportUrl)
+  const manifest: AddonManifest = {
+    ...identifiedManifest,
+    id: identifiedManifest.id || 'unknown',
+    name: identifiedManifest.name || fallbackName || 'Unknown Addon',
+    version: identifiedManifest.version || '0.0.0',
+    description: identifiedManifest.description || '',
+    types: identifiedManifest.types || [],
+    resources: identifiedManifest.resources || [],
+  }
+
+  if (effectiveManifest.catalogs) {
+    manifest.catalogs = effectiveManifest.catalogs.map(catalog => ({
+      ...catalog,
+      extra: catalog.extra?.map(extra => ({ ...extra })),
+    }))
+  }
+
+  return {
+    ...addon,
+    manifest
+  }
+}
+
+function prepareAddonCollectionForStremio(addons: AddonDescriptor[]): AddonDescriptor[] {
+  return dedupeAddonsByTransportUrl(
+    (addons || [])
+      .filter(addon => addon.flags?.enabled !== false)
+      .map(prepareAddonForStremio)
+  )
+}
+
+function validatePreparedAddon(addon: AddonDescriptor): string | null {
+  if (!addon || typeof addon !== 'object') return 'Addon entry is not an object'
+  if (!addon.transportUrl) return 'Addon is missing transport URL'
+  try {
+    const parsed = new URL(normalizeAddonUrl(addon.transportUrl))
+    if (!['http:', 'https:'].includes(parsed.protocol)) return 'Addon URL must use HTTP or HTTPS'
+  } catch {
+    return 'Addon has an invalid transport URL'
+  }
+
+  if (!addon.manifest?.id || !addon.manifest?.name || !addon.manifest?.version) {
+    return 'Addon manifest is missing required fields'
+  }
+
+  return null
+}
+
+export async function updateAddons(authKey: string, addons: AddonDescriptor[], accountContext: string = 'Unknown', options?: UpdateAddonOptions): Promise<void> {
+  const preparedAddons = prepareAddonCollectionForStremio(addons || [])
+  const invalidAddons = preparedAddons
+    .map((addon, index) => ({ addon, index, reason: validatePreparedAddon(addon) }))
+    .filter((result): result is { addon: AddonDescriptor; index: number; reason: string } => Boolean(result.reason))
+
+  if (invalidAddons.length > 0) {
+    const firstInvalid = invalidAddons[0]
+    throw new Error(`Safety guard: refusing to push invalid addon collection. Entry ${firstInvalid.index + 1}: ${firstInvalid.reason}`)
+  }
+
+  if (preparedAddons.length > MAX_ADDON_COLLECTION_SIZE) {
+    throw new Error(`Safety guard: refusing to push ${preparedAddons.length} addons. Limit is ${MAX_ADDON_COLLECTION_SIZE}.`)
+  }
+
+  const allowCollectionShrink = options?.allowCollectionShrink || options?.bypassEmptyGuard
+  const knownCount = knownAddonCounts.get(authKey) || 0
+  if (preparedAddons.length === 0 && knownCount > 0 && !allowCollectionShrink) {
+    throw new Error(`Anti-wipe guard: refusing to push empty addon collection (${knownCount} addon${knownCount !== 1 ? 's' : ''} previously seen)`)
+  }
+  if (knownCount > 0 && preparedAddons.length < Math.ceil(knownCount * 0.25) && !allowCollectionShrink) {
+    throw new Error(`Anti-wipe guard: refusing to shrink addon collection from ${knownCount} to ${preparedAddons.length}.`)
+  }
+
+  const cachedBeforeUpdate = addonCollectionCache.get(authKey)
+  const optionPreviousCollection = options?.previousCollection
+    ? prepareAddonCollectionForStremio(options.previousCollection)
+    : undefined
+  const previousCollection = cachedBeforeUpdate && Date.now() - cachedBeforeUpdate.ts < COLLECTION_CACHE_TTL
+    ? cachedBeforeUpdate.data
+    : optionPreviousCollection && optionPreviousCollection.length > 0
+      ? optionPreviousCollection
+      : undefined
+  invalidateAddonCache(authKey)
+  await stremioClient.setAddonCollection(authKey, preparedAddons, accountContext, { allowCollectionShrink, previousCollection })
+
+  if (preparedAddons.length > 0 || allowCollectionShrink) {
+    knownAddonCounts.set(authKey, preparedAddons.length)
+    addonCollectionCache.set(authKey, { data: preparedAddons, ts: Date.now() })
+  }
 }
 
 
 export async function installAddon(authKey: string, addonUrl: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
-  // First, fetch the addon manifest
-  const newAddon = await fetchAddonManifest(addonUrl, accountContext)
-
-  // Get current addons
-  const currentAddons = await getAddons(authKey, accountContext)
+  const [newAddon, currentAddons] = await Promise.all([
+    fetchAddonManifest(addonUrl, accountContext),
+    getAddons(authKey, accountContext),
+  ])
 
   // Check if addon already installed (by transportUrl to support duplicates with same ID)
+  const newAddonUrlKey = getAddonUrlKey(newAddon.transportUrl)
   const existingIndex = currentAddons.findIndex(
-    (addon) => normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(newAddon.transportUrl)
+    (addon) => getAddonUrlKey(addon.transportUrl) === newAddonUrlKey
   )
 
   let updatedAddons: AddonDescriptor[]
 
   if (existingIndex >= 0) {
-    // Update existing addon in place
     updatedAddons = [...currentAddons]
     const existing = currentAddons[existingIndex]
     updatedAddons[existingIndex] = {
       ...newAddon,
-      // Preserve local flags and metadata
-      // Preserve local flags and metadata and catalogOverrides
       flags: { ...existing.flags, ...newAddon.flags },
       metadata: { ...existing.metadata, ...newAddon.metadata },
       catalogOverrides: existing.catalogOverrides,
     }
   } else {
-    // Add new addon (Additive)
     updatedAddons = [...currentAddons, newAddon]
   }
 
-  // Update the collection
   await updateAddons(authKey, updatedAddons, accountContext)
 
   return updatedAddons
 }
 
 export async function removeAddon(authKey: string, transportUrl: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
-  // Get current addons
   const currentAddons = await getAddons(authKey, accountContext)
 
-  // Check if addon is protected
   const addonToRemove = currentAddons.find((addon) => addon.transportUrl === transportUrl)
   if (addonToRemove?.flags?.protected) {
     throw new Error(`Addon "${addonToRemove.manifest.name}" is protected and cannot be removed.`)
   }
 
-  // Remove the addon
   const updatedAddons = currentAddons.filter((addon) => addon.transportUrl !== transportUrl)
 
-  // Update the collection
   await updateAddons(authKey, updatedAddons, accountContext)
 
   return updatedAddons
@@ -122,26 +255,20 @@ export async function reinstallAddon(
   // 1. Fetch new manifest (Failsafe)
   // We fetch this FIRST. This ensures we can update the LOCAL store even if the addon 
   // isn't currently in Stremio (e.g. it's disabled).
-  let newAddonDescriptor: AddonDescriptor
-  try {
-    newAddonDescriptor = await fetchAddonManifest(transportUrl, accountContext, true)
-  } catch (error) {
-    console.error(`[Reinstall Failsafe] Failed to reach addon at ${transportUrl}`, error)
+  const manifestPromise = fetchAddonManifest(transportUrl, accountContext, true).catch((error) => {
+    if (import.meta.env.DEV) console.error(`[Reinstall Failsafe] Failed to reach addon at ${transportUrl}`, error)
     throw new Error(`Cannot reach addon: ${error instanceof Error ? error.message : 'Unknown error'}. Aborting reinstall.`)
-  }
-
-  // 2. Get current remote addons
-  const currentAddons = await getAddons(authKey, accountContext)
-  const addonIndex = currentAddons.findIndex((addon) => normalizeAddonUrl(addon.transportUrl).toLowerCase() === normalizeAddonUrl(transportUrl).toLowerCase())
+  })
+  const collectionPromise = getAddons(authKey, accountContext)
+  const [newAddonDescriptor, currentAddons] = await Promise.all([manifestPromise, collectionPromise])
+  const addonIndex = currentAddons.findIndex((addon) => normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl))
   const existingAddon = currentAddons[addonIndex]
 
   const previousVersion = existingAddon?.manifest?.version
   let finalAddons = currentAddons
 
-  // 3. Update the addon in place if it exists in remote Stremio
   if (existingAddon) {
     const updatedAddons = [...currentAddons]
-    // Preserve metadata and flags from the existing remote addon
     updatedAddons[addonIndex] = {
       ...newAddonDescriptor,
       flags: { ...existingAddon.flags, ...newAddonDescriptor.flags },
@@ -149,11 +276,11 @@ export async function reinstallAddon(
       catalogOverrides: existingAddon.catalogOverrides,
     }
 
-    // 4. Save the updated collection (Atomic operation)
-    await updateAddons(authKey, updatedAddons, accountContext)
+    // 4. Update the addons array for the caller (but do NOT push to Stremio yet)
+    // The accountStore will handle the final state persistence/push.
     finalAddons = updatedAddons
   } else {
-    console.log(`[Reinstall] Addon ${transportUrl} not found in remote collection. Updating locally only.`)
+    if (import.meta.env.DEV) console.log(`[Reinstall] Addon ${transportUrl} not found in remote collection. Updating locally only.`)
   }
 
   return {
@@ -169,17 +296,20 @@ export async function reinstallAddon(
  */
 export interface AddonUpdateInfo {
   addonId: string
+  versionKey: string
   name: string
   transportUrl: string
   installedVersion: string
   latestVersion: string
   hasUpdate: boolean
+  hasVersionUpdate?: boolean
+  hasManifestShapeChange?: boolean
+  manifestChanges?: SavedAddonManifestChangeSummary
   health: { isOnline: boolean; error?: string }
 }
 
 // --- Global Cache for Bursts (e.g. Sync All) ---
 const PENDING_CHECKS: Record<string, Promise<HealthStatus>> = {}
-const PENDING_MANIFESTS: Record<string, Promise<AddonDescriptor>> = {}
 
 // Track active manifest fetches per origin domain to avoid rate limiting
 const DOMAIN_ACTIVE_FETCHES: Record<string, number> = {}
@@ -191,14 +321,11 @@ function acquireDomainSlot(origin: string): Promise<void> {
     const active = DOMAIN_ACTIVE_FETCHES[origin] || 0
     if (active < MAX_CONCURRENT_PER_DOMAIN) {
       DOMAIN_ACTIVE_FETCHES[origin] = active + 1
-      // console.log(`[Domain Limiter] [${origin}] SLOT ACQUIRED (Active: ${DOMAIN_ACTIVE_FETCHES[origin]})`)
       resolve()
     } else {
       if (!DOMAIN_QUEUE[origin]) DOMAIN_QUEUE[origin] = []
-      // console.log(`[Domain Limiter] [${origin}] QUEUEING (Active: ${active}, Queue: ${DOMAIN_QUEUE[origin].length + 1})`)
       DOMAIN_QUEUE[origin].push(() => {
         DOMAIN_ACTIVE_FETCHES[origin] = (DOMAIN_ACTIVE_FETCHES[origin] || 0) + 1
-        // console.log(`[Domain Limiter] [${origin}] QUEUE RELEASED (Active: ${DOMAIN_ACTIVE_FETCHES[origin]})`)
         resolve()
       })
     }
@@ -211,8 +338,6 @@ function releaseDomainSlot(origin: string): void {
   if (next) {
     // Stagger slightly to avoid burst 429s
     setTimeout(next, 500)
-  } else {
-    // console.log(`[Domain Limiter] [${origin}] SLOT RELEASED (Active: ${active})`)
   }
 }
 
@@ -222,10 +347,9 @@ function releaseDomainSlot(origin: string): void {
  * Fetches manifests sequentially to avoid overwhelming the server/proxy.
  */
 export async function checkAddonUpdates(addons: AddonDescriptor[], accountContext: string = 'Update-Check'): Promise<AddonUpdateInfo[]> {
-  // Filter out official addons only (protected addons can still be updated)
   const checkableAddons = addons.filter((addon) => !addon.flags?.official)
 
-  console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
+  if (import.meta.env.DEV) console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
 
   const results: AddonUpdateInfo[] = []
   const domainHealthCache: Record<string, boolean> = {}
@@ -252,10 +376,9 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
               return await PENDING_CHECKS[origin]
             })()
 
-        const manifestKey = addon.transportUrl // Key by full URL to avoid version collisions (Issue #1)
-        if (!PENDING_MANIFESTS[manifestKey]) {
-          PENDING_MANIFESTS[manifestKey] = (async () => {
-            // Wait for health check before fetching manifest to save proxy bandwidth
+        const manifestKey = addon.transportUrl
+        if (!getPendingFetch(manifestKey)) {
+          setPendingFetch(manifestKey, (async () => {
             const healthVal = await healthPromise
             if (!healthVal.isOnline) throw new Error('Addon is offline')
 
@@ -266,15 +389,12 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
               releaseDomainSlot(origin)
             }
           })().catch(err => {
-            delete PENDING_MANIFESTS[manifestKey]
             throw err
-          })
-          // Manifest cache for 5s to sync burst requests
-          setTimeout(() => delete PENDING_MANIFESTS[manifestKey], 60000)
+          }))
         }
 
         const [latestManifest, healthStatus] = await Promise.all([
-          PENDING_MANIFESTS[manifestKey],
+          getPendingFetch(manifestKey)!,
           healthPromise,
         ])
 
@@ -282,6 +402,7 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
 
         return {
           addonId: addon.manifest.id,
+          versionKey: getAddonVersionKey(addon),
           name: addon.manifest.name,
           transportUrl: addon.transportUrl,
           installedVersion: addon.manifest.version,
@@ -291,7 +412,7 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
         }
       } catch (error) {
         if (!isKnownDeadDomain(addon.transportUrl)) {
-          console.warn(`[Update Check] Failed to check ${addon.manifest.name}:`, error)
+          if (import.meta.env.DEV) console.warn(`[Update Check] Failed to check ${addon.manifest.name}:`, error)
         }
         return null
       }
@@ -301,7 +422,7 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
     results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
   }
 
-  console.log(`[Update Check] Complete: ${results.length} checked`)
+  if (import.meta.env.DEV) console.log(`[Update Check] Complete: ${results.length} checked`)
 
   return results
 }
@@ -311,11 +432,11 @@ export async function checkSavedAddonUpdates(
     id: string
     name: string
     installUrl: string
-    manifest: { id: string; name: string; version: string }
+    manifest: AddonManifest
   }[],
   accountContext: string = 'Library-Update-Check'
 ): Promise<AddonUpdateInfo[]> {
-  console.log(`[Update Check] Checking ${savedAddons.length} saved addons with Domain+ID deduplication (v3)...`)
+  if (import.meta.env.DEV) console.log(`[Update Check] Checking ${savedAddons.length} saved addons with Domain+ID deduplication (v3)...`)
 
   const domainHealthCache: Record<string, boolean> = {}
 
@@ -344,10 +465,9 @@ export async function checkSavedAddonUpdates(
               return await PENDING_CHECKS[origin]
             })()
 
-        const manifestKey = addon.installUrl // Key by full URL to avoid version collisions
-        if (!PENDING_MANIFESTS[manifestKey]) {
-          PENDING_MANIFESTS[manifestKey] = (async () => {
-            // Wait for health check before fetching manifest to save proxy bandwidth
+        const manifestKey = addon.installUrl
+        if (!getPendingFetch(manifestKey)) {
+          setPendingFetch(manifestKey, (async () => {
             const healthVal = await healthPromise
             if (!healthVal.isOnline) throw new Error('Addon is offline')
 
@@ -358,31 +478,38 @@ export async function checkSavedAddonUpdates(
               releaseDomainSlot(origin)
             }
           })().catch(async (err) => {
-            delete PENDING_MANIFESTS[manifestKey]
             throw err
-          })
-          setTimeout(() => delete PENDING_MANIFESTS[manifestKey], 60000)
+          }))
         }
 
         const [latestManifest, healthStatus] = await Promise.all([
-          PENDING_MANIFESTS[manifestKey],
+          getPendingFetch(manifestKey)!,
           healthPromise,
         ])
 
-        const hasUpdate = isNewerVersion(addon.manifest.version, latestManifest.manifest.version)
+        const hasVersionUpdate = isNewerVersion(addon.manifest.version, latestManifest.manifest.version)
+        const manifestChanges = compareManifestShape(addon.manifest, latestManifest.manifest)
+        const hasUpdate = hasVersionUpdate || manifestChanges.hasManifestShapeChange
 
         return {
           addonId: addon.id,
+          versionKey: getAddonVersionKey({
+            transportUrl: addon.installUrl,
+            manifest: addon.manifest,
+          }),
           name: addon.name,
           transportUrl: addon.installUrl,
           installedVersion: addon.manifest.version,
           latestVersion: latestManifest.manifest.version,
           hasUpdate,
+          hasVersionUpdate,
+          hasManifestShapeChange: manifestChanges.hasManifestShapeChange,
+          manifestChanges,
           health: healthStatus,
         }
       } catch (error) {
         if (!isKnownDeadDomain(addon.installUrl)) {
-          console.warn(`[Update Check] Failed to check ${addon.name}:`, error)
+          if (import.meta.env.DEV) console.warn(`[Update Check] Failed to check ${addon.name}:`, error)
         }
         return null
       }
@@ -392,6 +519,6 @@ export async function checkSavedAddonUpdates(
     results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
   }
 
-  console.log(`[Update Check] Complete: ${results.length} checked`)
+  if (import.meta.env.DEV) console.log(`[Update Check] Complete: ${results.length} checked`)
   return results
 }

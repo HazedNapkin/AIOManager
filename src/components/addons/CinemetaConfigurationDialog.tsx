@@ -171,7 +171,7 @@ export function CinemetaConfigurationDialog({
       onSuccess?.()
       onOpenChange(false)
     } catch (error) {
-      console.error('Failed to apply configuration:', error)
+      import.meta.env.DEV && console.error('Failed to apply configuration:', error)
       toast({
         title: 'Configuration Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -263,7 +263,7 @@ export function CinemetaConfigurationDialog({
 
       onOpenChange(false)
     } catch (error) {
-      console.error('Failed to reset configuration:', error)
+      import.meta.env.DEV && console.error('Failed to reset configuration:', error)
       toast({
         title: 'Reset Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -294,7 +294,7 @@ export function CinemetaConfigurationDialog({
                     Remove Search Artifacts
                   </Label>
                   {patchStatus?.searchArtifactsPatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -320,7 +320,7 @@ export function CinemetaConfigurationDialog({
                     Remove Standard Catalogs
                   </Label>
                   {patchStatus?.standardCatalogsPatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -347,7 +347,7 @@ export function CinemetaConfigurationDialog({
                     Remove Metadata Resource
                   </Label>
                   {patchStatus?.metaResourcePatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -367,9 +367,9 @@ export function CinemetaConfigurationDialog({
 
           {/* Warning Banner */}
           {config.removeMetaResource && (
-            <div className="flex items-center gap-2 rounded-lg border border-yellow-500/50 bg-yellow-500/10 px-4 py-3">
-              <AlertTriangle className="h-4 w-4 text-yellow-500 flex-shrink-0" />
-              <p className="text-sm text-yellow-500">
+            <div className="flex items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
+              <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0" />
+              <p className="text-sm text-warning">
                 Warning: Removing the metadata resource may affect addon functionality
               </p>
             </div>

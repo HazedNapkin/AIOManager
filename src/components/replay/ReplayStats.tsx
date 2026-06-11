@@ -24,8 +24,8 @@ export function ReplayStats({ data }: ReplayStatsProps) {
                     viewport={{ once: true, margin: "0px" }}
                     className="mb-16"
                 >
-                    <h2 className="text-5xl md:text-7xl font-extrabold text-white tracking-tight leading-tight">By the Numbers</h2>
-                    <p className="text-white/70 font-bold mt-2 uppercase tracking-[0.2em] text-[12px]">Your streaming metrics, codified</p>
+                    <h2 className="text-5xl md:text-7xl font-bold text-white tracking-tight leading-tight">By the Numbers</h2>
+                    <p className="text-white/70 font-bold mt-2 uppercase text-sm">Streaming metrics, codified</p>
                 </motion.div>
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
@@ -39,8 +39,8 @@ export function ReplayStats({ data }: ReplayStatsProps) {
                             className="p-8 rounded-[32px] bg-white/5 border border-white/10 shadow-2xl flex flex-col justify-between group hover:scale-[1.02] transition-all relative overflow-hidden"
                         >
                             <div className="space-y-1 relative z-10">
-                                <span className="text-white/70 text-[11px] font-black uppercase tracking-widest">{stat.label}</span>
-                                <div className="text-5xl md:text-7xl font-extrabold text-white tracking-tight leading-[0.85]">
+                                <span className="text-white/70 text-xs font-bold uppercase">{stat.label}</span>
+                                <div className="text-5xl md:text-7xl font-bold text-white tracking-tight leading-[0.85]">
                                     <Counter value={stat.value} />
                                 </div>
                             </div>

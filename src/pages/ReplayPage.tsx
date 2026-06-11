@@ -3,8 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Sparkles, AlertCircle, ChevronUp, ChevronDown, Search, Check, Users, CalendarDays, X } from 'lucide-react'
 import { useLibraryCache } from '@/store/libraryCache'
+import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useAccountStore } from '@/store/accountStore'
 import { computeReplayData } from '@/lib/compute-replay-data'
+import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import { ReplayHero } from '@/components/replay/ReplayHero'
 import { ReplayStats } from '@/components/replay/ReplayStats'
 import { ReplayYearInNumbers } from '@/components/replay/ReplayYearInNumbers'
@@ -15,7 +17,7 @@ import { ReplayInsights } from '@/components/replay/ReplayInsights'
 import { ReplayShareCard } from '@/components/replay/ReplayShareCard'
 import { StremioAccount } from '@/types/account'
 import { cn, ACCOUNT_COLORS } from '@/lib/utils'
-// GlassPill removed for performance
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 interface AccountSwitcherProps {
     accounts: StremioAccount[]
@@ -29,7 +31,6 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
     const containerRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
 
-    // Close on outside click
     useEffect(() => {
         if (!open) return
         const handler = (e: MouseEvent) => {
@@ -42,12 +43,10 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
         return () => document.removeEventListener('mousedown', handler)
     }, [open])
 
-    // Focus search input when panel opens
     useEffect(() => {
         if (open) setTimeout(() => inputRef.current?.focus(), 50)
     }, [open])
 
-    // Close on Escape
     useEffect(() => {
         const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); setQuery('') } }
         document.addEventListener('keydown', handler)
@@ -59,7 +58,6 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
         ((a as any).email ?? '').toLowerCase().includes(query.toLowerCase())
     )
 
-    // Derive label for the trigger button
     const triggerLabel = selectedAccountId === 'all'
         ? 'All Accounts'
         : accounts.find(a => a.id === selectedAccountId)?.name ?? 'All Accounts'
@@ -99,7 +97,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                         width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
                         background: triggerColor,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 9, fontWeight: 900, color: 'white',
+                        fontSize: 9, fontWeight: 700, color: 'white',
                         fontFamily: '"DM Mono", monospace',
                     }}>
                         {getInitials(triggerLabel)}
@@ -116,7 +114,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
 
                 {/* Label */}
                 <span style={{
-                    fontFamily: '"DM Sans", sans-serif',
+                    fontFamily: 'Inter, sans-serif',
                     fontSize: 12, fontWeight: 700,
                     color: 'rgba(255,255,255,0.85)',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
@@ -134,7 +132,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                     })()}
                 </span>
 
-                {/* Account count badge — only in "all" mode */}
+                {/* Account count badge - only in "all" mode */}
                 {selectedAccountId === 'all' && accounts.length > 1 && (
                     <span style={{
                         fontFamily: '"DM Mono", monospace',
@@ -195,7 +193,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                                 placeholder="Search accounts..."
                                 style={{
                                     background: 'transparent', border: 'none', outline: 'none',
-                                    color: 'white', fontSize: 12, fontFamily: '"DM Sans", sans-serif',
+                                    color: 'white', fontSize: 16, fontFamily: 'Inter, sans-serif',
                                     fontWeight: 500, width: '100%',
                                 }}
                             />
@@ -213,7 +211,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                     {/* Account list */}
                     <div style={{ maxHeight: 320, overflowY: 'auto', padding: '6px' }} className="no-scrollbar">
 
-                        {/* All Accounts row — only show when not filtering */}
+                        {/* All Accounts row - only show when not filtering */}
                         {!query && (
                             <button
                                 onClick={() => { onSelect('all'); setOpen(false); setQuery('') }}
@@ -239,7 +237,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                                 </div>
                                 <div style={{ flex: 1, textAlign: 'left' }}>
                                     <div style={{
-                                        fontFamily: '"DM Sans", sans-serif', fontSize: 13, fontWeight: 700,
+                                        fontFamily: 'Inter, sans-serif', fontSize: 13, fontWeight: 700,
                                         color: 'white',
                                     }}>All Accounts</div>
                                     <div style={{
@@ -253,7 +251,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                             </button>
                         )}
 
-                        {/* Divider — only when not filtering */}
+                        {/* Divider - only when not filtering */}
                         {!query && (
                             <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', margin: '4px 0 6px' }} />
                         )}
@@ -293,7 +291,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                                             border: `1px solid rgba(255,255,255,0.1)`,
                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                                             fontFamily: '"DM Mono", monospace',
-                                            fontSize: 9, fontWeight: 900, color: 'white',
+                                            fontSize: 9, fontWeight: 700, color: 'white',
                                         }}>
                                             {initials}
                                         </div>
@@ -301,7 +299,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                                         {/* Name + email */}
                                         <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                                             <div style={{
-                                                fontFamily: '"DM Sans", sans-serif', fontSize: 13, fontWeight: 700,
+                                                fontFamily: 'Inter, sans-serif', fontSize: 13, fontWeight: 700,
                                                 color: isSelected ? 'white' : 'rgba(255,255,255,0.8)',
                                                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                                                 display: 'flex', alignItems: 'center', gap: '6px'
@@ -329,7 +327,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                         )}
                     </div>
 
-                    {/* Footer count — only visible when list is long */}
+                    {/* Footer count - only visible when list is long */}
                     {accounts.length > 8 && !query && (
                         <div style={{
                             borderTop: '1px solid rgba(255,255,255,0.06)',
@@ -347,26 +345,43 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
 }
 
 export function ReplayPage() {
+    useDocumentTitle('Replay')
     const navigate = useNavigate()
     const containerRef = useRef<HTMLDivElement>(null)
-    const { items, loading, ensureLoaded } = useLibraryCache()
-    const { accounts } = useAccountStore()
+    const { loading, ensureLoaded } = useLibraryCache()
+    const { history: watchHistory } = useWatchHistory()
+    const items = useMemo(() => watchHistory.map(historyEntryToActivityItem), [watchHistory])
+    const accounts = useAccountStore(s => s.accounts)
     const [userSelectedYear, setUserSelectedYear] = useState<number | string | null>(null)
     const [selectedAccountId, setSelectedAccountId] = useState<string>('all')
     const [activeSection, setActiveSection] = useState('hero')
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
-    // Force mobile PWA status bar to midnight
+    // Force body background to Replay's own dark color to prevent theme gradient bleed
     useEffect(() => {
         const metaThemeColor = document.querySelector('meta[name="theme-color"]')
         const originalColor = metaThemeColor?.getAttribute('content')
         if (metaThemeColor) {
             metaThemeColor.setAttribute('content', '#08080f')
         }
+
+        // Suppress body's theme gradient and html scrollbar while Replay is mounted
+        const html = document.documentElement
+        const body = document.body
+        const origHtmlOverflow = html.style.overflow
+        const origBg = body.style.backgroundColor
+        const origBgImage = body.style.backgroundImage
+        html.style.overflow = 'hidden'
+        body.style.backgroundColor = '#08080f'
+        body.style.backgroundImage = 'none'
+
         return () => {
             if (metaThemeColor && originalColor) {
                 metaThemeColor.setAttribute('content', originalColor)
             }
+            html.style.overflow = origHtmlOverflow
+            body.style.backgroundColor = origBg
+            body.style.backgroundImage = origBgImage
         }
     }, [])
 
@@ -439,7 +454,6 @@ export function ReplayPage() {
 
     const observerRef = useRef<IntersectionObserver | null>(null)
 
-    // Scroll Spy for active section updating
     useEffect(() => {
         const timer = setTimeout(() => {
             if (observerRef.current) observerRef.current.disconnect()
@@ -491,7 +505,6 @@ export function ReplayPage() {
 
     const handleYearChange = (year: number | string) => {
         setUserSelectedYear(year)
-        // Correctly target the internal container for reset
         if (containerRef.current) {
             containerRef.current.scrollTo({ top: 0, behavior: 'auto' })
         }
@@ -509,7 +522,7 @@ export function ReplayPage() {
                     >
                         <Sparkles className="text-white w-8 h-8" />
                     </motion.div>
-                    <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Curating Your Reel</h1>
+                    <h1 className="text-3xl font-bold text-white tracking-tighter uppercase">Curating the Reel</h1>
                     <p className="text-white/40 mt-2 font-bold max-w-xs">{loading ? "We're indexing your watch history..." : "Computing powerful analytics..."}</p>
                 </div>
             </div>
@@ -520,16 +533,16 @@ export function ReplayPage() {
         return (
             <div style={{ '--background': '0 0% 0%', '--foreground': '0 0% 98%', '--card': '0 0% 4%', '--card-foreground': '0 0% 98%', '--popover': '0 0% 4%', '--popover-foreground': '0 0% 98%', '--primary': '45 93% 47%', '--primary-foreground': '0 0% 0%', '--secondary': '0 0% 10%', '--secondary-foreground': '0 0% 98%', '--muted': '0 0% 10%', '--muted-foreground': '0 0% 64%', '--accent': '0 0% 10%', '--accent-foreground': '0 0% 98%', '--destructive': '0 63% 31%', '--destructive-foreground': '0 0% 98%', '--border': '0 0% 15%', '--input': '0 0% 15%', '--ring': '45 93% 47%', background: '#08080f', color: 'white', minHeight: '100vh' } as React.CSSProperties}>
                 <div className="min-h-screen mesh-gradient flex flex-col items-center justify-center p-8 text-center">
-                    <div className="p-4 bg-red-500/10 rounded-2xl border border-red-500/20 mb-8">
-                        <AlertCircle className="text-red-500 w-8 h-8" />
+                    <div className="p-4 bg-destructive/10 rounded-xl border border-destructive/20 mb-8">
+                        <AlertCircle className="text-destructive w-8 h-8" />
                     </div>
-                    <h1 className="text-3xl font-black text-white tracking-tighter uppercase">No History Found</h1>
+                    <h1 className="text-3xl font-bold text-white tracking-tighter uppercase">No History Found</h1>
                     <p className="text-white/40 mt-2 font-bold max-w-sm mb-12">
                         We couldn't find any watch history for your accounts. Start watching something on Stremio to see your Replay!
                     </p>
                     <button
                         onClick={() => navigate('/metrics')}
-                        className="bg-[#151520] shadow-xl border border-white/10 px-8 py-4 rounded-full text-white font-black uppercase tracking-widest flex items-center gap-3 hover:bg-white/10 transition-all"
+                        className="bg-[#151520] shadow-xl border border-white/10 px-8 py-4 rounded-full text-white font-bold uppercase flex items-center gap-3 hover:bg-white/10 transition-all"
                     >
                         <ArrowLeft className="w-5 h-5" />
                         Back to Metrics
@@ -540,8 +553,8 @@ export function ReplayPage() {
     }
 
     return (
-        <div style={{ '--background': '0 0% 0%', '--foreground': '0 0% 98%', '--card': '0 0% 4%', '--card-foreground': '0 0% 98%', '--popover': '0 0% 4%', '--popover-foreground': '0 0% 98%', '--primary': '45 93% 47%', '--primary-foreground': '0 0% 0%', '--secondary': '0 0% 10%', '--secondary-foreground': '0 0% 98%', '--muted': '0 0% 10%', '--muted-foreground': '0 0% 64%', '--accent': '0 0% 10%', '--accent-foreground': '0 0% 98%', '--destructive': '0 63% 31%', '--destructive-foreground': '0 0% 98%', '--border': '0 0% 15%', '--input': '0 0% 15%', '--ring': '45 93% 47%', background: '#08080f', color: 'white' } as React.CSSProperties}>
-            <div className="relative h-screen w-full bg-[#08080f] text-white selection:bg-primary/30 overflow-hidden fixed inset-0 z-[50]">
+        <div style={{ '--background': '0 0% 0%', '--foreground': '0 0% 98%', '--card': '0 0% 4%', '--card-foreground': '0 0% 98%', '--popover': '0 0% 4%', '--popover-foreground': '0 0% 98%', '--primary': '45 93% 47%', '--primary-foreground': '0 0% 0%', '--secondary': '0 0% 10%', '--secondary-foreground': '0 0% 98%', '--muted': '0 0% 10%', '--muted-foreground': '0 0% 64%', '--accent': '0 0% 10%', '--accent-foreground': '0 0% 98%', '--destructive': '0 63% 31%', '--destructive-foreground': '0 0% 98%', '--border': '0 0% 15%', '--input': '0 0% 15%', '--ring': '45 93% 47%', position: 'fixed', inset: 0, zIndex: 50, background: '#08080f', backgroundImage: 'none', color: 'white' } as React.CSSProperties}>
+            <div className="relative h-screen w-full bg-[#08080f] text-white selection:bg-primary/30 overflow-hidden">
 
                 {/* FIXED PERFORMANCE BACKGROUND */}
                 <div className="absolute inset-0 z-0 mesh-gradient opacity-60 pointer-events-none" />
@@ -553,10 +566,10 @@ export function ReplayPage() {
                     <div className="w-1/4 md:w-1/3 flex justify-start pointer-events-auto">
                         <button
                             onClick={() => navigate('/metrics')}
-                            className="bg-white/5 md:bg-[#151520] backdrop-blur-md shadow-xl border border-white/10 p-2.5 md:p-3 rounded-full md:rounded-2xl text-white/40 hover:text-white transition-all flex items-center gap-3 group"
+                            className="bg-white/5 md:bg-[#151520] backdrop-blur-md shadow-xl border border-white/10 p-2.5 md:p-3 rounded-full md:rounded-xl text-white/40 hover:text-white transition-all flex items-center gap-3 group"
                         >
                             <ArrowLeft className="w-5 h-5 md:w-5 md:h-5 group-hover:-translate-x-1 transition-transform" />
-                            <span className="font-bold text-[10px] uppercase tracking-widest hidden lg:block">Exit Replay</span>
+                            <span className="font-bold text-xs uppercase hidden lg:block">Exit Replay</span>
                         </button>
                     </div>
 
@@ -575,7 +588,7 @@ export function ReplayPage() {
                     <div className="w-1/4 md:w-1/3 flex justify-end pointer-events-none" />
                 </div>
 
-                {/* MAIN SCROLL CONTAINER - FREE SCROLL ENABLED */}
+
                 <div
                     ref={containerRef}
                     className="relative z-10 h-screen overflow-y-auto no-scrollbar scroll-smooth"
@@ -608,7 +621,7 @@ export function ReplayPage() {
                                             style={{
                                                 fontFamily: '"DM Mono", monospace',
                                                 fontSize: '10px',
-                                                fontWeight: 900,
+                                                fontWeight: 700,
                                                 borderRadius: '999px',
                                                 background: isSelectedYear ? 'white' : 'transparent',
                                                 color: isSelectedYear ? 'black' : 'rgba(255,255,255,0.35)',
@@ -662,7 +675,7 @@ export function ReplayPage() {
                                                                         style={{
                                                                             fontFamily: '"DM Mono", monospace',
                                                                             fontSize: '8px',
-                                                                            fontWeight: 900,
+                                                                            fontWeight: 700,
                                                                             borderRadius: '999px',
                                                                             background: isSelectedMonth ? 'hsl(var(--primary))' : 'rgba(255,255,255,0.05)',
                                                                             color: isSelectedMonth ? 'white' : 'rgba(255,255,255,0.3)',
@@ -706,7 +719,7 @@ export function ReplayPage() {
                                 style={{
                                     fontFamily: '"DM Mono", monospace',
                                     fontSize: '7px',
-                                    fontWeight: 900,
+                                    fontWeight: 700,
                                     borderRadius: '999px',
                                     background: activeSelectedYear === 'all-time' ? 'white' : 'transparent',
                                     color: activeSelectedYear === 'all-time' ? 'black' : 'rgba(255,255,255,0.35)',
@@ -761,7 +774,7 @@ export function ReplayPage() {
                                         }`}
                                 />
                                 {/* Tooltip */}
-                                <div className="absolute left-6 px-3 py-1.5 bg-black/80 backdrop-blur border border-white/10 text-white text-[10px] font-black uppercase tracking-widest rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                                <div className="absolute left-6 px-3 py-1.5 bg-black/80 backdrop-blur border border-white/10 text-white text-xs font-bold uppercase rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
                                     {section.label}
                                 </div>
                             </div>
@@ -801,7 +814,7 @@ export function ReplayPage() {
                     </AnimatePresence>
                 </div>
 
-                {/* Bottom weird bar removed */}
+
             </div>
         </div>
     )

@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Link2, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react'
 import { useAddonStore } from '@/store/addonStore'
+import { SquircleOverlay } from '@/components/ui/squircle-overlay'
+import { AddonIcon } from '@/components/ui/addon-icon'
 
 export function SyncSummarySection() {
-    const { library, accountStates } = useAddonStore()
+    const library = useAddonStore(s => s.library)
+    const accountStates = useAddonStore(s => s.accountStates)
     const [isExpanded, setIsExpanded] = useState(false)
     const navigate = useNavigate()
 
@@ -19,55 +22,52 @@ export function SyncSummarySection() {
 
     return (
         <section className="space-y-4">
-            <div className="p-4 rounded-xl border bg-card/50 space-y-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className="p-1.5 rounded-lg bg-primary/10">
-                            <Link2 className="h-4 w-4 text-primary" />
+            <div className="space-y-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                            <SquircleOverlay />
+                            <Link2 className="relative z-10 h-4 w-4 text-muted-foreground" />
                         </div>
-                        <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-semibold">Active Sync Connections</h3>
-                            <span className="bg-primary/10 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-tighter">
-                                {syncedAddons.length}
-                            </span>
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-base font-semibold">Active Sync Connections</h3>
+                                <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-xs font-bold uppercase tracking-tighter text-primary">
+                                    {syncedAddons.length}
+                                </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">Saved addons that mirror into installed account addons.</p>
                         </div>
                     </div>
                     <button
-                        className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1 uppercase tracking-widest"
-                        onClick={() => navigate('/saved-addons')}
+                        className="inline-flex h-8 items-center justify-center gap-1 rounded-xl border border-border/40 bg-background/60 px-3 text-xs font-semibold uppercase text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary sm:self-auto"
+                        onClick={() => navigate('/saved-addons?tab=sync')}
                     >
                         Manage
                         <ChevronRight className="h-3 w-3" />
                     </button>
                 </div>
 
-                <div className="space-y-2">
+                <div className="grid gap-2">
                     {syncedAddons.slice(0, displayCount).map((addon, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-background/30 border border-border/30">
-                            <div className="flex items-center gap-3 overflow-hidden">
-                                <div className="w-6 h-6 rounded bg-muted/50 flex-shrink-0 overflow-hidden border border-border/30">
-                                    {(addon.metadata?.customLogo || addon.manifest.logo) && (
-                                        <img
-                                            src={addon.metadata?.customLogo || addon.manifest.logo}
-                                            alt=""
-                                            className="w-full h-full object-contain"
-                                            onError={(e) => { e.currentTarget.style.display = 'none' }}
-                                        />
-                                    )}
-                                </div>
-                                <span className="text-xs font-bold truncate">{addon.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 flex-shrink-0 text-right">
-                                <span className="text-[10px] text-muted-foreground italic">
-                                    {(() => {
-                                        let count = 0
-                                        for (const accState of Object.values(accountStates)) {
-                                            if (accState.installedAddons.some(ia => ia.installUrl === addon.installUrl)) count++
-                                        }
-                                        return count > 0 ? `${count} account${count !== 1 ? 's' : ''}` : 'Not installed'
-                                    })()}
-                                </span>
-                            </div>
+                        <div key={idx} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-border/35 bg-background/35 p-2.5">
+                            <AddonIcon
+                                name={addon.name}
+                                logo={addon.metadata?.customLogo || addon.manifest.logo}
+                                className="h-8 w-8"
+                                textClassName="text-xs"
+                                imageClassName="p-0.5"
+                            />
+                            <span className="truncate text-xs font-bold">{addon.name}</span>
+                            <span className="shrink-0 rounded-full border border-border/30 bg-muted/25 px-2 py-1 text-xs text-muted-foreground">
+                                {(() => {
+                                    let count = 0
+                                    for (const accState of Object.values(accountStates)) {
+                                        if (accState.installedAddons.some(ia => ia.installUrl === addon.installUrl)) count++
+                                    }
+                                    return count > 0 ? `${count} account${count !== 1 ? 's' : ''}` : 'Not installed'
+                                })()}
+                            </span>
                         </div>
                     ))}
                 </div>
@@ -76,17 +76,17 @@ export function SyncSummarySection() {
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="w-full h-8 text-[11px] font-bold text-muted-foreground hover:text-primary"
+                        className="h-8 w-full gap-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-primary"
                         onClick={() => setIsExpanded(!isExpanded)}
                     >
                         {isExpanded ? (
                             <>
-                                <ChevronUp className="mr-2 h-3 w-3" />
+                                <ChevronUp className="h-3 w-3" />
                                 SHOW LESS
                             </>
                         ) : (
                             <>
-                                <ChevronDown className="mr-2 h-3 w-3" />
+                                <ChevronDown className="h-3 w-3" />
                                 SHOW ALL ({syncedAddons.length})
                             </>
                         )}

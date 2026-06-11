@@ -1,40 +1,83 @@
+import { triggerSync } from '@/lib/sync-trigger'
 import { checkAddonUpdates } from '@/api/addons'
 import { HealthStatus } from '@/lib/addon-health'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
-import { maskEmail, isNewerVersion, cn } from '@/lib/utils'
-import { useAccountStore } from '@/store/accountStore'
+import { getLatestAddonVersion, maskEmail, isNewerVersion, cn } from '@/lib/utils'
+import { AccountSwitcher } from '@/components/common/AccountSwitcher'
+import { useAccountStore, getAccountEmail, getAccountAuthKey } from '@/store/accountStore'
+import type { AddonDescriptor } from '@/types/addon'
 import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, ChevronLeft, ChevronRight, Zap, Check, Shield, Copy, Download } from 'lucide-react'
+import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, Copy, Download, User, Edit2, LayoutGrid, List } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { AnimatedRefreshIcon, AnimatedUpdateIcon, AnimatedShieldIcon } from '../ui/AnimatedIcons'
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Input } from '@/components/ui/input'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AddonCard } from './AddonCard'
+import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { AccountPickerDialog } from '../accounts/AccountPickerDialog'
 import { AddonReorderDialog } from './AddonReorderDialog'
 import { InstallSavedAddonDialog } from './InstallSavedAddonDialog'
 import { BulkSaveDialog } from './BulkSaveDialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { FailoverManager } from '@/components/accounts/FailoverManager'
+import { FailoverManager, type FailoverView } from '@/components/accounts/FailoverManager'
+import { ConnectionManager } from '@/components/providers/ConnectionManager'
+
+import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { AddonChangelog } from '@/components/accounts/AddonChangelog'
+import { FloatingActionBar } from '@/components/ui/floating-action-bar'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
+import { AccountSetupCreateDialog } from '@/components/accounts/AccountSetupCreateDialog'
+import { useConfetti } from '@/components/ui/confetti'
+import { mapConcurrent } from '@/lib/concurrency'
+import { SYNCED_SETTINGS_EVENT } from '@/lib/synced-settings'
+import type { AddonCollectionDiff } from '@/lib/addon-collection-diff'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
-
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 
 interface AddonListProps {
   accountId: string
+}
+
+const ADDON_REINSTALL_CONCURRENCY = 4
+const BULK_ACCOUNT_CONCURRENCY = 5
+const BULK_ADDON_FETCH_CONCURRENCY = 4
+
+function getProfileSwitchDescription(result: {
+  targetName: string
+  addonChanges: AddonCollectionDiff
+  stremioWriteSkipped: boolean
+}) {
+  const { addonChanges } = result
+  const parts = []
+  if (addonChanges.installs > 0) parts.push(`${addonChanges.installs} installed`)
+  if (addonChanges.updates > 0) parts.push(`${addonChanges.updates} updated`)
+  if (addonChanges.removals > 0) parts.push(`${addonChanges.removals} removed`)
+  if (addonChanges.orderChanged) parts.push('order updated')
+
+  const summary = parts.length > 0 ? parts.join(', ') : 'No add-on changes needed'
+  const writeSummary = result.stremioWriteSkipped ? 'No Stremio add-on write needed.' : 'Stremio add-on collection updated.'
+  return `${result.targetName}: ${summary}. ${writeSummary}`
 }
 
 export function AddonList({ accountId }: AddonListProps) {
@@ -44,28 +87,103 @@ export function AddonList({ accountId }: AddonListProps) {
   const account = accounts.find((acc) => acc.id === accountId)
   const { addons, removeAddonByIndex } = useAddons(accountId)
   const openAddAddonDialog = useUIStore((state) => state.openAddAddonDialog)
+  const addonListView = useUIStore((state) => state.addonListView)
+  const setAddonListView = useUIStore((state) => state.setAddonListView)
+  const [isDesktopAddonListViewport, setIsDesktopAddonListViewport] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return window.matchMedia('(min-width: 768px)').matches
+  })
+  const effectiveAddonListView = addonListView === 'list' && isDesktopAddonListViewport ? 'list' : 'grid'
   const checkRules = useFailoverStore((state) => state.checkRules)
   const pullServerState = useFailoverStore((state) => state.pullServerState)
   const encryptionKey = useAuthStore((state) => state.encryptionKey)
-  const syncAccount = useAccountStore((state) => state.syncAccount)
+  const syncAccount = useAccountStore(state => state.syncAccount)
 
+  const failoverRules = useFailoverStore(
+    useShallow((state) => state.rules.filter(r => r.accountId === accountId))
+  )
+
+  const linkedRuleMap = useMemo(() => {
+    const map = new Map<string, typeof failoverRules[number]>()
+    for (const r of failoverRules) {
+      for (let i = 1; i < r.priorityChain.length; i++) {
+        map.set(r.priorityChain[i].toLowerCase(), r)
+      }
+    }
+    return map
+  }, [failoverRules])
+
+  const primaryRuleMap = useMemo(() => {
+    const map = new Map<string, typeof failoverRules[number]>()
+    for (const r of failoverRules) {
+      if (r.priorityChain[0]) {
+        map.set(r.priorityChain[0].toLowerCase(), r)
+      }
+    }
+    return map
+  }, [failoverRules])
+
+  const addonUrlMap = useMemo(() => {
+    const map = new Map<string, typeof addons[number]>()
+    for (const a of addons) {
+      map.set(a.transportUrl.toLowerCase(), a)
+    }
+    return map
+  }, [addons])
+
+  const [visibleCount, setVisibleCount] = useState(200)
   const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
   const [installFromLibraryOpen, setInstallFromLibraryOpen] = useState(false)
 
   const [bulkSaveOpen, setBulkSaveOpen] = useState(false)
 
-  const activeTab = searchParams.get('tab') || 'addons'
+  const extractTransportUrl = (id: string) => {
+    const idx = id.lastIndexOf('::')
+    return idx > 0 ? id.substring(0, idx) : id
+  }
+
+  const tabParam = searchParams.get('tab')
+  const validTabs = ['addons', 'failover', 'failover-history', 'failover-webhooks', 'changelog', 'connections'] as const
+  type AccountTab = typeof validTabs[number]
+  const activeTab: AccountTab = validTabs.includes(tabParam as AccountTab) ? tabParam as AccountTab : 'addons'
+  const activeAccountTab = activeTab === 'failover-history' || activeTab === 'failover-webhooks' ? 'failover' : activeTab
+  const failoverViewByTab: Record<Extract<AccountTab, 'failover' | 'failover-history' | 'failover-webhooks'>, FailoverView> = {
+    failover: 'rules',
+    'failover-history': 'history',
+    'failover-webhooks': 'webhooks',
+  }
+  const failoverTabByView: Record<FailoverView, AccountTab> = {
+    rules: 'failover',
+    history: 'failover-history',
+    webhooks: 'failover-webhooks',
+  }
 
   const handleTabChange = (val: string) => {
     setSearchParams({ tab: val }, { replace: true })
   }
 
-  // Selection Mode State
+  const handleFailoverViewChange = (view: FailoverView) => {
+    setSearchParams({ tab: failoverTabByView[view] }, { replace: true })
+  }
+
   const [selectedAddonUrls, setSelectedAddonUrls] = useState<Set<string>>(new Set())
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
+  const [hideDisabled, setHideDisabled] = useState(() => {
+    try { return localStorage.getItem('stremio-manager:hide-disabled-addons') === 'true' } catch { return false }
+  })
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const handleSyncedSettings = (event: Event) => {
+      const value = (event as CustomEvent<{ hideDisabledAddons?: boolean }>).detail?.hideDisabledAddons
+      if (typeof value === 'boolean') setHideDisabled(value)
+    }
+
+    window.addEventListener(SYNCED_SETTINGS_EVENT, handleSyncedSettings)
+    return () => window.removeEventListener(SYNCED_SETTINGS_EVENT, handleSyncedSettings)
+  }, [])
 
   const handleSearchChange = (val: string) => {
     setSearchQuery(val)
@@ -73,6 +191,17 @@ export function AddonList({ accountId }: AddonListProps) {
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(val)
     }, 150)
+  }
+
+  const toggleHideDisabled = () => {
+    setHideDisabled(v => {
+      const next = !v
+      try {
+        localStorage.setItem('stremio-manager:hide-disabled-addons', String(next))
+        triggerSync()
+      } catch (e) { /* localStorage unavailable */ }
+      return next
+    })
   }
 
   const toggleAddonSelection = (addonUrl: string) => {
@@ -95,14 +224,31 @@ export function AddonList({ accountId }: AddonListProps) {
   }
 
 
-  // Auto-sync on mount to reflect server-side Autopilot swaps
+  // Sync first, then reconcile Autopilot so a fresh Stremio pull cannot
+  // re-enable backup addons after the server says a different URL is active.
   useEffect(() => {
-    if (accountId && encryptionKey) {
-      syncAccount(accountId, false).then(() => {
-        pullServerState()
-      })
+    if (!accountId || !encryptionKey) return
+
+    let cancelled = false
+    const reconcile = async () => {
+      const lastSync = account?.lastSync ? new Date(account.lastSync).getTime() : 0
+      const isStale = Date.now() - lastSync > 2 * 60 * 1000
+      if (isStale) {
+        await syncAccount(accountId, false)
+      }
+      if (!cancelled) {
+        await pullServerState()
+      }
     }
-  }, [accountId, syncAccount, pullServerState, encryptionKey])
+
+    reconcile().catch((error) => {
+      if (import.meta.env.DEV) console.warn('[AddonList] Autopilot reconciliation failed:', error)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [accountId, syncAccount, encryptionKey, account?.lastSync, pullServerState])
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [protectedInSelection, setProtectedInSelection] = useState(0)
@@ -110,11 +256,15 @@ export function AddonList({ accountId }: AddonListProps) {
   const handleBulkDeleteClick = () => {
     if (selectedAddonUrls.size === 0) return
 
-    // Count how many protected addons are selected
     const protectedCount = addons.filter((addon, index) => {
       const compositeId = `${addon.transportUrl}::${index}`
       return selectedAddonUrls.has(compositeId) && addon.flags?.protected
     }).length
+
+    if (selectedAddonUrls.size >= addons.length) {
+      toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your Stremio collection.' })
+      return
+    }
 
     setProtectedInSelection(protectedCount)
     setShowDeleteConfirm(true)
@@ -126,13 +276,11 @@ export function AddonList({ accountId }: AddonListProps) {
     try {
       setUpdatingAll(true)
 
-      // Filter current addons based on selected composite IDs (url::index)
       const updatedAddons = addons.filter((_, index) => {
         const compositeId = `${addons[index].transportUrl}::${index}`
         return !selectedAddonUrls.has(compositeId)
       })
 
-      // Push the entire updated list to preserve order
       await useAccountStore.getState().reorderAddons(accountId, updatedAddons)
 
       toast({ title: 'Addons Deleted', description: `Successfully deleted selected addons.` })
@@ -141,7 +289,12 @@ export function AddonList({ accountId }: AddonListProps) {
       setShowDeleteConfirm(false)
       await syncAccount(accountId)
     } catch (e) {
-      toast({ variant: 'destructive', title: 'Delete Failed', description: 'Could not delete selected addons.' })
+      const msg = (e as Error)?.message || ''
+      if (msg.includes('Anti-wipe guard')) {
+        toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your Stremio collection.' })
+      } else {
+        toast({ variant: 'destructive', title: 'Delete Failed', description: 'Could not delete selected addons.' })
+      }
     } finally {
       setUpdatingAll(false)
     }
@@ -155,46 +308,107 @@ export function AddonList({ accountId }: AddonListProps) {
   const [showBulkAccountPicker, setShowBulkAccountPicker] = useState(false)
   const [isBulkActionLoading, setIsBulkActionLoading] = useState(false)
   const { toast } = useToast()
+  const confetti = useConfetti()
 
+  const [profileToDelete, setProfileToDelete] = useState<{ id: string, name: string } | null>(null)
+  const [profileToEdit, setProfileToEdit] = useState<{ id: string, name: string } | null>(null)
+  const [profileEditName, setProfileEditName] = useState('')
+  const [profileEditLoading, setProfileEditLoading] = useState(false)
+  const [isCreateProfileOpen, setIsCreateProfileOpen] = useState(false)
 
+  const handleSwitchProfile = useCallback(async (targetProfileId: string) => {
+    try {
+      const { useAccountStore } = await import('@/store/accountStore')
+      const result = await useAccountStore.getState().switchProfile(accountId, targetProfileId)
+      toast({ title: 'Setup Switched', description: getProfileSwitchDescription(result) })
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Swap Failed', description: 'Failed to switch setup' })
+    }
+  }, [accountId, toast])
 
-  // Filter addons based on search query
+  const handleDeleteProfile = useCallback(async () => {
+    if (!profileToDelete) return
+    try {
+      const { useAccountStore } = await import('@/store/accountStore')
+      await useAccountStore.getState().deleteSubProfile(accountId, profileToDelete.id)
+      toast({ title: 'Setup Deleted', description: `Deleted ${profileToDelete.name}` })
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Deletion Failed', description: 'Failed to delete setup' })
+    } finally {
+      setProfileToDelete(null)
+    }
+  }, [accountId, profileToDelete, toast])
+
+  const handleSaveProfile = useCallback(async () => {
+    if (!profileToEdit || !profileEditName.trim()) return
+    setProfileEditLoading(true)
+    try {
+      const { useAccountStore } = await import('@/store/accountStore')
+      await useAccountStore.getState().renameSubProfile(accountId, profileToEdit.id, profileEditName)
+      toast({ title: 'Setup Renamed', description: `Renamed to ${profileEditName}` })
+      setProfileToEdit(null)
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Failed to rename setup', description: `Could not rename setup` })
+    } finally {
+      setProfileEditLoading(false)
+    }
+  }, [accountId, profileToEdit, profileEditName, toast])
+
+  const handleCreateProfileConfirm = useCallback(async (name: string, clone: boolean) => {
+    try {
+      const { useAccountStore } = await import('@/store/accountStore')
+      toast({ title: 'Creating Setup...', description: clone ? `Copying current setup to ${name}` : `Creating empty setup ${name}` })
+      await useAccountStore.getState().createSubProfile(accountId, name, clone)
+      confetti.fire({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } })
+      toast({ title: 'Setup Created', description: `Created and switched to ${name}` })
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Failed to create setup', description: `Could not create setup` })
+    }
+  }, [accountId, confetti, toast])
+
+  const addonIndexMap = useMemo(() => {
+    const map = new Map<AddonDescriptor, number>()
+    addons.forEach((addon, i) => map.set(addon, i))
+    return map
+  }, [addons])
+
   const filteredAddons = useMemo(() => {
-    if (!debouncedSearchQuery.trim()) return addons
+    let result = addons
+    if (hideDisabled) result = result.filter(a => a.flags?.enabled !== false)
+    if (!debouncedSearchQuery.trim()) return result
     const query = debouncedSearchQuery.toLowerCase()
-    return addons.filter((addon) =>
+    return result.filter((addon) =>
       addon.manifest.name?.toLowerCase().includes(query) ||
       addon.manifest.id?.toLowerCase().includes(query) ||
       addon.manifest.description?.toLowerCase().includes(query)
     )
-  }, [addons, debouncedSearchQuery])
+  }, [addons, debouncedSearchQuery, hideDisabled])
 
   const selectAllAddons = useCallback(() => {
-    // Select visible filtered addons
     const newSelected = new Set<string>()
     filteredAddons.forEach(addon => {
-      const originalIndex = addons.indexOf(addon)
-      if (originalIndex !== -1) {
+      const originalIndex = addonIndexMap.get(addon)
+      if (originalIndex !== undefined) {
         newSelected.add(`${addon.transportUrl}::${originalIndex}`)
       }
     })
     setSelectedAddonUrls(newSelected)
-  }, [filteredAddons, addons])
+  }, [filteredAddons, addonIndexMap])
 
   // Keyboard shortcut: Esc exits selection mode, S to save selected, Ctrl+A to select all
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement
+      const isInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
       if (e.key === 'Escape' && isSelectionMode) {
         setIsSelectionMode(false)
         setSelectedAddonUrls(new Set())
       }
 
-      // 'S' key for saving selected to library
-      if ((e.key === 's' || e.key === 'S') && isSelectionMode && selectedAddonUrls.size > 0 && !bulkSaveOpen) {
+      if ((e.key === 's' || e.key === 'S') && isSelectionMode && selectedAddonUrls.size > 0 && !bulkSaveOpen && !isInput) {
         setBulkSaveOpen(true)
       }
 
-      // 'A' key for selecting all (when in selection mode)
       if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey) && isSelectionMode) {
         e.preventDefault()
         selectAllAddons()
@@ -204,10 +418,10 @@ export function AddonList({ accountId }: AddonListProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isSelectionMode, selectedAddonUrls, bulkSaveOpen, filteredAddons, selectAllAddons])
 
-  const updatesAvailable = addons.filter((addon) => {
-    const latest = latestVersions[addon.manifest.id]
+  const updatesAvailable = useMemo(() => addons.filter((addon) => {
+    const latest = getLatestAddonVersion(latestVersions, addon)
     return latest && isNewerVersion(addon.manifest.version, latest)
-  })
+  }), [addons, latestVersions])
 
   const handleCheckUpdates = useCallback(async () => {
     if (checkingUpdates) return
@@ -215,10 +429,8 @@ export function AddonList({ accountId }: AddonListProps) {
 
     setCheckingUpdates(true)
     try {
-      // First sync account to get the latest addons from the server
       await syncAccount(accountId)
 
-      // Sync with server-side autopilot state and local health
       await pullServerState()
       await checkRules()
 
@@ -227,6 +439,7 @@ export function AddonList({ accountId }: AddonListProps) {
       const health: Record<string, HealthStatus> = {}
 
       updateInfoList.forEach((info) => {
+        versions[info.versionKey] = info.latestVersion
         versions[info.addonId] = info.latestVersion
         health[info.addonId] = info.health
       })
@@ -259,7 +472,7 @@ export function AddonList({ accountId }: AddonListProps) {
     } finally {
       setCheckingUpdates(false)
     }
-  }, [account, encryptionKey, addons, toast, updateLatestVersions, syncAccount, accountId, checkRules, pullServerState])
+  }, [account, encryptionKey, addons, toast, updateLatestVersions, syncAccount, accountId, checkRules, pullServerState, checkingUpdates])
 
   const handleUpdateAddon = useCallback(
     async (_accountId: string, transportUrl: string) => {
@@ -273,11 +486,13 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || !encryptionKey) return
 
     try {
-      await useAccountStore.getState().bulkProtectAddons(accountId, true)
+      const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, true)
 
       toast({
-        title: 'Addons Protected',
-        description: 'All addons have been marked as protected.'
+        title: changedCount > 0 ? 'Addons Protected' : 'Already Protected',
+        description: changedCount > 0
+          ? `Protected ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No add-ons needed to change.'
       })
     } catch (error) {
       toast({
@@ -292,11 +507,13 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || !encryptionKey) return
 
     try {
-      await useAccountStore.getState().bulkProtectAddons(accountId, false)
+      const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, false)
 
       toast({
-        title: 'Addons Unprotected',
-        description: 'All addons have been unprotected.'
+        title: changedCount > 0 ? 'Addons Unprotected' : 'Already Unprotected',
+        description: changedCount > 0
+          ? `Unprotected ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No add-ons needed to change.'
       })
     } catch (error) {
       toast({
@@ -312,7 +529,7 @@ export function AddonList({ accountId }: AddonListProps) {
     const allUrls = addons.map(a => a.transportUrl)
     try {
       await useAccountStore.getState().bulkToggleAddonEnabled(accountId, allUrls, true)
-      toast({ title: 'All Addons Enabled', description: `Enabled ${allUrls.length} addons.` })
+      toast({ title: 'All Addons Enabled', description: `Enabled ${allUrls.length} addon${allUrls.length !== 1 ? 's' : ''}.` })
     } catch (e) {
       toast({ variant: 'destructive', title: 'Failed', description: 'Could not enable addons.' })
     }
@@ -323,7 +540,7 @@ export function AddonList({ accountId }: AddonListProps) {
     const allUrls = addons.map(a => a.transportUrl)
     try {
       await useAccountStore.getState().bulkToggleAddonEnabled(accountId, allUrls, false)
-      toast({ title: 'All Addons Disabled', description: `Disabled ${allUrls.length} addons.` })
+      toast({ title: 'All Addons Disabled', description: `Disabled ${allUrls.length} addon${allUrls.length !== 1 ? 's' : ''}.` })
     } catch (e) {
       toast({ variant: 'destructive', title: 'Failed', description: 'Could not disable addons.' })
     }
@@ -333,13 +550,14 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || selectedAddonUrls.size === 0) return
 
     try {
-      // Extract transport URLs from composite IDs (url::index)
-      const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
-      await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, true)
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
+      const changedCount = await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, true)
 
       toast({
-        title: 'Selection Protected',
-        description: `Marked ${selectedAddonUrls.size} selected addons as protected.`
+        title: changedCount > 0 ? 'Selection Protected' : 'Already Protected',
+        description: changedCount > 0
+          ? `Protected ${changedCount} selected addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No selected add-ons needed changes.'
       })
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
@@ -356,12 +574,14 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account || selectedAddonUrls.size === 0) return
 
     try {
-      const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
-      await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, false)
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
+      const changedCount = await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, false)
 
       toast({
-        title: 'Selection Unprotected',
-        description: `Unprotected ${selectedAddonUrls.size} selected addons.`
+        title: changedCount > 0 ? 'Selection Unprotected' : 'Already Unprotected',
+        description: changedCount > 0
+          ? `Unprotected ${changedCount} selected addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No selected add-ons needed changes.'
       })
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
@@ -376,10 +596,10 @@ export function AddonList({ accountId }: AddonListProps) {
 
   const handleBulkEnable = useCallback(async () => {
     if (!account || selectedAddonUrls.size === 0) return
-    const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
+    const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
     try {
       await useAccountStore.getState().bulkToggleAddonEnabled(accountId, urls, true)
-      toast({ title: 'Addons Enabled', description: `Enabled ${urls.length} addons.` })
+      toast({ title: 'Addons Enabled', description: `Enabled ${urls.length} addon${urls.length !== 1 ? 's' : ''}.` })
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
     } catch (e) {
@@ -389,10 +609,10 @@ export function AddonList({ accountId }: AddonListProps) {
 
   const handleBulkDisable = useCallback(async () => {
     if (!account || selectedAddonUrls.size === 0) return
-    const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
+    const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
     try {
       await useAccountStore.getState().bulkToggleAddonEnabled(accountId, urls, false)
-      toast({ title: 'Addons Disabled', description: `Disabled ${urls.length} addons.` })
+      toast({ title: 'Addons Disabled', description: `Disabled ${urls.length} addon${urls.length !== 1 ? 's' : ''}.` })
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
     } catch (e) {
@@ -407,14 +627,13 @@ export function AddonList({ accountId }: AddonListProps) {
       toast({
         variant: 'destructive',
         title: 'Selection too small',
-        description: 'Please select at least 2 addons to create a failover chain.'
+        description: 'Select at least 2 addons to create an autopilot chain.'
       })
       return
     }
 
     try {
-      // Extract transport URLs from composite IDs (url::index)
-      const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
 
       const { useFailoverStore } = await import('@/store/failoverStore')
       const failoverStore = useFailoverStore.getState()
@@ -423,7 +642,7 @@ export function AddonList({ accountId }: AddonListProps) {
 
       toast({
         title: 'Autopilot Rule Created',
-        description: `Created a new rule with ${urls.length} addons. Switching to configuration...`
+        description: `Created a new rule with ${urls.length} addon${urls.length !== 1 ? 's' : ''}. Switching to configuration...`
       })
 
       setIsSelectionMode(false)
@@ -449,20 +668,16 @@ export function AddonList({ accountId }: AddonListProps) {
     setUpdatingAll(true)
     try {
 
-      let successCount = 0
-      for (const item of addonsToUpdate) {
-        try {
-          await useAccountStore.getState().reinstallAddon(accountId, item.url)
-          successCount++
-        } catch (error) {
-          console.warn(`Failed to update addon ${item.id}:`, error)
-        }
-      }
+      const { successCount } = await useAccountStore.getState().reinstallAddons(
+        accountId,
+        addonsToUpdate.map(item => item.url),
+        ADDON_REINSTALL_CONCURRENCY
+      )
 
 
       toast({
         title: 'Updates Complete',
-        description: `Successfully updated ${successCount} of ${addonsToUpdate.length} addons`,
+        description: `Successfully updated ${successCount} of ${addonsToUpdate.length} addon${addonsToUpdate.length !== 1 ? 's' : ''}`,
       })
     } catch (error) {
       toast({
@@ -480,26 +695,20 @@ export function AddonList({ accountId }: AddonListProps) {
 
     setUpdatingAll(true)
     try {
-      const urls = Array.from(selectedAddonUrls).map(id => id.split('::')[0])
-
-      let successCount = 0
-      for (const url of urls) {
-        try {
-          await useAccountStore.getState().reinstallAddon(accountId, url)
-          successCount++
-        } catch (error) {
-          console.warn(`Failed to reinstall addon ${url}:`, error)
-        }
-      }
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
+      const { successCount } = await useAccountStore.getState().reinstallAddons(
+        accountId,
+        urls,
+        ADDON_REINSTALL_CONCURRENCY
+      )
 
       toast({
         title: 'Reinstallation Complete',
-        description: `Successfully reinstalled ${successCount} of ${urls.length} addons.`,
+        description: `Successfully reinstalled ${successCount} of ${urls.length} addon${urls.length !== 1 ? 's' : ''}.`,
       })
 
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
-      await syncAccount(accountId)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -509,7 +718,32 @@ export function AddonList({ accountId }: AddonListProps) {
     } finally {
       setUpdatingAll(false)
     }
-  }, [account, accountId, selectedAddonUrls, toast, syncAccount])
+  }, [account, accountId, selectedAddonUrls, toast])
+
+  const handleReinstallAll = useCallback(async () => {
+    if (!account) return
+    setUpdatingAll(true)
+    try {
+      const urls = addons.map(a => a.transportUrl)
+      const { successCount } = await useAccountStore.getState().reinstallAddons(
+        accountId,
+        urls,
+        ADDON_REINSTALL_CONCURRENCY
+      )
+      toast({
+        title: 'Reinstallation Complete',
+        description: `Successfully reinstalled ${successCount} of ${urls.length} addon${urls.length !== 1 ? 's' : ''}.`,
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Reinstall Failed',
+        description: 'Failed to reinstall addons.'
+      })
+    } finally {
+      setUpdatingAll(false)
+    }
+  }, [account, accountId, addons, toast])
 
   const handleBulkCloneToAccounts = useCallback(async (targetAccountIds: string[]) => {
     if (targetAccountIds.length === 0 || selectedAddonUrls.size === 0) return
@@ -518,24 +752,27 @@ export function AddonList({ accountId }: AddonListProps) {
     let successCount = 0
     let failCount = 0
 
-    const accountStore = useAccountStore.getState()
     const selectedAddonsList = addons.filter((_, index) => selectedAddonUrls.has(`${addons[index].transportUrl}::${index}`))
+    const selectedAddonUrlsToInstall = selectedAddonsList.map(addon => addon.transportUrl)
 
-    for (const targetId of targetAccountIds) {
-      for (const addon of selectedAddonsList) {
-        try {
-          await accountStore.installAddonToAccount(targetId, addon.transportUrl)
-          successCount++
-        } catch (err) {
-          console.error(`Failed to deploy ${addon.manifest.name} to ${targetId}:`, err)
-          failCount++
-        }
+    await mapConcurrent(targetAccountIds, BULK_ACCOUNT_CONCURRENCY, async (targetId) => {
+      try {
+        const result = await useAccountStore.getState().installAddonsToAccount(
+          targetId,
+          selectedAddonUrlsToInstall,
+          BULK_ADDON_FETCH_CONCURRENCY
+        )
+        successCount += result.successCount
+        failCount += result.failCount
+      } catch (err) {
+        if (import.meta.env.DEV) console.error(`Failed to deploy addons to ${targetId}:`, err)
+        failCount += selectedAddonsList.length
       }
-    }
+    })
 
     toast({
       title: 'Bulk Clone Complete',
-      description: `Successfully processed ${successCount} installations. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
+      description: `Successfully processed ${successCount} installation${successCount !== 1 ? 's' : ''}. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
     })
     setIsBulkActionLoading(false)
     setShowBulkAccountPicker(false)
@@ -571,6 +808,18 @@ export function AddonList({ accountId }: AddonListProps) {
     return addons.filter((_, index) => selectedAddonUrls.has(`${addons[index].transportUrl}::${index}`))
   }, [addons, selectedAddonUrls])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const mediaQuery = window.matchMedia('(min-width: 768px)')
+    const handleViewportChange = () => setIsDesktopAddonListViewport(mediaQuery.matches)
+
+    handleViewportChange()
+    mediaQuery.addEventListener('change', handleViewportChange)
+
+    return () => mediaQuery.removeEventListener('change', handleViewportChange)
+  }, [])
+
   if (!account) {
     return (
       <div className="text-center py-12">
@@ -582,14 +831,17 @@ export function AddonList({ accountId }: AddonListProps) {
     )
   }
 
-  const isNameCustomized = account.name !== account.email && account.name !== 'Stremio Account'
+  const accountEmail = account ? getAccountEmail(account) : undefined
+  const isNameCustomized = account.name !== accountEmail && account.name !== 'Stremio Account'
   const displayName =
     isPrivacyModeEnabled && !isNameCustomized
       ? account.name.includes('@')
         ? maskEmail(account.name)
         : '********'
       : account.name
-
+  const activeProfileName = account.activeProfileId
+    ? (account.profiles?.find(p => p.id === account.activeProfileId)?.name || 'Setup')
+    : 'Main Setup'
   const allEnabled = selectedAddons.length > 0 && selectedAddons.every(a => a.flags?.enabled !== false)
   const allProtected = selectedAddons.length > 0 && selectedAddons.every(a => a.flags?.protected)
 
@@ -599,403 +851,411 @@ export function AddonList({ accountId }: AddonListProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => navigate('/')}
-            className="h-8 w-8 shrink-0"
+            className="mt-0.5 h-9 w-9 shrink-0 rounded-xl border border-border/40 bg-card text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="min-w-0">
-            <h2 className="text-xl md:text-2xl font-bold truncate">{displayName}</h2>
-            <p className="text-xs md:text-sm text-muted-foreground">
+          <div className="min-w-0 space-y-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{displayName}</h2>
               {updatesAvailable.length > 0 && (
-                <span className="text-primary">
-                  {updatesAvailable.length} update{updatesAvailable.length !== 1 ? 's' : ''}{' '}
-                  available
+                <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                  {updatesAvailable.length} update{updatesAvailable.length !== 1 ? 's' : ''} available
                 </span>
               )}
-            </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{addons.length} installed</span>
+              <span className="text-border">/</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
+                    <User className="h-3.5 w-3.5" />
+                    <span className="truncate max-w-[140px]">{activeProfileName}</span>
+                    <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
+                  <DropdownMenuItem
+                    className="gap-2"
+                    onClick={() => handleSwitchProfile('default')}
+                    disabled={!account.activeProfileId}
+                  >
+                    <User className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className={!account.activeProfileId ? 'font-semibold' : ''}>{'Main Setup'}</span>
+                    {!account.activeProfileId && <Check className="ml-auto h-4 w-4 text-primary" />}
+                  </DropdownMenuItem>
+                  {(account.profiles || []).filter(p => p.id !== 'default').map(p => (
+                    <div key={p.id} className="group relative">
+                      <DropdownMenuItem
+                        className="gap-2 pr-20 group-hover:bg-accent group-hover:text-accent-foreground"
+                        onClick={() => handleSwitchProfile(p.id)}
+                        disabled={account.activeProfileId === p.id}
+                      >
+                        <User className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className={`truncate flex-1 text-left ${account.activeProfileId === p.id ? 'font-semibold' : ''}`}>{p.name}</span>
+                        {account.activeProfileId === p.id && <Check className="h-4 w-4 text-primary shrink-0" />}
+                      </DropdownMenuItem>
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                        <DropdownMenuItem
+                          className="h-7 w-7 min-w-[28px] p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setProfileEditName(p.name);
+                            setProfileToEdit({ id: p.id, name: p.name });
+                          }}
+                          title={`Rename ${p.name}`}
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="h-7 w-7 min-w-[28px] p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setProfileToDelete({ id: p.id, name: p.name });
+                          }}
+                          title={`Delete ${p.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </DropdownMenuItem>
+                      </div>
+                    </div>
+                  ))}
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setIsCreateProfileOpen(true);
+                    }}
+                    className="gap-2 text-primary focus:text-primary"
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    Create New Setup
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
 
         {accounts.length > 1 && (
-          <div className="flex items-center gap-2 self-end sm:self-auto order-first sm:order-last border border-border/50 rounded-lg p-1 bg-muted/20">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => prevAccount && navigate(`/account/${prevAccount?.id}?tab=${activeTab}`)}
-              title={`Previous: ${prevAccount?.name || prevAccount?.email}`}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="px-2 py-0.5 bg-background rounded border text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-              {currentIndex + 1} / {accounts.length}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => nextAccount && navigate(`/account/${nextAccount?.id}?tab=${activeTab}`)}
-              title={`Next: ${nextAccount?.name || nextAccount?.email}`}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+          <div className="self-end rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm sm:self-auto" data-account-switcher-pill>
+            <AccountSwitcher
+            mode="pagination"
+            accounts={accounts}
+            selectedId={accountId}
+            onSelect={(id) => navigate(`/account/${id}?tab=${activeTab}`)}
+            onPrev={() => prevAccount && navigate(`/account/${prevAccount?.id}?tab=${activeTab}`)}
+            onNext={() => nextAccount && navigate(`/account/${nextAccount?.id}?tab=${activeTab}`)}
+            prevLabel={prevAccount ? `Previous: ${prevAccount.name || getAccountEmail(prevAccount)}` : undefined}
+            nextLabel={nextAccount ? `Next: ${nextAccount.name || getAccountEmail(nextAccount)}` : undefined}
+          />
           </div>
         )}
       </div>
 
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        <TabsList className="flex flex-wrap h-auto bg-transparent p-0 gap-2 justify-start w-full pb-2">
-          <TabsTrigger value="addons" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm relative">
+      <Tabs value={activeAccountTab} onValueChange={handleTabChange} className="space-y-4">
+          <TabsList>
+          <TabsTrigger value="addons" className="relative">
             Installed Addons
             {addons.length > 0 && (
-              <span className="ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-black shrink-0 shadow-sm">
+              <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
                 {addons.length}
               </span>
             )}
           </TabsTrigger>
-          <TabsTrigger value="failover" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm">
-            Failover Rules
+          <TabsTrigger value="failover">
+            Autopilot
           </TabsTrigger>
-          <TabsTrigger value="changelog" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm">
-            Recent Changes
+          <TabsTrigger value="changelog">
+            Changelog
+          </TabsTrigger>
+          <TabsTrigger value="connections">
+            Connections
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="addons" className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            {/* Left: Search Filter */}
-            {addons.length > 0 && (
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <TabsContent value="addons" animated={false} className="space-y-4">
+          <ToolbarShell contentClassName="gap-2 sm:gap-3">
+            {/* Search + view toggle - grouped so they never wrap apart */}
+            <div className="grid w-full grid-cols-[1fr_auto] items-center gap-2 sm:flex sm:w-auto sm:flex-none">
+              <div className="relative flex-1 min-w-0 sm:min-w-[180px] sm:max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   ref={searchInputRef}
                   type="text"
                   placeholder="Search addons..."
-                  className="pl-10 pr-10 h-10 w-full bg-background/50 border-muted focus:bg-background transition-colors"
+                  className="pl-9 pr-9 h-8 text-xs w-full bg-muted/30 border border-border/40 focus:bg-muted/40 transition-colors"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
                   data-search-focus
+                  disabled={addons.length === 0}
                 />
                 {searchQuery && (
                   <button
                     onClick={() => handleSearchChange('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-accent rounded-full transition-colors"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors"
                   >
-                    <X className="h-4 w-4 text-muted-foreground" />
+                    <X className="h-3.5 w-3.5 text-muted-foreground" />
                   </button>
                 )}
               </div>
-            )}
-
-            <div className="flex flex-wrap gap-2 w-full sm:w-auto ml-auto items-center">
-
-              {/* 1. Refresh */}
-              {!isSelectionMode && (
-                <Button
-                  onClick={handleCheckUpdates}
-                  disabled={addons.length === 0 || checkingUpdates}
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 sm:flex-none h-10"
-                >
-                  <AnimatedRefreshIcon className="h-4 w-4 mr-0.5" isAnimating={checkingUpdates} />
-                  <span className="hidden xs:inline">
-                    {checkingUpdates ? 'Refreshing...' : 'Refresh'}
-                  </span>
-                  <span className="inline xs:hidden">{checkingUpdates ? '...' : 'Refresh'}</span>
+              <div className="hidden items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0 md:flex">
+                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('grid')} aria-label="Grid view">
+                  <LayoutGrid className="h-3.5 w-3.5" />
                 </Button>
-              )}
+                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('list')} aria-label="List view">
+                  <List className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
 
-              {/* 2. Primary Actions */}
+            <div className="grid w-full grid-cols-2 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+
               {!isSelectionMode && (
                 <>
                   <Button
-                    variant="outline"
+                    onClick={handleCheckUpdates}
+                    disabled={addons.length === 0 || checkingUpdates}
                     size="sm"
-                    onClick={() => setReorderDialogOpen(true)}
-                    className="flex-1 sm:flex-none h-10"
+                    variant="outline"
+                    className="w-full shrink-0 gap-1.5 h-8 text-xs font-medium sm:w-auto"
                   >
-                    <GripVertical className="h-4 w-4 mr-1.5" />
-                    <span className="hidden xs:inline">Reorder</span>
-                    <span className="inline xs:hidden">Reorder</span>
+                    <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={checkingUpdates} />
+                    <span>{checkingUpdates ? 'Refreshing...' : 'Refresh'}</span>
                   </Button>
                   <Button
+                    size="sm"
+                    onClick={() => setReorderDialogOpen(true)}
                     variant="outline"
+                    className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:inline-flex"
+                    disabled={addons.length < 2}
+                  >
+                    <GripVertical className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Reorder</span>
+                  </Button>
+                  <Button
                     size="sm"
                     onClick={() => setInstallFromLibraryOpen(true)}
-                    className="flex-1 sm:flex-none h-10"
+                    variant="outline"
+                    className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:flex"
                   >
-                    <Library className="h-4 w-4 mr-1.5" />
-                    <span className="hidden xs:inline text-nowrap">Install from Library</span>
-                    <span className="inline xs:hidden text-nowrap">Library</span>
+                    <Library className="h-3.5 w-3.5" />
+                    Library
                   </Button>
                 </>
               )}
-
-              {/* 3. Bulk Actions Dropdown */}
               {!isSelectionMode && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1 flex-1 sm:flex-none h-10">
-                      <Layers className="h-4 w-4" />
-                      Bulk Actions
+                    <Button size="sm" variant="outline" className="ml-0 w-full shrink-0 gap-1.5 h-8 text-xs font-medium sm:w-auto">
+                      <Layers className="h-3.5 w-3.5" />
+                      <span className="sm:hidden">Actions</span>
+                      <span className="hidden sm:inline">Bulk Actions</span>
                       {updatesAvailable.length > 0 && (
-                        <span className="ml-1 w-5 h-5 flex items-center justify-center text-[10px] font-bold bg-blue-500 text-primary-foreground rounded-full shrink-0">
+                        <span className="ml-1 w-4 h-4 flex items-center justify-center text-[10px] font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
                           {updatesAvailable.length}
                         </span>
                       )}
-                      <ChevronDown className="h-4 w-4" />
+                      <ChevronDown className="h-3.5 w-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuContent align="end" className="w-56 max-w-[calc(100vw-2rem)]">
+                    <DropdownMenuItem className="gap-2 sm:hidden" onClick={() => setInstallFromLibraryOpen(true)}>
+                      <Library className="h-4 w-4" />
+                      Install from Library
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="gap-2 sm:hidden"
+                      onClick={() => setReorderDialogOpen(true)}
+                      disabled={addons.length < 2}
+                    >
+                      <GripVertical className="h-4 w-4" />
+                      Reorder Addons
+                    </DropdownMenuItem>
+                    {addons.some(a => a.flags?.enabled === false) && (
+                      <DropdownMenuItem className="gap-2 sm:hidden" onClick={toggleHideDisabled}>
+                        <List className="h-4 w-4" />
+                        {hideDisabled ? 'Show disabled' : 'Hide disabled'}
+                      </DropdownMenuItem>
+                    )}
                     {updatesAvailable.length > 0 && (
-                      <DropdownMenuItem onClick={handleUpdateAll} disabled={updatingAll}>
-                        <AnimatedUpdateIcon className="h-4 w-4 mr-2" isAnimating={updatingAll} />
+                      <DropdownMenuItem className="gap-2" onClick={handleUpdateAll} disabled={updatingAll}>
+                        <AnimatedUpdateIcon className="h-4 w-4" isAnimating={updatingAll} />
                         Update All ({updatesAvailable.length})
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem onClick={handleReinstallSelected} disabled={updatingAll}>
-                      <Zap className="h-4 w-4 mr-2 text-emerald-500" />
+                      <DropdownMenuItem className="gap-2" onClick={handleReinstallAll} disabled={updatingAll}>
+                        <Zap className="h-4 w-4 text-success" />
                       Force Reinstall All
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setBulkSaveOpen(true)}>
-                      <Save className="h-4 w-4 mr-2" />
+                      <DropdownMenuItem className="gap-2" onClick={() => setBulkSaveOpen(true)}>
+                        <Save className="h-4 w-4" />
                       Save All to Library
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     {addons.some(a => !a.flags?.protected) ? (
-                      <DropdownMenuItem onClick={handleProtectAll}>
-                        <AnimatedShieldIcon className="h-4 w-4 mr-2 text-blue-500" />
+                      <DropdownMenuItem className="gap-2" onClick={handleProtectAll}>
+                        <AnimatedShieldIcon className="h-4 w-4 text-primary" />
                         Protect All
                       </DropdownMenuItem>
                     ) : (
-                      <DropdownMenuItem onClick={handleUnprotectAll}>
-                        <AnimatedShieldIcon className="h-4 w-4 mr-2 text-muted-foreground" />
+                      <DropdownMenuItem className="gap-2" onClick={handleUnprotectAll}>
+                        <AnimatedShieldIcon className="h-4 w-4 text-muted-foreground" />
                         Unprotect All
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleEnableAll}>
-                      <Zap className="h-4 w-4 mr-2 text-emerald-500" />
+                      <DropdownMenuItem className="gap-2" onClick={handleEnableAll}>
+                        <Zap className="h-4 w-4 text-success" />
                       Enable All
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleDisableAll}>
-                      <X className="h-4 w-4 mr-2 text-red-500" />
+                    <DropdownMenuItem className="gap-2" onClick={handleDisableAll}>
+                      <X className="h-4 w-4 text-destructive" />
                       Disable All
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
 
-              {/* 3. Select Mode */}
+              {addons.some(a => a.flags?.enabled === false) && !isSelectionMode && (
+                <Button
+                  size="sm"
+                  onClick={toggleHideDisabled}
+                  variant="outline"
+                  className="hidden h-8 shrink-0 text-xs font-medium sm:flex"
+                >
+                  {hideDisabled ? 'Show disabled' : 'Hide disabled'}
+                </Button>
+              )}
+
               <Button
-                variant={isSelectionMode ? "secondary" : "outline"}
                 size="sm"
+                variant="outline"
                 onClick={toggleSelectionMode}
-                className="flex-1 sm:flex-none h-10 px-4"
+                className="w-full shrink-0 gap-1.5 h-8 px-3 text-xs font-medium sm:w-auto sm:px-4"
               >
-                <Check className="h-4 w-4 mr-2" />
-                {isSelectionMode ? "Cancel" : "Select"}
+                {isSelectionMode ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+                <span>{isSelectionMode ? "Cancel" : "Select"}</span>
               </Button>
 
               {isSelectionMode && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={selectAllAddons}
-                    className="flex-1 sm:flex-none"
-                  >
-                    {selectedAddonUrls.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect All' : 'Select All'}
-                  </Button>
-                  {selectedAddonUrls.size > 0 && (
-                    <>
-                      <div className="flex gap-1 flex-1 sm:flex-none">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={allEnabled ? handleBulkDisable : handleBulkEnable}
-                          className={cn(
-                            "flex-1",
-                            allEnabled
-                              ? "border-destructive/30 hover:bg-destructive/10"
-                              : "border-emerald-500/30 hover:bg-emerald-500/10"
-                          )}
-                        >
-                          {allEnabled ? (
-                            <>
-                              <X className="h-4 w-4 mr-1.5 text-red-500" />
-                              Disable
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="h-4 w-4 mr-1.5 text-emerald-600" />
-                              Enable
-                            </>
-                          )}
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={allProtected ? handleUnprotectSelected : handleProtectSelected}
-                          className={cn(
-                            "flex-1",
-                            allProtected
-                              ? "border-primary/30 hover:bg-primary/10 text-primary"
-                              : ""
-                          )}
-                        >
-                          <Shield className={cn("h-4 w-4 mr-1.5", allProtected ? "fill-blue-500/20" : "")} />
-                          {allProtected ? "Unprotect" : "Protect"}
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => { setShowBulkAccountPicker(true); }}
-                          disabled={isBulkActionLoading}
-                          className="flex-1"
-                        >
-                          <Copy className="h-4 w-4 mr-1.5" />
-                          Clone
-                        </Button>
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleBulkDeployToAll}
-                          disabled={isBulkActionLoading}
-                          className="flex-1"
-                        >
-                          <Download className="h-4 w-4 mr-1.5" />
-                          Deploy to All
-                        </Button>
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleReinstallSelected}
-                        disabled={updatingAll}
-                        className="flex-1 sm:flex-none border-primary/30 hover:bg-primary/10"
-                      >
-                        <AnimatedUpdateIcon className="h-4 w-4 mr-1.5" isAnimating={updatingAll} />
-                        Reinstall ({selectedAddonUrls.size})
-                      </Button>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setBulkSaveOpen(true)}
-                        className="flex-1 sm:flex-none"
-                      >
-                        <Save className="h-4 w-4 mr-1.5" />
-                        Save
-                      </Button>
-
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={handleBulkDeleteClick}
-                        disabled={updatingAll}
-                        className="flex-1 sm:flex-none"
-                      >
-                        <Trash2 className="h-4 w-4 mr-1.5" />
-                        Delete
-                      </Button>
-
-                      {selectedAddonUrls.size >= 2 && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          onClick={handleCreateRule}
-                          className="flex-1 sm:flex-none bg-gradient-to-r from-primary to-violet-600 hover:from-primary/90 hover:to-violet-700 text-primary-foreground shadow-primary/20"
-                        >
-                          <Zap className="h-4 w-4 mr-1.5 text-yellow-300" />
-                          Autopilot
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </>
+                <Button
+                  size="sm"
+                  onClick={selectAllAddons}
+                   variant="outline"
+                   className="w-full shrink-0 sm:w-auto sm:flex-none h-8 gap-1.5 text-xs font-medium"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {selectedAddonUrls.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect All' : 'Select All'}
+                </Button>
               )}
 
-              {/* 4. Library & Install */}
               {!isSelectionMode && (
-                <div className="flex gap-2 flex-1 sm:flex-none">
-
-
-                  <Button
-                    onClick={() => openAddAddonDialog(accountId)}
-                    size="sm"
-                    className="flex-1"
-                  >
-                    <Plus className="h-4 w-4" />
-                    <span className="hidden xs:inline">Install</span>
-                    <span className="inline xs:hidden text-[10px]">Install</span>
-                  </Button>
-                </div>
+                <Button
+                  onClick={() => openAddAddonDialog(accountId)}
+                  size="sm"
+                  className="w-full shrink-0 gap-1.5 h-8 text-xs font-medium sm:w-auto"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Install
+                </Button>
               )}
             </div>
-          </div>
+          </ToolbarShell>
 
           {addons.length === 0 ? (
-            <div className="text-center py-12 border border-dashed rounded-lg">
-              <p className="text-muted-foreground mb-4">No addons installed</p>
-              <Button onClick={() => openAddAddonDialog(accountId)}>Install Your First Addon</Button>
-            </div>
+            <EmptyState
+              icon={<Library className="h-6 w-6" />}
+              title="No addons installed"
+              description="Install your first addon to start streaming. Add it from a manifest URL, or pick from your saved Library."
+              action={<Button onClick={() => openAddAddonDialog(accountId)}>Install First Addon</Button>}
+            />
           ) : filteredAddons.length === 0 ? (
-            <div className="text-center py-12 border border-dashed rounded-lg">
-              <p className="text-lg font-medium mb-2">No addons match your search</p>
-              <p className="text-muted-foreground mb-4">Try a different search term</p>
-              <Button variant="outline" onClick={() => setSearchQuery('')}>Clear Search</Button>
-            </div>
+            <EmptyState
+              icon={<Search className="h-6 w-6" />}
+              title="No addons match your search"
+              description="Try a different keyword, or clear the search to see every installed addon."
+              action={<Button variant="outline" onClick={() => setSearchQuery('')}>Clear Search</Button>}
+            />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredAddons.map((addon) => {
-                const originalIndex = addons.indexOf(addon)
+            <>
+            <StaggerContainer className={effectiveAddonListView === 'list' ? 'flex flex-col gap-2' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}>
+              {filteredAddons.slice(0, visibleCount).map((addon) => {
+                const originalIndex = addonIndexMap.get(addon) ?? 0
+                const normUrl = addon.transportUrl.toLowerCase()
+                const linkedRule = linkedRuleMap.get(normUrl)
+                const primaryUrl = linkedRule?.priorityChain?.[0]
+                const primaryAddon = primaryUrl
+                  ? addonUrlMap.get(primaryUrl.toLowerCase()) ?? null
+                  : null
+                const primaryRule = primaryRuleMap.get(normUrl)
                 return (
-                  <AddonCard
-                    key={`${addon.transportUrl}-${originalIndex}`}
-                    index={originalIndex}
-                    addon={addon}
-                    accountId={accountId}
-                    accountAuthKey={account?.authKey || ''}
-                    onRemove={async () => {
-                      await removeAddonByIndex(accountId, originalIndex)
-                    }}
-                    onUpdate={handleUpdateAddon}
-                    latestVersion={latestVersions[addon.manifest.id]}
-                    isOnline={healthStatus[addon.manifest.id]?.isOnline}
-                    healthError={healthStatus[addon.manifest.id]?.error}
-                    isSelectionMode={isSelectionMode}
-                    onToggleSelect={toggleAddonSelection}
-                    onLongPress={(id) => {
-                      setIsSelectionMode(true)
-                      toggleAddonSelection(id)
-                    }}
-                    selectionId={`${addon.transportUrl}::${originalIndex}`}
-                    isSelected={selectedAddonUrls.has(`${addon.transportUrl}::${originalIndex}`)}
-                  />
+                  <StaggerItem key={`${addon.transportUrl}-${originalIndex}`}>
+                    <AddonCard
+                      index={originalIndex}
+                      addon={addon}
+                      accountId={accountId}
+                      accountAuthKey={account ? getAccountAuthKey(account) : ''}
+                      onRemove={async () => { await removeAddonByIndex(accountId, originalIndex) }}
+                      onUpdate={handleUpdateAddon}
+                      latestVersion={getLatestAddonVersion(latestVersions, addon)}
+                      isOnline={healthStatus[addon.manifest.id]?.isOnline}
+                      healthError={healthStatus[addon.manifest.id]?.error}
+                      isSelectionMode={isSelectionMode}
+                      onToggleSelect={toggleAddonSelection}
+                      onLongPress={(id) => { setIsSelectionMode(true); toggleAddonSelection(id) }}
+                      selectionId={`${addon.transportUrl}::${originalIndex}`}
+                      isSelected={selectedAddonUrls.has(`${addon.transportUrl}::${originalIndex}`)}
+                      failoverPrimaryName={linkedRule && primaryAddon ? (primaryAddon.metadata?.customName || primaryAddon.manifest.name) : undefined}
+                      failoverPaused={linkedRule ? !linkedRule.isActive : undefined}
+                      isPrimary={!!primaryRule}
+                      isPrimaryPaused={primaryRule ? !primaryRule.isActive : undefined}
+                      compact={effectiveAddonListView === 'list'}
+                    />
+                  </StaggerItem>
                 )
               })}
-            </div>
+            </StaggerContainer>
+            {visibleCount < filteredAddons.length && (
+              <div className="flex justify-center pt-4">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setVisibleCount(prev => prev + 200)}
+                  className="gap-1.5 text-xs font-medium"
+                >
+                  Load More ({filteredAddons.length - visibleCount} remaining)
+                </Button>
+              </div>
+            )}
+            </>
           )}
         </TabsContent>
 
         <TabsContent value="failover">
-          <FailoverManager accountId={accountId} />
+          <FailoverManager
+            accountId={accountId}
+            activeView={failoverViewByTab[activeTab as keyof typeof failoverViewByTab] ?? 'rules'}
+            onActiveViewChange={handleFailoverViewChange}
+          />
         </TabsContent>
 
         <TabsContent value="changelog">
           <AddonChangelog accountId={accountId} />
+        </TabsContent>
+
+        <TabsContent value="connections">
+          <div className="space-y-4">
+            <ConnectionManager
+              accountId={accountId}
+              account={account ?? undefined}
+              connections={account?.connections}
+            />
+
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -1006,12 +1266,14 @@ export function AddonList({ accountId }: AddonListProps) {
         onOpenChange={setReorderDialogOpen}
       />
 
+
+
       {
         account && (
           <>
             <InstallSavedAddonDialog
               accountId={accountId}
-              accountAuthKey={account.authKey}
+              accountAuthKey={account ? getAccountAuthKey(account) : ''}
               open={installFromLibraryOpen}
               onOpenChange={setInstallFromLibraryOpen}
               installedAddons={addons}
@@ -1036,6 +1298,7 @@ export function AddonList({ accountId }: AddonListProps) {
         title="Clone Addons"
         description="Select accounts to clone the selected addons to."
         onConfirm={handleBulkCloneToAccounts}
+        confirmLabel="Clone"
       />
 
       <ConfirmationDialog
@@ -1057,6 +1320,108 @@ export function AddonList({ accountId }: AddonListProps) {
         onConfirm={handleBulkDeleteConfirm}
         isLoading={updatingAll}
         disabled={updatingAll}
+      />
+
+      <FloatingActionBar
+        open={isSelectionMode && selectedAddonUrls.size > 0}
+        selectedCount={selectedAddonUrls.size}
+        totalCount={filteredAddons.length}
+        onClearSelection={() => { setIsSelectionMode(false); setSelectedAddonUrls(new Set()) }}
+        actions={[
+          {
+            label: allEnabled ? 'Disable' : 'Enable',
+            icon: allEnabled ? <X className="h-3.5 w-3.5 text-destructive" /> : <Zap className="h-3.5 w-3.5 text-success" />,
+            onClick: allEnabled ? handleBulkDisable : handleBulkEnable,
+          },
+          {
+            label: allProtected ? 'Unprotect' : 'Protect',
+            icon: <Shield className={cn("h-3.5 w-3.5", allProtected ? "fill-primary/20 text-primary" : "")} />,
+            onClick: allProtected ? handleUnprotectSelected : handleProtectSelected,
+          },
+          {
+            label: 'Clone',
+            icon: <Copy className="h-3.5 w-3.5" />,
+            onClick: () => setShowBulkAccountPicker(true),
+            disabled: isBulkActionLoading,
+          },
+          {
+            label: 'Deploy to All',
+            icon: <Download className="h-3.5 w-3.5" />,
+            onClick: handleBulkDeployToAll,
+            disabled: isBulkActionLoading,
+          },
+          {
+            label: `Reinstall (${selectedAddonUrls.size})`,
+            icon: <AnimatedUpdateIcon className="h-3.5 w-3.5" isAnimating={updatingAll} />,
+            onClick: handleReinstallSelected,
+            disabled: updatingAll,
+          },
+          {
+            label: 'Save',
+            icon: <Save className="h-3.5 w-3.5" />,
+            onClick: () => setBulkSaveOpen(true),
+          },
+          ...(selectedAddonUrls.size >= 2 ? [{
+            label: 'Autopilot',
+            icon: <Zap className="h-3.5 w-3.5 text-warning" />,
+            onClick: handleCreateRule,
+            variant: 'default' as const,
+          }] : []),
+          {
+            label: 'Delete',
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            onClick: handleBulkDeleteClick,
+            disabled: updatingAll,
+            variant: 'destructive' as const,
+          },
+        ]}
+      />
+
+      <ConfirmationDialog
+        open={!!profileToDelete}
+        onOpenChange={(open) => !open && setProfileToDelete(null)}
+        title="Delete Setup?"
+        description={`Are you sure you want to delete the setup "${profileToDelete?.name}"? This cannot be undone.`}
+        confirmText="Delete"
+        isDestructive={true}
+        onConfirm={handleDeleteProfile}
+      />
+
+      <Dialog open={!!profileToEdit} onOpenChange={(open) => !open && setProfileToEdit(null)}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rename Setup</DialogTitle>
+            <DialogDescription>
+              Enter a new name for this setup.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="profile-name">Setup Name</Label>
+              <Input
+                id="profile-name"
+                placeholder="e.g. Kids, Secondary, Test"
+                value={profileEditName}
+                onChange={(e) => setProfileEditName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveProfile()}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="subtle" onClick={() => setProfileToEdit(null)}>Cancel</Button>
+            <Button onClick={handleSaveProfile} disabled={profileEditLoading || !profileEditName.trim()}>
+              {profileEditLoading ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AccountSetupCreateDialog
+        isOpen={isCreateProfileOpen}
+        onClose={() => setIsCreateProfileOpen(false)}
+        accountName={displayName}
+        onConfirm={handleCreateProfileConfirm}
       />
     </div >
   )

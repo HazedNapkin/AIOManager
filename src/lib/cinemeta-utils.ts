@@ -1,10 +1,6 @@
 import { CinemetaManifest, CinemetaConfigState, CinemetaPatchStatus } from '@/types/cinemeta'
 import { AddonDescriptor } from '@/types/addon'
 
-// ============================================================================
-// Detection Functions (read-only)
-// ============================================================================
-
 /**
  * Detects if search artifacts have been removed from the manifest
  * Returns true if the search catalogs and extras are missing (patch applied)
@@ -13,11 +9,9 @@ export function detectSearchArtifactsPatched(manifest: CinemetaManifest): boolea
   if (!manifest || !Array.isArray(manifest.catalogs)) return false
   const catalogs = manifest.catalogs || []
 
-  // Check if search catalogs are missing
   const hasSearchMovie = catalogs.some((c) => c.id === 'cinemeta.search' && c.type === 'movie')
   const hasSearchSeries = catalogs.some((c) => c.id === 'cinemeta.search' && c.type === 'series')
 
-  // Check if 'search' extra is missing from top catalogs
   const topMovie = catalogs.find((c) => c.id === 'top' && c.type === 'movie')
   const topSeries = catalogs.find((c) => c.id === 'top' && c.type === 'series')
 
@@ -26,7 +20,6 @@ export function detectSearchArtifactsPatched(manifest: CinemetaManifest): boolea
   const topSeriesHasSearchExtra =
     topSeries && Array.isArray(topSeries.extra) && topSeries.extra.some((e) => e.name === 'search')
 
-  // Patch is applied if search catalogs are missing AND search extras are missing from top catalogs
   return !hasSearchMovie && !hasSearchSeries && !topMovieHasSearchExtra && !topSeriesHasSearchExtra
 }
 
@@ -41,7 +34,6 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
   if (!manifest || !Array.isArray(manifest.catalogs)) return false
   const catalogs = manifest.catalogs || []
 
-  // Check if standard catalogs exist
   const hasPopularMovie = catalogs.some((c) => c.id === 'top' && c.type === 'movie')
   const hasPopularSeries = catalogs.some((c) => c.id === 'top' && c.type === 'series')
   const hasNewMovie = catalogs.some((c) => c.id === 'year' && c.type === 'movie')
@@ -49,7 +41,6 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
   const hasFeaturedMovie = catalogs.some((c) => c.id === 'imdbRating' && c.type === 'movie')
   const hasFeaturedSeries = catalogs.some((c) => c.id === 'imdbRating' && c.type === 'series')
 
-  // Check if Popular catalogs have been modified (search extra has isRequired: true)
   const popularMovieCatalog = catalogs.find((c) => c.id === 'top' && c.type === 'movie')
   const popularSeriesCatalog = catalogs.find((c) => c.id === 'top' && c.type === 'series')
 
@@ -64,7 +55,6 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
     popularSeriesCatalog.extra.some((e) => e.name === 'search' && e.isRequired === true)
   )
 
-  // Scenario 1: All standard catalogs are removed (both toggles ON)
   const allCatalogsRemoved =
     !hasPopularMovie &&
     !hasPopularSeries &&
@@ -73,7 +63,6 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
     !hasFeaturedMovie &&
     !hasFeaturedSeries
 
-  // Scenario 2: Popular catalogs are modified and New/Featured are removed (only 'Remove Cinemeta Catalogs' ON)
   const popularModifiedAndOthersRemoved =
     hasPopularMovie &&
     hasPopularSeries &&
@@ -84,7 +73,6 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
     !hasFeaturedMovie &&
     !hasFeaturedSeries
 
-  // Patch is applied if either scenario is true
   return allCatalogsRemoved || popularModifiedAndOthersRemoved
 }
 
@@ -100,18 +88,12 @@ export function detectMetaResourcePatched(manifest: CinemetaManifest): boolean {
   )
 }
 
-// ============================================================================
-// Transformation Functions (return new manifest)
-// ============================================================================
-
 /**
  * Removes search artifacts from Cinemeta manifest
  */
 export function removeCinemetaSearchArtifacts(manifest: CinemetaManifest): CinemetaManifest {
-  const modifiedCatalogs = manifest.catalogs
-    // Filter out catalogs with id === 'cinemeta.search'
+  const modifiedCatalogs = (manifest.catalogs || [])
     .filter((catalog) => catalog.id !== 'cinemeta.search')
-    // Remove search extras from remaining catalogs
     .map((catalog) => ({
       ...catalog,
       extra: catalog.extra?.filter((extra) => extra.name !== 'search'),
@@ -134,9 +116,8 @@ export function removeCinemetaStandardCatalogs(
   const standardCatalogIds = ['top', 'year', 'imdbRating']
 
   if (keepSearchExtras) {
-    // Modify Popular catalogs to add isRequired: true to search extra
-    const modifiedCatalogs = manifest.catalogs.map((catalog) => {
-      if (catalog.id.includes('top')) {
+    const modifiedCatalogs = (manifest.catalogs || []).map((catalog) => {
+      if (catalog.id === 'top') {
         return {
           ...catalog,
           extra: catalog.extra?.map((extra) =>
@@ -147,20 +128,18 @@ export function removeCinemetaStandardCatalogs(
       return catalog
     })
 
-    // Filter out year and imdbRating catalogs
     return {
       ...manifest,
       catalogs: modifiedCatalogs.filter(
-        (catalog) => !catalog.id.includes('year') && !catalog.id.includes('imdbRating')
+        (catalog) => catalog.id !== 'year' && catalog.id !== 'imdbRating'
       ),
     }
   }
 
-  // Remove all standard catalogs completely
   return {
     ...manifest,
-    catalogs: manifest.catalogs.filter(
-      (catalog) => !standardCatalogIds.some((id) => catalog.id.includes(id))
+    catalogs: (manifest.catalogs || []).filter(
+      (catalog) => !standardCatalogIds.some((id) => catalog.id === id)
     ),
   }
 }
@@ -171,7 +150,7 @@ export function removeCinemetaStandardCatalogs(
 export function removeMeta(manifest: CinemetaManifest): CinemetaManifest {
   return {
     ...manifest,
-    resources: manifest.resources.filter(r =>
+    resources: (manifest.resources || []).filter(r =>
       r !== 'meta' &&
       !(typeof r === 'object' && r !== null && ((r as any).name === 'meta' || (r as any).value === 'meta'))
     ),
@@ -187,31 +166,22 @@ export function applyCinemetaConfiguration(
 ): CinemetaManifest {
   let modifiedManifest = { ...manifest }
 
-  // Apply search artifacts removal
   if (config.removeSearchArtifacts) {
     modifiedManifest = removeCinemetaSearchArtifacts(modifiedManifest)
   }
 
-  // Apply standard catalogs removal (conditional logic)
   if (config.removeSearchArtifacts && config.removeStandardCatalogs) {
-    // If BOTH flags are ON: remove all catalogs completely
     modifiedManifest = removeCinemetaStandardCatalogs(modifiedManifest, false)
   } else if (config.removeStandardCatalogs) {
-    // If ONLY catalog flag ON: modify Popular (keep search working)
     modifiedManifest = removeCinemetaStandardCatalogs(modifiedManifest, true)
   }
 
-  // Apply meta resource removal
   if (config.removeMetaResource) {
     modifiedManifest = removeMeta(modifiedManifest)
   }
 
   return modifiedManifest
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /**
  * Fetches the original Cinemeta manifest from the transport URL
@@ -247,14 +217,12 @@ export function isCinemetaAddon(addon: AddonDescriptor): boolean {
 export function isInternalAddon(addon: AddonDescriptor): boolean {
   if (!addon) return false
 
-  // 1. Check Cinemeta
   if (isCinemetaAddon(addon)) return true
 
   const id = addon.manifest.id?.toLowerCase() || ''
   const name = addon.manifest.name?.toLowerCase() || ''
   const transportUrl = addon.transportUrl?.toLowerCase() || ''
 
-  // 2. Known Internal IDs
   const INTERNAL_IDS = [
     'com.linvo.cinemeta',
     'org.stremio.cinemeta',
@@ -269,7 +237,6 @@ export function isInternalAddon(addon: AddonDescriptor): boolean {
   ]
   if (INTERNAL_IDS.includes(id)) return true
 
-  // 3. Known Internal/Official URLs or Name patterns
   if (transportUrl.includes('v3-cinemeta.strem.io')) return true
   if (transportUrl.includes('127.0.0.1:11470/local-addon')) return true
   if (transportUrl.includes('watchhub.strem.io')) return true
@@ -277,7 +244,6 @@ export function isInternalAddon(addon: AddonDescriptor): boolean {
   if (transportUrl.includes('caching.stremio.net/publicdomainmovies')) return true
   if (transportUrl.includes('opensubtitles-v3.strem.io')) return true
 
-  // 4. Name fallback for official ones
   if (name === 'cinemeta') return true
   if (name === 'watchhub') return true
   if (name.includes('local files')) return true
@@ -297,18 +263,13 @@ export function detectAllPatches(manifest: CinemetaManifest): CinemetaPatchStatu
   }
 }
 
-// ============================================================================
-// Poster Helpers
-// ============================================================================
-
 /**
  * Returns the proxyable poster URL for a given item type and IMDB ID.
  * Falls back to cinemeta's official images.
  */
 export function getCinemetaPosterUrl(itemId: string): string {
   if (!itemId) return ''
-  // itemId is expected to be an IMDB ID (e.g., tt123)
-  return `https://images.metahub.space/poster/small/${itemId}/img`
+  return `https://live.metahub.space/poster/small/${itemId}/img`
 }
 
 /**

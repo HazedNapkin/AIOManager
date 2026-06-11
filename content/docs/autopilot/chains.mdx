@@ -1,0 +1,44 @@
+---
+title: Creating a Chain
+description: Set up a failover chain to keep your addons running automatically.
+---
+
+## Creating a Chain
+
+The fastest way to create a chain:
+
+<Steps>
+  <Step>**Go to the Installed tab:** Open an account and switch to the Installed addons tab.</Step>
+  <Step>**Enter selection mode:** Click Select or long-press an addon card on mobile.</Step>
+  <Step>**Select your addons:** Pick two or more addons. The first one selected becomes the primary.</Step>
+  <Step>**Click Autopilot:** The ⚡ Autopilot button appears in the selection toolbar. Click it to create the chain instantly.</Step>
+</Steps>
+
+You can also create chains manually from the Autopilot tab by clicking **Add Rule** and configuring the priority chain, name, webhook, and cooldown manually.
+
+## Rule Card Anatomy
+
+A rule in the Autopilot tab shows the following information:
+
+| Element | Description |
+|---------|-------------|
+| **Rule Name** | Human-readable identifier you set when creating the rule |
+| **Chain** | Ordered list of addons with priority numbers (1 = primary) |
+| **Status Badge** | Live (monitoring), Paused (disabled), or Triggered (recent failover) |
+| **Toggle** | Enable or disable the rule without deleting it |
+| **Menu (⋮)** | Edit, Duplicate, Delete, or Simulate |
+
+## Managing Chains
+
+| Action | What it does |
+|--------|--------------|
+| **Enable / Disable** | Toggle pauses or resumes Autopilot monitoring for that chain |
+| **Edit** | Change chain order, name, webhook, or cooldown without recreating |
+| **Duplicate** | Creates a copy - useful for similar chains across accounts |
+| **Delete** | Removes the chain from Autopilot. Addons themselves are unaffected |
+
+## Simulating a Failover
+
+The flask (🧪) icon on each rule runs a simulated health check without actually switching any addons. It shows you what Autopilot would do right now: which addons are healthy, which would be activated, and what the outcome would be. This happens without touching your live setup.
+
+<Tip>Run a simulation after creating a new chain to confirm it's correctly configured before relying on it.</Tip>

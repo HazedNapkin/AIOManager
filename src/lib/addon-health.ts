@@ -4,6 +4,7 @@ import { SavedAddon } from '@/types/saved-addon'
 export interface HealthStatus {
   isOnline: boolean
   error?: string
+  latencyMs?: number
 }
 
 export function isLocalOrPrivateUrl(url: string): boolean {
@@ -28,98 +29,49 @@ export function isLocalOrPrivateUrl(url: string): boolean {
  * @returns HealthStatus object
  */
 export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> {
+  const startTime = Date.now()
+
   if (isLocalOrPrivateUrl(addonUrl)) {
-    return { isOnline: false, error: 'Local addon unreachable from server' }
+    return { isOnline: false, error: 'Local addon unreachable from server', latencyMs: Date.now() - startTime }
   }
 
-  let domain = addonUrl;
-  try { domain = new URL(addonUrl).origin } catch (e) { console.warn('[AddonHealth] Invalid URL for origin extraction:', addonUrl) }
-
-  const performCheck = async (target: string, timeoutMs: number): Promise<{ ok: boolean, error?: string }> => {
-    try {
-      const controller = new AbortController()
-      const id = setTimeout(() => controller.abort(), timeoutMs)
-
-      const fetchUrl = target;
-
-      // Priority 1: HEAD
-      try {
-        const response = await fetch(fetchUrl, {
-          method: 'HEAD',
-          signal: controller.signal,
-          mode: 'no-cors',
-          cache: 'no-cache'
-        })
-
-        if (response.ok || (response.type as string) === 'opaque' || response.status === 405 || response.status === 302) {
-          clearTimeout(id)
-          return { ok: true }
-        }
-      } catch (headErr) {
-        // Fall through to GET if HEAD fails (often CORS restricts HEAD but allows GET, or proxy needed)
-      }
-
-      // Priority 2: GET
-      const response2 = await fetch(fetchUrl, {
-        method: 'GET',
-        signal: controller.signal,
-        mode: 'no-cors',
-        cache: 'no-cache'
-      })
-
-      clearTimeout(id)
-      if (response2.ok || (response2.type as string) === 'opaque' || response2.status === 302) return { ok: true }
-      return { ok: false, error: (response2.type as string) === 'opaque' ? 'Network Error' : `HTTP ${response2.status}: ${response2.statusText}` }
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { ok: false, error: 'Request Timeout' }
-      }
-      return { ok: false, error: error instanceof Error ? error.message : 'Unknown Network Error' }
-    }
-  }
-
-  // 1. Silent Domain-Only Check (Direct)
-  const domainCheck = await performCheck(domain, 5000)
-  if (domainCheck.ok) {
-    return { isOnline: true }
-  }
-
-  // 2. Definitive Manifest Check (Direct)
   const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
-  const manifestCheck = await performCheck(manifestUrl, 5000)
-  if (manifestCheck.ok) {
-    return { isOnline: true }
-  }
 
-  // 3. Server-side Proxy Fallback
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+    const response = await fetch(manifestUrl, {
+      method: 'GET',
+      signal: controller.signal,
+      cache: 'no-cache'
+    })
+
+    clearTimeout(timeoutId)
+
+    if (response.ok) {
+      try {
+        const data = await response.json()
+        if (data && typeof data === 'object') {
+          return { isOnline: true, latencyMs: Date.now() - startTime }
+        }
+      } catch {}
+    }
+  } catch {}
+
   try {
     const response = await fetch(`/api/addon-health?url=${encodeURIComponent(addonUrl)}`);
     if (!response.ok) {
-      return { isOnline: false, error: 'Connection Failed' };
+      return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime };
     }
     const data = await response.json();
     return {
       isOnline: data.isOnline,
-      error: data.error
+      error: data.error,
+      latencyMs: Date.now() - startTime
     };
   } catch (err) {
-    return { isOnline: false, error: 'Connection Failed' };
-  }
-}
-
-/**
- * Update a saved addon with health status
- */
-export async function updateAddonHealth(addon: SavedAddon): Promise<SavedAddon> {
-  const status = await checkAddonHealth(addon.installUrl)
-
-  return {
-    ...addon,
-    health: {
-      isOnline: status.isOnline,
-      error: status.error,
-      lastChecked: Date.now(),
-    },
+    return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime };
   }
 }
 
@@ -134,12 +86,17 @@ export async function checkAllAddonsHealth(
   onProgress?: (completed: number, total: number) => void
 ): Promise<SavedAddon[]> {
   const CONCURRENT_LIMIT = 5
+  const BUDGET_MS = 30000
+  const budgetStart = Date.now()
+  const budgetExceeded = () => Date.now() - budgetStart > BUDGET_MS
   const results: SavedAddon[] = [...addons]
   const domainHealthCache: Record<string, boolean> = {}
   const PENDING_CHECKS: Record<string, Promise<HealthStatus>> = {}
 
   for (let i = 0; i < addons.length; i += CONCURRENT_LIMIT) {
-    const batch = addons.slice(i, i + CONCURRENT_LIMIT)
+    if (budgetExceeded()) break
+
+    const batch = addons.slice(i, Math.min(i + CONCURRENT_LIMIT, addons.length))
 
     await Promise.all(batch.map(async (addon, batchIndex) => {
       const globalIndex = i + batchIndex
@@ -162,7 +119,7 @@ export async function checkAllAddonsHealth(
               domainHealthCache[origin] = true
             }
             // Temporarily keep it in the cache to collapse other simultaneous requests
-            setTimeout(() => delete PENDING_CHECKS[origin], 2000)
+            setTimeout(() => delete PENDING_CHECKS[origin], 5000)
             return s
           })
         }
@@ -186,11 +143,11 @@ export async function checkAllAddonsHealth(
           isOnline: status.isOnline,
           error: status.error,
           lastChecked: Date.now(),
+          latencyMs: status.latencyMs,
         },
       }
     }))
 
-    // Report progress
     if (onProgress) {
       onProgress(Math.min(i + CONCURRENT_LIMIT, addons.length), addons.length)
     }
@@ -234,7 +191,6 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
   const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
 
   try {
-    // 1. Fetch Manifest
     const controller = new AbortController()
     const id = setTimeout(() => controller.abort(), 10000)
 
@@ -244,17 +200,24 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
       const res = await fetch(manifestUrl, { signal: controller.signal })
       if (res.ok) manifest = await res.json()
     } catch {
-      // Try proxy
-      const proxyUrl = `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}`
-      const res = await fetch(proxyUrl, { signal: controller.signal })
-      if (res.ok) manifest = await res.json()
+      try {
+        const { useSyncStore } = await import('@/store/syncStore')
+        const { auth } = useSyncStore.getState()
+        const headers: Record<string, string> = {}
+        if (auth.isAuthenticated) {
+          const { deriveSyncToken } = await import('@/lib/crypto')
+          headers['x-sync-user'] = auth.id
+          headers['x-sync-password'] = await deriveSyncToken(auth.password)
+        }
+        const proxyUrl = `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}`
+        const res = await fetch(proxyUrl, { signal: controller.signal, headers })
+        if (res.ok) manifest = await res.json()
+      } catch {}
     }
     clearTimeout(id)
 
     if (!manifest) return { isHealthy: false, message: "Manifest unreachable" }
 
-    // 2. Determine Verification Capability
-    // Priority: Catalog (easiest) -> Stream (needs ID) -> Meta (needs ID)
     let verifyUrl = ''
 
     if (manifest.catalogs && manifest.catalogs.length > 0) {
@@ -269,7 +232,6 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
       return { isHealthy: true, message: "Manifest OK (No verifiable resources found)", latency: Date.now() - start }
     }
 
-    // 3. Fetch Verification Resource
     const vController = new AbortController()
     const vId = setTimeout(() => vController.abort(), 10000)
 
@@ -281,7 +243,6 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
         if (data.metas || data.streams) verifySuccess = true
       }
     } catch {
-      // Direct only
     }
     clearTimeout(vId)
 

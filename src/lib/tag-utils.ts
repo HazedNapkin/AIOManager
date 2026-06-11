@@ -6,7 +6,7 @@ export const TAG_PALETTE = [
     { bg: 'rgba(220,38,38,0.2)', text: '#fca5a5', border: 'rgba(220,38,38,0.3)' },
     { bg: 'rgba(124,58,237,0.2)', text: '#c4b5fd', border: 'rgba(124,58,237,0.3)' },
     { bg: 'rgba(219,39,119,0.2)', text: '#f9a8d4', border: 'rgba(219,39,119,0.3)' },
-    { bg: 'rgba(255,255,255,0.08)', text: 'rgba(255,255,255,0.5)', border: 'rgba(255,255,255,0.1)' },
+    { bg: 'hsl(var(--muted))', text: 'hsl(var(--muted-foreground))', border: 'transparent' },
 ]
 
 export function getTagColor(tag: string) {

@@ -1,14 +1,25 @@
-import { VaultProvider } from './vault'
+export interface HydraDriverConfig {
+    name: string
+    baseUrl: string
+    authType: 'api-key' | 'bearer' | 'basic' | 'none'
+    authHeader?: string
+}
+
+export interface HydraStatus {
+    name: string
+    version: string
+    capabilities: string[]
+}
 
 export interface ProviderHealth {
-    id: string // Vault key ID
+    id: string
     name: string
-    provider: VaultProvider
-    status: 'active' | 'expired' | 'error' | 'none'
+    provider: string
+    status: 'none' | 'active' | 'expired' | 'error'
     daysRemaining: number | null
     expiresAt: string | null
     lastChecked: number
-    loading: boolean
+    loading?: boolean
     error?: string
 }
 

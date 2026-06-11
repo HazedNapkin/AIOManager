@@ -34,11 +34,48 @@ export interface ActivityItem {
     name: string
     type: string
     poster: string
-    timestamp: Date
+    timestamp: Date      // Last watched (_mtime / lastWatched)
+    firstWatched?: Date  // First added to library (_ctime) - when they started watching
     duration: number
     watched: number
     progress: number
+    timesWatched?: number  // From state.timesWatched
+    isInProgress: boolean  // timeOffset > 0 && progress < 90
     season?: number
     episode?: number
     overallTimeWatched?: number
+    source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = stremio)
+    backfill?: boolean // recovered from Stremio's watched-bitfield; no real per-episode time, so excluded from time-based Replay stats
+}
+
+// A detected watch event from snapshot diffing.
+// Accumulated in the cloud sync blob as the source of truth for
+// Activity, Metrics, and Replay history.
+export interface WatchEvent {
+    id: string
+    accountId: string
+    itemId: string
+    video_id: string
+    event_ts: number
+    detected_ts: number
+    name: string
+    type: string
+    poster: string
+    time_watched: number
+    time_watched_delta?: number
+    duration: number
+    season?: number
+    episode?: number
+    source?: string
+    backfill?: boolean // recovered from Stremio's watched-bitfield (no real per-episode timestamp)
+}
+
+export interface SnapshotItem {
+    mtime: number
+    video_id: string
+    overallTimeWatched: number
+    timeWatched: number
+    duration?: number
+    season?: number
+    episode?: number
 }

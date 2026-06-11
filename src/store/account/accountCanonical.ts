@@ -1,0 +1,87 @@
+import { threeWayMergeCanonical, type CanonicalAddon } from '@/lib/canonical-merge'
+import { getCanonicalBase } from '@/lib/canonical-base'
+import { fetchCanonical } from '@/api/hydra-providers'
+import {
+    getAccountById,
+    persistAccounts,
+    syncMutexes,
+    getAccountAuthKey,
+} from '../accountStore'
+import type { AccountStore } from '../accountStore'
+import type { AddonDescriptor } from '@/types/addon'
+
+type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
+
+async function getStore(): Promise<StoreRef> {
+    const { useAccountStore } = await import('../accountStore')
+    return useAccountStore
+}
+
+/**
+ * Fold inbound canonical-store writes (e.g. AIOStreams) into non-Stremio Hubs via the
+ * tested three-way merge, BEFORE the client's blob push so the push reflects the merge.
+ * The client is the single merger (D2).
+ *
+ * Loop-safety: this is invoked from inside syncToRemote. It mutates account.addons under
+ * the per-account sync mutex and propagates a changed Hub to native connections via
+ * pushToConnections (which only hits triggerReconciliation + connectionStore, NO
+ * triggerSync), but it never calls backgroundSync/triggerSync itself. The in-flight blob
+ * push carries the rest.
+ *
+ * @returns true if any Hub changed (the caller may want to ensure a push follows).
+ */
+export async function reconcileInboundCanonical(): Promise<boolean> {
+    const store = await getStore()
+    // Only non-Stremio Hubs use the canonical store; Stremio is served Stremio-first.
+    const targets = store.getState().accounts.filter(a => !getAccountAuthKey(a))
+    if (targets.length === 0) return false
+
+    let remote: Record<string, { addons: AddonDescriptor[]; updatedAt: number }>
+    try {
+        remote = await fetchCanonical()
+    } catch {
+        return false // best-effort; never block the push on it
+    }
+
+    let anyChanged = false
+
+    for (const account of targets) {
+        const remoteAddons = (remote[account.id]?.addons || []) as unknown as CanonicalAddon[]
+
+        // Compute AND apply under the per-account mutex. `local` MUST be read fresh inside
+        // the lock: a concurrent addon op (install/remove) can land during the
+        // fetchCanonical() await above, and merging against the pre-await snapshot would
+        // clobber it: a TOCTOU drop in the exact feature meant to never drop addons.
+        while (syncMutexes.has(account.id)) { await syncMutexes.get(account.id) }
+        let release!: () => void
+        syncMutexes.set(account.id, new Promise<void>(r => { release = r }))
+        let didChange = false
+        try {
+            const current = getAccountById(store.getState().accounts, account.id)
+            if (!current) continue
+            const base = getCanonicalBase(account.id) as unknown as CanonicalAddon[] | null
+            const local = (current.addons || []) as unknown as CanonicalAddon[]
+            const { addons: merged, changed } = threeWayMergeCanonical(base, local, remoteAddons)
+            if (!changed) continue
+            const updated = { ...current, addons: merged as unknown as AddonDescriptor[], lastSync: new Date() }
+            const next = store.getState().accounts.map(a => (a.id === account.id ? updated : a))
+            store.setState({ accounts: next })
+            persistAccounts(next)
+            anyChanged = true
+            didChange = true
+        } finally {
+            release()
+            syncMutexes.delete(account.id)
+        }
+
+        // Propagate the merged Hub to native connections (Nuvio etc.). Fire-and-forget,
+        // loop-safe: pushToConnections does not trigger another blob sync.
+        if (didChange) {
+            import('./accountAddonOps')
+                .then(({ pushToConnections }) => pushToConnections(account.id))
+                .catch(() => {})
+        }
+    }
+
+    return anyChanged
+}

@@ -2,7 +2,7 @@
 
 Thank you for even considering this. AIOManager started as something I built strictly for myself and I genuinely didn't expect anyone to find it, let alone want to contribute to it. PRs are welcome and I appreciate anyone willing to put in the time.
 
-Feel free to fork the project and build whatever you want. If I happen to see a PR and want to merge it, cool. If not, no worries! Just know that I am stepping back from active maintenance on this project and won't be actively reviewing issues, feature requests, or large architectural changes. Take the codebase and have fun with it!
+Feel free to fork the project and build whatever you want. If I happen to see a PR and want to merge it, cool. If not, no worries! The project is feature-complete as of v2.0. Bug fixes and quality-of-life improvements are welcome, but large architectural changes are unlikely to be merged.
 
 ---
 
@@ -68,7 +68,7 @@ In dev, the frontend already proxies `/api` calls to `http://localhost:16100` th
 
 | | |
 |---|---|
-| Frontend | React 18, TypeScript, Vite |
+| Frontend | React 19, TypeScript, Vite |
 | Styling | Tailwind CSS + shadcn/ui |
 | State | Zustand |
 | Local storage | localforage (IndexedDB) |

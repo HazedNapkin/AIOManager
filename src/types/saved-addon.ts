@@ -1,4 +1,4 @@
-import { AddonManifest } from './addon'
+import { AddonManifest, CatalogOverrides } from './addon'
 
 /**
  * Saved Addon - A reusable addon configuration
@@ -11,6 +11,7 @@ export interface SavedAddon {
   name: string // User-defined name (e.g., "Torrentio - RD+AD")
   installUrl: string // Full addon URL with any config embedded
   manifest: AddonManifest // Cached manifest data
+  originalManifest?: AddonManifest
   tags: string[] // User-defined tags for organization
   profileId?: string // Link to a Profile
   createdAt: Date
@@ -26,9 +27,7 @@ export interface SavedAddon {
     customLogo?: string
     customDescription?: string
   }
-  catalogOverrides?: {
-    removed: string[]
-  }
+  catalogOverrides?: CatalogOverrides
 
   // Health & Restoration
   autoRestore?: boolean
@@ -36,7 +35,8 @@ export interface SavedAddon {
   health?: {
     isOnline: boolean
     error?: string
-    lastChecked: number // timestamp
+    lastChecked: number
+    latencyMs?: number
   }
 }
 
@@ -64,6 +64,23 @@ export interface InstalledAddon {
   }
 }
 
+export interface SavedAddonManifestChangeSummary {
+  catalogsAdded: number
+  catalogsRemoved: number
+  resourcesAdded: number
+  resourcesRemoved: number
+  hasManifestShapeChange: boolean
+}
+
+export interface SavedAddonManifestUpdateResult extends SavedAddonManifestChangeSummary {
+  previousVersion: string
+  latestVersion: string
+  versionChanged: boolean
+  libraryChanged: boolean
+  preservedRemovedCatalogs: number
+  remappedRemovedCatalogs: number
+}
+
 /**
  * Result of a merge operation
  */
@@ -73,6 +90,10 @@ export interface MergeResult {
     name: string
     installUrl: string
   }>
+  removed?: Array<{
+    addonId: string
+    name: string
+  }>
   updated: Array<{
     addonId: string
     oldUrl: string
@@ -80,7 +101,7 @@ export interface MergeResult {
   }>
   skipped: Array<{
     addonId: string
-    reason: 'already-exists' | 'protected' | 'fetch-failed'
+    reason: 'already-exists' | 'protected' | 'fetch-failed' | 'not-installed'
   }>
   protected: Array<{
     addonId: string

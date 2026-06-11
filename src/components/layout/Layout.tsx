@@ -1,7 +1,7 @@
 import { ReactNode, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Footer } from './Footer'
-import { Header } from './Header'
+import { Header, MobileBottomNav } from './Header'
 import { SyncIdReminder } from './SyncIdReminder'
 import { useAddonStore } from '@/store/addonStore'
 import { CommandPalette } from '@/components/CommandPalette'
@@ -11,22 +11,27 @@ interface LayoutProps {
 }
 
 export function Layout({ children }: LayoutProps) {
-  const { checkAllHealth } = useAddonStore()
+  const checkAllHealth = useAddonStore(s => s.checkAllHealth)
   const location = useLocation()
 
   // Use a more robust check for Replay mode
   const isReplay = location.pathname.includes('/replay')
+  const isKronorium = location.pathname.startsWith('/kronorium')
 
-  // Auto-refresh health when window is focused (with store-level 3m cooldown)
+  // Auto-refresh health when tab becomes visible (with store-level 3m cooldown)
   useEffect(() => {
-    const handleFocus = () => {
-      checkAllHealth()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkAllHealth()
+      }
     }
-    window.addEventListener('focus', handleFocus)
-    return () => window.removeEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [checkAllHealth])
 
   if (isReplay) {
+    // Replay (Apple Music Replay-style year-in-review) is intentionally always dark.
+    // Don't swap bg-[#08080f] for bg-background - the override is by design.
     return (
       <div className="min-h-screen bg-[#08080f] flex flex-col overflow-hidden">
         <main className="flex-1 overflow-hidden">{children}</main>
@@ -35,12 +40,28 @@ export function Layout({ children }: LayoutProps) {
     )
   }
 
+  if (isKronorium) {
+    return <>{children}</>
+  }
+
   return (
-    <div className="min-h-screen bg-background flex flex-col pb-20 md:pb-0">
+    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden md:h-auto md:min-h-[100dvh] md:overflow-visible">
+      <svg width="0" height="0" className="absolute">
+        <defs>
+          <filter id="squircle">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+            <feColorMatrix in="blur" mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9"
+              result="squircle" />
+            <feComposite in="SourceGraphic" in2="squircle" operator="atop" />
+          </filter>
+        </defs>
+      </svg>
       <SyncIdReminder />
       <Header />
-      <main className="container mx-auto px-4 py-6 md:py-10 flex-1">{children}</main>
-      <Footer />
+      <main className="relative z-10 max-w-[1800px] mx-auto w-full px-4 py-6 md:py-10 flex-1 overflow-y-auto md:overflow-visible">{children}</main>
+      <MobileBottomNav />
+      <Footer className="hidden md:block" />
       <CommandPalette />
     </div>
   )

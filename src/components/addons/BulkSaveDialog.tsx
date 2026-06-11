@@ -24,10 +24,33 @@ import { useProfileStore } from '@/store/profileStore'
 import { AddonDescriptor } from '@/types/addon'
 import { isInternalAddon } from '@/lib/cinemeta-utils'
 import { TagInput } from '@/components/ui/tag-input'
-import { Loader2 } from 'lucide-react'
-import { useEffect, useState, useMemo } from 'react'
+import { CheckCircle2, Library, Loader2, Plus, ShieldCheck, Tags } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { useEffect, useState, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 
 // Internal addon IDs are now handled by isInternalAddon in cinemeta-utils.ts
+
+const SAVE_MODE_OPTIONS: Array<{
+    value: 'skip' | 'update' | 'copy'
+    label: string
+    description: string
+}> = [
+        {
+            value: 'skip',
+            label: 'Skip Existing',
+            description: 'Only save addons that are not already in the library.',
+        },
+        {
+            value: 'update',
+            label: 'Update Matches',
+            description: 'Merge tags and refresh details for existing entries.',
+        },
+        {
+            value: 'copy',
+            label: 'Create Copies',
+            description: 'Save new entries even when a match already exists.',
+        },
+    ]
 
 interface BulkSaveDialogProps {
     open: boolean
@@ -44,8 +67,10 @@ export function BulkSaveDialog({
     accountId,
     title,
 }: BulkSaveDialogProps) {
-    const { library, createSavedAddon } = useAddonStore()
-    const { profiles, createProfile } = useProfileStore()
+    const library = useAddonStore(s => s.library)
+    const createSavedAddon = useAddonStore(s => s.createSavedAddon)
+    const profiles = useProfileStore(s => s.profiles)
+    const createProfile = useProfileStore(s => s.createProfile)
     const accounts = useAccountStore((state) => state.accounts)
     const { toast } = useToast()
 
@@ -56,10 +81,12 @@ export function BulkSaveDialog({
     const [saveTags, setSaveTags] = useState<string[]>([])
     const [saveMode, setSaveMode] = useState<'skip' | 'update' | 'copy'>('skip')
     const [excludeInternal, setExcludeInternal] = useState(true)
+    const saveModeRefs = useRef<Array<HTMLButtonElement | null>>([])
 
     const filteredAddons = excludeInternal
         ? addons.filter(a => !isInternalAddon(a))
         : addons
+    const internalAddonsCount = addons.length - filteredAddons.length
 
     const allKnownTags = useMemo(() => {
         const tagsSet = new Set<string>()
@@ -68,6 +95,26 @@ export function BulkSaveDialog({
         })
         return Array.from(tagsSet).sort()
     }, [library])
+
+    const handleSaveModeKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+        let nextIndex: number | null = null
+
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            nextIndex = (index + 1) % SAVE_MODE_OPTIONS.length
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            nextIndex = (index - 1 + SAVE_MODE_OPTIONS.length) % SAVE_MODE_OPTIONS.length
+        } else if (e.key === 'Home') {
+            nextIndex = 0
+        } else if (e.key === 'End') {
+            nextIndex = SAVE_MODE_OPTIONS.length - 1
+        }
+
+        if (nextIndex === null) return
+
+        e.preventDefault()
+        setSaveMode(SAVE_MODE_OPTIONS[nextIndex].value)
+        requestAnimationFrame(() => saveModeRefs.current[nextIndex]?.focus())
+    }
 
     // Smart Defaulting when dialog opens
     useEffect(() => {
@@ -118,7 +165,7 @@ export function BulkSaveDialog({
                     const newProfile = await createProfile(newProfileName.trim())
                     finalProfileId = newProfile.id
                 } catch (err) {
-                    console.error('Failed to create profile:', err)
+                    if (import.meta.env.DEV) console.error('Failed to create profile:', err)
                     toast({
                         title: 'Error',
                         description: 'Failed to create profile. Aborting.',
@@ -140,15 +187,7 @@ export function BulkSaveDialog({
             const { updateSavedAddon, updateSavedAddonMetadata } = useAddonStore.getState()
 
             for (const addon of filteredAddons) {
-                // Check for existing saved addon (duplicate check)
-                // We match by ID && URL to be precise. Profile is part of the "duplicate" definition in the original code
-                // but for "Update" mode we probably want to find *any* instance of this addon?
-                // Original logic: match ID && URL && Profile.
-                // If we have multiple copies in library (different profiles), which one do we update?
-                // "Update" implies we target *one* specific entry? Or *all* matching?
-                // Let's stick to the previous strict definition: ID + URL.
-                // If multiple exist (e.g. same addon in multiple profiles), we might be ambiguous.
-                // BUT, `library` keys are UUIDs. We iterate `Object.values(library)`.
+                // Check for existing saved addon
 
                 const existingAddons = Object.values(library).filter(
                     (saved) =>
@@ -156,13 +195,7 @@ export function BulkSaveDialog({
                         saved.installUrl === addon.transportUrl
                 )
 
-                // IF Profile is specified in target, we might want to narrow down?
-                // Actually, if I say "Save to Profile A", and it's already in Profile B...
-                // Skip: Don't touch.
-                // Update: Move to Profile A? Or just update tags?
-                // Copy: Create new in Profile A.
-
-                // Let's interpret "Existing" as "Same ID & URL".
+                // Interpret "Existing" as "Same ID & URL"
                 const existing = existingAddons.find(s => s.profileId === finalProfileId) || existingAddons[0]
 
                 if (existing) {
@@ -192,7 +225,7 @@ export function BulkSaveDialog({
                             successCount++
                             continue
                         } catch (err) {
-                            console.error(`Failed to update ${addon.manifest.id}:`, err)
+                            if (import.meta.env.DEV) console.error(`Failed to update ${addon.manifest.id}:`, err)
                             failCount++
                             continue
                         }
@@ -211,7 +244,7 @@ export function BulkSaveDialog({
                     )
                     successCount++
                 } catch (err) {
-                    console.error(`Failed to save ${addon.manifest.id}:`, err)
+                    if (import.meta.env.DEV) console.error(`Failed to save ${addon.manifest.id}:`, err)
                     failCount++
                 }
             }
@@ -223,7 +256,7 @@ export function BulkSaveDialog({
 
             handleClose()
         } catch (err) {
-            console.error('Bulk save failed:', err)
+            if (import.meta.env.DEV) console.error('Bulk save failed:', err)
             toast({
                 title: 'Error',
                 description: 'An unexpected error occurred during bulk save.',
@@ -236,127 +269,192 @@ export function BulkSaveDialog({
 
     return (
         <Dialog open={open} onOpenChange={(_val) => !saving && handleClose()}>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>{title || 'Save Addons to Library'}</DialogTitle>
-                    <DialogDescription>
-                        Save {filteredAddons.length} installed addon{filteredAddons.length !== 1 ? 's' : ''} to your library.
-                    </DialogDescription>
-                </DialogHeader>
-
-                <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                            <Label>Target Profile</Label>
-                            {!isCreatingProfile ? (
-                                <Button
-                                    variant="link"
-                                    size="sm"
-                                    className="h-auto p-0 text-xs"
-                                    onClick={() => setIsCreatingProfile(true)}
-                                >
-                                    + Create New Profile
-                                </Button>
-                            ) : (
-                                <Button
-                                    variant="link"
-                                    size="sm"
-                                    className="h-auto p-0 text-xs"
-                                    onClick={() => setIsCreatingProfile(false)}
-                                >
-                                    Select Existing
-                                </Button>
+            <DialogContent className="max-h-[92vh] max-w-3xl gap-0 overflow-hidden p-0">
+                <DialogHeader className="p-5 pb-2 pr-14 sm:pr-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 space-y-1">
+                            <DialogTitle className="text-2xl tracking-tight">{title || 'Save Addons to Library'}</DialogTitle>
+                            <DialogDescription>
+                                Capture installed addons as reusable library entries.
+                            </DialogDescription>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                                {filteredAddons.length} saving
+                            </span>
+                            {internalAddonsCount > 0 && (
+                                <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                                    {internalAddonsCount} internal
+                                </span>
                             )}
                         </div>
+                    </div>
+                </DialogHeader>
 
-                        {isCreatingProfile ? (
-                            <Input
-                                value={newProfileName}
-                                onChange={(e) => setNewProfileName(e.target.value)}
-                                placeholder="New Profile Name"
-                                autoFocus
-                            />
-                        ) : (
-                            <Select value={saveProfileId} onValueChange={setSaveProfileId}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Select a profile" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                                    {profiles.map((p) => (
-                                        <SelectItem key={p.id} value={p.id}>
-                                            {p.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        )}
-                        <Label className="text-xs font-medium">Tags (optional)</Label>
-                        <TagInput
-                            value={saveTags}
-                            onChange={setSaveTags}
-                            placeholder="Type and press Enter to add..."
-                            suggestions={allKnownTags}
-                        />
-                        <Label>Configuration</Label>
-                        <div className="flex flex-col gap-3">
-                            <div className="space-y-2 p-3 bg-muted/30 rounded-lg border border-dashed">
-                                <Label className="text-xs font-semibold uppercase text-muted-foreground">Conflict Resolution</Label>
-                                <Select value={saveMode} onValueChange={(v: any) => setSaveMode(v)}>
-                                    <SelectTrigger className="h-8">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="skip">
-                                            <span className="font-medium">Skip Existing</span>
-                                            <span className="ml-2 text-muted-foreground text-xs text-nowrap hidden sm:inline">
-                                                (Don't add duplicates)
-                                            </span>
-                                        </SelectItem>
-                                        <SelectItem value="update">
-                                            <span className="font-medium">Update Existing</span>
-                                            <span className="ml-2 text-muted-foreground text-xs text-nowrap hidden sm:inline">
-                                                (Merge tags & details)
-                                            </span>
-                                        </SelectItem>
-                                        <SelectItem value="copy">
-                                            <span className="font-medium">Create Copy</span>
-                                            <span className="ml-2 text-muted-foreground text-xs text-nowrap hidden sm:inline">
-                                                (Allow duplicates)
-                                            </span>
-                                        </SelectItem>
-                                    </SelectContent>
-                                </Select>
+                <div className="grid min-h-0 gap-4 overflow-y-auto p-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
+                    <div className="space-y-4">
+                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2">
+                                    <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-primary/12 text-primary">
+                                        <Library className="h-4 w-4" />
+                                    </span>
+                                    <div>
+                                        <Label>Target Profile</Label>
+                                        <p className="text-xs text-muted-foreground">Group these saved addons for reuse.</p>
+                                    </div>
+                                </div>
+                                {!isCreatingProfile ? (
+                                    <Button
+                                        variant="subtle"
+                                        size="sm"
+                                        className="h-8 gap-1.5 text-xs"
+                                        onClick={() => setIsCreatingProfile(true)}
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                        New
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="subtle"
+                                        size="sm"
+                                        className="h-8 text-xs"
+                                        onClick={() => setIsCreatingProfile(false)}
+                                    >
+                                        Existing
+                                    </Button>
+                                )}
                             </div>
 
-                            <div className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border border-dashed">
+                            {isCreatingProfile ? (
+                                <Input
+                                    value={newProfileName}
+                                    onChange={(e) => setNewProfileName(e.target.value)}
+                                    placeholder="New profile name"
+                                    autoFocus
+                                    className="bg-background/70"
+                                />
+                            ) : (
+                                <Select value={saveProfileId} onValueChange={setSaveProfileId}>
+                                    <SelectTrigger className="bg-background/70">
+                                        <SelectValue placeholder="Select a profile" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="unassigned">Unassigned</SelectItem>
+                                        {profiles.map((p) => (
+                                            <SelectItem key={p.id} value={p.id}>
+                                                {p.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            )}
+                        </section>
+
+                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                            <div className="mb-3 flex items-center gap-2">
+                                <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/40 bg-muted/35 text-muted-foreground">
+                                    <Tags className="h-4 w-4" />
+                                </span>
+                                <div>
+                                    <Label>Tags</Label>
+                                    <p className="text-xs text-muted-foreground">Optional labels for filtering later.</p>
+                                </div>
+                            </div>
+                            <TagInput
+                                value={saveTags}
+                                onChange={setSaveTags}
+                                placeholder="Type and press Enter to add..."
+                                suggestions={allKnownTags}
+                            />
+                        </section>
+
+                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                            <div className="mb-3">
+                                <Label>Conflict Resolution</Label>
+                                <p className="text-xs text-muted-foreground">Choose what happens when a matching addon already exists.</p>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Conflict resolution">
+                                {SAVE_MODE_OPTIONS.map((option, index) => (
+                                    <button
+                                        key={option.value}
+                                        ref={(node) => { saveModeRefs.current[index] = node }}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={saveMode === option.value}
+                                        tabIndex={saveMode === option.value ? 0 : -1}
+                                        onClick={() => setSaveMode(option.value)}
+                                        onKeyDown={(e) => handleSaveModeKeyDown(e, index)}
+                                        className={cn(
+                                            "rounded-2xl border p-3 text-left transition-[background,border-color,box-shadow]",
+                                            saveMode === option.value
+                                                ? "border-primary/30 bg-primary/12 shadow-sm"
+                                                : "border-border/35 bg-background/55 hover:border-primary/25 hover:bg-muted/30",
+                                        )}
+                                    >
+                                        <span className="flex items-center gap-2 text-sm font-semibold">
+                                            {saveMode === option.value && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+                                            {option.label}
+                                        </span>
+                                        <span className="mt-1 block text-xs leading-snug text-muted-foreground">
+                                            {option.description}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </section>
+                    </div>
+
+                    <aside className="space-y-3">
+                        <div className="rounded-[1.35rem] border border-border/40 bg-background/55 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Save Summary</p>
+                            <div className="mt-3 space-y-2 text-sm">
+                                <div className="flex justify-between gap-2">
+                                    <span className="text-muted-foreground">Installed addons</span>
+                                    <span className="font-semibold tabular-nums">{addons.length}</span>
+                                </div>
+                                <div className="flex justify-between gap-2">
+                                    <span className="text-muted-foreground">Will save</span>
+                                    <span className="font-semibold tabular-nums">{filteredAddons.length}</span>
+                                </div>
+                                <div className="flex justify-between gap-2">
+                                    <span className="text-muted-foreground">Tags</span>
+                                    <span className="font-semibold tabular-nums">{saveTags.length}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="rounded-[1.35rem] border border-dashed border-border/45 bg-muted/20 p-4">
+                            <div className="flex items-start gap-3">
                                 <Checkbox
                                     id="exclude-internal"
                                     checked={excludeInternal}
                                     onCheckedChange={(checked) => setExcludeInternal(!!checked)}
+                                    className="mt-0.5"
                                 />
                                 <div className="grid gap-1.5 leading-none">
                                     <Label
                                         htmlFor="exclude-internal"
-                                        className="text-sm font-medium leading-none cursor-pointer"
+                                        className="flex cursor-pointer items-center gap-1.5 text-sm font-medium leading-none"
                                     >
-                                        Exclude internal Stremio addons
+                                        <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                                        Exclude internal addons
                                     </Label>
-                                    <p className="text-[10px] text-muted-foreground">
+                                    <p className="text-xs leading-relaxed text-muted-foreground">
                                         Skip Cinemeta, Local, and other built-in Stremio components.
                                     </p>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </aside>
                 </div>
 
-                <DialogFooter>
-                    <Button variant="outline" onClick={handleClose} disabled={saving}>
+                <DialogFooter className="grid grid-cols-2 gap-3 px-5 pb-5 pt-2">
+                    <Button variant="subtle" onClick={handleClose} disabled={saving}>
                         Cancel
                     </Button>
-                    <Button onClick={handleBulkSave} disabled={saving}>
-                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    <Button onClick={handleBulkSave} disabled={saving || filteredAddons.length === 0} className="gap-2">
+                        {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                         {isCreatingProfile
                             ? (title?.includes('Selected') ? 'Create & Save Selected' : 'Create & Save All')
                             : (title || 'Save Addons')}

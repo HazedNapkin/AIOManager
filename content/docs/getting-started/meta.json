@@ -1,0 +1,9 @@
+{
+  "title": "Getting Started",
+  "pages": ["index", "public-instances", "installation", "first-account"],
+  "index": {
+    "public-instances": {
+      "title": "Public Instances"
+    }
+  }
+}

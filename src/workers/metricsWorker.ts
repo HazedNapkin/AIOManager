@@ -11,38 +11,145 @@ interface ActivityItem {
     progress: number
     itemId: string
     poster: string
+    season?: number
+    episode?: number
+    video_id?: string
 }
-import { subHours, subDays } from 'date-fns'
+const subDays = (d: Date, n: number) => new Date(d.getTime() - n * 864e5)
+const isSeriesType = (t: string) => t === 'series' || t === 'anime' || t === 'episode'
+const BINGE_GAP_MINUTES = 90
+const MAX_MINUTES_CAP = 50000 * 60
 
-// Minimal types for worker environment
+function toLocalDayKey(ts: number): string {
+    const d = new Date(ts)
+    if (isNaN(d.getTime())) return 'unknown'
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
+
+function stableHashIndex(str: string, count: number): number {
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0
+    }
+    return Math.abs(hash) % count
+}
+
+interface UserStatsEntry {
+    id: string
+    name: string
+    currentStreak: number
+    bestStreak: number
+    count: number
+    duration: number
+    recentHistory: ActivityItem[]
+    bingeDuration: number
+    bingeItems: ActivityItem[]
+    avatarChar: string
+    rank?: number
+}
+
+interface AwardEntry {
+    id: string
+    name: string
+    count: number
+}
+
+interface CompletionEntry {
+    id: string
+    name: string
+    rate: number
+    finishes: number
+}
+
+interface SharedUniverseEntry {
+    item: ActivityItem
+    count: number
+    accounts: { id: string; name: string; count: number; firstWatched: Date }[]
+    firstSeen: Date
+    lastSeen: Date
+}
+
+interface VelocityEntry {
+    item: ActivityItem
+    days: number
+    episodes: number
+    velocity: number
+}
+
+interface PersonaBadge {
+    type: string
+    icon: string
+    color: string
+}
+
+interface PersonaEntry {
+    id: string
+    name: string
+    badges: PersonaBadge[]
+}
+
+interface TraitMeta {
+    label: string
+    icon: string
+    color: string
+}
+
+interface TraitEntry {
+    id: string
+    name: string
+    chronotype: TraitMeta
+    formatLoyalty: TraitMeta
+}
+
+interface FranchiseEntry {
+    name: string
+    count: number
+}
+
+interface TopAllTimeEntry {
+    count: number
+    item: ActivityItem
+    shared: boolean
+}
+
 interface MetricsResult {
     totalItems: number
     totalHours: number
-    leaderboard: any[]
-    bingeMasters: any[]
-    streakMasters: any[]
+    leaderboard: UserStatsEntry[]
+    bingeMasters: UserStatsEntry[]
+    streakMasters: UserStatsEntry[]
     topTrending: ActivityItem[]
-    topAllTime: any[]
+    topAllTime: TopAllTimeEntry[]
     funnel: { started: number, engaged: number, finished: number }
     abandonedSeries: ActivityItem[]
     abandonedMovies: ActivityItem[]
-    awards: { midnightSnackers: any[], weekendWarriors: any[], completionChampions: any[] }
+    awards: { midnightSnackers: AwardEntry[], weekendWarriors: AwardEntry[], completionChampions: CompletionEntry[] }
     itemsByHour: number[]
-    sharedUniverse: any[]
-    contentVelocity: any[]
+    sharedUniverse: SharedUniverseEntry[]
+    contentVelocity: VelocityEntry[]
     typeCounts: { movie: number, series: number, other: number }
     seriesLoyalty: number
-    userPersonas: any[]
-    userTraits: any[]
-    franchiseFocus: any[]
-    rareFinds: any[]
+    userPersonas: PersonaEntry[]
+    userTraits: TraitEntry[]
+    franchiseFocus: FranchiseEntry[]
+    rareFinds: ActivityItem[]
     streakMap: number[]
-    topPilot: any | null
-    theLoop: any | null
+    topPilot: UserStatsEntry | null
+    theLoop: TopAllTimeEntry | null
     maxActivityHour: number
+    weekOverWeek: number
+    thisWeekCount: number
+    lastWeekCount: number
+    firstWatch: { item: ActivityItem; date: Date } | null
+    _error?: boolean
+    _message?: string
 }
 
 self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
+    try {
     const { items } = e.data
     if (!items || items.length === 0) {
         self.postMessage(null)
@@ -52,16 +159,34 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     const now = new Date()
 
     let totalDurationMinutes = 0
+    const seriesWithOverall = new Map<string, number>()
     const itemsByHour = new Array(24).fill(0)
     const typeCounts = { movie: 0, series: 0, other: 0 }
 
-    const userStats: Record<string, any> = {}
+    const userStats: Record<string, {
+        name: string
+        count: number
+        duration: number
+        lastActive: Date
+        recentHistory: ActivityItem[]
+        allDates: Date[]
+        hourlyActivity: number[]
+        formatCounts: { movie: number; series: number }
+    }> = {}
     const trendingItems: Record<string, { count: number, item: ActivityItem }> = {}
-    const contentStats: Record<string, any> = {}
+    const contentStats: Record<string, {
+        count: number
+        uniqueEpisodes: Set<string>
+        item: ActivityItem
+        firstSeen: Date
+        lastSeen: Date
+        accounts: Map<string, { name: string; count: number; firstWatched: Date }>
+    }> = {}
     const abandonedSeries: ActivityItem[] = []
     const abandonedMovies: ActivityItem[] = []
 
-    const twoDaysAgo = subHours(now, 48)
+    const sevenDaysAgo = subDays(now, 7)
+    const fourteenDaysAgo = subDays(now, 14)
     const thirtyDaysAgo = subDays(now, 30)
 
     const userAwardMap: Record<string, { midnightPlays: number, weekendPlays: number, totalStarts: number, totalFinishes: number }> = {}
@@ -75,10 +200,13 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     const franchiseCounts: Record<string, number> = {}
     franchises.forEach(f => franchiseCounts[f.name] = 0)
 
-    items.forEach((h: ActivityItem) => {
-        // Revival: Ensure timestamp is a Date object (handles common IndexedDB stringification)
-        const timestamp = h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp)
-        if (isNaN(timestamp.getTime())) return // Skip invalid dates
+    const normalizedItems = items.map((h: ActivityItem) => ({
+        ...h,
+        timestamp: h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp)
+    })).filter(h => !isNaN(h.timestamp.getTime()))
+
+    normalizedItems.forEach((h: ActivityItem) => {
+        const timestamp = h.timestamp
 
         const hTime = timestamp.getTime()
         const hDate = timestamp
@@ -88,18 +216,20 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         // 1. Totals
         let minutes = 0
 
-        // precise tracking: use overallTimeWatched if available (covers total series time from server)
-        if (h.overallTimeWatched && h.overallTimeWatched > 0) {
-            minutes = h.overallTimeWatched / 60000
+        const isSeries = isSeriesType(h.type)
+        if (isSeries && h.overallTimeWatched && h.overallTimeWatched > 0) {
+            const prev = seriesWithOverall.get(h.itemId) || 0
+            if (h.overallTimeWatched > prev) {
+                minutes = (h.overallTimeWatched - prev) / 60000
+                seriesWithOverall.set(h.itemId, h.overallTimeWatched)
+            } else {
+                minutes = 0
+            }
         } else {
-            // align with ActivityPage: use actual watched time, not full duration
             minutes = (h.watched || 0) / 60000
         }
 
-        // Sanity Check: If play duration > 24 hours (for single items) or > 50,000 hours (for series totals)
-        // 50,000h = ~5.7 years, which is a safe upper bound for valid watch time vs Unix timestamp junk (which is ~470k hours)
-        const limit = (h.overallTimeWatched && h.overallTimeWatched > 0) ? 50000 * 60 : 24 * 60
-        if (minutes > limit) {
+        if (minutes > MAX_MINUTES_CAP) {
             minutes = 0
         }
 
@@ -108,7 +238,7 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
 
         // 2. Types
         if (h.type === 'movie') typeCounts.movie++
-        else if (h.type === 'series' || h.type === 'episode') typeCounts.series++
+        else if (isSeriesType(h.type)) typeCounts.series++
         else typeCounts.other++
 
         // 3. Franchises
@@ -143,9 +273,9 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         u.hourlyActivity[hour]++
 
         if (h.type === 'movie') u.formatCounts.movie++
-        else if (h.type === 'series' || h.type === 'episode') u.formatCounts.series++
+        else if (isSeriesType(h.type)) u.formatCounts.series++
 
-        if (u.recentHistory.length < 8 && !u.recentHistory.some((rh: any) => rh.itemId === h.itemId)) {
+        if (u.recentHistory.length < 8) {
             u.recentHistory.push(h)
         }
 
@@ -154,8 +284,8 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         if (h.progress > 0) m.totalStarts++
         if (h.progress >= 90) m.totalFinishes++
 
-        // 5. Trending (Last 48h)
-        if (hTime > twoDaysAgo.getTime()) {
+        // 5. Trending (Last 14d). A wider window keeps the rail useful on quiet days.
+        if (hTime > fourteenDaysAgo.getTime()) {
             if (!trendingItems[h.itemId]) trendingItems[h.itemId] = { count: 0, item: h }
             trendingItems[h.itemId].count++
         }
@@ -164,15 +294,28 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         if (!contentStats[h.itemId]) {
             contentStats[h.itemId] = {
                 count: 0,
+                uniqueEpisodes: new Set<string>(),
                 item: h,
                 firstSeen: h.timestamp,
                 lastSeen: h.timestamp,
-                accounts: new Set()
+                accounts: new Map<string, { name: string; count: number; firstWatched: Date }>()
             }
         }
         const cs = contentStats[h.itemId]
         cs.count++
-        cs.accounts.add(h.accountId)
+        const epIdentity = h.season !== undefined && h.episode !== undefined
+            ? `s${h.season}:e${h.episode}`
+            : (h as unknown as Record<string, unknown>).video_id as string || h.id
+        cs.uniqueEpisodes.add(epIdentity)
+        if (!cs.accounts.has(h.accountId)) {
+            cs.accounts.set(h.accountId, { name: h.accountName || 'Unknown', count: 1, firstWatched: h.timestamp })
+        } else {
+            const acct = cs.accounts.get(h.accountId)
+            if (acct) {
+                acct.count++
+                if (h.timestamp < acct.firstWatched) acct.firstWatched = h.timestamp
+            }
+        }
         if (h.timestamp < cs.firstSeen) cs.firstSeen = h.timestamp
         if (h.timestamp > cs.lastSeen) cs.lastSeen = h.timestamp
 
@@ -183,22 +326,23 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     })
 
     // Binge Logic
-    const chronoHistory = [...items].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    const chronoHistory = [...normalizedItems].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     const tempBingeTracker: Record<string, { currentChain: ActivityItem[], lastTime: Date }> = {}
-    const userBinges: Record<string, { duration: number, items: ActivityItem[] }> = {}
+    const userBinges: Record<string, { duration: number; items: ActivityItem[] }> = {}
 
     chronoHistory.forEach((h: ActivityItem) => {
-        const uid = h.accountId
-        if (!tempBingeTracker[uid]) {
-            tempBingeTracker[uid] = { currentChain: [h], lastTime: h.timestamp }
+        const bingeKey = `${h.accountId}`
+        if (!tempBingeTracker[bingeKey]) {
+            tempBingeTracker[bingeKey] = { currentChain: [h], lastTime: h.timestamp }
         } else {
-            const tracker = tempBingeTracker[uid]
+            const tracker = tempBingeTracker[bingeKey]
             const diff = (h.timestamp.getTime() - tracker.lastTime.getTime()) / 60000
-            if (diff < 90) {
+            if (diff < BINGE_GAP_MINUTES) {
                 tracker.currentChain.push(h)
                 tracker.lastTime = h.timestamp
             } else {
                 const duration = tracker.currentChain.length
+                const uid = h.accountId
                 if (!userBinges[uid] || duration > userBinges[uid].duration) {
                     userBinges[uid] = { duration, items: [...tracker.currentChain].reverse() }
                 }
@@ -255,21 +399,25 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     // Streaks
     const streakStats = Object.keys(userStats).map(uid => {
         const u = userStats[uid]
-        u.allDates.sort((a: Date, b: Date) => a.getTime() - b.getTime())
+        const localDays = [...new Set<string>(u.allDates.map((d: Date) => toLocalDayKey(d instanceof Date ? d.getTime() : new Date(d).getTime())))]
+        localDays.sort()
         let currentStreak = 0, bestStreak = 0, tempStreak = 0
-        if (u.allDates.length > 0) {
-            for (let i = 0; i < u.allDates.length; i++) {
-                if (i === 0) tempStreak = 1
-                else {
-                    const diffDays = Math.floor((u.allDates[i].getTime() - u.allDates[i - 1].getTime()) / (1000 * 60 * 60 * 24))
-                    if (diffDays === 0) continue
-                    if (diffDays === 1) tempStreak++
-                    else { bestStreak = Math.max(bestStreak, tempStreak); tempStreak = 1 }
-                }
+        if (localDays.length > 0) {
+            for (let i = 0; i < localDays.length; i++) {
+                if (i === 0) { tempStreak = 1; continue }
+                const prev = localDays[i - 1].split('-').map(Number)
+                const curr = localDays[i].split('-').map(Number)
+                const prevDate = new Date(prev[0], prev[1] - 1, prev[2])
+                const currDate = new Date(curr[0], curr[1] - 1, curr[2])
+                const diffDays = Math.round((currDate.getTime() - prevDate.getTime()) / 864e5)
+                if (diffDays === 1) tempStreak++
+                else { bestStreak = Math.max(bestStreak, tempStreak); tempStreak = 1 }
             }
             bestStreak = Math.max(bestStreak, tempStreak)
-            const daysSinceLast = Math.floor((now.getTime() - u.lastActive.getTime()) / (1000 * 60 * 60 * 24))
-            if (daysSinceLast <= 1) currentStreak = tempStreak
+            const lastActiveLocal = toLocalDayKey(u.lastActive instanceof Date ? u.lastActive.getTime() : new Date(u.lastActive).getTime())
+            const todayLocal = toLocalDayKey(Date.now())
+            const yesterdayLocal = toLocalDayKey(Date.now() - 864e5)
+            if (lastActiveLocal === todayLocal || lastActiveLocal === yesterdayLocal) currentStreak = tempStreak
         }
         const binge = userBinges[uid] || { duration: 0, items: [] }
         const avatarChar = (u.name && u.name.length > 0) ? u.name[0].toUpperCase() : '?'
@@ -293,35 +441,62 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     }))
 
     const sharedUniverse = Object.values(contentStats)
-        .filter((cs: any) => cs.accounts.size > 1)
+        .filter((cs) => cs.accounts.size > 1)
         .sort((a, b) => b.count - a.count)
         .slice(0, 10)
+        .map((cs) => ({
+            item: cs.item,
+            count: cs.count,
+            accounts: Array.from(cs.accounts.entries()).map(([id, data]) => ({
+                id, name: data.name, count: data.count, firstWatched: data.firstWatched
+            })),
+            firstSeen: cs.firstSeen,
+            lastSeen: cs.lastSeen,
+        }))
 
     const contentVelocity = Object.values(contentStats)
-        .filter((cs: any) => cs.count > 3 && cs.item.type === 'series')
-        .map((cs: any) => {
+        .filter((cs) => cs.uniqueEpisodes.size > 3 && isSeriesType(cs.item.type))
+        .map((cs) => {
             const days = Math.max(1, Math.ceil((cs.lastSeen.getTime() - cs.firstSeen.getTime()) / (1000 * 60 * 60 * 24)))
-            return { item: cs.item, days, episodes: cs.count, velocity: cs.count / days }
+            return { item: cs.item, days, episodes: cs.uniqueEpisodes.size, velocity: cs.uniqueEpisodes.size / days }
         })
         .sort((a, b) => b.velocity - a.velocity)
         .slice(0, 10)
 
     const streakMap = new Array(30).fill(0)
+    const todayKey = toLocalDayKey(Date.now())
+    const todayParts = todayKey.split('-').map(Number)
+    const todayDate = new Date(todayParts[0], todayParts[1] - 1, todayParts[2])
     items.forEach(h => {
-        const diff = Math.floor((now.getTime() - h.timestamp.getTime()) / (1000 * 60 * 60 * 24))
+        const hKey = toLocalDayKey(h.timestamp instanceof Date ? h.timestamp.getTime() : new Date(h.timestamp).getTime())
+        const hParts = hKey.split('-').map(Number)
+        const hDate = new Date(hParts[0], hParts[1] - 1, hParts[2])
+        const diff = Math.round((todayDate.getTime() - hDate.getTime()) / 864e5)
         if (diff >= 0 && diff < 30) streakMap[29 - diff]++
     })
 
     const topPilot = leaderboard[0] || null
     const theLoop = topAllTime[0] || null
 
-    const seriesItems = items.filter(h => h.type === 'series' || h.type === 'episode')
+    const seriesItems = items.filter(h => isSeriesType(h.type))
     const topSeriesContentCount = Object.values(contentStats)
-        .filter((cs: any) => cs.item.type === 'series' || cs.item.type === 'episode')
+        .filter((cs) => isSeriesType(cs.item.type))
         .sort((a, b) => b.count - a.count)
         .slice(0, 5)
         .reduce((sum, cs) => sum + cs.count, 0)
     const seriesLoyalty = seriesItems.length > 0 ? (topSeriesContentCount / seriesItems.length) * 100 : 0
+
+    const thisWeekCount = items.filter(h => h.timestamp > sevenDaysAgo).length
+    const lastWeekCount = items.filter(h => h.timestamp > fourteenDaysAgo && h.timestamp <= sevenDaysAgo).length
+    const weekOverWeek = lastWeekCount > 0 ? Math.round(((thisWeekCount - lastWeekCount) / lastWeekCount) * 100) : (thisWeekCount > 0 ? 100 : 0)
+
+    const allContentFirsts = Object.values(contentStats)
+        .filter((cs) => cs.item.poster && (cs.item.type === 'movie' || isSeriesType(cs.item.type)))
+        .sort((a, b) => a.firstSeen.getTime() - b.firstSeen.getTime())
+    const firstWatch = allContentFirsts.length > 0 ? {
+        item: allContentFirsts[0].item,
+        date: allContentFirsts[0].firstSeen
+    } : null
 
     const result: MetricsResult = {
         totalItems: items.length,
@@ -356,23 +531,31 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         userTraits,
         franchiseFocus: Object.entries(franchiseCounts).map(([name, count]) => ({ name, count })).filter(f => f.count > 0).sort((a, b) => b.count - a.count),
         rareFinds: Object.values(contentStats)
-            .filter((cs: any) => {
-                if (cs.item.type !== 'movie' && cs.item.type !== 'series') return false
-                // If multiple accounts, rare means only one person watched it
+            .filter((cs) => {
+                if (cs.item.type !== 'movie' && !isSeriesType(cs.item.type)) return false
                 if (Object.keys(userStats).length > 1) {
                     return cs.accounts.size === 1 && cs.count === 1
                 }
-                // If single account, rare means it's a one-off watch among many replays
                 return cs.count === 1
             })
-            .sort(() => Math.random() - 0.5) // Randomize slightly for discovery
+            .sort((a, b) => stableHashIndex(a.item.id || a.item.name, 1000) - stableHashIndex(b.item.id || b.item.name, 1000))
             .slice(0, 10)
-            .map(cs => ({ ...cs.item, accountName: userStats[Array.from(cs.accounts)[0] as string]?.name })),
+            .map((cs) => {
+                const firstAccount = Array.from(cs.accounts.keys() as IterableIterator<string>)[0] as string
+                return { ...cs.item, accountName: userStats[firstAccount]?.name }
+            }),
         streakMap,
         topPilot,
         theLoop,
-        maxActivityHour: Math.max(...itemsByHour)
+        maxActivityHour: itemsByHour.indexOf(Math.max(...itemsByHour)),
+        weekOverWeek,
+        thisWeekCount,
+        lastWeekCount,
+        firstWatch,
     }
 
     self.postMessage(result)
+    } catch (err) {
+        self.postMessage({ _error: true, _message: err instanceof Error ? err.message : String(err) })
+    }
 }

@@ -24,16 +24,16 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                     viewport={{ once: true, margin: "-100px" }}
                     className="mb-16 text-center"
                 >
-                    <h2 className="text-5xl md:text-7xl font-black text-white tracking-[-0.04em] leading-tight">Deep Insights</h2>
-                    <p className="text-white/70 font-bold mt-2 uppercase tracking-[0.2em] text-[12px]">Patterns hidden in your viewing behavior</p>
+                    <h2 className="text-5xl md:text-7xl font-bold text-white tracking-[-0.04em] leading-tight">Deep Insights</h2>
+                    <p className="text-white/70 font-bold mt-2 uppercase text-sm">Patterns hidden in your viewing behavior</p>
                 </motion.div>
 
                 <div className="space-y-8">
 
-                    {/* ── Row 1: Time-of-Day + Day-of-Week ── */}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-                        {/* Time-of-Day Radial Visualization */}
+
                         <motion.div
                             initial={{ opacity: 0, y: 30 }}
                             whileInView={{ opacity: 1, y: 0 }}
@@ -49,7 +49,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             }}
                         >
                             <div style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 letterSpacing: '0.25em',
@@ -59,15 +59,15 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             }}>Peak Viewing Hours</div>
 
                             <div style={{
-                                fontFamily: '"DM Sans", sans-serif',
+                                fontFamily: '"Inter", sans-serif',
                                 fontSize: '28px',
-                                fontWeight: 900,
+                                fontWeight: 700,
                                 color: 'white',
                                 letterSpacing: '-0.03em',
                                 marginBottom: '4px',
                             }}>{formatHour(data.peakHour)}</div>
                             <div style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 600,
                                 color: 'rgba(255,255,255,0.6)',
@@ -75,7 +75,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 marginBottom: '24px',
                             }}>YOUR PRIME TIME</div>
 
-                            {/* Hourly bar chart */}
+
                             <div className="flex items-end gap-[2px]" style={{ height: '100px' }}>
                                 {data.hourlyDistribution.map((h, i) => (
                                     <motion.div
@@ -95,9 +95,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                             borderRadius: '2px 2px 0 0',
                                         }}
                                     >
-                                        {/* Tooltip */}
+
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/90 backdrop-blur rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10"
-                                            style={{ fontFamily: '"DM Mono", monospace', fontSize: '11px', fontWeight: 700, color: 'white' }}
+                                            style={{ fontFamily: '"Inter", monospace', fontSize: '11px', fontWeight: 700, color: 'white' }}
                                         >
                                             {formatHour(h.hour)}{h.count > 0 ? `: ${h.count}` : ''}
                                         </div>
@@ -105,9 +105,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 ))}
                             </div>
 
-                            {/* Hour axis labels */}
+
                             <div className="flex justify-between mt-2" style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '10px',
                                 fontWeight: 600,
                                 color: 'rgba(255,255,255,0.4)',
@@ -120,7 +120,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             </div>
                         </motion.div>
 
-                        {/* Day-of-Week Heatmap */}
+
                         <motion.div
                             initial={{ opacity: 0, y: 30 }}
                             whileInView={{ opacity: 1, y: 0 }}
@@ -136,7 +136,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             }}
                         >
                             <div style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 letterSpacing: '0.25em',
@@ -146,15 +146,15 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             }}>Weekly Pattern</div>
 
                             <div style={{
-                                fontFamily: '"DM Sans", sans-serif',
+                                fontFamily: '"Inter", sans-serif',
                                 fontSize: '28px',
-                                fontWeight: 900,
+                                fontWeight: 700,
                                 color: 'white',
                                 letterSpacing: '-0.03em',
                                 marginBottom: '4px',
                             }}>{data.peakDay}</div>
                             <div style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 600,
                                 color: 'rgba(255,255,255,0.6)',
@@ -162,7 +162,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 marginBottom: '24px',
                             }}>YOUR BINGE DAY</div>
 
-                            {/* Day bars */}
+
                             <div className="space-y-3">
                                 {data.dailyDistribution.map((d, i) => {
                                     const isPeak = d.dayName === data.peakDay
@@ -176,7 +176,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                             className="flex items-center gap-3"
                                         >
                                             <div style={{
-                                                fontFamily: '"DM Mono", monospace',
+                                                fontFamily: '"Inter", monospace',
                                                 fontSize: '12px',
                                                 fontWeight: 700,
                                                 color: isPeak ? '#a5b4fc' : 'rgba(255,255,255,0.7)',
@@ -200,7 +200,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                                 />
                                             </div>
                                             <div style={{
-                                                fontFamily: '"DM Mono", monospace',
+                                                fontFamily: '"Inter", monospace',
                                                 fontSize: '12px',
                                                 fontWeight: 700,
                                                 color: isPeak ? 'white' : 'rgba(255,255,255,0.7)',
@@ -214,10 +214,10 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                         </motion.div>
                     </div>
 
-                    {/* ── Row 2: Year-over-Year + Discovery Stats ── */}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-                        {/* Year-over-Year */}
+
                         {yoy ? (
                             <motion.div
                                 initial={{ opacity: 0, y: 30 }}
@@ -234,7 +234,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 }}
                             >
                                 <div style={{
-                                    fontFamily: '"DM Mono", monospace',
+                                    fontFamily: '"Inter", monospace',
                                     fontSize: '11px',
                                     fontWeight: 700,
                                     letterSpacing: '0.25em',
@@ -244,9 +244,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 }}>Year Over Year</div>
 
                                 <div style={{
-                                    fontFamily: '"DM Sans", sans-serif',
+                                    fontFamily: '"Inter", sans-serif',
                                     fontSize: '20px',
-                                    fontWeight: 900,
+                                    fontWeight: 700,
                                     color: 'white',
                                     letterSpacing: '-0.02em',
                                     marginBottom: '20px',
@@ -265,14 +265,14 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                             whileInView={{ opacity: 1, y: 0 }}
                                             viewport={{ once: true }}
                                             transition={{ delay: i * 0.08 }}
-                                            className="p-4 rounded-2xl"
+                                            className="p-4 rounded-xl"
                                             style={{
                                                 background: 'rgba(255,255,255,0.03)',
                                                 border: '1px solid rgba(255,255,255,0.05)',
                                             }}
                                         >
                                             <div style={{
-                                                fontFamily: '"DM Mono", monospace',
+                                                fontFamily: '"Inter", monospace',
                                                 fontSize: '11px',
                                                 fontWeight: 700,
                                                 letterSpacing: '0.2em',
@@ -282,9 +282,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                             }}>{stat.label}</div>
                                             <div className="flex items-baseline gap-2">
                                                 <span style={{
-                                                    fontFamily: '"DM Sans", sans-serif',
+                                                    fontFamily: '"Inter", sans-serif',
                                                     fontSize: '24px',
-                                                    fontWeight: 900,
+                                                    fontWeight: 700,
                                                     color: stat.delta > 0 ? '#34d399' : stat.delta < 0 ? '#f87171' : 'rgba(255,255,255,0.5)',
                                                 }}>
                                                     {stat.delta > 0 ? '+' : ''}{stat.delta}{stat.label === 'Streak' ? '' : '%'}
@@ -292,7 +292,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                             </div>
                                             {stat.prev !== null && (
                                                 <div style={{
-                                                    fontFamily: '"DM Mono", monospace',
+                                                    fontFamily: '"Inter", monospace',
                                                     fontSize: '11px',
                                                     fontWeight: 600,
                                                     color: 'rgba(255,255,255,0.6)',
@@ -320,13 +320,13 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             >
                                 <div style={{ fontSize: '36px', marginBottom: '12px', opacity: 0.3 }}>📊</div>
                                 <div style={{
-                                    fontFamily: '"DM Sans", sans-serif',
+                                    fontFamily: '"Inter", sans-serif',
                                     fontSize: '14px',
-                                    fontWeight: 800,
+                                    fontWeight: 700,
                                     color: 'rgba(255,255,255,0.3)',
                                 }}>Year-over-Year</div>
                                 <div style={{
-                                    fontFamily: '"DM Mono", monospace',
+                                    fontFamily: '"Inter", monospace',
                                     fontSize: '12px',
                                     fontWeight: 600,
                                     color: 'rgba(255,255,255,0.5)',
@@ -336,7 +336,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             </motion.div>
                         )}
 
-                        {/* Discovery Stats */}
+
                         <motion.div
                             initial={{ opacity: 0, y: 30 }}
                             whileInView={{ opacity: 1, y: 0 }}
@@ -352,7 +352,7 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             }}
                         >
                             <div style={{
-                                fontFamily: '"DM Mono", monospace',
+                                fontFamily: '"Inter", monospace',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 letterSpacing: '0.25em',
@@ -361,18 +361,18 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 marginBottom: '12px',
                             }}>Discovery Radar</div>
 
-                            {/* Big number */}
+
                             <div className="flex items-baseline gap-3 mb-2">
                                 <span style={{
-                                    fontFamily: '"DM Sans", sans-serif',
+                                    fontFamily: '"Inter", sans-serif',
                                     fontSize: '56px',
-                                    fontWeight: 900,
+                                    fontWeight: 700,
                                     color: '#34d399',
                                     lineHeight: 1,
                                     letterSpacing: '-0.04em',
                                 }}>{data.totalUniqueDiscoveries}</span>
                                 <span style={{
-                                    fontFamily: '"DM Mono", monospace',
+                                    fontFamily: '"Inter", monospace',
                                     fontSize: '12px',
                                     fontWeight: 700,
                                     color: 'rgba(52,211,153,0.8)',
@@ -382,17 +382,17 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                             </div>
 
                             <div style={{
-                                fontFamily: '"DM Sans", sans-serif',
+                                fontFamily: '"Inter", sans-serif',
                                 fontSize: '16px',
                                 fontWeight: 600,
                                 color: 'rgba(255,255,255,0.7)',
                                 lineHeight: 1.6,
                                 marginBottom: '24px',
                             }}>
-                                <span style={{ color: '#34d399', fontWeight: 900 }}>{data.discoveryPercentage}%</span> of your watches were brand new discoveries you'd never seen before.
+                                <span style={{ color: '#34d399', fontWeight: 700 }}>{data.discoveryPercentage}%</span> of your watches were brand new discoveries you'd never seen before.
                             </div>
 
-                            {/* Discovery breakdown visual */}
+
                             <div className="flex gap-[2px] h-6 rounded-full overflow-hidden">
                                 <motion.div
                                     initial={{ width: 0 }}
@@ -404,9 +404,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 >
                                     {data.discoveryPercentage > 15 && (
                                         <span style={{
-                                            fontFamily: '"DM Mono", monospace',
+                                            fontFamily: '"Inter", monospace',
                                             fontSize: '8px',
-                                            fontWeight: 900,
+                                            fontWeight: 700,
                                             color: 'rgba(0,0,0,0.6)',
                                             letterSpacing: '0.1em',
                                         }}>NEW</span>
@@ -418,9 +418,9 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 >
                                     {(100 - data.discoveryPercentage) > 15 && (
                                         <span style={{
-                                            fontFamily: '"DM Mono", monospace',
+                                            fontFamily: '"Inter", monospace',
                                             fontSize: '8px',
-                                            fontWeight: 900,
+                                            fontWeight: 700,
                                             color: 'rgba(255,255,255,0.15)',
                                             letterSpacing: '0.1em',
                                         }}>REWATCHED</span>
@@ -428,8 +428,8 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 </div>
                             </div>
 
-                            {/* Persona badge */}
-                            <div className="mt-6 flex items-center gap-3 p-4 rounded-2xl"
+
+                            <div className="mt-6 flex items-center gap-3 p-4 rounded-xl"
                                 style={{
                                     background: 'rgba(52,211,153,0.08)',
                                     border: '1px solid rgba(52,211,153,0.1)',
@@ -438,13 +438,13 @@ export function ReplayInsights({ data }: ReplayInsightsProps) {
                                 <div style={{ fontSize: '20px' }}>✦</div>
                                 <div>
                                     <div style={{
-                                        fontFamily: '"DM Sans", sans-serif',
+                                        fontFamily: '"Inter", sans-serif',
                                         fontSize: '13px',
-                                        fontWeight: 900,
+                                        fontWeight: 700,
                                         color: '#34d399',
                                     }}>{data.persona}</div>
                                     <div style={{
-                                        fontFamily: '"DM Sans", sans-serif',
+                                        fontFamily: '"Inter", sans-serif',
                                         fontSize: '12px',
                                         fontWeight: 500,
                                         color: 'rgba(255,255,255,0.6)',

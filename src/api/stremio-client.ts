@@ -1,9 +1,19 @@
-import { AddonDescriptor } from '@/types/addon'
+import { AddonDescriptor, AddonManifest } from '@/types/addon'
 import { LibraryItem } from '@/types/activity'
-import axios, { AxiosInstance } from 'axios'
 import { resilientFetch } from '@/lib/api-resilience'
+import { useSyncStore } from '@/store/syncStore'
+import { deriveSyncToken } from '@/lib/crypto'
+import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 
-// API endpoint - we'll test CORS first, may need to use a proxy
+async function getProxyAuthHeaders(): Promise<Record<string, string>> {
+    const { auth } = useSyncStore.getState()
+    if (!auth.isAuthenticated) return {}
+    return {
+        'x-sync-user': auth.id,
+        'x-sync-password': await deriveSyncToken(auth.password),
+    }
+}
+
 const API_BASE = 'https://api.strem.io'
 
 export interface LoginResponse {
@@ -20,29 +30,32 @@ export interface AddonCollectionResponse {
   lastModified: number
 }
 
+interface SetAddonCollectionOptions {
+  allowCollectionShrink?: boolean
+  previousCollection?: AddonDescriptor[]
+}
+
+const ADDON_REFRESH_ERROR_PATTERN = /AddonsPulledFromAPI|UserAddonsLocked|manifest.*missing field|upstream returned 403|forbidden|access denied|status\s*403|\b403\b/i
+
+async function serverPost(path: string, body: Record<string, unknown>, headers?: Record<string, string>) {
+  const authHeaders = await getProxyAuthHeaders()
+  const res = await resilientFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders, ...headers },
+    body: JSON.stringify(body),
+    timeout: 30000,
+  })
+  const text = await res.text()
+  let data: Record<string, unknown>
+  try { data = JSON.parse(text) } catch { data = {} }
+  if (!res.ok) {
+    const errorVal = data?.error
+    throw new Error((typeof errorVal === 'string' ? errorVal : (errorVal as Record<string, unknown>)?.message as string) || `Server error: ${res.status}`)
+  }
+  return data
+}
 
 export class StremioClient {
-  private client: AxiosInstance
-  private serverClient: AxiosInstance
-  private syncTimeouts: Map<string, any> = new Map()
-
-  constructor() {
-    this.client = axios.create({
-      baseURL: API_BASE,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      timeout: 30000,
-    })
-
-    this.serverClient = axios.create({
-      baseURL: '/api',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      timeout: 30000,
-    })
-  }
 
   async login(email: string, password: string): Promise<LoginResponse> {
     try {
@@ -52,22 +65,23 @@ export class StremioClient {
         body: JSON.stringify({ type: 'Auth', email, password })
       })
 
-      const data = await response.json()
+      let data: Record<string, unknown>
+      try { data = await response.json() } catch { throw new Error('Invalid response from Stremio API') }
 
       if (data?.error) {
-        const errData = data.error
-        const message = typeof errData === 'string' ? errData : (errData.message || 'Login failed')
+        const errData = data.error as Record<string, unknown>
+        const message = typeof errData.message === 'string' ? errData.message : (typeof errData === 'string' ? String(errData) : 'Login failed')
         const err = new Error(typeof message === 'string' ? message : JSON.stringify(message))
         const code = errData.code || errData.message
-          ; (err as any).code = typeof code === 'string' ? code : JSON.stringify(code)
+          ; (err as unknown as Record<string, unknown>).code = typeof code === 'string' ? code : JSON.stringify(code)
         throw err
       }
 
-      if (!data?.result?.authKey) {
+      if (!(data?.result as Record<string, unknown>)?.authKey) {
         throw new Error('Invalid login response - no auth key')
       }
 
-      return data.result
+      return (data as { result: LoginResponse }).result
     } catch (error) {
       if (error instanceof Error) {
         if (error.message.includes('401')) throw new Error('Invalid email or password')
@@ -78,202 +92,197 @@ export class StremioClient {
   }
 
   async register(email: string, password: string): Promise<LoginResponse> {
-    const response = await resilientFetch(`${API_BASE}/api/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'Auth', email, password })
-    })
+    try {
+      const response = await resilientFetch(`${API_BASE}/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'Auth', email, password })
+      })
 
-    const data = await response.json()
+      let data: Record<string, unknown>
+      try { data = await response.json() } catch { throw new Error('Invalid response from Stremio API') }
 
-    if (data?.error) {
-      throw new Error(data.error.message || 'Registration failed')
+      if (data?.error) {
+        const errData = data.error as Record<string, unknown>
+        throw new Error((typeof errData.message === 'string' ? errData.message : undefined) || 'Registration failed')
+      }
+
+      if (!(data?.result as Record<string, unknown>)?.authKey) {
+        throw new Error('Invalid registration response - no auth key')
+      }
+
+      return (data as { result: LoginResponse }).result
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid email or password')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection')
+      }
+      throw error
     }
-
-    if (!data?.result?.authKey) {
-      throw new Error('Invalid registration response - no auth key')
-    }
-
-    return data.result
   }
 
   async getUser(authKey: string): Promise<{ email: string, _id: string }> {
     try {
-      const response = await this.serverClient.post('/stremio-proxy', {
+      const data = await serverPost('/api/stremio-proxy', {
         type: 'GetUser',
         authKey,
-      }, {
-        headers: {
-          'x-account-context': 'System Check'
-        }
-      })
+      }, { 'x-account-context': 'System Check' })
 
-      if (response.data?.error) {
-        throw new Error(response.data.error.message || 'Failed to get user profile')
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get user profile')
       }
 
-      if (!response.data?.result) {
+      if (!data?.result) {
         throw new Error('Invalid getUser response')
       }
 
-      return response.data.result
+      return data.result as unknown as { email: string; _id: string }
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(error.response?.data?.error || error.message || 'Failed to get user profile')
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
       }
       throw error
     }
   }
 
-  /**
-   * Get user's addon collection
-   */
-  async getAddonCollection(authKey: string, accountContext: string = 'System Check'): Promise<AddonDescriptor[]> {
+  async getAddonCollection(authKey: string, accountContext: string = 'System Check', update: boolean = true): Promise<AddonDescriptor[]> {
     try {
-      // Use the server proxy for collection management to enable backend logging
-      const response = await this.serverClient.post('/stremio-proxy', {
-        type: 'AddonCollectionGet',
-        authKey,
-        update: true,
-      }, {
-        headers: {
-          'x-account-context': accountContext
-        }
-      })
+      const fetchCollection = (shouldUpdate: boolean) => serverPost('/api/stremio-proxy', {
+          type: 'AddonCollectionGet',
+          authKey,
+          update: shouldUpdate,
+        }, { 'x-account-context': accountContext })
 
-      if (response.data?.error) {
-        throw new Error(response.data.error.message || 'Failed to get addon collection')
+      let data = await fetchCollection(update)
+
+      if (data?.error) {
+        const errorText = typeof data.error === 'string' ? data.error : JSON.stringify(data.error)
+        if (update && ADDON_REFRESH_ERROR_PATTERN.test(errorText)) {
+          if (import.meta.env.DEV) console.warn('[Stremio] Live addon refresh failed; falling back to stored collection:', errorText)
+          data = await fetchCollection(false)
+        }
       }
 
-      const result = response.data?.result
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        const message = typeof data.error === 'string' ? data.error : (e.message as string)
+        throw new Error(message || 'Failed to get addon collection')
+      }
+
+      const result = data?.result as Record<string, unknown> | undefined
+      if (result && typeof result === 'object' && !('addons' in result)) {
+        throw new Error('Stremio returned unexpected response - addon collection field missing')
+      }
       if (!result?.addons) {
         return []
       }
 
-      return result.addons.map((addon: any) => ({
-        ...addon,
-        manifest: {
-          ...addon.manifest,
-          types: addon.manifest?.types || [],
-          resources: addon.manifest?.resources || []
+       return (result.addons as Record<string, unknown>[]).map((addon: Record<string, unknown>) => {
+         const identifiedManifest = identifyAddon((addon.transportUrl as string) || '', addon.manifest as Record<string, unknown>)
+         return {
+           ...(addon as unknown as AddonDescriptor),
+          manifest: {
+            ...identifiedManifest,
+            id: identifiedManifest.id || 'unknown',
+            name: identifiedManifest.name || getHostnameIdentifier((addon.transportUrl as string) || ''),
+            version: identifiedManifest.version || '0.0.0',
+            description: identifiedManifest.description || '',
+            types: identifiedManifest.types || [],
+            resources: identifiedManifest.resources || []
+          }
         }
-      }))
+      })
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 401) {
-          throw new Error('Invalid or expired auth key')
-        }
-        if (error.code === 'ERR_NETWORK') {
-          throw new Error('Network error - check your internet connection or CORS configuration')
-        }
-        throw new Error(
-          error.response?.data?.error || error.message || 'Failed to get addon collection'
-        )
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection or CORS configuration')
       }
       throw error
     }
   }
 
-  /**
-   * Update user's addon collection
-   */
-  async setAddonCollection(authKey: string, addons: AddonDescriptor[], accountContext: string = 'System Check'): Promise<void> {
+  async setAddonCollection(authKey: string, addons: AddonDescriptor[], accountContext: string = 'System Check', options: SetAddonCollectionOptions = {}): Promise<void> {
     try {
-      // Use the server proxy for collection management to enable backend logging
-      const response = await this.serverClient.post('/stremio-proxy', {
+      const shouldVerifyShrink = !options.allowCollectionShrink
+      const previousCollection = shouldVerifyShrink
+        ? options.previousCollection ?? await this.getAddonCollection(authKey, accountContext).catch(() => null)
+        : null
+      const previousCount = previousCollection?.length || 0
+      const data = await serverPost('/api/stremio-proxy', {
         type: 'AddonCollectionSet',
         authKey,
         addons,
-      }, {
-        headers: {
-          'x-account-context': accountContext
-        }
-      })
+        allowCollectionShrink: Boolean(options.allowCollectionShrink),
+      }, { 'x-account-context': accountContext })
 
-      if (response.data?.error) {
-        throw new Error(response.data.error.message || 'Failed to update addon collection')
-      }
-      // We wait a short moment for Stremio's consistency and then verify.
-      if (this.syncTimeouts.has(authKey)) {
-        clearTimeout(this.syncTimeouts.get(authKey))
+      if (data?.error) {
+        const err = data.error as Record<string, unknown>
+        throw new Error((err.message as string) || 'Failed to update addon collection')
       }
 
-      this.syncTimeouts.set(authKey, setTimeout(async () => {
-        try {
-          const verified = await this.getAddonCollection(authKey, accountContext)
-          if (verified.length < addons.length) {
-            console.warn(`[Sync] Stremio collection mismatch after update: ${addons.length} sent, ${verified.length} reported.`)
-          }
-        } catch (e) {
-          console.warn('[Sync] Post-sync verification failed:', e)
-        } finally {
-          this.syncTimeouts.delete(authKey)
-        }
-      }, 2000))
+      const verificationCollection = shouldVerifyShrink
+        ? await this.getAddonCollection(authKey, accountContext, false).catch(() => null)
+        : null
+      if (
+        shouldVerifyShrink &&
+        previousCount > 0 &&
+        verificationCollection &&
+        verificationCollection.length < Math.ceil(previousCount * 0.25)
+      ) {
+        await serverPost('/api/stremio-proxy', {
+          type: 'AddonCollectionSet',
+          authKey,
+          addons: previousCollection,
+        }, { 'x-account-context': `${accountContext}: rollback` }).catch((rollbackError) => {
+          if (import.meta.env.DEV) console.error('[Stremio] Failed to rollback suspicious addon collection shrink:', rollbackError)
+        })
+        throw new Error(`Safety rollback: Stremio accepted a suspicious addon collection shrink (${previousCount} → ${verificationCollection.length}). Previous collection was restored.`)
+      }
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 401) {
-          throw new Error('Invalid or expired auth key')
-        }
-        if (error.code === 'ERR_NETWORK') {
-          throw new Error('Network error - check your internet connection or CORS configuration')
-        }
-        throw new Error(
-          error.response?.data?.error || error.message || 'Failed to update addon collection'
-        )
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection or CORS configuration')
       }
       throw error
     }
   }
 
-  /**
-   * Domains that should be fetched directly without using the proxy
-   * Add domains here that have proper CORS headers or are official Stremio services
-   */
   private readonly DIRECT_FETCH_DOMAINS = ['v3-cinemeta.strem.io', 'cinemeta.strem.io', 'opensubtitles-v3.strem.io', 'www.strem.io', 'v3-channels.strem.io', '127.0.0.1', 'localhost']
 
-  /**
-   * Fetch addon manifest from URL
-   * Uses CORS proxy to avoid cross-origin issues with addon servers
-   * Some domains (like official Stremio services) are fetched directly
-   */
   async fetchAddonManifest(transportUrl: string, accountContext: string = 'System Check', force: boolean = false, retries = 2): Promise<AddonDescriptor> {
-    // Determine the manifest URL
     let manifestUrl: string
     if (transportUrl.endsWith('/manifest.json') || transportUrl.includes('/manifest.json?')) {
       manifestUrl = transportUrl
     } else {
-      // Try to append /manifest.json
       manifestUrl = transportUrl.endsWith('/')
         ? `${transportUrl}manifest.json`
         : `${transportUrl}/manifest.json`
     }
 
-    // Check if this URL should be fetched directly (skip proxy for allowed domains)
-    const shouldFetchDirectly = this.DIRECT_FETCH_DOMAINS.some((domain) =>
-      manifestUrl.includes(domain)
-    )
+    const shouldFetchDirectly = this.DIRECT_FETCH_DOMAINS.some((domain) => {
+      try {
+        return new URL(manifestUrl).hostname === domain
+      } catch {
+        return false
+      }
+    })
 
-    // Add a 30-minute cache buster (1800000ms = 30 minutes)
-    // Increased from 5 minutes to reduce proxy usage and improve performance
     const interval = force ? Date.now() : Math.floor(Date.now() / 1800000)
-    const cacheBuster = `cb=${interval}`
-    const separator = manifestUrl.includes('?') ? '&' : '?'
-    const finalManifestUrl = `${manifestUrl}${separator}${cacheBuster}`
 
-    // Use internal proxy only for URLs that need it (most addon servers don't have CORS headers)
     const fetchUrl = shouldFetchDirectly
-      ? finalManifestUrl
-      : `/api/meta-proxy?url=${encodeURIComponent(finalManifestUrl)}`
+      ? manifestUrl
+      : `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}&cb=${interval}`
 
     try {
-      console.log(
+      if (import.meta.env.DEV) console.log(
         `[Manifest Fetch] Fetching ${shouldFetchDirectly ? 'directly' : 'via proxy'}: ${manifestUrl}`
       )
 
+      const proxyAuthHeaders = shouldFetchDirectly ? {} : await getProxyAuthHeaders()
       const response = await resilientFetch(fetchUrl, {
-        timeout: 15000,
-        headers: shouldFetchDirectly ? {} : { 'x-account-context': accountContext },
+        timeout: 5000,
+        headers: shouldFetchDirectly ? {} : { ...proxyAuthHeaders, 'x-account-context': accountContext },
         retries: retries
       })
 
@@ -282,110 +291,93 @@ export class StremioClient {
         throw new Error(`Addon server responded with ${response.status}`)
       }
 
-      const manifestData = await response.json()
+      let manifestData: Record<string, unknown>
+      try {
+        manifestData = await response.json()
+      } catch {
+        throw new Error('Invalid response from Stremio API')
+      }
 
       if (!manifestData?.id || !manifestData?.name || !manifestData?.version) {
-        console.error(`[Manifest Fetch] Missing fields for ${manifestUrl}:`, manifestData)
+        if (import.meta.env.DEV) console.error(`[Manifest Fetch] Missing fields for ${manifestUrl}:`, manifestData)
         throw new Error('Invalid addon manifest - missing required fields')
       }
 
-      // Sanitize manifest to ensure Stremio compliance (Fixes "missing field types")
       const sanitizedManifest = {
         ...manifestData,
-        types: manifestData.types || [],
-        resources: manifestData.resources || []
+        types: (manifestData.types as string[]) || [],
+        resources: (manifestData.resources as AddonManifest['resources']) || []
       }
+      const identifiedManifest = identifyAddon(transportUrl, sanitizedManifest)
 
       return {
         transportUrl,
-        manifest: sanitizedManifest,
+        manifest: {
+          ...identifiedManifest,
+          id: identifiedManifest.id || 'unknown',
+          name: identifiedManifest.name || getHostnameIdentifier(transportUrl),
+          version: identifiedManifest.version || '0.0.0',
+          description: identifiedManifest.description || '',
+          types: identifiedManifest.types || [],
+          resources: identifiedManifest.resources || []
+        },
       }
     } catch (error) {
-      console.warn(
-        `[Manifest Fetch] Failed for ${manifestUrl}:`,
-        error instanceof Error ? error.message : error
-      )
-      throw error
-    }
-  }
-
-
-
-  /**
-   * Get user's library items (Watch History)
-   * Uses datastoreGet with collection: 'libraryItem' to match Syncio's implementation
-   */
-  async getLibraryItems(authKey: string, accountContext: string = 'System Check'): Promise<LibraryItem[]> {
-    try {
-      const response = await this.serverClient.post('/stremio-proxy', {
-        type: 'DatastoreGet',
-        authKey,
-        collection: 'libraryItem',
-        all: true
-      }, {
-        headers: {
-          'x-account-context': accountContext
-        }
-      })
-
-      if (response.data?.error) {
-        throw new Error(response.data.error.message || 'Failed to get library items')
-      }
-
-      // datastoreGet returns the array directly in result, or as result.library
-      const result = response.data?.result
-      if (Array.isArray(result)) {
-        return result
-      }
-      if (result?.library && Array.isArray(result.library)) {
-        return result.library
-      }
-
-      return []
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 401) {
-          throw new Error('Invalid or expired auth key')
-        }
-        if (error.code === 'ERR_NETWORK') {
-          throw new Error('Network error - check your internet connection or CORS configuration')
-        }
-        throw new Error(
-          error.response?.data?.error || error.message || 'Failed to get library items'
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[Manifest Fetch] Failed for ${manifestUrl}:`,
+          error instanceof Error ? error.message : error
         )
       }
       throw error
     }
   }
 
-  /**
-   * Test CORS access to the API
-   */
+  async getLibraryItems(authKey: string, accountContext: string = 'System Check'): Promise<LibraryItem[]> {
+    try {
+      const data = await serverPost('/api/stremio-proxy', {
+        type: 'DatastoreGet',
+        authKey,
+        collection: 'libraryItem',
+        all: true
+      }, { 'x-account-context': accountContext })
+
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get library items')
+      }
+
+      const result = data?.result as unknown
+      if (Array.isArray(result)) {
+        return result as LibraryItem[]
+      }
+      if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).library)) {
+        return (result as Record<string, LibraryItem[]>).library
+      }
+
+      return []
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection or CORS configuration')
+      }
+      throw error
+    }
+  }
+
   async testCORS(): Promise<boolean> {
     try {
-      await this.client.post('/api/addonCollectionGet', {
-        type: 'AddonCollectionGet',
-        authKey: 'test',
+      await fetch(`${API_BASE}/api/addonCollectionGet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'AddonCollectionGet', authKey: 'test' })
       })
       return true
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        // If we get a response (even error response), CORS is working
-        if (error.response) {
-          return true
-        }
-        // Network error likely means CORS issue
-        if (error.code === 'ERR_NETWORK') {
-          return false
-        }
-      }
+    } catch {
       return false
     }
   }
 
-  /**
-   * Add an item to a user's library
-   */
   async addLibraryItem(authKey: string, item: {
     id: string
     name: string
@@ -405,68 +397,81 @@ export class StremioClient {
         state: {}
       }
 
-      await this.serverClient.post('/stremio-proxy', {
+      const data = await serverPost('/api/stremio-proxy', {
         type: 'DatastorePut',
         authKey,
         collection: 'libraryItem',
         changes: [libraryItem]
-      }, {
-        headers: {
-          'x-account-context': accountContext
-        }
-      })
+      }, { 'x-account-context': accountContext })
+
+      if (data?.error) {
+        const err = data.error as Record<string, unknown>
+        throw new Error((err.message as string) || 'Failed to add library item')
+      }
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 401) {
-          throw new Error('Invalid or expired auth key')
-        }
-        throw new Error(error.response?.data?.error || error.message || 'Failed to add library item')
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
       }
       throw error
     }
   }
 
-  /**
-   * Remove an item from a user's library (marks as removed)
-   */
-  async removeLibraryItem(authKey: string, itemId: string, accountContext: string = 'System Check'): Promise<void> {
+  async pushLibraryItems(authKey: string, items: LibraryItem[], accountContext: string = 'System Check'): Promise<void> {
     try {
-      const libraryItem = {
-        _id: itemId,
-        removed: true,
-        _mtime: new Date().toISOString(),
-        state: {
-          timeWatched: 0,
-          timesWatched: 0,
-          flaggedWatched: 0,
-          overallTimeWatched: 0,
-          timeOffset: 0,
-          lastWatched: '',
-          video_id: '',
-          watched: '',
-          noNotif: false,
-          season: 0,
-          episode: 0,
-          duration: 0
+      const BATCH_SIZE = 100
+      for (let i = 0; i < items.length; i += BATCH_SIZE) {
+        const batch = items.slice(i, i + BATCH_SIZE)
+        const changes = batch.map(item => ({
+          ...item,
+          _mtime: item._mtime || new Date().toISOString(),
+        }))
+
+        const data = await serverPost('/api/stremio-proxy', {
+          type: 'DatastorePut',
+          authKey,
+          collection: 'libraryItem',
+          changes
+        }, { 'x-account-context': accountContext })
+
+        if (data?.error) {
+          const err = data.error as Record<string, unknown>
+          throw new Error((err.message as string) || (typeof data.error === 'string' ? String(data.error) : '') || 'Failed to push library items')
+        }
+        if (data?.result === false) {
+          throw new Error('Stremio rejected the library update')
         }
       }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
+      }
+      throw error
+    }
+  }
 
-      await this.serverClient.post('/stremio-proxy', {
+  async removeLibraryItem(authKey: string, item: LibraryItem | string, accountContext: string = 'System Check'): Promise<void> {
+    try {
+      const fullItem = typeof item === 'string'
+        ? { _id: item, removed: true, _mtime: new Date().toISOString() }
+        : { ...item, removed: true, _mtime: new Date().toISOString() }
+
+      const data = await serverPost('/api/stremio-proxy', {
         type: 'DatastorePut',
         authKey,
         collection: 'libraryItem',
-        changes: [libraryItem]
-      }, {
-        headers: {
-          'x-account-context': accountContext
-        }
-      })
+        changes: [fullItem]
+      }, { 'x-account-context': accountContext })
+
+      if (data?.error) {
+        const err = data.error as Record<string, unknown>
+        throw new Error((err.message as string) || 'Failed to remove library item')
+      }
+      if (data?.result === false) {
+        throw new Error('Stremio rejected the library removal')
+      }
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 401) {
-          throw new Error('Invalid or expired auth key')
-        }
-        throw new Error(error.response?.data?.error || error.message || 'Failed to remove library item')
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
       }
       throw error
     }

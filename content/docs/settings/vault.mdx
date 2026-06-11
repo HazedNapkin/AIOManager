@@ -1,0 +1,410 @@
+---
+title: Key Vault
+description: Store and monitor your API keys and debrid service credentials securely.
+---
+
+## What is Debrid?
+
+Debrid services (also called premium multihosters) are subscription services that cache files on high-speed servers. When you request a file through a debrid service, it downloads the file once, caches it, and then serves it directly to you from their fast servers.
+
+**Why use debrid?**
+- **Faster streaming:** Files download at maximum speed from cached servers
+- **Better reliability:** No dead links or slow torrents
+- **Higher quality:** Access to premium file hosts
+
+**Popular debrid services:**
+| Service | Website |
+|---------|---------|
+| Real-Debrid | [real-debrid.com](https://real-debrid.com) |
+| AllDebrid | [alldebrid.com](https://alldebrid.com) |
+| Premiumize | [premiumize.me](https://premiumize.me) |
+| TorBox | [torbox.app](https://torbox.app) |
+| Debrid-Link | [debrid-link.com](https://debrid-link.com) |
+
+<Tip>You'll need an API key from your debrid provider to add it to the Vault. Find this in your account settings on their website.</Tip>
+
+## What Is the Key Vault?
+
+The Key Vault is AIOManager's secure storage system for API keys and debrid service credentials. It encrypts your keys locally in your browser and monitors their expiration dates, alerting you before they expire.
+
+### Why Use the Vault?
+
+| Without Vault | With Vault |
+|---------------|------------|
+| Keys in text files | Encrypted storage |
+| Manual expiry tracking | Automatic expiry monitoring |
+| No centralized view | Single dashboard for all keys |
+| Easy to lose track | Header pill shows status |
+
+### Supported Key Types
+
+| Category | Examples |
+|----------|----------|
+| Debrid Services | Real-Debrid, AllDebrid, Premiumize, TorBox |
+| Streaming Services | Various API tokens |
+| Custom Keys | Any API key or token |
+
+---
+
+## Security Model
+
+### How Your Keys Are Protected
+
+### Security Guarantees
+
+| Guarantee | How It's Achieved |
+|-----------|-------------------|
+| Keys never leave your browser | All encryption is client-side |
+| Keys never sent to servers | No server-side storage |
+| Master password never transmitted | Stays in your browser |
+| Military-grade encryption | AES-256-GCM with PBKDF2 key derivation |
+
+### Encryption Details (Simplified)
+
+| Component | Purpose |
+|-----------|---------|
+| **AES-256-GCM** | Symmetric encryption - scrambles your data |
+| **PBKDF2** | Key derivation - turns your password into an encryption key |
+| **Salt** | Random data added to prevent rainbow table attacks |
+| **IV (Initialization Vector)** | Ensures same data encrypts differently each time |
+
+<Warning>If you forget your master password, there is no recovery. You'll need to re-add all keys from scratch.</Warning>
+
+---
+
+## Accessing the Vault
+
+<Steps>
+  <Step>**Open Settings:** Click the gear icon or navigate to Settings.</Step>
+  <Step>**Select Vault Tab:** Click "Vault" in the settings sidebar.</Step>
+  <Step>**Enter Master Password:** If vault is locked, enter your master password to unlock.</Step>
+</Steps>
+
+### First-Time Setup
+
+When you first access the Vault:
+
+<Steps>
+  <Step>**Create Master Password:** Enter a strong password, as this protects all your keys.</Step>
+  <Step>**Confirm Password:** Re-enter to confirm.</Step>
+  <Step>**Vault Created:** Your encrypted vault is initialized.</Step>
+</Steps>
+
+<Note>There is no password reset. Choose a memorable but strong password.</Note>
+
+---
+
+## Key States and Display
+
+Each key card shows its current status. Click the eye icon to reveal the key value:
+
+<DemoVaultKey name="TorBox" provider="TORBOX" abbr="TB" status="active" daysRemaining={219} />
+
+<DemoVaultKey name="Real-Debrid" provider="REAL-DEBRID" abbr="RD" status="expiring" daysRemaining={12} />
+
+<DemoVaultKey name="AllDebrid" provider="ALLDEBRID" abbr="AD" status="expired" daysRemaining={0} />
+
+### Status Indicators
+
+| Status | Color | Meaning | Action |
+|--------|-------|---------|--------|
+| **Active** | Green | Valid, no expiry concerns | None |
+| **Expiring** | Amber | Expiring within 30 days | Renew soon |
+| **Expired** | Red | Past expiry date | Renew immediately |
+| **Unknown** | Gray | No expiry set or check failed | Manual check |
+
+---
+
+## Supported Providers
+
+| Provider | Key Format | Dashboard URL | Auto-Expiry |
+|----------|-----------|---------------|-------------|
+| Real-Debrid | 32-char alphanumeric | `real-debrid.com/apitoken` | Yes |
+| AllDebrid | 32-char alphanumeric | `alldebrid.com/apisettings/` | Yes |
+| Premiumize | 32-char hex | `premiumize.me/account` | Yes |
+| Debrid-Link | JWT token | `debrid-link.com/account/api` | Yes |
+| TorBox | 32-char uppercase | `torbox.app/settings` | Yes |
+| Other/Custom | Any format | Custom | Manual |
+
+### Provider Capabilities
+
+| Provider | API Status Check | Expiry Detection | Premium Detection |
+|----------|-----------------|------------------|-------------------|
+| Real-Debrid | Yes | Yes | Yes |
+| AllDebrid | Yes | Yes | Yes |
+| Premiumize | Yes | Yes | Yes |
+| Debrid-Link | Yes | Yes | Yes |
+| TorBox | Yes | Yes | Yes |
+| Custom | No | Manual | Manual |
+
+---
+
+## Adding a Key
+
+### Step-by-Step
+
+<Steps>
+  <Step>**Unlock Vault:** Enter your master password if vault is locked.</Step>
+  <Step>**Click Add Key:** Press the "Add Key" button.</Step>
+  <Step>**Select Provider:** Choose from dropdown or "Other/Custom".</Step>
+  <Step>**Enter Details:** Fill in name, key, and optional fields.</Step>
+  <Step>**Save:** Click Save to encrypt and store.</Step>
+</Steps>
+
+### Field Reference
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| **Provider** | Yes | Select from dropdown or "Other/Custom" |
+| **Display Name** | Yes | Human-readable name for the vault |
+| **API Key / Token** | Yes | The actual key value (encrypted on save) |
+| **Abbreviation** | No | 2-character badge shown in header pill |
+| **Auto Expiry Check** | No | Enable automatic expiry monitoring |
+| **Expiry Date** | No | Manual expiry date (for custom providers) |
+| **API Dashboard URL** | No | Link to manage this key externally |
+
+### Choosing Display Name
+
+| Good Names | Bad Names |
+|------------|-----------|
+| "Real-Debrid Main" | "key1" |
+| "AllDebrid - 2025" | "test" |
+| "Family Premiumize" | "rd" |
+
+### Setting Abbreviation
+
+The abbreviation appears in the header pill for quick status:
+
+| Provider | Typical Abbr |
+|----------|--------------|
+| Real-Debrid | RD |
+| AllDebrid | AD |
+| Premiumize | PM |
+| TorBox | TB |
+| Debrid-Link | DL |
+
+---
+
+## Finding Your API Keys
+
+### Real-Debrid
+
+<Steps>
+  <Step>**Open Real-Debrid:** Go to `https://real-debrid.com/apitoken`</Step>
+  <Step>**Log In:** Enter your Real-Debrid credentials.</Step>
+  <Step>**Copy Token:** Your API token is displayed on the page. Copy it.</Step>
+</Steps>
+
+| Characteristic | Value |
+|----------------|-------|
+| Length | 32 characters |
+| Format | Alphanumeric (letters and numbers) |
+| Example | `ABC123XYZ789ABC123XYZ789ABC123XY` |
+
+### AllDebrid
+
+<Steps>
+  <Step>**Open AllDebrid:** Go to `https://alldebrid.com/apisettings/`</Step>
+  <Step>**Log In:** Enter your AllDebrid credentials.</Step>
+  <Step>**Generate/View:** Click to generate or view your API key.</Step>
+  <Step>**Copy:** Copy the displayed key.</Step>
+</Steps>
+
+### Premiumize
+
+<Steps>
+  <Step>**Open Premiumize:** Go to `https://premiumize.me/account`</Step>
+  <Step>**Log In:** Enter your Premiumize credentials.</Step>
+  <Step>**Find API Section:** Scroll to the API section.</Step>
+  <Step>**Copy Key:** Copy your API key.</Step>
+</Steps>
+
+### Debrid-Link
+
+<Steps>
+  <Step>**Open Debrid-Link:** Go to `https://debrid-link.com/account/api`</Step>
+  <Step>**Log In:** Enter your Debrid-Link credentials.</Step>
+  <Step>**Generate Token:** Generate a new token if needed.</Step>
+  <Step>**Copy Full Token:** Copy the complete JWT token.</Step>
+</Steps>
+
+<Note>Debrid-Link tokens are long JWT format. Copy the entire token.</Note>
+
+### TorBox
+
+<Steps>
+  <Step>**Open TorBox:** Go to `https://torbox.app/settings`</Step>
+  <Step>**Log In:** Enter your TorBox credentials.</Step>
+  <Step>**Find API Key:** Locate the API Key section.</Step>
+  <Step>**Copy Key:** Copy your key.</Step>
+</Steps>
+
+---
+
+## Expiry Tracking
+
+### Automatic Tracking (Built-in Providers)
+
+For supported providers, AIOManager queries the provider API:
+
+| Check Type | Frequency | Accuracy |
+|------------|-----------|----------|
+| Subscription status | Every 24 hours | Exact |
+| Expiration date | Every 24 hours | Exact |
+| Premium status | Every 24 hours | Exact |
+
+### Manual Tracking (Custom Providers)
+
+For "Other/Custom" providers:
+
+| Aspect | Behavior |
+|--------|----------|
+| Expiry detection | None (manual entry) |
+| Warning triggers | Based on date you set |
+| Status updates | Static until you update |
+
+### Setting Manual Expiry
+
+<Steps>
+  <Step>**Add/Edit Key:** Open the key creation or edit dialog.</Step>
+  <Step>**Set Expiry Date:** Enter the date your subscription expires.</Step>
+  <Step>**Save:** The vault will warn based on this date.</Step>
+</Steps>
+
+---
+
+## Header Pill Integration
+
+### What Is the Header Pill?
+
+When you have keys in the vault, a **Vault** pill appears in the AIOManager header:
+
+| Pill Color | Meaning |
+|------------|---------|
+| Green | All keys active |
+| Amber | One or more keys expiring soon |
+| Red | One or more keys expired |
+
+### Using the Header Pill
+
+<Steps>
+  <Step>**Click Pill:** Click the Vault pill in the header.</Step>
+  <Step>**View Summary:** See a compact grid of all your keys.</Step>
+  <Step>**Expand Details:** Click any key row for full information.</Step>
+</Steps>
+
+### Expanded Key Details
+
+| Information Shown |
+|-------------------|
+| Exact expiry date |
+| Last checked time |
+| Dashboard link |
+| Copy key button |
+
+<Tip>Keys expiring within 30 days show their remaining time in amber as an early warning before they actually expire.</Tip>
+
+---
+
+## Managing Your Vault
+
+### Locking the Vault
+
+| Method | How |
+|--------|-----|
+| Manual | Click "Lock Vault" button |
+| Page close | Vault locks when you close the tab |
+
+### Editing a Key
+
+<Steps>
+  <Step>**Unlock Vault:** Enter master password.</Step>
+  <Step>**Find Key:** Locate the key card.</Step>
+  <Step>**Click Edit:** Press the edit icon.</Step>
+  <Step>**Modify:** Update any field except provider.</Step>
+  <Step>**Save:** Changes are re-encrypted.</Step>
+</Steps>
+
+### Deleting a Key
+
+<Steps>
+  <Step>**Unlock Vault:** Enter master password.</Step>
+  <Step>**Find Key:** Locate the key card.</Step>
+  <Step>**Click Delete:** Press the delete/trash icon.</Step>
+  <Step>**Confirm:** Confirm deletion in dialog.</Step>
+</Steps>
+
+<Warning>Deleted keys cannot be recovered. You'll need to re-add them.</Warning>
+
+---
+
+## Security Best Practices
+
+| Practice | Why | How |
+|----------|-----|-----|
+| Use strong master password | Prevents brute-force | 12+ chars, mixed case, numbers, symbols |
+| Don't share master password | Keys only as secure as password | Keep it private |
+| Lock vault when done | Prevents casual access | Close tab to auto-lock |
+| Export backup regularly | No server-side recovery | Use Export function |
+| Rotate keys periodically | Limits impact if compromised | Generate new keys on provider site |
+| Use unique passwords | Don't reuse your master password | Dedicated password for vault |
+
+---
+
+## Troubleshooting
+
+### "Failed to unlock vault"
+
+| Cause | Solution |
+|-------|----------|
+| Wrong password | Verify password, check caps lock |
+| Corrupted data | Clear browser storage, re-initialize |
+| Browser storage blocked | Enable localStorage/IndexedDB |
+
+### "Expiry check failed"
+
+| Cause | Solution |
+|-------|----------|
+| Invalid API key | Verify key is still valid on provider site |
+| Provider API down | Wait and retry later |
+| Network issue | Check internet connection |
+
+### "Keys disappeared after browser clear"
+
+| Cause | Solution |
+|-------|----------|
+| Site data cleared | Vault data is in localStorage |
+| Browser reset | All local data removed |
+
+**Recovery:** Restore from backup export or re-add keys manually.
+
+### "Master password forgotten"
+
+There is no recovery option. You must:
+
+<Steps>
+  <Step>**Clear Vault Data:** Go to Settings → Vault → Reset and clear vault data.</Step>
+  <Step>**Re-add Keys:** Re-add all keys from scratch.</Step>
+</Steps>
+
+---
+
+## Common Questions
+
+**Q: Where are my keys stored?**
+Keys are encrypted and stored in your browser's localStorage. They never leave your device.
+
+**Q: Can AIOManager developers see my keys?**
+No. Keys are encrypted before storage and never transmitted.
+
+**Q: What happens if I clear my browser data?**
+Your vault is stored in localStorage, which gets cleared. Export backups regularly.
+
+**Q: Can I use the same vault on multiple devices?**
+Not automatically. Export from one device and import to another, using the same master password.
+
+**Q: How often are expiry dates checked?**
+Every 24 hours when the vault is open, for built-in providers.
+
+**Q: Can I store passwords in the vault?**
+The vault is designed for API keys. For passwords, use a dedicated password manager.

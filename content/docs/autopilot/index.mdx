@@ -1,0 +1,311 @@
+---
+title: How Autopilot Works
+description: Understand failover chains, health monitoring, and how Autopilot makes decisions.
+---
+
+## What Is Autopilot?
+
+Autopilot is AIOManager's automated failover system. It monitors your streaming addons for health and automatically switches to backups when something goes down, keeping your streams available without manual intervention.
+
+### Why Use Autopilot?
+
+| Without Autopilot | With Autopilot |
+|-------------------|----------------|
+| Manual monitoring | Automatic health checks |
+| Streams fail silently | Instant failover to backup |
+| Wake up to broken streams | 24/7 reliability |
+| Manual switching | Automatic recovery |
+
+### How It Works
+
+Autopilot monitors the health of addons in a priority chain. The first addon is the **primary**. If a health check fails, Autopilot enables the next addon as a backup. When the primary recovers, it switches back automatically.
+
+### Important Architecture Note
+
+Autopilot runs on your AIOManager server, not inside Stremio. For reliable failover, **host AIOManager separately from the addons it monitors**. If both go down together, Autopilot can't fire.
+
+<Note>The Autopilot badge in the header shows: Live (monitoring active rules), Standby (no rules), Paused (all rules disabled), or Offline (server unreachable).</Note>
+
+---
+
+## Health Checks
+
+### What Gets Checked
+
+Each health check verifies that an addon is responding correctly:
+
+| Check Phase | Details |
+|-------------|---------|
+| **HTTP Request** | Requests the addon's `manifest.json` |
+| **Response Validation** | Ensures valid JSON with required fields |
+| **Timing Recorded** | Response time logged for diagnostics |
+| **Score Updated** | Reliability score adjusted |
+
+### Check Timeout and Retries
+
+| Phase | Duration |
+|-------|----------|
+| Initial request timeout | 10 seconds |
+| Retry attempts | 2 |
+| Retry delay | 2 seconds |
+| Maximum total time | 14 seconds |
+
+### What Makes an Addon "Healthy" or "Unhealthy"
+
+| Condition | Status | Why |
+|-----------|--------|-----|
+| HTTP 200 + valid JSON | Healthy | Addon responding normally |
+| HTTP 4xx (client error) | Unhealthy | Addon rejecting requests |
+| HTTP 5xx (server error) | Unhealthy | Addon server has problems |
+| Connection timeout | Unhealthy | Server unreachable |
+| Invalid JSON response | Unhealthy | Addon malfunctioning |
+| DNS resolution failure | Unhealthy | Domain doesn't resolve |
+| SSL certificate error | Unhealthy | Certificate expired/invalid |
+
+### Check Intervals
+
+| Cooldown Setting | Behavior | Best For |
+|-----------------|----------|----------|
+| 1 minute | Aggressive monitoring, higher load | Critical production |
+| 5 minutes | Balanced (recommended) | Most use cases |
+| 15 minutes | Relaxed monitoring | Stable setups |
+| 30+ minutes | Minimal monitoring | Low-priority addons |
+
+<Warning>Very short intervals (under 5 minutes) can trigger rate limits on some addon hosts.</Warning>
+
+---
+
+## Reliability Score
+
+### What Is the Reliability Score?
+
+Each addon in a chain has a Reliability Score: the count of consecutive successful health checks since the last failure.
+
+### Score Rules
+
+| Event | Score Change |
+|-------|--------------|
+| Successful check | +1 |
+| Failed check | Reset to 0 |
+| Maximum | Unlimited |
+
+### Score Interpretation
+
+| Score Range | Meaning |
+|-------------|---------|
+| 0 | Currently failing or just recovered |
+| 1-10 | Recently recovered, still unstable |
+| 11-50 | Stable, normal operation |
+| 50+ | Very stable, long-term healthy |
+
+### Why Scores Matter
+
+The score prevents "flapping", meaning rapid switching between unstable addons:
+
+| Without Score | With Score |
+|---------------|------------|
+| Addon recovers once → switch back immediately | Addon needs multiple successes → switch back after confirmed stable |
+| Unstable addon causes constant switching | Recovery threshold ensures stability |
+
+---
+
+## Recovery Behavior
+
+### The Recovery Process
+
+When a failed primary addon recovers:
+
+### Recovery Threshold
+
+The **recovery threshold** is the number of consecutive successful checks required before switching back to a recovered primary. Currently fixed at **2** - two clean checks in a row before Autopilot trusts a recovered addon. The matching **failover threshold** (also 2) determines how many failed checks happen before a primary is replaced by a backup.
+
+| Threshold | Effect | Status |
+|-----------|--------|--------|
+| 1 | Switch immediately on first success | Too reactive - risks flapping |
+| 2 | Two clean checks before recovery | **Current behavior** |
+| 5+ | Conservative - strong stability before switching | Not currently exposed |
+
+These thresholds are server-side constants and are not user-configurable today.
+
+### Why Not Switch Back Immediately?
+
+| Immediate Switch | Threshold-Based |
+|------------------|-----------------|
+| Unstable addon keeps flipping | Confirms addon is truly recovered |
+| Disrupts streaming | Smooth transition |
+| Wastes resources on switches | Efficient switching |
+
+---
+
+## Failover Process
+
+### Step-by-Step Failover
+
+### Detailed Process
+
+| Step | Action | Details |
+|------|--------|---------|
+| 1 | Primary fails | Health check returns unhealthy |
+| 2 | Score resets | Reliability score → 0 |
+| 3 | Find backup | Autopilot locates next addon in chain |
+| 4 | Enable backup | Backup addon enabled in Stremio |
+| 5 | Disable primary | Failed primary disabled |
+| 6 | Notify | Webhook sent (if configured) |
+| 7 | Continue monitoring | Primary still monitored for recovery |
+
+### Multiple Backups
+
+If you have more than one backup:
+
+| Priority | Role | When Active |
+|----------|------|-------------|
+| 1 (Primary) | Main source | When healthy |
+| 2 (Backup 1) | First fallback | When primary fails |
+| 3 (Backup 2) | Second fallback | When backup 1 also fails |
+| ... | ... | ... |
+
+---
+
+## Live Chain Demo
+
+This is what a failover chain looks like in practice. Click an addon row to simulate switching the active addon, or toggle the rule on and off:
+
+<DemoFailoverChain />
+
+---
+
+## Manual Override Detection
+
+### What Happens When You Intervene
+
+If you manually enable or disable an addon that's part of an active rule, AIOManager detects this and automatically **pauses that rule** to respect your choice.
+
+### Why Rules Pause
+
+| Situation | Autopilot Response |
+|-----------|-------------------|
+| You disable primary | Rule pauses - you want backup |
+| You enable backup | Rule pauses - you're taking control |
+| You make any change | Rule respects your manual choice |
+
+### Resuming a Paused Rule
+
+<Steps>
+  <Step>**Go to Autopilot Tab:** Click Autopilot in the sidebar.</Step>
+  <Step>**Find Paused Rule:** Look for the "Paused" badge.</Step>
+  <Step>**Re-enable:** Click the toggle or "Resume" button.</Step>
+</Steps>
+
+<Tip>If Autopilot keeps re-enabling an addon you've turned off, check whether it has an active rule. The addon card will show a "Failover backup · Paused" badge confirming the rule was correctly paused.</Tip>
+
+---
+
+## Status Badge Reference
+
+### Header Status
+
+The Autopilot badge in AIOManager's header shows overall status:
+
+| Badge | Meaning | Action |
+|-------|---------|--------|
+| **Live** | Active rules running | Normal - monitoring in progress |
+| **Standby** | No rules configured | Add rules to enable Autopilot |
+| **Paused** | All rules manually paused | Resume rules if desired |
+| **Offline** | Cannot reach server | Check server status |
+
+### Addon Card Badges
+
+When an addon is part of a failover chain:
+
+| Badge | State | Enabled? | Notes |
+|-------|-------|----------|-------|
+| Primary | Active | Yes | Currently serving |
+| Primary · Paused | Paused | As you left it | Rule paused by your action |
+| Backup | Standby | No | Waiting for primary to fail |
+| Backup · Paused | Paused | As you left it | Rule paused by your action |
+
+---
+
+## When NOT to Use Autopilot
+
+### Situations Where Autopilot May Not Help
+
+| Scenario | Why Autopilot Won't Help | Alternative |
+|----------|--------------------------|-------------|
+| All addons on same server | Single point of failure | Host addons separately |
+| AIOManager hosted with addons | Can't monitor itself | Host AIOManager elsewhere |
+| Only one addon | No backup to failover to | Add backup addons |
+| Unstable internet on your end | False failures | Fix connectivity first |
+
+### Requirements for Effective Autopilot
+
+| Requirement | Why |
+|-------------|-----|
+| Multiple addons in chain | Need backups to failover to |
+| AIOManager reliably online | Can't monitor if down |
+| Addons on different hosts | Avoid single point of failure |
+| Reasonable cooldown | Prevent rate limiting |
+
+---
+
+## Common Patterns
+
+### Pattern 1: Primary + One Backup
+
+| Priority | Addon | Host |
+|----------|-------|------|
+| 1 | AIOStreams (Primary) | Your server |
+| 2 | AIOStreams (Backup) | Different host (e.g., ElfHosted) |
+
+**Best for:** Simple reliability, personal use
+
+### Pattern 2: Primary + Multiple Backups
+
+| Priority | Addon | Purpose |
+|----------|-------|---------|
+| 1 | AIOStreams Premium | Best quality when available |
+| 2 | AIOStreams Standard | Fallback |
+| 3 | Torrentio | Last resort |
+
+**Best for:** Maximum uptime, critical streams
+
+### Pattern 3: Geographic Distribution
+
+| Priority | Addon | Location |
+|----------|-------|----------|
+| 1 | AIOStreams EU | Europe |
+| 2 | AIOStreams US | North America |
+
+**Best for:** Global availability, regional outages
+
+---
+
+## Best Practices
+
+| Practice | Why |
+|----------|-----|
+| Use 5-minute cooldown | Balance between monitoring and server load |
+| Build chains with at least 2 backups | Recovery threshold is fixed at 2; multiple fallbacks prevent outages while a primary stabilises |
+| Host backups separately | Avoid single point of failure |
+| Configure webhooks | Get notified of failovers |
+| Check Autopilot status regularly | Ensure it's running as expected |
+| Test failover manually | Verify your chain works |
+
+---
+
+## Common Questions
+
+**Q: How quickly does Autopilot detect failures?**
+Within one cooldown period (default 5 minutes) plus check time.
+
+**Q: Can Autopilot monitor any addon?**
+Yes, as long as it has a reachable manifest URL.
+
+**Q: What if all addons in a chain fail?**
+Autopilot will have enabled the last backup. Add more backups or fix your addons.
+
+**Q: Does Autopilot work when AIOManager is closed?**
+No. Autopilot requires AIOManager to be running. Consider hosting on a server.
+
+**Q: Can I have multiple Autopilot rules?**
+Yes. Each rule monitors its own chain independently.

@@ -1,0 +1,370 @@
+---
+title: Troubleshooting
+description: Comprehensive guide to diagnosing and fixing common issues.
+---
+
+## Quick Diagnostics
+
+| Symptom | Likely Cause | Quick Fix |
+|---------|--------------|-----------|
+| "Server Unreachable" | Server down or wrong URL | Check server status, verify Server URL in Settings |
+| Addons not showing | Sync needed | Click Sync on account card |
+| Ghost catalogs | Stremio cache | Reinstall the backup addon |
+| Vault won't unlock | Wrong password | Verify master password |
+| Changes not syncing | Conflict or offline | Check connection, pull from cloud |
+
+## Connection Issues
+
+### Server Unreachable
+
+**Symptoms:**
+- Red "Server Unreachable" banner
+- Autopilot badge shows "Offline"
+- Cloud sync fails silently
+
+**Causes & Solutions:**
+
+| Cause | Solution |
+|-------|----------|
+| Server not running | Start Docker container or Node process |
+| Wrong Server URL | Update in Settings → General |
+| Firewall blocking | Open port 1610 (or custom port) |
+| DNS resolution failure | Use IP address or fix DNS |
+| SSL certificate expired | Renew certificate, use Caddy for auto-renewal |
+
+**Debug Steps:**
+```bash
+# Check if server is listening
+curl http://your-server:1610/api/health
+
+# Check Docker container status
+docker ps | grep aiomanager
+
+# Check container logs
+docker logs aiomanager --tail 100
+```
+
+### CORS Errors
+
+**Symptoms:**
+- Browser console shows CORS errors
+- Requests fail from web interface
+- Works from localhost but not domain
+
+**Solution:**
+Set `CORS_ORIGINS` to your domain:
+```bash
+CORS_ORIGINS=https://aiomanager.yourdomain.com
+```
+
+### HTTPS / Secure Context Issues
+
+**Symptoms:**
+- Vault fails to initialize
+- "Secure context required" errors
+- Crypto APIs unavailable
+
+**Solution:**
+- Use HTTPS via reverse proxy
+- Or add domain to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+
+## Addon Issues
+
+### Addons Not Showing in Stremio
+
+| Cause | Solution |
+|-------|----------|
+| Account not synced | Click **Sync** on account card |
+| Addons disabled in Stremio | Check Stremio addon list |
+| Wrong account selected | Verify account in AIOManager matches Stremio |
+| Stremio cache | Restart Stremio app |
+
+### Ghost Catalogs After Failover
+
+After Autopilot swaps from a failed primary to a backup, you may notice the failed addon's catalogs still appearing as errors at the bottom of Stremio's catalog list, even though the addon is disabled.
+
+**Solution:**
+
+<Steps>
+  <Step>**Open Backup Addon:** Go to the backup addon in AIOManager.</Step>
+  <Step>**Reinstall:** Click **Reinstall**.</Step>
+  <Step>**Wait:** Wait for Stremio to refresh.</Step>
+</Steps>
+
+### Addon Shows Wrong Version
+
+**Cause:** Cached manifest data
+
+**Solution:**
+
+<Steps>
+  <Step>**Repair:** Click **Repair** on the account card (more thorough than Sync).</Step>
+  <Step>**Done:** This re-downloads all addon manifests fresh.</Step>
+</Steps>
+
+### Cannot Remove Protected Addon
+
+**Symptoms:**
+- Remove button disabled
+- "Protected" badge visible
+
+**Solution:**
+
+<Steps>
+  <Step>**Open Menu:** Open addon menu (⋮).</Step>
+  <Step>**Unprotect:** Click **Unprotect**.</Step>
+  <Step>**Remove:** Remove addon normally.</Step>
+</Steps>
+
+## Autopilot Issues
+
+### Autopilot Keeps Re-enabling Disabled Addon
+
+**Cause:** Addon is part of an active failover chain
+
+**Solution:**
+- Check addon card for Autopilot badge
+- Rule should auto-pause on manual override
+- If not, manually pause the rule in Autopilot tab
+
+### No Failover Happening
+
+| Cause | Solution |
+|-------|----------|
+| Rule disabled | Enable rule in Autopilot tab |
+| All addons unhealthy | Check addon URLs, verify they're online |
+| Server offline | Check server health endpoint |
+| Check interval too long | Reduce cooldown setting |
+
+### Failover Loop (Flapping)
+
+**Symptoms:** Rapid switching between primary and backup
+
+**Causes:**
+- Unstable primary addon
+- Recovery threshold too low
+- Very short cooldown
+
+**Solutions:**
+
+<Steps>
+  <Step>**Increase Cooldown:** Increase cooldown to 5+ minutes.</Step>
+  <Step>**Raise Threshold:** Increase recovery threshold.</Step>
+  <Step>**Change Primary:** Consider a different primary addon.</Step>
+</Steps>
+
+## Vault Issues
+
+### Vault Won't Unlock
+
+| Cause | Solution |
+|-------|----------|
+| Wrong password | Verify master password (case-sensitive) |
+| Data corruption | Clear vault, re-add keys |
+| Browser storage cleared | Restore from backup |
+
+### Expiry Check Failed
+
+**Causes:**
+- Invalid API key
+- Provider API down
+- Network issues
+
+**Solution:**
+
+<Steps>
+  <Step>**Verify Key:** Verify key at provider dashboard.</Step>
+  <Step>**Check Status:** Check provider status page.</Step>
+  <Step>**Retry Later:** Try again later if provider is down.</Step>
+</Steps>
+
+### Lost Master Password
+
+**There is no recovery.** AIOManager uses client-side AES-256-GCM encryption. The key never leaves your browser.
+
+**Workaround:**
+
+<Steps>
+  <Step>**Clear Vault:** Clear vault data in Settings → Advanced.</Step>
+  <Step>**New Password:** Set new master password.</Step>
+  <Step>**Re-add Keys:** Re-add all keys from source.</Step>
+</Steps>
+
+## Sync Issues
+
+### Changes Not Syncing Between Devices
+
+| Cause | Solution |
+|-------|----------|
+| Both devices open simultaneously | Close one device, wait for sync |
+| Server offline | Check server status |
+| Conflict resolution | Last write wins - pull from cloud |
+
+### Deleted Addons Reappearing
+
+**Cause:** Race condition when two devices push simultaneously
+
+**Solution:**
+
+<Steps>
+  <Step>**Close Other Devices:** Close AIOManager on other devices.</Step>
+  <Step>**Make Changes:** Make deletions on single device.</Step>
+  <Step>**Wait:** Wait for sync before opening elsewhere.</Step>
+</Steps>
+
+### Sync Data Corrupted
+
+**Symptoms:**
+- Invalid data errors
+- App crashes on load
+- Settings reset unexpectedly
+
+**Solution:**
+
+<Steps>
+  <Step>**Export Data:** Export current data if possible.</Step>
+  <Step>**Clear Site Data:** Clear site data in browser.</Step>
+  <Step>**Re-login:** Re-login.</Step>
+  <Step>**Import:** Import backup or reconfigure.</Step>
+</Steps>
+
+## Performance Issues
+
+### Slow Loading
+
+| Cause | Solution |
+|-------|----------|
+| Many accounts/addons | Expected - consider pruning |
+| Slow server | Check server resources |
+| Database bloat | Run vacuum (SQLite) or analyze (PostgreSQL) |
+
+### High Memory Usage
+
+**Docker:**
+```bash
+# Check container memory
+docker stats aiomanager
+
+# Limit memory if needed
+docker update --memory="512m" aiomanager
+```
+
+### High CPU Usage
+
+**Causes:**
+- Many active Autopilot rules with short cooldowns
+- Large sync payloads
+- Database queries
+
+**Solution:**
+- Increase cooldown intervals
+- Reduce number of tracked addons
+- Consider PostgreSQL for better query performance
+
+## Debug Mode
+
+### Enable Verbose Logging
+
+**Docker:**
+```bash
+docker run -e LOG_LEVEL=debug ...
+```
+
+**Node.js:**
+```bash
+LOG_LEVEL=debug npm run server
+```
+
+### Check Logs
+
+**Docker:**
+```bash
+# Follow logs
+docker logs -f aiomanager
+
+# Last 500 lines
+docker logs aiomanager --tail 500
+```
+
+**Node.js:**
+Logs appear in terminal output.
+
+### Browser Console
+
+Open DevTools (F12) → Console tab. Look for:
+- Red error messages
+- Failed network requests (Network tab)
+- WebSocket connection issues
+
+## Emergency Recovery
+
+### Factory Reset
+
+If the UI becomes unresponsive:
+
+<Steps>
+  <Step>**Open Settings:** Navigate to Settings → Advanced.</Step>
+  <Step>**Unlock:** Toggle **Unlock Actions**.</Step>
+  <Step>**Reset:** Click **Factory Reset**.</Step>
+  <Step>**Re-login:** Re-login with existing credentials.</Step>
+</Steps>
+
+<Warning>Factory Reset removes all local data. Export backup first if possible.</Warning>
+
+### Browser Site Data Clear
+
+If UI is inaccessible:
+
+<Steps>
+  <Step>**Open DevTools:** Open DevTools (F12).</Step>
+  <Step>**Navigate to Storage:** Go to Application → Storage.</Step>
+  <Step>**Clear Data:** Click "Clear site data".</Step>
+  <Step>**Reload:** Reload page.</Step>
+  <Step>**Re-login:** Re-login.</Step>
+</Steps>
+
+### Database Recovery
+
+**SQLite:**
+```bash
+# Check integrity
+sqlite3 data/aiomanager.db "PRAGMA integrity_check;"
+
+# Backup
+cp data/aiomanager.db data/aiomanager.db.backup
+
+# Rebuild (if corrupted)
+sqlite3 data/aiomanager.db ".recover" | sqlite3 data/aiomanager_fixed.db
+```
+
+**PostgreSQL:**
+```sql
+-- Check for corruption
+SELECT * FROM pg_stat_all_tables;
+
+-- Vacuum analyze
+VACUUM ANALYZE;
+```
+
+## FAQ
+
+<Accordions>
+  <Accordion title="Why does Autopilot keep re-enabling an addon I disabled?">
+    The addon is part of an active failover chain. Autopilot detects manual overrides and pauses the rule, but if you re-enable the rule, it will resume managing the addon. Delete the Autopilot rule first, then disable the addon.
+  </Accordion>
+  <Accordion title="My Master Key is lost. Can I recover?">
+    No. AIOManager uses client-side AES-256-GCM encryption. The key never leaves your browser. If lost, there is no recovery. You will need to clear encrypted data and start fresh.
+  </Accordion>
+  <Accordion title="Can I run AIOManager without a server?">
+    Yes, but you lose Autopilot, Health Checks, Cloud Sync, and Replay Sharing. The frontend will work in a local-only mode for addon management.
+  </Accordion>
+  <Accordion title="Why do deleted addons reappear in Cloud Sync?">
+    This is a race condition when two devices push conflicting changes simultaneously. The last write wins. To avoid it, close AIOManager on other devices before making deletions.
+  </Accordion>
+  <Accordion title="How do I migrate from SQLite to PostgreSQL?">
+    Export your data from Settings → Data & Sync. Set up PostgreSQL with `DATABASE_URL`. Start a fresh AIOManager instance with `DB_TYPE=postgres`. Import your backup data.
+  </Accordion>
+  <Accordion title="Can I use AIOManager behind Cloudflare?">
+    Yes. Ensure WebSocket support is enabled in Cloudflare. Cloudflare may timeout long requests - if sync fails, increase the timeout or bypass Cloudflare for `/api/*` routes.
+  </Accordion>
+</Accordions>

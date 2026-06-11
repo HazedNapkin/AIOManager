@@ -16,7 +16,7 @@ export function AddonTag({ tag, className, isCompact = false }: AddonTagProps) {
             <Badge
                 variant="secondary"
                 className={cn(
-                    "font-mono text-[9px] pointer-events-none uppercase tracking-wider font-bold mb-0.5 px-1.5 py-0.5 border",
+                    "text-[10px] pointer-events-none font-medium leading-5 mb-0.5 px-1.5 py-0 rounded-full border",
                     className
                 )}
                 style={{
@@ -34,7 +34,7 @@ export function AddonTag({ tag, className, isCompact = false }: AddonTagProps) {
         <Badge
             variant="secondary"
             className={cn(
-                "font-mono text-[10px] pointer-events-none uppercase tracking-wider font-bold px-2 py-0.5 border",
+                "text-xs pointer-events-none font-medium px-2 py-0.5 rounded-full border",
                 className
             )}
             style={{

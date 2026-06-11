@@ -9,7 +9,7 @@
 
   <br />
 
-  [![Version](https://img.shields.io/badge/version-1.8.5%20(Build%202)-blue.svg)](https://github.com/sonicx161/aiomanager/releases)
+  [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/sonicx161/aiomanager/releases)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
   [![Vite](https://img.shields.io/badge/Vite-B73BFE?style=flat&logo=vite&logoColor=FFD62E)](https://vitejs.dev/)
   [![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
@@ -26,7 +26,7 @@
 
 > [!NOTE]
 > **Maintenance Status**
-> AIOManager is in maintenance mode. Active feature development has wrapped up, but bug fixes and stability improvements ship as needed. Bug reports via GitHub Issues are welcome and PRs from the community are always open.
+> AIOManager is feature-complete as of v2.0. Active feature development has wrapped up, but bug fixes and stability improvements ship as needed. Bug reports via GitHub Issues are welcome and PRs from the community are always open.
 
 ---
 
@@ -59,6 +59,18 @@ The soul of AIOManager is giving you complete authority over your Stremio ecosys
 #### Custom Addon Customization
 ![Addon Editor](public/screenshots/editor.png)
 
+### 🔗 Connections
+
+Mirror your addon configuration to external platforms and keep them in sync automatically.
+
+* **Multi-Platform Support**: Connect to Stremio, Nuvio, Hydra (inbound and outbound), and RealStream.
+* **Bidirectional Reconciler**: The sync engine detects changes on both sides and reconciles them. Addons added or removed on any connected platform propagate to all others.
+* **Connection API Keys**: Credentials are encrypted at rest on the server and never exposed to the client after initial setup.
+* **RealStream Driver**: Native RealStream integration with server-side token custody and automatic refresh.
+
+#### Platform Connections
+![Platforms](public/screenshots/Platforms.png)
+
 ### 📚 Saved Addon Library
 
 * **Profiles**: Organize your saved addons into profiles and deploy entire profiles to accounts in one click.
@@ -67,23 +79,34 @@ The soul of AIOManager is giving you complete authority over your Stremio ecosys
 * **Manifest Updates**: Refresh the name, logo, and version of selected addons from their source URLs while keeping your tags and profile assignments intact.
 * **Conflict Resolution**: When saving addons from an account, choose to skip existing entries, update them with merged tags, or create a new copy.
 
-### 📊 Mega Metrics
+### 📊 Metrics
 
 * **Pulse**: Real-time activity tracking, Trending Now clusters, and the **Streak Hall of Fame**.
 * **Deep Dive**: Prime Time heatmaps, Retention Funnels, and "The Graveyard" for abandoned shows.
 * **Smart Repair**: If your watch stats look off, the repair tool finds and fixes corrupted duration data without wiping your history.
 
+#### Watch Replay
+![Replay](public/screenshots/Replay.png)
+
 ### 🔐 Account Management
 
-* **OAuth Login**: Add accounts using the official Stremio OAuth flow. No email or password required.
+* **OAuth Login**: Add Stremio accounts using the official OAuth flow. No email or password required.
 * **Email & Password**: Standard login with auto-registration. If the account doesn't exist it gets created instantly.
 * **Auth Key**: Add accounts directly via auth key for advanced setups.
+* **Local Accounts**: Manage addons locally with no external platform connection.
+* **Connections**: Link any account to Stremio, Nuvio, RealStream, or Hydra via the Connections tab. Each account can connect to multiple platforms at once.
 
 ### 🛡️ Privacy First Sync
 
 * **Local First**: Your data stays in your browser via IndexedDB.
 * **Encrypted Cloud**: Optional sync using AES-256-GCM encryption. User-side keys never leave your device.
-* **Server-Side Protection**: Autopilot rules and Stremio auth keys are encrypted at rest on the server using a global `ENCRYPTION_KEY` secret.
+* **Server-Side Protection**: Autopilot rules, Stremio auth keys, and connection credentials are encrypted at rest on the server using a global `ENCRYPTION_KEY` secret.
+
+#### Encrypted Vault
+![Vault](public/screenshots/Vault.png)
+
+#### Notes
+![Notes](public/screenshots/Notes.png)
 
 ---
 
@@ -113,10 +136,10 @@ AIOManager includes a native Unraid template!
 ## 🏁 Getting Started
 
 Once the app is running:
-1. Open the app in your browser (usually `http://localhost:5173` or your server IP).
+1. Open the app in your browser (usually `http://localhost:1610` or your server IP).
 2. You will be greeted by the **Login** screen. Stay on the **New Account** tab to generate your unique **Account UUID**.
 3. Choose a strong password. This is the **only key** to your encrypted data.
-4. Once inside, use the **Accounts** page to link your Stremio identities. You can then go to **Settings** to customize your name for AIOManager or enable Auto-Save. (Note you still need to use your UUID to login) 
+4. Once inside, use the **Accounts** page to link your Stremio identities, add local accounts, or connect to platforms like Nuvio and RealStream. You can then go to **Settings** to customize your name for AIOManager or enable Auto-Save. (Note you still need to use your UUID to login)
 
 <div align="center">
   <h4>Initial Setup & Login</h4>
@@ -144,14 +167,14 @@ You don't need to manually configure encryption for it to work:
 > AIOManager **must** be served over a **Secure Context** (HTTPS or Localhost). Browser security policies block the necessary encryption APIs on insecure remote connections.
 
 #### Option 1: The Proper Way (Recommended)
-*   **Localhost**: Works over `http://localhost:5173`.
+*   **Localhost**: Works over `http://localhost:1610`.
 *   **Remote/Server**: **HTTPS is Mandatory** (via reverse proxy like Traefik, Caddy, or Nginx Proxy Manager).
 *   **Plain HTTP over IP**: Accessing via `http://192.168.x.x` **will not work**.
 
 #### Option 2: Browser Bypass (Advanced / Chrome & Edge)
 If you cannot set up a reverse proxy, you can force your browser to treat your server's IP as secure:
 1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
-2. Add your server's address: `http://192.168.x.x:8080` (replace with your IP/Port)
+2. Add your server's address: `http://192.168.x.x:1610` (replace with your IP)
 3. Change the dropdown to **Enabled**
 4. Relaunch your browser.
 

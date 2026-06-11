@@ -1,15 +1,24 @@
 
 import { ActivityItem } from '@/types/activity'
 import { isToday, isYesterday, format } from 'date-fns'
-import { PlayCircle, Activity, ArrowUp } from 'lucide-react'
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { Activity, ArrowUp } from 'lucide-react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ActivityItemCard, isCluster, HistoryCluster } from './ActivityItemCard'
+import { ActivityItemCard } from './ActivityItemCard'
+import { ActivityEmptyState } from '@/components/common/PageEmptyStates'
+import { NumberTicker } from '@/components/ui/number-ticker'
+import { StatusChip } from '@/components/ui/status-chip'
+
+const INITIAL_VISIBLE_COUNT = 60
+const VISIBLE_COUNT_INCREMENT = 40
+const EMPTY_SELECTED_ITEMS = new Set<string>()
 
 interface ActivityFeedProps {
     history: ActivityItem[]
     viewMode?: 'grid' | 'list'
+    todayHours?: number
+    todayTrend?: 'up' | 'down'
     onToggleSelect?: (id: string | string[]) => void
     onDelete?: (id: string | string[], removeFromLibrary: boolean) => void
     selectedItems?: Set<string>
@@ -19,26 +28,35 @@ interface ActivityFeedProps {
 export function ActivityFeed({
     history,
     viewMode = 'grid',
+    todayHours = 0,
+    todayTrend = 'up',
     onToggleSelect,
     onDelete,
-    selectedItems = new Set(),
+    selectedItems,
     isBulkMode = false,
 }: ActivityFeedProps) {
+    const safeSelectedItems = selectedItems ?? EMPTY_SELECTED_ITEMS
     const [activeTab, setActiveTab] = useState("all")
-    const [visibleCount, setVisibleCount] = useState(100)
+    const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
     const [showScrollTop, setShowScrollTop] = useState(false)
 
-    // Reset visible count when tab changes
     useEffect(() => {
-        setVisibleCount(100)
+        setVisibleCount(INITIAL_VISIBLE_COUNT)
     }, [activeTab])
 
     // Scroll to Top Logic
     useEffect(() => {
+        let ticking = false
         const handleScroll = () => {
-            setShowScrollTop(window.scrollY > 400)
+            if (!ticking) {
+                requestAnimationFrame(() => {
+                    setShowScrollTop(window.scrollY > 400)
+                    ticking = false
+                })
+                ticking = true
+            }
         }
-        window.addEventListener('scroll', handleScroll)
+        window.addEventListener('scroll', handleScroll, { passive: true })
         return () => window.removeEventListener('scroll', handleScroll)
     }, [])
 
@@ -52,7 +70,7 @@ export function ActivityFeed({
 
         // 1. Filter by Tab
         if (activeTab === 'movies') filtered = filtered.filter(h => h.type === 'movie')
-        else if (activeTab === 'series') filtered = filtered.filter(h => h.type === 'series' || h.type === 'episode')
+        else if (activeTab === 'series') filtered = filtered.filter(h => h.type === 'series' || h.type === 'anime' || h.type === 'episode')
         else if (activeTab === 'now') {
             const twentyMinsAgo = new Date().getTime() - (20 * 60 * 1000)
             filtered = filtered.filter(h => new Date(h.timestamp).getTime() > twentyMinsAgo)
@@ -62,14 +80,10 @@ export function ActivityFeed({
     }, [history, activeTab])
 
     const groupedHistory = useMemo(() => {
-        const sorted = [...filteredHistory].sort((a, b) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        )
-
         const dates: string[] = []
-        const groups: Record<string, (ActivityItem | HistoryCluster)[]> = {}
+        const groups: Record<string, ActivityItem[]> = {}
 
-        sorted.forEach(item => {
+        filteredHistory.forEach(item => {
             const date = new Date(item.timestamp)
             const dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
 
@@ -78,45 +92,67 @@ export function ActivityFeed({
                 dates.push(dateStr)
             }
 
-            const currentGroup = groups[dateStr]
-            const lastEntry = currentGroup[currentGroup.length - 1]
-
-            // If movie, always separate item
-            if (item.type === 'movie' || !item.name) {
-                currentGroup.push(item)
-                return
-            }
-
-            // Cluster logic: If same show name as last entry, add to cluster
-            if (lastEntry && isCluster(lastEntry) && lastEntry.name === item.name) {
-                lastEntry.items.push(item)
-            } else if (lastEntry && !isCluster(lastEntry) && lastEntry.name === item.name && (item.type === 'series' || item.type === 'episode')) {
-                // Convert last item to a cluster and add current item
-                const cluster: HistoryCluster = {
-                    isCluster: true,
-                    name: item.name,
-                    items: [lastEntry, item],
-                    timestamp: new Date(lastEntry.timestamp)
-                }
-                currentGroup[currentGroup.length - 1] = cluster
-            } else {
-                currentGroup.push(item)
-            }
+            // Activity is an event log: each episode/watch should remain visible.
+            groups[dateStr].push(item)
         })
 
-        return dates.map(date => ({
-            date,
-            items: groups[date]
-        }))
+        return dates.map(date => {
+            let dateId = ''
+            if (date !== 'Unknown Date') {
+                const d = new Date(date)
+                if (!isNaN(d.getTime())) {
+                    dateId = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+                }
+            }
+            const items = groups[date]
+            return { date, dateId, items, watchCount: items.length }
+        })
     }, [filteredHistory])
 
-    const formatDateHeader = (dateStr: string) => {
+    const filteredWatchHours = useMemo(() => {
+        const seriesWithOverall = new Map<string, number>()
+        let totalMs = 0
+        for (const item of filteredHistory) {
+            const isSeries = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
+            if (isSeries && item.overallTimeWatched) {
+                const prev = seriesWithOverall.get(item.itemId) || 0
+                if (item.overallTimeWatched > prev) {
+                    totalMs += item.overallTimeWatched - prev
+                    seriesWithOverall.set(item.itemId, item.overallTimeWatched)
+                }
+            } else {
+                totalMs += item.watched || 0
+            }
+        }
+        return Math.round(totalMs / 3600000)
+    }, [filteredHistory])
+    const tabCounts = useMemo(() => {
+        const twentyMinsAgo = new Date().getTime() - (20 * 60 * 1000)
+        let now = 0
+        let movies = 0
+        let series = 0
+
+        for (const item of history) {
+            if (new Date(item.timestamp).getTime() > twentyMinsAgo) now++
+            if (item.type === 'movie') movies++
+            if (item.type === 'series' || item.type === 'anime' || item.type === 'episode') series++
+        }
+
+        return {
+            all: history.length,
+            now,
+            movies,
+            series,
+        }
+    }, [history])
+
+    const formatDateHeader = useCallback((dateStr: string) => {
         if (dateStr === 'Unknown Date') return dateStr
         const date = new Date(dateStr)
         if (isToday(date)) return 'Today'
         if (isYesterday(date)) return 'Yesterday'
         return format(date, 'MMMM d, yyyy')
-    }
+    }, [])
 
     // Pagination Logic
     const { visibleGroups, hasMore } = useMemo(() => {
@@ -130,16 +166,8 @@ export function ActivityFeed({
                 break
             }
 
-            // If the whole group fits, add it.
-            // If not, we could slice it, but for simplicity let's just add full groups 
-            // until we cross the limit.
-            // Actually, adding full groups is safer for DOM integrity (headers etc).
-            // But if one group is huge (mock data), we might want to slice it.
-            // Let's stick to full groups for now, assuming date grouping breaks it down enough.
-            // Exception: If the FIRST group is huge, we must render it.
-
             visible.push(group)
-            count += group.items.length
+            count += group.watchCount
         }
 
         return {
@@ -156,7 +184,7 @@ export function ActivityFeed({
         const observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0].isIntersecting) {
-                    setVisibleCount(c => c + 50)
+                    setVisibleCount(c => c + VISIBLE_COUNT_INCREMENT)
                 }
             },
             { threshold: 0.1 }
@@ -166,54 +194,43 @@ export function ActivityFeed({
     }, [hasMore, visibleGroups.length])
 
     // --- RENDER HELPERS ---
-    const renderEmptyState = () => (
-        <div className="text-center py-20 border-2 border-dashed rounded-xl opacity-50">
-            <div className={`bg-muted/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${activeTab === 'now' ? 'bg-green-500/10' : ''}`}>
-                {activeTab === 'now' ? <Activity className="h-8 w-8 text-green-500 opacity-60" /> : <PlayCircle className="h-8 w-8 opacity-50" />}
-            </div>
-            <p className="text-sm font-medium">{activeTab === 'now' ? 'No active streams' : 'No activity found'}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-                {activeTab === 'now' ? "Nobody is watching anything right now." : "Time to start watching something!"}
-            </p>
-        </div>
-    )
+    const renderEmptyState = () => <ActivityEmptyState />
 
     const renderFeedContent = () => {
         if (filteredHistory.length === 0) return renderEmptyState()
 
         return (
-            <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-                {visibleGroups.map(({ date, items }) => (
-                    <div key={date} className="space-y-4">
-                        <div className="sticky top-0 z-10 bg-background py-2 flex items-center gap-4 border-b border-border/50">
-                            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-muted-foreground">
-                                {formatDateHeader(date)}
-                            </h3>
+            <div className="space-y-4 pb-20">
+                {visibleGroups.map(({ date, dateId, items, watchCount }) => (
+                    <section
+                        key={date}
+                        id={dateId ? `activity-date-${dateId}` : undefined}
+                        className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm"
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="truncate text-sm font-semibold">{formatDateHeader(date)}</span>
+                            </div>
+                            <StatusChip variant="muted" className="rounded-lg bg-background/70 px-2 tabular-nums">
+                                {watchCount} {watchCount === 1 ? 'watch' : 'watches'}
+                            </StatusChip>
                         </div>
 
                         <div className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" : "space-y-3"}>
-                            {items.map((entry) => {
-                                // Unique key: Use ID of first item
-                                const key = isCluster(entry) ? entry.items[0].id : entry.id
-                                const item = isCluster(entry) ? entry.items[0] : entry
-                                const isSelected = isCluster(entry)
-                                    ? entry.items.every(i => selectedItems.has(i.id))
-                                    : selectedItems.has(item.id)
-
-                                return (
-                                    <ActivityItemCard
-                                        key={key}
-                                        entry={entry}
-                                        viewMode={viewMode}
-                                        isSelected={isSelected}
-                                        isBulkMode={isBulkMode}
-                                        onToggleSelect={onToggleSelect}
-                                        onDelete={onDelete}
-                                    />
-                                )
-                            })}
+                            {items.map((item) => (
+                                <ActivityItemCard
+                                    key={item.id}
+                                    entry={item}
+                                    viewMode={viewMode}
+                                    isSelected={safeSelectedItems.has(item.id)}
+                                    isBulkMode={isBulkMode}
+                                    onToggleSelect={onToggleSelect}
+                                    onDelete={onDelete}
+                                />
+                            ))}
                         </div>
-                    </div>
+                    </section>
                 ))}
 
                 {/* IntersectionObserver Sentinel */}
@@ -229,22 +246,49 @@ export function ActivityFeed({
         )
     }
 
+    const renderTabCount = (count: number) => (
+        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-lg border border-border/35 bg-background/70 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+            {count}
+        </span>
+    )
+
     return (
         <div className="space-y-6">
             <Tabs defaultValue="all" onValueChange={setActiveTab} className="w-full">
-                <div className="flex items-center justify-between mb-2 gap-4">
-                    <TabsList className="flex flex-wrap h-auto bg-transparent p-0 gap-2 justify-start w-full pb-2">
-                        <TabsTrigger value="all" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm">All Activity</TabsTrigger>
-                        <TabsTrigger value="movies" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm">Movies</TabsTrigger>
-                        <TabsTrigger value="series" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-full px-4 border border-border/50 data-[state=active]:border-transparent bg-muted/30 shrink-0 shadow-sm">Series</TabsTrigger>
-                        <TabsTrigger value="now" className="data-[state=active]:text-green-400 data-[state=active]:bg-green-400/10 rounded-full px-4 border border-border/50 data-[state=active]:border-green-400/20 bg-muted/30 shrink-0 flex items-center shadow-sm">
-                            <Activity className="h-3 w-3 mr-1.5" /> Now
-                        </TabsTrigger>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <TabsList>
+                        <TabsTrigger value="all">All Activity {renderTabCount(tabCounts.all)}</TabsTrigger>
+                        <TabsTrigger value="now">Now {renderTabCount(tabCounts.now)}</TabsTrigger>
+                        <TabsTrigger value="movies">Movies {renderTabCount(tabCounts.movies)}</TabsTrigger>
+                        <TabsTrigger value="series">Series {renderTabCount(tabCounts.series)}</TabsTrigger>
                     </TabsList>
 
-                    <span className="text-[10px] uppercase font-black tracking-wider text-muted-foreground whitespace-nowrap hidden sm:block">
-                        Showing {Math.min(visibleCount, filteredHistory.length)} of {filteredHistory.length}
-                    </span>
+                    <div className="hidden max-w-full flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm sm:flex">
+                        <span className="opacity-70">Showing</span>
+                        <span className="font-semibold tabular-nums text-foreground">
+                            {filteredHistory.length === 0
+                                ? '0'
+                                : <NumberTicker value={Math.min(visibleCount, filteredHistory.length)} />
+                            }
+                        </span>
+                        <span className="opacity-50">of</span>
+                        <span className="font-semibold tabular-nums text-foreground">
+                            {filteredHistory.length === 0
+                                ? '0'
+                                : <NumberTicker value={filteredHistory.length} />
+                            }
+                        </span>
+                        <span className="h-3.5 w-px bg-border/60" />
+                        <span className="tabular-nums text-foreground"><NumberTicker value={filteredWatchHours} />h total</span>
+                        {todayHours > 0 && (
+                            <>
+                                <span className="h-3.5 w-px bg-border/60" />
+                                <span className={todayTrend === 'up' ? 'text-success' : 'text-warning'}>
+                                    Today <span className="font-semibold tabular-nums">{todayTrend === 'up' ? '↑' : '↓'}{todayHours}h</span>
+                                </span>
+                            </>
+                        )}
+                    </div>
                 </div>
 
                 <TabsContent value="all" className="mt-0">{renderFeedContent()}</TabsContent>
@@ -254,10 +298,11 @@ export function ActivityFeed({
             </Tabs>
 
             {/* Scroll to Top Button */}
-            <div className={`fixed bottom-24 right-5 md:bottom-8 md:right-8 z-40 transition-all duration-300 ${showScrollTop ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}>
+            <div className={`fixed bottom-24 right-5 md:bottom-8 md:right-8 z-40 transition-[transform,opacity,box-shadow] duration-300 ${showScrollTop ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}>
                 <Button
                     size="icon"
-                    className="h-10 w-10 md:h-12 md:w-12 rounded-full shadow-xl bg-primary hover:bg-primary/90"
+                    variant="outline"
+                    className="h-10 w-10 rounded-full shadow-lg md:h-11 md:w-11"
                     onClick={scrollToTop}
                 >
                     <ArrowUp className="h-5 w-5 md:h-6 md:w-6" />

@@ -1,29 +1,30 @@
 
+import { useTheme } from '@/contexts/ThemeContext'
 import { ActivityItem } from '@/types/activity'
 import { formatDistanceToNow } from 'date-fns'
-import { PlayCircle, Trash2, Tv, Film, Activity } from 'lucide-react'
-import { memo } from 'react'
+import { PlayCircle, Trash2 } from 'lucide-react'
+import { memo, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+
 import { cn, openStremioDetail } from '@/lib/utils'
 import { Poster } from '@/components/common/Poster'
+import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
+import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 
-// Cluster Type Definition
-export type HistoryCluster = {
-    isCluster: true,
-    name: string,
-    items: ActivityItem[],
-    timestamp: Date
-}
-
-export const isCluster = (entry: ActivityItem | HistoryCluster): entry is HistoryCluster => {
-    return (entry as any).isCluster === true
-}
+const AVATAR_COLORS = [
+  'bg-blue-500/20 text-blue-400',
+  'bg-purple-500/20 text-purple-400',
+  'bg-green-500/20 text-green-400',
+  'bg-yellow-500/20 text-yellow-400',
+  'bg-rose-500/20 text-rose-400',
+  'bg-cyan-500/20 text-cyan-400',
+  'bg-orange-500/20 text-orange-400',
+  'bg-pink-500/20 text-pink-400',
+] as const
 
 interface ActivityItemCardProps {
-    entry: ActivityItem | HistoryCluster
+    entry: ActivityItem
     viewMode: 'grid' | 'list'
     isSelected: boolean
     isBulkMode: boolean
@@ -39,68 +40,32 @@ export const ActivityItemCard = memo(({
     onToggleSelect,
     onDelete
 }: ActivityItemCardProps) => {
+    const { isLight } = useTheme()
 
-    // Extract the main item to show (always the latest one in a cluster)
-    const item = isCluster(entry) ? entry.items[0] : entry
-    const cluster = isCluster(entry) ? entry : null
+    const item = entry
+    const isEpisodeLike = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
+    const episodeLabel = isEpisodeLike && item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
 
-    // Helper: Get safe date
-    const getSafeDate = (date: Date | string) => {
-        const d = new Date(date)
-        return isNaN(d.getTime()) ? new Date() : d
-    }
-
-    const itemDate = getSafeDate(item.timestamp)
     const userName = item.accountName || 'Unknown User'
 
-    // Live logic: < 20 mins ago
-    const diffNow = new Date().getTime() - itemDate.getTime()
-    const isLive = diffNow < 1200000 // 20 mins
+    const itemDate = useMemo(() => {
+        const d = new Date(item.timestamp)
+        return isNaN(d.getTime()) ? new Date() : d
+    }, [item.timestamp])
 
-    const remainingMinutes = item.duration && item.watched
+    const isLive = useMemo(() => Date.now() - itemDate.getTime() < 1200000, [itemDate])
+
+    const remainingMinutes = useMemo(() => item.duration && item.watched
         ? Math.max(0, Math.round((item.duration - item.watched) / 60000))
-        : 0
-
-    // Color Helpers
-    const getColorClasses = (index: number) => {
-        const colors = [
-            'border-blue-500/50 hover:border-blue-500 bg-blue-500/5',
-            'border-purple-500/50 hover:border-purple-500 bg-purple-500/5',
-            'border-green-500/50 hover:border-green-500 bg-green-500/5',
-            'border-amber-500/50 hover:border-amber-500 bg-amber-500/5',
-            'border-rose-500/50 hover:border-rose-500 bg-rose-500/5',
-            'border-cyan-500/50 hover:border-cyan-500 bg-cyan-500/5',
-            'border-orange-500/50 hover:border-orange-500 bg-orange-500/5',
-            'border-pink-500/50 hover:border-pink-500 bg-pink-500/5',
-            'border-violet-500/50 hover:border-violet-500 bg-violet-500/5',
-            'border-emerald-500/50 hover:border-emerald-500 bg-emerald-500/5',
-        ]
-        return colors[index % colors.length]
-    }
+        : 0, [item.duration, item.watched])
 
     const getAvatarColor = (index: number) => {
-        const colors = [
-            'bg-blue-500/20 text-blue-400',
-            'bg-purple-500/20 text-purple-400',
-            'bg-green-500/20 text-green-400',
-            'bg-amber-500/20 text-amber-400',
-            'bg-rose-500/20 text-rose-400',
-            'bg-cyan-500/20 text-cyan-400',
-            'bg-orange-500/20 text-orange-400',
-            'bg-pink-500/20 text-pink-400',
-            'bg-violet-500/20 text-violet-400',
-            'bg-emerald-500/20 text-emerald-400',
-        ]
-        return colors[index % colors.length]
+        return AVATAR_COLORS[index % AVATAR_COLORS.length]
     }
 
     const handleClick = () => {
         if (isBulkMode || isSelected) { // If bulk mode OR passing selection, toggle
-            if (cluster) {
-                onToggleSelect?.(cluster.items.map(i => i.id))
-            } else {
-                onToggleSelect?.(item.id)
-            }
+            onToggleSelect?.(item.id)
         } else {
             // Open in Stremio Desktop App
             openStremioDetail(item.type, item.itemId)
@@ -109,106 +74,116 @@ export const ActivityItemCard = memo(({
 
     const handleDelete = (e: React.MouseEvent) => {
         e.stopPropagation()
-        if (cluster) {
-            onDelete?.(cluster.items.map(i => i.id), true)
-        } else {
-            onDelete?.(item.id, true)
-        }
+        onDelete?.(item.id, true)
     }
 
 
     if (viewMode === 'grid') {
         return (
             <div
-                className={`group relative aspect-[2/3] rounded-xl overflow-hidden cursor-pointer border-2 transition-all duration-200 ${isSelected ? 'border-primary ring-2 ring-primary/20 scale-[0.98]' : 'border-transparent hover:border-primary/50'
-                    }`}
+                className="group flex flex-col gap-1.5 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                role="button"
+                tabIndex={0}
                 onClick={handleClick}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick() } }}
             >
-                {/* Selection Overlay */}
-                {isSelected && (
-                    <div className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full border-2 border-background shadow-lg flex items-center justify-center transition-all animate-in zoom-in-50 duration-200" style={{ background: 'hsl(var(--primary))' }}>
-                        <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                    </div>
-                )}
-                <Poster
-                    src={item.poster}
-                    itemId={item.itemId}
-                    itemType={item.type}
-                    alt={item.name}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                    loading="lazy"
-                />
 
-                {/* Gradient overlay for readability */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 pointer-events-none">
-                    {(!isBulkMode && !isSelected) && (
-                        <div className="bg-primary/40 rounded-full p-3 border border-primary/50 shadow-lg">
-                            <PlayCircle className="w-8 h-8 text-white drop-shadow-lg" />
+                <div className={cn(
+                    "relative aspect-[2/3] rounded-2xl overflow-hidden border transition-[transform,opacity,box-shadow] duration-200 shadow-sm group-hover:shadow-lg",
+                    isSelected ? `border-primary ring-2 ${isLight ? 'ring-primary/20' : 'ring-primary/10'} scale-[0.98]` : 'border-transparent group-hover:border-primary/40'
+                )}>
+
+                    {isSelected && (
+                        <div className="absolute top-2 left-2 z-30 w-6 h-6 rounded-full border-2 border-background shadow-lg flex items-center justify-center animate-in zoom-in-50 duration-200" style={{ background: 'hsl(var(--primary))' }}>
+                            <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                    )}
+
+                    <Poster
+                        src={item.poster}
+                        itemId={item.itemId}
+                        itemType={item.type}
+                        alt={item.name}
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        loading="lazy"
+                    />
+
+                    {item.source && <PlatformSourceBadge source={item.source} />}
+
+
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+
+
+                    {!isBulkMode && !isSelected && (
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            <div className="rounded-full border border-white/25 bg-black/75 p-3 shadow-xl">
+                                <PlayCircle className={`w-7 h-7 text-white ${isLight ? 'drop-shadow-lg' : 'drop-shadow-sm'}`} />
+                            </div>
+                        </div>
+                    )}
+
+
+                    {item.progress > 0 && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
+                            <div className="h-full bg-primary transition-[transform,opacity,box-shadow] duration-500" style={{ width: `${item.progress}%` }} />
+                        </div>
+                    )}
+
+
+                    {isLive && (
+                        <div className="absolute top-2 right-2 z-20">
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white shadow-xl">
+                                <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
+                            </span>
+                        </div>
+                    )}
+
+
+                    {episodeLabel && (
+                        <div className="absolute bottom-2 left-2 z-10">
+                            <span className={cn(
+                                "text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75",
+                                getAvatarColor(item.accountColorIndex).split(' ')[1]
+                            )}>
+                                {episodeLabel}
+                            </span>
+                        </div>
+                    )}
+
+
+                    {item.progress > 0 && !isLive && (
+                        <div className="absolute bottom-2 right-2 z-10">
+                            <span className="text-xs font-bold text-white/80 bg-black/75 rounded-full px-1.5 py-0.5">
+                                {Math.round(item.progress)}%
+                            </span>
                         </div>
                     )}
                 </div>
 
-                {/* Bottom Layout: Left stack + Right user/time */}
-                <div className="absolute bottom-0 left-0 right-0 p-2.5 flex items-end justify-between gap-2 z-10">
-                    {/* Left Stack: Title, Season/Ep, Timestamp */}
-                    <div className="flex flex-col gap-1 items-start min-w-0 flex-1">
-                        <div className="bg-black/80 rounded px-1.5 py-1 max-w-full">
-                            <h3 className="font-black text-[11px] text-white leading-tight line-clamp-2">
-                                {item.name}
-                            </h3>
-                            {cluster ? (
-                                <div className="flex flex-wrap gap-1 mt-0.5">
-                                    {cluster.items.map(i => ({ s: i.season || 1, e: i.episode })).filter(i => i.e !== undefined).sort((a, b) => b.e! - a.e!).map((item, idx) => (
-                                        <span key={idx} className="text-[10px] font-black text-primary bg-primary/10 px-1 rounded">
-                                            S{item.s} E{item.e}
-                                        </span>
-                                    ))}
-                                </div>
-                            ) : (item.type === 'series' || item.type === 'anime') && item.episode !== undefined && (
-                                <span className={cn(
-                                    "text-[10px] font-bold block mt-0.5",
-                                    getAvatarColor(item.accountColorIndex).split(' ')[1]
-                                )}>
-                                    S{item.season ?? 1} E{item.episode}
-                                </span>
-                            )}
+
+                <div className="px-0.5 space-y-0.5">
+                    <p className="font-bold text-xs text-foreground leading-tight line-clamp-1 truncate">{item.name}</p>
+                    <div className="flex items-center gap-1.5">
+                        {episodeLabel && (
+                            <span className="shrink-0 font-mono text-[10px] font-bold text-primary">
+                                {episodeLabel}
+                            </span>
+                        )}
+
+                        <div className="relative w-4 h-4 shrink-0 flex items-center justify-center">
+                            <SquircleOverlay />
+                            <span className="relative z-10 text-xs font-bold text-muted-foreground">{userName[0]?.toUpperCase()}</span>
                         </div>
+                        <span className="text-xs text-muted-foreground truncate font-medium">{userName}</span>
                         {!isLive && (
-                            <span className="text-[9px] text-white/80 font-semibold bg-black/80 rounded px-1.5 py-0.5">
-                                {formatDistanceToNow(itemDate, { addSuffix: true })}
+                            <span className="text-xs text-muted-foreground/60 font-mono ml-auto shrink-0">
+                                {formatDistanceToNow(itemDate, { addSuffix: false })}
                             </span>
                         )}
                     </div>
-
-                    {/* Right: User + Time Left */}
-                    <div className="flex flex-col gap-1 items-end shrink-0">
-                        <Badge variant="secondary" className="bg-black/80 hover:bg-black/90 text-white border-0 shadow-lg flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-bold">
-                            <Avatar className="h-3 w-3 border border-white/20">
-                                <AvatarFallback className={cn("text-[6px] font-bold", getAvatarColor(item.accountColorIndex))}>
-                                    {userName[0]?.toUpperCase()}
-                                </AvatarFallback>
-                            </Avatar>
-                            <span className="truncate max-w-[50px]">{userName}</span>
-                            {remainingMinutes > 0 && !isLive && (
-                                <span className="text-primary font-black ml-0.5">
-                                    • {remainingMinutes}M
-                                </span>
-                            )}
-                        </Badge>
-                    </div>
                 </div>
-
-                {/* Live: Watching Now Overlay */}
-                {isLive && (
-                    <div className="absolute top-2 right-2 z-20">
-                        <Badge className="bg-green-500 text-white border-0 shadow-xl animate-pulse flex items-center gap-1 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide">
-                            <Activity className="h-2.5 w-2.5" /> NOW
-                        </Badge>
-                    </div>
-                )}
             </div>
         )
     }
@@ -216,21 +191,28 @@ export const ActivityItemCard = memo(({
     // LIST VIEW
     return (
         <div
+            role="button"
+            tabIndex={0}
             className={cn(
-                'group flex items-center gap-6 p-4 rounded-2xl border transition-all duration-200 cursor-pointer',
-                isSelected ? 'bg-primary/5 border-primary shadow-md ring-2 ring-primary/20' : cn('shadow-sm', getColorClasses(item.accountColorIndex))
+                'group flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-2xl border bg-card/70 p-3 shadow-sm transition-[transform,opacity,box-shadow] duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background md:gap-4 md:p-4',
+                isSelected
+                    ? `border-primary ring-2 ${isLight ? 'ring-primary/20' : 'ring-primary/10'} bg-primary/5`
+                    : 'border-border/40 hover:border-border hover:bg-muted/25 hover:shadow-md'
             )}
             onClick={handleClick}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick() } }}
         >
-            {/* Selection Checkbox (List) */}
+
             {isSelected && (
-                <div className="shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all bg-primary border-primary">
+                <div className="shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-[transform,opacity,box-shadow] bg-primary border-primary">
                     <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                 </div>
             )}
-            <div className="relative w-24 h-36 shrink-0 rounded-lg overflow-hidden border border-white/10 bg-muted shadow-sm group-hover:shadow-md transition-all">
+
+
+            <div className="relative h-24 w-16 shrink-0 overflow-hidden rounded-2xl bg-muted shadow-sm md:h-28 md:w-20">
                 <Poster
                     src={item.poster}
                     itemId={item.itemId}
@@ -238,89 +220,80 @@ export const ActivityItemCard = memo(({
                     className="w-full h-full object-cover"
                     loading="lazy"
                 />
+                {item.source && <PlatformSourceBadge source={item.source} />}
+                {isLive && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                        <div className={`w-2 h-2 rounded-full bg-success animate-pulse ${isLight ? 'shadow-lg shadow-success/50' : 'shadow-sm shadow-success/20'}`} />
+                    </div>
+                )}
                 {item.progress > 0 && (
                     <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40">
-                        <div
-                            className="h-full bg-primary transition-all duration-500"
-                            style={{ width: `${item.progress}%` }}
-                        />
+                        <div className="h-full bg-primary transition-[transform,opacity,box-shadow] duration-500" style={{ width: `${item.progress}%` }} />
                     </div>
                 )}
             </div>
 
-            <div className="flex-1 min-w-0 py-2 space-y-2">
-                <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="flex items-center gap-1 text-[9px] uppercase tracking-tighter px-1.5 h-5 font-black opacity-60">
-                        {isLive ? (
-                            <span className="text-green-500 animate-pulse flex items-center gap-1">
-                                <Activity className="h-3 w-3" /> WATCHING NOW
-                            </span>
-                        ) : (
-                            <>
-                                {item.type === 'movie' ? <Film className="h-3 w-3" /> : <Tv className="h-3 w-3" />}
-                                {item.type}
-                            </>
-                        )}
-                    </Badge>
-                    <span className="text-xs font-mono opacity-50 flex items-center gap-1">
-                        {formatDistanceToNow(itemDate, { addSuffix: true })}
-                    </span>
+
+            <div className="min-w-0 flex-1 space-y-1.5">
+
+                <div className="flex items-start justify-between gap-2">
+                    <h4 className="truncate text-base font-bold leading-tight tracking-tight md:text-lg">{item.name}</h4>
+                    {isLive && (
+                        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 text-xs font-semibold uppercase text-success">
+                            <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
+                        </span>
+                    )}
                 </div>
 
-                <h4 className="font-black text-xl truncate tracking-tight">{item.name}</h4>
 
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                    {cluster ? (
-                        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-1">
-                            <span className="text-[10px] font-black tracking-tighter text-primary bg-primary/20 px-2 py-0.5 rounded border border-primary/30">
-                                {cluster.items.length} EPISODES
-                            </span>
-                            <div className="flex flex-wrap gap-1">
-                                {cluster.items.map(i => ({ s: i.season || 1, e: i.episode })).filter(i => i.e !== undefined).sort((a, b) => b.e! - a.e!).map((item, idx) => (
-                                    <span key={idx} className="text-[9px] font-bold opacity-70 bg-muted px-1.5 rounded border border-border/50">
-                                        S{item.s} E{item.e}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (item.type === 'series' || item.type === 'anime') && item.episode !== undefined && (
-                        <span className={cn(
-                            "flex items-center gap-1 font-mono font-bold",
-                            getAvatarColor(item.accountColorIndex).split(' ')[1]
-                        )}>
-                            S{item.season} E{item.episode}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+
+                    <span className="inline-flex items-center rounded-full border border-border/40 bg-muted/45 px-2 py-0.5 text-xs font-semibold uppercase text-muted-foreground">
+                        {item.type}
+                    </span>
+
+                    {episodeLabel && (
+                        <span className="text-xs font-mono font-bold text-muted-foreground">
+                            {episodeLabel}
                         </span>
                     )}
 
-                    <div className="flex items-center gap-2">
-                        <Avatar className="h-5 w-5 border border-border">
-                            <AvatarFallback className={cn("text-[9px] font-bold", getAvatarColor(item.accountColorIndex))}>
-                                {userName[0]?.toUpperCase()}
-                            </AvatarFallback>
-                        </Avatar>
-                        <span className="font-medium text-foreground/80">{userName}</span>
-                    </div>
                 </div>
 
-                {/* Progress Bar Label */}
-                {item.progress > 0 && (
-                    <div className="flex items-center gap-3 mt-4 max-w-md">
-                        <Progress value={item.progress} className="h-1.5 flex-1" />
-                        <div className="flex items-center gap-1 text-[10px] font-black tracking-tighter opacity-70 min-w-[70px] justify-end">
-                            <span>{Math.round(item.progress)}%</span>
-                            {remainingMinutes > 0 && <span>• {remainingMinutes}m left</span>}
+
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center">
+                            <SquircleOverlay />
+                            <span className="relative z-10 text-xs font-bold text-muted-foreground">{userName[0]?.toUpperCase()}</span>
                         </div>
+                        <span className="text-xs font-semibold text-muted-foreground">{userName}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground/60 font-mono">
+                        {isLive ? 'Watching now' : formatDistanceToNow(itemDate, { addSuffix: true })}
+                    </span>
+                </div>
+
+
+                {item.progress > 0 && (
+                    <div className="flex items-center gap-2 max-w-xs">
+                        <Progress value={item.progress} className="h-1 flex-1" />
+                        <span className="text-xs font-bold text-muted-foreground/60 tabular-nums">
+                            {Math.round(item.progress)}%{remainingMinutes > 0 && ` · ${remainingMinutes}m`}
+                        </span>
                     </div>
                 )}
+
             </div>
 
             <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10 text-muted-foreground hover:text-destructive shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="inline-flex h-8 w-8 shrink-0 text-muted-foreground transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={handleDelete}
+                aria-label="Delete activity item"
             >
-                <Trash2 className="h-5 w-5" />
+                <Trash2 className="h-4 w-4" />
             </Button>
         </div>
     )

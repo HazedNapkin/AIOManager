@@ -1,5 +1,11 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { inflateSync, strFromU8 } from 'fflate'
+import type { AddonDescriptor } from '@/types/addon'
+import { getHostnameIdentifier } from '@/lib/addon-identifier'
+import { normalizeAddonUrl } from '@/lib/addon-url'
+
+export { normalizeAddonUrl }
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -10,12 +16,6 @@ export function maskEmail(email: string): string {
   const [local, domain] = email.split('@')
   if (local.length <= 3) return `***@${domain}`
   return `${local.substring(0, 3)}***@${domain}`
-}
-
-export function maskString(str: string): string {
-  if (!str) return ''
-  if (str.length <= 8) return '********'
-  return `${str.substring(0, 4)}****${str.substring(str.length - 4)}`
 }
 
 export function maskUrl(url: string): string {
@@ -51,14 +51,12 @@ export function openStremioDetail(type: string, id: string) {
     return
   }
 
-  // Desktop/Web logic
   const start = Date.now()
   let blurred = false
 
   const onBlur = () => { blurred = true }
   window.addEventListener('blur', onBlur)
 
-  // Try deep link
   window.location.href = deepLink
 
   setTimeout(() => {
@@ -77,17 +75,8 @@ export function getAddonConfigureUrl(installUrl: string): string {
 
 /**
  * Normalizes an addon URL for consistent comparison.
- * Handles stremio:// protocols, trailing slashes, and manifest.json suffixes.
- * Note: Case is NOT forced here to preserve Base64 tokens; callers should .toLowerCase() if needed.
+ * Handles stremio:// protocols, trailing slashes, manifest.json suffixes, and lowercases the result.
  */
-export function normalizeAddonUrl(url: string): string {
-  if (!url) return ''
-  let normalized = url.trim()
-  normalized = normalized.replace(/^stremio:\/\//i, 'https://')
-  normalized = normalized.replace(/\/manifest\.json$/i, '')
-  normalized = normalized.replace(/\/+$/, '')
-  return normalized
-}
 
 /**
  * Strips user-specific UUID segments (20+ chars, hex/hyphen) from the path.
@@ -117,6 +106,27 @@ export function getAddonGroupKey(addon: AddonDescriptor): string {
   return getCanonicalAddonUrl(addon.transportUrl)
 }
 
+export function getAddonVersionKey(addon: { transportUrl: string; manifest?: { id?: string } }): string {
+  return `${addon.manifest?.id || 'unknown'}::${normalizeAddonUrl(addon.transportUrl)}`
+}
+
+export function getLatestAddonVersion(
+  latestVersions: Record<string, string>,
+  addon: { transportUrl: string; manifest?: { id?: string; version?: string } }
+): string | undefined {
+  const id = addon.manifest?.id
+  const instanceVersion = latestVersions[getAddonVersionKey(addon)]
+  if (instanceVersion) return instanceVersion
+
+  // Pre-release/custom builds are often separate instances sharing a manifest ID.
+  // Do not inherit another instance's stable latest version until this URL is checked.
+  if (addon.manifest?.version && /[-+]/.test(addon.manifest.version)) return undefined
+
+  const legacyLatest = id ? latestVersions[id] : undefined
+  if (legacyLatest && /[-+]/.test(legacyLatest)) return undefined
+  return legacyLatest
+}
+
 /**
  * Checks if a version string is strictly newer than the current version.
  * Handles 'v' prefixes, varying segment lengths, and basic semver flags.
@@ -125,16 +135,13 @@ export function isNewerVersion(current?: string, latest?: string): boolean {
   if (!latest || !current) return false
   if (latest === current) return false
 
-  // Helper to extract base version and build number
   const parseVersion = (v: string) => {
     const lower = v.toLowerCase().replace(/^v/, '')
     const [base, buildPart] = lower.split('+')
 
-    // Clean base version (remove pre-release tags like -beta for core comparison)
     const cleanBase = base.split('-')[0]
     const parts = cleanBase.split('.').map(Number)
 
-    // Extract build metadata if present (e.g. "build.2" -> 2)
     let buildNum = 0
     if (buildPart && buildPart.startsWith('build.')) {
       buildNum = parseInt(buildPart.split('.')[1]) || 0
@@ -155,20 +162,39 @@ export function isNewerVersion(current?: string, latest?: string): boolean {
     if (lPart < cPart) return false
   }
 
-  // Base versions are identical, compare build numbers
   if (l.buildNum > c.buildNum) return true
 
   return false
+}
+
+const normalizeIdentityText = (value: string | undefined) => (value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+export function hasFallbackAddonName(addon: Pick<AddonDescriptor, 'transportUrl' | 'manifest'>): boolean {
+  const manifestName = addon.manifest?.name
+  if (!manifestName || manifestName === 'Unknown Addon') return true
+
+  const hostFallback = getHostnameIdentifier(addon.transportUrl)
+  const normalizedName = normalizeIdentityText(manifestName)
+  const normalizedHostFallback = normalizeIdentityText(hostFallback)
+  return Boolean(normalizedName && normalizedName === normalizedHostFallback)
+}
+
+export function hasFallbackAddonIdentity(addon: Pick<AddonDescriptor, 'transportUrl' | 'manifest'>): boolean {
+  if (hasFallbackAddonName(addon)) return true
+
+  const hostFallback = getHostnameIdentifier(addon.transportUrl)
+  const normalizedHostFallback = normalizeIdentityText(hostFallback)
+
+  const description = addon.manifest?.description || ''
+  return description.startsWith('Addon from ') && normalizeIdentityText(description).includes(normalizedHostFallback)
 }
 
 /**
  * Helper: Merge remote addons with local addons, preserving order and flags.
  * Source of Truth: Remote presence determines "enabled" status, but local flags and metadata are preserved.
  */
-import { AddonDescriptor } from '@/types/addon'
 
 export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[]) {
-  // 1. Map remote addons for lookup (by normalized URL)
   // STRICT: Case-sensitive URL matching only. No ID-based deduplication.
   const remoteAddonMap = new Map<string, AddonDescriptor>()
 
@@ -183,7 +209,6 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
   const now = Date.now()
   const MANIFEST_GRACE_PERIOD = 10 * 60 * 1000 // 10 minutes
 
-  // 2. Iterate through LOCAL addons to preserve their order
   localAddons.forEach((localAddon) => {
     const normLocal = normalizeAddonUrl(localAddon.transportUrl)
 
@@ -194,8 +219,9 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
 
     if (remoteAddon) {
       // ANTI-WIPE GUARD: Favor local manifest if remote is 'broken' or if we recently updated/enabled it locally.
-      const isSubstantial = (m: any) => {
-        if (!m || !m.name || m.name === 'Unknown Addon') return false;
+      const isSubstantial = (addon: AddonDescriptor | undefined) => {
+        const m = addon?.manifest;
+        if (!addon || !m || !m.name || m.name === 'Unknown Addon' || hasFallbackAddonName(addon)) return false;
         const v = (m.version || '').replace(/^v/, '');
         const hasResources = Array.isArray(m.resources) && m.resources.length > 0;
         return v !== '0.0.0' && v !== '' && hasResources;
@@ -203,7 +229,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
 
       const remoteManifest = remoteAddon.manifest;
       const localManifest = localAddon.manifest;
-      const useLocalManifest = (isSubstantial(localManifest) && !isSubstantial(remoteManifest)) || isRecentLocalChange;
+      const useLocalManifest = (isSubstantial(localAddon) && !isSubstantial(remoteAddon)) || isRecentLocalChange;
 
       // Metadata: start from local (which carries customName, customLogo, etc.)
       let mergedMetadata = localAddon.metadata
@@ -234,7 +260,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         // Local customName is already in mergedMetadata from the logic above or existing state
       }
 
-      let finalManifest = useLocalManifest ? localManifest : remoteManifest;
+      const finalManifest = useLocalManifest ? localManifest : remoteManifest;
 
       finalAddons.push({
         ...remoteAddon,
@@ -247,6 +273,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         },
         metadata: mergedMetadata,
         catalogOverrides: localAddon.catalogOverrides,
+        note: localAddon.note,
       })
 
       processedRemoteNormUrls.add(normalizeAddonUrl(remoteAddon.transportUrl))
@@ -259,21 +286,17 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       // We MUST keep them locally to avoid a sync-deletion loop.
       const hasCustomizations = localAddon.metadata?.customName || localAddon.metadata?.customLogo || localAddon.metadata?.customDescription;
       const isProtected = localAddon.flags?.protected;
+      const hasNote = Boolean(localAddon.note?.trim());
 
-      if (isRecentLocalChange || localAddon.flags?.enabled === false || hasCustomizations || isProtected) {
-        finalAddons.push({
-          ...localAddon,
-          flags: {
-            ...(localAddon.flags || {}),
-            enabled: localAddon.flags?.enabled !== false
-          },
-        })
+      if (localAddon.flags?.enabled === false) {
+        finalAddons.push({ ...localAddon })
+      } else if (isRecentLocalChange || hasCustomizations || isProtected || hasNote) {
+        finalAddons.push({ ...localAddon })
       }
     }
     // If not in remote AND none of the above -> DROP (1:1 Mirroring)
   })
 
-  // 3. Append any NEW remote addons that weren't accounted for
   remoteAddons.forEach((remoteAddon) => {
     const normRemote = normalizeAddonUrl(remoteAddon.transportUrl)
 
@@ -327,5 +350,39 @@ export function getTimeAgo(date: Date): string {
   if (interval > 1) {
     return Math.floor(interval) + 'm ago'
   }
+  if (seconds < 10) return 'just now'
   return Math.floor(seconds) + 's ago'
+}
+
+export function decompressSyncPayload(base64String: string): string {
+  const bytes = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
+  return strFromU8(inflateSync(bytes))
+}
+
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+export function safeHref(url: string): string {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '#'
+    return url
+  } catch { return '#' }
+}
+
+export function inlineFormat(text: string, options?: { wikilinks?: boolean }): string {
+  let html = escapeHtml(text)
+  if (options?.wikilinks !== false) {
+    html = html.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
+      const safeTitle = title.replace(/"/g, '&quot;')
+      return `<span class="text-primary underline underline-offset-2 decoration-primary/40 hover:decoration-primary cursor-pointer" data-wikilink="${safeTitle}">${title}</span>`
+    })
+  }
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+  html = html.replace(/~~(.+?)~~/g, '<del>$1</del>')
+  html = html.replace(/`(.+?)`/g, '<code class="bg-destructive/10 text-destructive border border-destructive/15 px-1 py-0.5 rounded text-[0.8em] font-mono">$1</code>')
+  html = html.replace(/\[(.+?)\]\((.+?)\)/g, (_, t, url) => `<a href="${safeHref(url)}" class="text-primary underline underline-offset-2 hover:opacity-80" target="_blank" rel="noopener noreferrer">${t}</a>`)
+  return html
 }

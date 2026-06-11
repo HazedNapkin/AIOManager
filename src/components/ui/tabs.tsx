@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground",
+      "inline-flex h-auto w-fit max-w-full flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 text-muted-foreground shadow-sm",
       className
     )}
     {...props}
@@ -22,27 +22,37 @@ TabsList.displayName = TabsPrimitive.List.displayName
 
 const TabsTrigger = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.Trigger
-    ref={ref}
-    className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow",
-      className
-    )}
-    {...props}
-  />
-))
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger> & { animated?: boolean }
+>(({ className, children, animated: _animated = true, ...props }, ref) => {
+  const activeClass = "data-[state=active]:border data-[state=active]:border-border/40 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+  return (
+    <TabsPrimitive.Trigger
+      ref={ref}
+      className={cn(
+        "relative inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-transparent px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+        "text-muted-foreground hover:text-foreground",
+        activeClass,
+        className
+      )}
+      {...props}
+    >
+      <span className="relative z-10 flex items-center justify-center gap-1.5">
+        {children}
+      </span>
+    </TabsPrimitive.Trigger>
+  )
+})
 TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
 
 const TabsContent = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content> & { animated?: boolean }
+>(({ className, animated = true, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
     className={cn(
-      "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+      "mt-2 outline-none",
+      animated && "data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-150",
       className
     )}
     {...props}

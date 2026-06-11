@@ -1,0 +1,125 @@
+---
+title: Troubleshooting
+description: Step-by-step fixes for common AIOManager issues.
+---
+
+Step-by-step solutions for common problems. If the issue persists after following these guides, join the [Discord community](https://discord.viren070.me) for help.
+
+---
+
+## Account Issues
+
+<Accordions>
+  <Accordion title="My OAuth code expired">
+    OAuth codes expire after 10 minutes. Generate a fresh link from the Add Account dialog.
+  </Accordion>
+  <Accordion title="OAuth authorization failed">
+    You may have entered the wrong code. Start over with a new code and type it exactly as shown; codes are case-sensitive.
+  </Accordion>
+  <Accordion title="My account expires after signing out of Stremio Web">
+    Stremio can revoke OAuth link tokens when the approving web session signs out. Copied AuthKeys are usually more durable, but they still cannot be auto-refreshed if Stremio rejects them later. If you're adding the account now, choose **Save persistent account** after OAuth approval. For an existing account, edit it and re-authenticate with Email & Password.
+  </Accordion>
+  <Accordion title="Account not found after authorizing">
+    Wait 30 seconds after authorizing. AIOManager polls Stremio periodically. If it still doesn't appear, try refreshing the page.
+  </Accordion>
+  <Accordion title="AuthKey returns null or undefined">
+    You're not logged into Stremio Web. Navigate to `https://web.stremio.com`, log in, then try extracting the AuthKey again.
+  </Accordion>
+  <Accordion title="AuthKey is rejected">
+    The key may be stale, copied incorrectly, or invalidated after a password/security change. Re-log into Stremio Web and get a fresh AuthKey, or re-authenticate with Email & Password for a refreshable token.
+  </Accordion>
+</Accordions>
+
+---
+
+## Addon Issues
+
+<Accordions>
+  <Accordion title="An addon isn't loading">
+    <Steps>
+      <Step>**Check URL:** Check if the addon URL is correct.</Step>
+      <Step>**Verify Server:** Verify the addon server is online (try opening the manifest URL in your browser).</Step>
+      <Step>**Sync:** Click **Sync** on the account to refresh addon data.</Step>
+      <Step>**Repair:** If the addon was recently updated, click **Repair** to re-download the manifest.</Step>
+    </Steps>
+  </Accordion>
+  <Accordion title="Getting wrong results (wrong season/episode/movie)">
+    This is usually an addon issue, not AIOManager. Try:
+
+    - Using a different addon for that content
+    - Checking if the addon has known issues on their support channel
+    - Verifying the content exists on the source the addon uses
+  </Accordion>
+  <Accordion title="Results are very slow to appear">
+    - Some addons are slower than others due to their backend
+    - If you have many addons, results take longer to aggregate
+    - Check your server's network connection
+    - Try disabling some addons you don't use
+  </Accordion>
+  <Accordion title="Addon shows in AIOManager but not in Stremio">
+    <Steps>
+      <Step>**Sync:** Click **Sync** in AIOManager.</Step>
+      <Step>**Restart Stremio:** Restart the Stremio app.</Step>
+      <Step>**Check Toggle:** Check if the addon is enabled (toggle switch).</Step>
+      <Step>**Geo-block:** Verify the addon isn't geo-blocked.</Step>
+    </Steps>
+  </Accordion>
+</Accordions>
+
+---
+
+## Self-Hosting Issues
+
+<Accordions>
+  <Accordion title="Stremio shows 'Failed to fetch' or refuses to connect">
+    - Verify the server is running: check `docker ps` or the process list
+    - Check `CORS_ORIGINS` includes your Stremio app's origin
+    - Ensure you're using HTTPS (required for non-localhost)
+    - Check firewall rules allow traffic on your configured port
+  </Accordion>
+  <Accordion title="Configuration disappears after updating container">
+    You're not using a persistent volume. Add a volume mount:
+
+    ```yaml
+    volumes:
+      - ./data:/app/data
+    ```
+
+    This preserves your database across container recreations.
+  </Accordion>
+  <Accordion title="TMDB API errors on my VPS">
+    Some VPS providers (especially Oracle Cloud) have IP ranges that TMDB blocks. Work around this by:
+
+    - Using a VPN via environment variable `ADDON_PROXY`
+    - Setting up a proxy server
+    - Using a different VPS provider
+  </Accordion>
+  <Accordion title="Encryption APIs don't work over HTTP">
+    AIOManager requires HTTPS for encryption features (Vault, Cloud Sync). For local testing, use `localhost`, which browsers treat as secure. For remote access, set up a reverse proxy with SSL.
+  </Accordion>
+</Accordions>
+
+---
+
+## Sync Issues
+
+<Accordions>
+  <Accordion title="Cloud Sync fails to complete">
+    - Check your network connection
+    - Verify you have enough storage space
+    - Try resetting sync and starting fresh
+    - Check browser console for specific error messages
+  </Accordion>
+  <Accordion title="Sync shows conflicts">
+    Conflicts occur when the same data is modified on multiple devices. Choose which version to keep, or manually merge the changes.
+  </Accordion>
+  <Accordion title="Lost data after sync">
+    Sync overwrites local data with the synced version. Always backup before syncing if you have important local changes. Check the **Sync Diagnostics** page in Settings for details.
+  </Accordion>
+</Accordions>
+
+---
+
+<Callout type="warn">
+Still stuck? Join the [Discord community](https://discord.viren070.me) and ask in the `#support` channel. Include your container logs, what you've tried, and any error screenshots.
+</Callout>

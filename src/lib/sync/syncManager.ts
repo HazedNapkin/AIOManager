@@ -14,45 +14,47 @@ export interface PendingOperation {
 }
 
 class SyncManager {
-    private pendingRemovals: Map<string, Set<string>> = new Map()
+    private pendingRemovals: Map<string, Map<string, number>> = new Map()
     private observers: Set<() => void> = new Set()
 
-    /**
-     * Mark an addon as "Deleting" for a specific account.
-     * This ensures that any background PULLs from Stremio ignore this addon 
-     * until the deletion is confirmed or timed out.
-     */
-    addPendingRemoval(accountId: string, transportUrl: string) {
-        if (!this.pendingRemovals.has(accountId)) {
-            this.pendingRemovals.set(accountId, new Set())
+    private static TTL_MS = 24 * 60 * 60 * 1000
+
+    private evictExpired(accountId: string) {
+        const map = this.pendingRemovals.get(accountId)
+        if (!map) return
+        const now = Date.now()
+        for (const [url, ts] of map) {
+            if (now - ts > SyncManager.TTL_MS) {
+                map.delete(url)
+            }
         }
-        this.pendingRemovals.get(accountId)!.add(transportUrl.toLowerCase())
+        if (map.size === 0) this.pendingRemovals.delete(accountId)
+    }
+
+    addPendingRemoval(accountId: string, transportUrl: string) {
+        this.evictExpired(accountId)
+        if (!this.pendingRemovals.has(accountId)) {
+            this.pendingRemovals.set(accountId, new Map())
+        }
+        this.pendingRemovals.get(accountId)!.set(transportUrl.toLowerCase(), Date.now())
         this.notify()
     }
 
-    /**
-     * Unmark an addon.
-     */
     removePendingRemoval(accountId: string, transportUrl: string) {
-        const set = this.pendingRemovals.get(accountId)
-        if (set) {
-            set.delete(transportUrl.toLowerCase())
-            if (set.size === 0) this.pendingRemovals.delete(accountId)
+        const map = this.pendingRemovals.get(accountId)
+        if (map) {
+            map.delete(transportUrl.toLowerCase())
+            if (map.size === 0) this.pendingRemovals.delete(accountId)
             this.notify()
         }
     }
 
-    /**
-     * Check if an addon is currently pending deletion.
-     */
     isPendingRemoval(accountId: string, transportUrl: string): boolean {
-        const set = this.pendingRemovals.get(accountId)
-        return set ? set.has(transportUrl.toLowerCase()) : false
+        this.evictExpired(accountId)
+        const map = this.pendingRemovals.get(accountId)
+        return map ? map.has(transportUrl.toLowerCase()) : false
     }
 
-    /**
-     * Clear all pending operations for an account.
-     */
     clearAccount(accountId: string) {
         this.pendingRemovals.delete(accountId)
         this.notify()

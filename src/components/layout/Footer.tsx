@@ -1,11 +1,12 @@
-import { Github, Laptop, Heart, Box, FileText, Globe } from 'lucide-react'
+import { Github, Heart, Box, FileText } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import React from 'react'
 import pkg from '../../../package.json'
 import { useUIStore } from '@/store/uiStore'
-import { isNewerVersion } from '@/lib/utils'
+import { isNewerVersion, cn } from '@/lib/utils'
+import { Tooltip } from '@/components/ui/tooltip'
 
-export function Footer() {
+export function Footer({ className }: { className?: string }) {
   const isDev = import.meta.env?.DEV
   const version = pkg.version
   const build = (pkg as any).build as number | undefined
@@ -33,107 +34,95 @@ export function Footer() {
     }
 
     if (!isDev) checkUpdate()
-  }, [isDev, version])
+  }, [isDev, version, build])
 
   return (
-    <>
-      <footer className="border-t border-border bg-card/30 mt-auto">
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex flex-col gap-6">
-            <div className="grid grid-cols-2 md:flex md:items-center md:justify-center gap-2 sm:gap-4">
-              <a
-                href="https://torbox.app/subscription?referral=a7aecfd0-57c8-48fa-9e49-2904f09d57d2"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-150 border md:border-transparent"
-              >
-                <Box className="h-4 w-4" />
-                TorBox
-              </a>
-              <a
-                href="https://github.com/sonicx161/AIOManager"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-150 border md:border-transparent"
-              >
-                <Github className="h-4 w-4" />
-                Source
-              </a>
-              <Link
-                to="/faq#credits"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-150 border md:border-transparent"
-              >
-                <FileText className="h-4 w-4" />
-                Credits
-              </Link>
-              <Link
-                to="/faq#support"
-                className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors duration-150 border md:border-transparent"
-              >
-                <Heart className="h-4 w-4" />
-                Support
-              </Link>
-            </div>
+    <footer className={cn("mt-auto px-3 pt-5 sm:px-4", className)}>
+      <div className="glass-header mx-auto w-full max-w-[1800px] rounded-t-3xl border border-b-0 border-border/40 px-4 py-4 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06),0_-18px_60px_hsl(var(--background)/0.35)]">
+        <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
+          <nav
+            aria-label="Footer links"
+            className="inline-flex w-full flex-wrap items-center justify-center gap-1 rounded-2xl border border-border/40 bg-white/[0.04] p-1.5 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)] md:w-auto"
+          >
+            <a
+              href="https://torbox.app/subscription?referral=a7aecfd0-57c8-48fa-9e49-2904f09d57d2"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+            >
+              <Box className="h-3.5 w-3.5" />
+              TorBox
+            </a>
+            <a
+              href="https://github.com/sonicx161/AIOManager"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+            >
+              <Github className="h-3.5 w-3.5" />
+              Source
+            </a>
+            <Link
+              to="/kronorium/project/credits"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Credits
+            </Link>
+            <Link
+              to="/kronorium/project/support"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+            >
+              <Heart className="h-3.5 w-3.5" />
+              Support
+            </Link>
+          </nav>
 
-            <div className="flex flex-col items-center justify-center gap-2 text-center">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>Made with ❤️ by</span>
+          <div className="inline-flex max-w-full flex-wrap items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-white/[0.04] text-[10px] font-semibold uppercase tracking-[0.05em] shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)]">
+            <Tooltip content="Developer GitHub Profile" side="top">
+              <a
+                href="https://github.com/sonicx161"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-8 items-center gap-1.5 px-3 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Made with <Heart className="h-3 w-3 fill-primary text-primary" /> by <span className="text-primary">Sonicx161</span>
+              </a>
+            </Tooltip>
+            <span className="h-4 w-px bg-border/70" />
+            <Tooltip content="View release notes" side="top">
+              <button
+                onClick={() => useUIStore.getState().setWhatsNewOpen(true)}
+                className="inline-flex h-8 items-center gap-1.5 px-3 font-mono text-muted-foreground transition-colors hover:text-primary"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                v{version}
+              </button>
+            </Tooltip>
+            {build && (
+              <>
+                <span className="h-4 w-px bg-border/70" />
+                <span className="inline-flex h-8 items-center px-3 text-muted-foreground">
+                  Build <span className="ml-1 font-mono text-foreground">{build}</span>
+                </span>
+              </>
+            )}
+            {updateAvailable && (
+              <>
+                <span className="h-4 w-px bg-border/70" />
                 <a
-                  href="https://github.com/sonicx161"
+                  href="https://github.com/sonicx161/AIOManager/releases"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary hover:underline font-medium"
-                  title="Developer GitHub Profile"
+                  className="inline-flex h-8 items-center px-3 text-primary transition-colors hover:bg-primary/10"
                 >
-                  Sonicx161
+                  Update v{updateAvailable}
                 </a>
-                <span className="text-muted-foreground/30">•</span>
-                <div className="flex items-center gap-2">
-                  <a
-                    href="https://chrise.vercel.app/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-primary transition-colors"
-                    title="Professional Portfolio (Chris E)"
-                  >
-                    <Laptop className="h-4 w-4" />
-                  </a>
-                  <span className="text-muted-foreground/30">•</span>
-                  <a
-                    href="https://sonicx161.vercel.app/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-muted-foreground hover:text-primary transition-colors"
-                    title="Project Brand & Community"
-                  >
-                    <Globe className="h-4 w-4" />
-                  </a>
-                  <span className="text-muted-foreground/30">•</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => useUIStore.getState().setWhatsNewOpen(true)}
-                      className="text-[10px] sm:text-xs font-mono text-muted-foreground/40 hover:text-primary select-none uppercase tracking-widest transition-colors"
-                      title="View release notes"
-                    >
-                      v{version}{build ? ` (Build ${build})` : ''}
-                    </button>
-                    {updateAvailable && (
-                      <a
-                        href="https://github.com/sonicx161/AIOManager/releases"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="bg-primary/10 text-primary hover:bg-primary/20 text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors"
-                      >
-                        Update: v{updateAvailable}
-                      </a>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         </div>
-      </footer>
-    </>
+      </div>
+    </footer>
   )
 }

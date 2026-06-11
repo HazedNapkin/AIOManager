@@ -4,11 +4,7 @@ export type VaultProvider =
     | 'premiumize'
     | 'alldebrid'
     | 'debrid-link'
-    | 'offcloud'
-    | 'put-io'
-    | 'easynews'
-    | 'pikpak'
-    | 'trakt'
+    | 'aiostreams'
     | 'other'
 
 export interface VaultKey {
@@ -17,6 +13,12 @@ export interface VaultKey {
     provider: VaultProvider
     value: string
     updatedAt: number
+    customExpiry?: string
+    customAbbr?: string
+    customDashboardUrl?: string
+    customProviderName?: string
+    group?: string
+    catalogId?: string
 }
 
 export interface VaultState {

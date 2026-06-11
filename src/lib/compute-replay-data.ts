@@ -1,5 +1,6 @@
 import { ActivityItem } from '@/types/activity'
 import { ReplayData, RankedTitle, GenreStat, MonthStat, Milestone, HourlyDistribution, DailyDistribution, YearOverYearDelta } from '@/types/ReplayTypes'
+import { getCinemetaPosterUrl } from '@/lib/cinemeta-utils'
 import { format } from 'date-fns'
 
 const GENRE_COLORS: Record<string, string> = {
@@ -25,10 +26,8 @@ const GENRE_COLORS: Record<string, string> = {
 }
 
 export function computeReplayData(history: ActivityItem[], targetYear: number | string): ReplayData {
-    // Determine if target is a specific month (e.g. "2026-02")
     const isSpecificMonth = typeof targetYear === 'string' && targetYear !== 'all-time' && targetYear.includes('-');
 
-    // 1. Filter history by time window
     const filteredHistory = targetYear === 'all-time'
         ? history
         : isSpecificMonth
@@ -44,7 +43,11 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
             })
             : history.filter(item => new Date(item.timestamp).getFullYear() < (targetYear as number))
 
-    // Data Structures for Aggregation
+    // Backfilled episodes (recovered from the watched-bitfield) have a synthetic timestamp, so they
+    // count toward titles/episodes/discoveries but are excluded from every time-based stat (monthly
+    // breakdown, streaks, hourly/daily distribution, busiest day, YoY hours).
+    const timeHistory = filteredHistory.filter(item => !item.backfill)
+
     const titleMap = new Map<string, {
         item: ActivityItem,
         count: number,
@@ -59,35 +62,37 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         titleCounts: Map<string, { item: ActivityItem, count: number }>
     }>()
 
-    // Aggregation Logic
+    // Title aggregation (includes backfill: counts titles/episodes). Backfill contributes 0 hours
+    // rather than the duration fallback, so recovered episodes never fabricate watch time.
     filteredHistory.forEach(item => {
-        // Format aggregation removed from genreMap as requested.
-        // ActivityItem doesn't carry full Cinemeta genres yet, so genreMap will be empty
-        // unless actual genres are provided in a future update.
+        const hours = item.backfill
+            ? 0
+            : (item.overallTimeWatched && item.overallTimeWatched > 0
+                ? item.overallTimeWatched
+                : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000) / 3600000;
 
-        // Time calculations - prioritize precise timeWatched/overallTimeWatched, fallback to duration * progress
-        const timeWatchedMs = item.overallTimeWatched && item.overallTimeWatched > 0
-            ? item.overallTimeWatched
-            : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000;
-
-        const hours = timeWatchedMs / 3600000;
-
-        // Title aggregation
         const uniqueId = item.itemId;
         const current = titleMap.get(uniqueId) || {
             item,
             count: 0,
             totalHours: 0,
-            years: new Set()
+            years: new Set<number>()
         }
 
         current.count++
         current.totalHours += hours
-
         current.years.add(new Date(item.timestamp).getFullYear())
         titleMap.set(uniqueId, current)
+    })
 
-        // Monthly aggregation
+    // Monthly aggregation (time-based: excludes backfill).
+    timeHistory.forEach(item => {
+        const rawTimeMs = item.overallTimeWatched && item.overallTimeWatched > 0
+            ? item.overallTimeWatched
+            : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000;
+        const hours = rawTimeMs / 3600000;
+
+        const uniqueId = item.itemId;
         const mKey = format(new Date(item.timestamp), 'yyyy-MM')
         const mData = monthMap.get(mKey) || { titles: new Set(), hours: 0, titleCounts: new Map() }
         mData.titles.add(uniqueId)
@@ -100,7 +105,6 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         monthMap.set(mKey, mData)
     })
 
-    // Rank Titles
     const rankedTitles: RankedTitle[] = Array.from(titleMap.entries())
         .map(([_, data]) => ({
             id: data.item.id,
@@ -111,12 +115,11 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
             poster: data.item.poster,
             watchCount: data.count,
             totalHours: data.totalHours,
-            rank: 0 // Will set after sorting
+            rank: 0
         }))
         .sort((a, b) => b.totalHours - a.totalHours || b.watchCount - a.watchCount)
         .map((t, i) => ({ ...t, rank: i + 1 }))
 
-    // Top Genres
     const totalItems = filteredHistory.length
     const topGenres: GenreStat[] = Array.from(genreMap.entries())
         .map(([genre, count]) => ({
@@ -127,7 +130,6 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         }))
         .sort((a, b) => b.count - a.count)
 
-    // Monthly Breakdown
     const months: MonthStat[] = []
     if (targetYear !== 'all-time' && !isSpecificMonth) {
         for (let m = 0; m < 12; m++) {
@@ -170,25 +172,24 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         })
     }
 
-    // Special Categories
     const beforeTargetIds = new Set(historyBeforeTarget.map(item => item.itemId))
 
-    // Discoveries: New items first seen in this period
-    const discoveries = rankedTitles.filter(t => !beforeTargetIds.has(t.itemId)).slice(0, 10)
+    // Discoveries: New items first seen in this period. Keep the full count separate from the
+    // display slice -- persona/milestones/stats below need the true total, not the capped 10.
+    const allDiscoveries = rankedTitles.filter(t => !beforeTargetIds.has(t.itemId))
+    const discoveryCount = allDiscoveries.length
+    const discoveries = allDiscoveries.slice(0, 10)
 
-    // Marathon: The titles you sank the most hours into — sorted by total hours
     const marathonTitles = [...rankedTitles]
         .sort((a, b) => b.totalHours - a.totalHours)
         .slice(0, 10)
 
-    // Hidden Gems: Strong titles ranked outside your top 3 that still pulled serious hours
     const hiddenGems = rankedTitles
         .filter(t => t.rank > 3)
         .sort((a, b) => b.totalHours - a.totalHours)
         .slice(0, 10)
 
-    // Binge Streaks (Consecutive Days - UTC Consistent)
-    const activeDates = Array.from(new Set(filteredHistory.map(item => new Date(item.timestamp).toISOString().split('T')[0]))).sort()
+    const activeDates = Array.from(new Set(timeHistory.map(item => new Date(item.timestamp).toISOString().split('T')[0]))).sort()
     let longestStreak = 0
     let currentStreak = 0
     let lastTimestampMs: number | null = null
@@ -212,23 +213,24 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         lastTimestampMs = currentTimestampMs
     })
 
-    // Hero Mosaic
-    const heroPosterArt = rankedTitles.slice(0, 48).map(t => t.poster)
+    const heroPosterArt = rankedTitles.slice(0, 48).map(t => {
+        const tt = t.itemId?.match(/tt\d+/i)?.[0]
+        return tt ? getCinemetaPosterUrl(tt) : t.poster
+    })
 
-    // Calculate Persona
     const calculatePersona = () => {
         const totalHours = Math.round(Array.from(titleMap.values()).reduce((sum, d) => sum + d.totalHours, 0))
-        const nightOwlHours = filteredHistory.filter(h => {
+        const nightOwlHours = timeHistory.filter(h => {
             const hour = new Date(h.timestamp).getHours()
             return hour >= 0 && hour <= 5
         }).length
 
-        const weekendHours = filteredHistory.filter(h => {
+        const weekendHours = timeHistory.filter(h => {
             const day = new Date(h.timestamp).getDay()
             return day === 0 || day === 6
         }).length
 
-        if (nightOwlHours > filteredHistory.length * 0.3) {
+        if (nightOwlHours > timeHistory.length * 0.3) {
             return {
                 name: 'The Night Owl',
                 description: 'Your best streaming starts when the rest of the world is asleep.'
@@ -240,13 +242,13 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
                 description: 'Once you start, there is no stopping. You live for the "Next Episode" button.'
             }
         }
-        if (discoveries.length > 50) {
+        if (discoveryCount > 50) {
             return {
                 name: 'The Explorer',
                 description: 'Always on the hunt for something new. Your curiosity knows no bounds.'
             }
         }
-        if (weekendHours > filteredHistory.length * 0.4) {
+        if (weekendHours > timeHistory.length * 0.4) {
             return {
                 name: 'Weekend Warrior',
                 description: 'You save your cinematic adventures for the ultimate weekend escape.'
@@ -266,13 +268,8 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
 
     const persona = calculatePersona()
 
-    // ═════════════════════════════════════════════════════════════════
-    //  NEW FEATURES: Milestones, Hourly, Daily, YoY, Discovery Stats
-    // ═════════════════════════════════════════════════════════════════
-
     const totalHoursComputed = Math.round(Array.from(titleMap.values()).reduce((sum, d) => sum + d.totalHours, 0))
 
-    // ── Milestones & Achievements ──
     const milestones: Milestone[] = [
         { id: 'titles-50', icon: '🎬', title: 'Cineplex Pass', description: 'Watched 50 unique titles', value: titleMap.size, threshold: 50, unlocked: titleMap.size >= 50 },
         { id: 'titles-100', icon: '🏅', title: 'Century Club', description: 'Watched 100 unique titles', value: titleMap.size, threshold: 100, unlocked: titleMap.size >= 100 },
@@ -286,12 +283,11 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         { id: 'streak-30', icon: '⚡', title: 'Monthly Marathon', description: 'Binge streak of 30+ days', value: longestStreak, threshold: 30, unlocked: longestStreak >= 30 },
         // Genres milestone hidden until Cinemeta genre data is available in ActivityItem
         // { id: 'genres-5', icon: '🔍', title: 'Genre Explorer', description: 'Watched across 5+ categories', value: genreMap.size, threshold: 5, unlocked: genreMap.size >= 5 },
-        { id: 'discoveries-25', icon: '🔍', title: 'Trailblazer', description: 'Discovered 25+ new titles', value: discoveries.length, threshold: 25, unlocked: discoveries.length >= 25 },
+        { id: 'discoveries-25', icon: '🔍', title: 'Trailblazer', description: 'Discovered 25+ new titles', value: discoveryCount, threshold: 25, unlocked: discoveryCount >= 25 },
     ]
 
-    // ── Hourly Distribution (Time-of-Day) ──
     const hourCounts = new Array(24).fill(0)
-    filteredHistory.forEach(item => {
+    timeHistory.forEach(item => {
         const hour = new Date(item.timestamp).getHours()
         hourCounts[hour]++
     })
@@ -303,11 +299,10 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
     }))
     const peakHour = hourCounts.indexOf(Math.max(...hourCounts))
 
-    // ── Daily Distribution (Day-of-Week) ──
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const dayCounts = new Array(7).fill(0)
     const dayHours = new Array(7).fill(0)
-    filteredHistory.forEach(item => {
+    timeHistory.forEach(item => {
         const day = new Date(item.timestamp).getDay()
         dayCounts[day]++
         const timeWatchedMs = item.overallTimeWatched && item.overallTimeWatched > 0
@@ -326,15 +321,15 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
     const peakDayIndex = dayHours.indexOf(Math.max(...dayHours))
     const peakDay = dayNames[peakDayIndex]
 
-    // ── Year-over-Year Comparisons ──
     let yearOverYear: YearOverYearDelta | null = null
     if (typeof targetYear === 'number') {
         const prevYearNum = targetYear - 1
         const prevYearHistory = history.filter(item => new Date(item.timestamp).getFullYear() === prevYearNum)
 
         if (prevYearHistory.length > 0) {
+            const prevYearTimeHistory = prevYearHistory.filter(i => !i.backfill)
             const prevTitles = new Set(prevYearHistory.map(i => i.itemId)).size
-            const prevHours = Math.round(prevYearHistory.reduce((sum, item) => {
+            const prevHours = Math.round(prevYearTimeHistory.reduce((sum, item) => {
                 const tw = item.overallTimeWatched && item.overallTimeWatched > 0
                     ? item.overallTimeWatched
                     : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
@@ -347,7 +342,7 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
             const currentLoyalty = titleMap.size > 0 ? Math.round((currentSeriesCount / titleMap.size) * 100) : 0
 
             // Previous year streak (UTC based for consistency)
-            const prevDates = Array.from(new Set(prevYearHistory.map(i => new Date(i.timestamp).toISOString().split('T')[0]))).sort()
+            const prevDates = Array.from(new Set(prevYearTimeHistory.map(i => new Date(i.timestamp).toISOString().split('T')[0]))).sort()
             let prevStreak = 0, prevCurrentStreak = 0
             let prevLast: Date | null = null
             prevDates.forEach(ds => {
@@ -378,8 +373,7 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         }
     }
 
-    // ── Discovery Stats ──
-    const totalUniqueDiscoveries = discoveries.length
+    const totalUniqueDiscoveries = discoveryCount
     const discoveryPercentage = titleMap.size > 0 ? Math.round((totalUniqueDiscoveries / titleMap.size) * 100) : 0
 
     return {
@@ -400,7 +394,6 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         heroPosterArt,
         persona: persona.name,
         personaDescription: persona.description,
-        // New features
         milestones,
         hourlyDistribution,
         dailyDistribution,

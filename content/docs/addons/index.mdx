@@ -1,0 +1,339 @@
+---
+title: Managing Addons
+description: Everything available on an installed addon card and how to use it.
+---
+
+## What Are Stremio Addons?
+
+Addons are extensions that add functionality to Stremio. They provide content sources, metadata, subtitles, and more. Think of them as apps or plugins for Stremio.
+
+### How Addons Work
+
+| Component | Purpose |
+|-----------|---------|
+| **Manifest** | JSON file describing the addon's capabilities |
+| **Install URL** | Link containing any configuration parameters |
+| **Catalog** | Browseable content lists (e.g., "Trending Movies") |
+| **Stream** | Actual video sources for content |
+
+### Addon Types
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| **Streaming** | Provide video sources | AIOStreams, Torrentio |
+| **Metadata** | Enhance content info | AIOMetadata, Cinemeta |
+| **Subtitles** | Provide subtitles | OpenSubtitles |
+| **Debrid** | Premium file hosts | Real-Debrid, AllDebrid |
+
+---
+
+## Addon Card Anatomy
+
+Each installed addon appears as a card with several interactive elements:
+
+### Card Components
+
+| Component | Location | Function |
+|-----------|----------|----------|
+| **Name** | Top-left | Addon's display name (can be customized) |
+| **Version** | Top-right | Current addon version |
+| **Description** | Below name | What the addon does |
+| **Badge** | Top-right corner | Autopilot status (if applicable) |
+| **Toggle** | Bottom-right | Enable/disable without removing |
+| **URL Bar** | Bottom | Install URL with copy/link buttons |
+| **Action Grid** | Center | 2×2 grid of action buttons |
+| **Menu (⋮)** | Top-right | Additional actions |
+
+---
+
+## Action Grid Explained
+
+The 2×2 grid in the center of each card provides quick access to common actions:
+
+### Configure
+
+Opens the addon's configuration page in a new tab.
+
+| Behavior | Details |
+|----------|---------|
+| **Primary use** | Change addon settings |
+| **Smart detection** | Finds config page even if not declared in manifest |
+| **After changes** | URL may change - Save to Library to update |
+
+**When to use:**
+- Changing debrid provider in AIOStreams
+- Adjusting filter settings
+- Enabling/disabling content types
+- Configuring quality preferences
+
+### Catalogs
+
+Opens the Catalog Editor for reordering or hiding individual catalogs.
+
+| Capability | Description |
+|------------|-------------|
+| **Reorder** | Drag catalogs to change display order in Stremio |
+| **Hide** | Toggle off catalogs you don't want to see |
+| **Preview** | See catalog names and types before saving |
+
+<Note>Only appears if the addon has catalogs. Grayed out if none available.</Note>
+
+**When to use:**
+- Too many catalogs cluttering Stremio
+- Want specific catalogs first
+- Hiding unwanted content types
+
+### Customize
+
+Opens the metadata editor for personalizing how the addon appears.
+
+| Field | Effect |
+|-------|--------|
+| **Custom Name** | Display name in AIOManager and Stremio |
+| **Logo URL** | Custom icon/image for the addon |
+| **Description** | Your own notes or description |
+
+<Tip>Custom names and logos persist through reinstalls and sync to Stremio. Great for distinguishing multiple instances of the same addon.</Tip>
+
+**When to use:**
+- Running multiple AIOStreams instances (e.g., "AIOStreams - RD", "AIOStreams - TB")
+- Adding notes about configuration
+- Fixing incorrect addon icons
+
+### Save to Library / Reinstall
+
+This button changes based on addon state:
+
+| State | Label | Action |
+|-------|-------|--------|
+| Not saved | "Save to Library" | Stores configuration for later deployment |
+| Already saved | "Reinstall" | Re-fetches manifest without losing customizations |
+
+**Reinstall behavior:**
+
+<Steps>
+  <Step>**Fetch:** Fetches fresh manifest from source URL.</Step>
+  <Step>**Preserve:** Preserves custom name, logo, description.</Step>
+  <Step>**Update:** Updates addon metadata.</Step>
+  <Step>**Keep URL:** Does not change configuration URL.</Step>
+</Steps>
+
+**When to Reinstall:**
+- Addon shows outdated version
+- Manifest appears corrupted
+- Addon behaving unexpectedly
+
+### Remove Addon
+
+Permanently removes the addon from this Stremio account.
+
+| Behavior | Details |
+|----------|---------|
+| **Confirmation** | Shows dialog before proceeding |
+| **Protection** | Grayed out if addon is protected |
+| **Recovery** | Re-install from Library if saved |
+
+<Warning>Removal is immediate and affects Stremio. Save to Library first if you might need it again.</Warning>
+
+---
+
+## Badge States
+
+Addons in Autopilot failover chains display status badges:
+
+### Active States
+
+| Badge | State | Meaning |
+|-------|-------|---------|
+| **Primary** | Active | Currently serving content, healthy |
+| **Primary · Paused** | Paused | Was primary, rule paused by user action |
+
+### Backup States
+
+| Badge | State | Meaning |
+|-------|-------|---------|
+| **Backup** | Standby | Disabled, waiting for primary to fail |
+| **Backup · Paused** | Paused | Was backup, rule paused by user action |
+
+### What Causes Paused State
+
+| Trigger | Result |
+|---------|--------|
+| Manually enable a backup addon | Rule auto-pauses |
+| Manually disable a primary addon | Rule auto-pauses |
+| Change addon's Autopilot participation | Rule may pause |
+
+---
+
+## Menu Actions (⋮)
+
+The three-dot menu provides additional management options:
+
+### Protect / Unprotect
+
+Prevents accidental removal during bulk operations.
+
+| State | Visual | Effect |
+|-------|--------|--------|
+| Unprotected | No badge | Can be removed |
+| Protected | Green "Protected" badge | Skipped by bulk remove |
+
+**When to protect:**
+- Critical addons you never want to lose
+- Complex configurations that took time to set up
+- Primary streaming addons
+
+### Clone to Account
+
+Copies this exact addon (with configuration URL) to another account.
+
+<Steps>
+  <Step>**Open Menu:** Click ⋮ on the addon card.</Step>
+  <Step>**Select Clone:** Choose "Clone to Account".</Step>
+  <Step>**Pick Target:** Select destination account from list.</Step>
+  <Step>**Confirm:** Addon is copied with same configuration.</Step>
+</Steps>
+
+**What gets cloned:**
+- Install URL (including all configuration parameters)
+- Custom name and logo (if set)
+
+**What doesn't get cloned:**
+- Protection status
+- Autopilot membership
+
+### Deploy to All
+
+Pushes this addon to every account you manage simultaneously.
+
+| Behavior | Details |
+|----------|---------|
+| **Skips existing** | Accounts with this addon already are skipped |
+| **Preserves config** | Uses same install URL |
+| **No confirmation** | Action is immediate |
+
+<Warning>Deploy to All affects all accounts. Consider implications before using.</Warning>
+
+### Remove
+
+Alternative to the Remove button in the action grid.
+
+---
+
+## Filtering and Search
+
+### Search
+
+The search bar filters addons in real time as you type.
+
+| Searches | Example Match |
+|----------|---------------|
+| Name | "AIOStreams" |
+| Description | "debrid integration" |
+| URL | "example.com" |
+
+### Hide Disabled
+
+Toggle that appears when any addon is disabled.
+
+| State | Effect |
+|-------|--------|
+| Off | Show all addons |
+| On | Hide disabled addons |
+
+<Tip>Use this to focus on active addons when you have many disabled backups.</Tip>
+
+### Grid / List View
+
+Toggle between visual layouts:
+
+| View | Best For |
+|------|----------|
+| **Grid** | Visual browsing, seeing logos |
+| **List** | Compact view, many addons |
+
+Preference is stored per device.
+
+### Selection Mode
+
+Enter multi-select for bulk operations.
+
+**How to enter:**
+- Mobile: Long-press an addon card
+- Desktop: Click "Select" in toolbar
+
+**Keyboard shortcuts:**
+
+| Shortcut | Action |
+|----------|--------|
+| `Esc` | Exit selection mode |
+| `Ctrl+A` | Select all visible addons |
+| `Delete` | Remove selected (if unprotected) |
+
+<Tip>Use Selection Mode with the ⚡ Autopilot button to instantly create a failover chain from any two or more selected addons.</Tip>
+
+---
+
+## Protection System
+
+### How Protection Works
+
+Protection prevents addons from being removed during:
+
+- Bulk "Remove All" operations
+- Selection mode deletions
+- Deploy operations (existing protected addons aren't replaced)
+
+### Managing Protection
+
+| Action | How |
+|--------|-----|
+| Protect | Menu (⋮) → Protect |
+| Unprotect | Menu (⋮) → Unprotect |
+| Check status | Look for green "Protected" badge |
+
+---
+
+## Common Workflows
+
+### Workflow: Configure and Save
+
+<Steps>
+  <Step>**Configure:** Click Configure to set up the addon.</Step>
+  <Step>**Note New URL:** Changing settings may change the install URL.</Step>
+  <Step>**Save:** Click Save to Library to preserve configuration.</Step>
+  <Step>**Refresh:** Click Refresh Addons on account to push changes.</Step>
+</Steps>
+
+### Workflow: Create Backup Chain
+
+<Steps>
+  <Step>**Select Addons:** Enter selection mode, select primary + backup(s).</Step>
+  <Step>**Create Rule:** Click ⚡ Autopilot button.</Step>
+  <Step>**Configure:** Set cooldown and recovery threshold.</Step>
+  <Step>**Enable:** Rule starts monitoring immediately.</Step>
+</Steps>
+
+### Workflow: Clone to Another Account
+
+<Steps>
+  <Step>**Find Addon:** Locate the configured addon.</Step>
+  <Step>**Clone:** Menu (⋮) → Clone to Account.</Step>
+  <Step>**Select Target:** Choose destination account.</Step>
+</Steps>
+
+---
+
+## Common Questions
+
+**Q: What's the difference between Disable and Remove?**
+Disable keeps the addon in your list but Stremio won't use it. Remove completely deletes it from your account.
+
+**Q: Why is my addon showing wrong version?**
+The cached manifest may be stale. Click Reinstall to fetch fresh data.
+
+**Q: Can I have multiple copies of the same addon?**
+Yes, if they have different configuration URLs. Use Customize to give them distinct names.
+
+**Q: Why can't I remove an addon?**
+It's likely protected. Check for the "Protected" badge and unprotect first.

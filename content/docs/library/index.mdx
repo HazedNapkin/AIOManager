@@ -1,0 +1,297 @@
+---
+title: Saved Library
+description: Your personal repository of addon configurations. Save once, deploy anywhere.
+---
+
+## What Is the Library?
+
+The Saved Library is your personal collection of addon configurations. Think of it as a backup vault: save an addon once, then deploy it to any account instantly without reconfiguring from scratch.
+
+### Why Use the Library?
+
+| Without Library | With Library |
+|-----------------|--------------|
+| Re-configure addons from scratch | One-click deployment |
+| Lose configurations if removed | Persistent storage |
+| Manual setup for each account | Clone to multiple accounts |
+| No backup if addon goes offline | Restore from saved URL |
+
+### What Gets Saved
+
+| Data | Saved? |
+|------|--------|
+| Install URL (with config) | Yes |
+| Custom name | Yes |
+| Custom logo URL | Yes |
+| Custom description | Yes |
+| Tags | Yes |
+| Profile assignment | Yes |
+| Protection status | No |
+| Enable/disable state | No |
+
+<Note>The Library stores the addon's install URL at the time of saving. If you later change the addon's config (which usually changes the URL), save a new snapshot to capture the updated URL.</Note>
+
+---
+
+## Saving Addons
+
+### Basic Save
+
+Save any installed addon to your Library:
+
+<Steps>
+  <Step>**Locate Addon:** Find the addon in the Installed tab.</Step>
+  <Step>**Click Save:** Click **Save to Library** on the addon card.</Step>
+  <Step>**Configure Options:** Set name, profile, and tags.</Step>
+  <Step>**Save:** Click Save to add to Library.</Step>
+</Steps>
+
+### Save Options Explained
+
+| Option | Required | Purpose |
+|--------|----------|---------|
+| **Name** | Yes | Descriptive name for identification |
+| **Profile** | No | Group with related addons |
+| **Tags** | No | For filtering and bulk operations |
+| **Conflict Handling** | Auto | What to do if URL already exists |
+
+### Setting a Name
+
+Give saved addons descriptive names to identify them later:
+
+| Good Names | Bad Names |
+|------------|-----------|
+| "AIOStreams - RD + TB" | "AIOStreams" |
+| "Torrentio - 4K Filter" | "addon1" |
+| "Kids Profile - Safe Only" | "test" |
+
+### Assigning a Profile
+
+Profiles group related addons in the Library:
+
+| Profile Name | Contents |
+|--------------|----------|
+| "Main" | Primary streaming addons |
+| "Backups" | Fallback addons |
+| "Kids" | Family-safe content sources |
+| "Testing" | Experimental configurations |
+
+<Steps>
+  <Step>**Click Profile Dropdown:** In the save dialog, click the profile selector.</Step>
+  <Step>**Choose Existing:** Select from your existing profiles.</Step>
+  <Step>**Or Create New:** Click "Create New Profile" to make one inline.</Step>
+</Steps>
+
+### Adding Tags
+
+Tags enable flexible filtering and bulk operations:
+
+| Tag Examples | Use Case |
+|--------------|----------|
+| `debrid, premium` | Filter all premium debrid addons |
+| `4k, movies` | Find 4K movie sources |
+| `backup, streaming` | Locate backup streaming addons |
+
+**Tag format:** Comma-separated, e.g., `debrid, movies, primary`
+
+### Handling Conflicts
+
+When saving an addon whose URL already exists in your Library:
+
+| Option | Behavior |
+|--------|----------|
+| **Skip** | Don't save, keep existing |
+| **Update** | Replace existing with new (merge tags) |
+| **Create Copy** | Save alongside existing |
+
+---
+
+## Sync with Installed
+
+### What It Does
+
+When enabled, **Sync with Installed** creates a live link between a Library entry and its installed counterpart.
+
+### How It Works
+
+| Event | What Happens |
+|-------|--------------|
+| Installed URL changes | Library entry updates automatically |
+| Library entry updated | All linked accounts get new URL |
+| Multiple accounts linked | Change propagates to all |
+
+### When to Use Sync
+
+| Scenario | Use Sync? |
+|----------|-----------|
+| Same addon on multiple accounts | Yes |
+| Addon you frequently reconfigure | Yes |
+| Static addon, rarely changes | No |
+| Testing different configurations | No (use copies) |
+
+<Tip>Sync with Installed is ideal for addons you manage across multiple accounts. Change the config once and every account gets the update automatically.</Tip>
+
+### How to Enable
+
+<Steps>
+  <Step>**Save Dialog:** When saving, find "Sync with Installed" toggle.</Step>
+  <Step>**Enable Toggle:** Turn on Sync with Installed.</Step>
+  <Step>**Save:** Complete the save operation.</Step>
+</Steps>
+
+---
+
+## Auto-Restore
+
+### What It Does
+
+Saved addons with **Auto-Restore** enabled are automatically re-fetched during health checks if they go offline.
+
+### How It Works
+
+| Stage | Action |
+|-------|--------|
+| 1. Detection | Health check marks addon as offline |
+| 2. Trigger | Auto-Restore fires if enabled |
+| 3. Fetch | Requests manifest from saved URL |
+| 4. Result | If successful, addon recovers |
+
+### Throttling
+
+A built-in backoff throttle prevents excessive retries:
+
+| Attempt | Wait Time |
+|---------|-----------|
+| 1st | Immediate |
+| 2nd | 1 minute |
+| 3rd | 5 minutes |
+| 4th+ | 15 minutes |
+
+### When to Use Auto-Restore
+
+| Scenario | Enable? |
+|----------|---------|
+| Critical streaming addon | Yes |
+| Addon on unreliable host | Yes |
+| Stable, rarely-down addon | Optional |
+| Testing/development | No |
+
+---
+
+## Deploying Addons
+
+### From Library to Accounts
+
+Deploy saved addons to any of your accounts:
+
+<Steps>
+  <Step>**Open Library:** Click the Library tab in navigation.</Step>
+  <Step>**Select Addons:** Click Select or long-press to enter selection mode.</Step>
+  <Step>**Choose Addons:** Select one or more addons to deploy.</Step>
+  <Step>**Click Install:** Click the Install button in toolbar.</Step>
+  <Step>**Select Accounts:** Choose which accounts receive the addons.</Step>
+  <Step>**Confirm:** Deploy and wait for completion.</Step>
+</Steps>
+
+### Deployment Options
+
+| Option | Effect |
+|--------|--------|
+| **Deploy to specific accounts** | Install only to selected accounts |
+| **Deploy to all accounts** | Install to every managed account |
+| **Deploy by profile** | Install entire profile groups |
+| **Deploy by tag** | Install all addons with matching tag |
+
+### What Happens During Deployment
+
+| Step | Action |
+|------|--------|
+| 1 | For each target account, check if addon exists |
+| 2 | If exists, skip (preserves existing config) |
+| 3 | If new, install using saved URL |
+| 4 | Apply saved custom name/logo |
+| 5 | Report results |
+
+<Tip>Use the profile and tag filters to quickly find the right addons before deploying.</Tip>
+
+---
+
+## Selection Mode
+
+### Entering Selection Mode
+
+| Device | How to Enter |
+|--------|--------------|
+| Desktop | Click **Select** button in toolbar |
+| Mobile | Long-press any addon card |
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `S` | Save selected to library |
+| `Ctrl+A` | Select all visible addons |
+| `Esc` | Exit selection mode |
+| `Delete` | Remove selected (if unprotected) |
+
+### Bulk Operations in Selection Mode
+
+| Operation | How |
+|-----------|-----|
+| Move to profile | Select → Choose profile from dropdown |
+| Add tags | Select → Click Tags → Enter tags |
+| Install to accounts | Select → Click Install → Choose accounts |
+| Remove | Select → Click Remove → Confirm |
+
+---
+
+## Library Management
+
+### Organizing Your Library
+
+| Strategy | Implementation |
+|----------|----------------|
+| **By function** | Profiles: "Streaming", "Metadata", "Subtitles" |
+| **By quality** | Tags: `4k`, `hd`, `sd` |
+| **By provider** | Tags: `real-debrid`, `alldebrid` |
+| **By use case** | Profiles: "Main", "Kids", "Guest" |
+
+### Cleaning Up
+
+| Task | How |
+|------|-----|
+| Remove unused | Filter → Select → Delete |
+| Merge duplicates | Find same URL entries → Keep one |
+| Update stale entries | Find → Reinstall → Re-save |
+
+---
+
+## Common Questions
+
+**Q: Does saving to Library create a backup?**
+Yes. The Library stores your addon configuration. If an addon is removed, you can reinstall from Library.
+
+**Q: What if the addon's source URL goes down?**
+The Library can't recover addons whose source servers are permanently offline. Save multiple backup addons.
+
+**Q: Can I share my Library with others?**
+No. The Library is personal to your AIOManager instance.
+
+**Q: How many addons can I save?**
+Unlimited. The Library can store as many addon configurations as you need.
+
+**Q: Do Library entries expire?**
+No. Saved addons remain in your Library until you remove them.
+
+---
+
+## Quick Reference
+
+| Task | Action |
+|------|--------|
+| Save addon | Installed → Save to Library |
+| Deploy to account | Library → Select → Install |
+| Keep synced | Enable Sync with Installed when saving |
+| Auto-recover | Enable Auto-Restore when saving |
+| Bulk deploy | Selection mode → Install |
+| Find by tag | Click tag in filter bar |
