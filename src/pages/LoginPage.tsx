@@ -57,6 +57,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
 
     const [loading, setLoading] = useState(false)
     const [loginError, setLoginError] = useState<string | null>(null)
+    const [regError, setRegError] = useState<string | null>(null)
 
     const passwordsMatch = regPass === regPassConfirm || !regPassConfirm
     const normalizedLoginError = loginError?.toLowerCase() ?? ''
@@ -99,6 +100,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         }
 
         setIsRegistering(true)
+        setRegError(null)
         try {
             await register(regPass)
             const newId = useSyncStore.getState().auth.id
@@ -106,7 +108,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             setShowRegSuccess(true)
             confetti.fire({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } })
         } catch (e) {
-            if (import.meta.env.DEV) console.error("Registration error:", e)
+            setRegError(e instanceof Error ? e.message : 'Registration failed. Please try again.')
         } finally {
             setIsRegistering(false)
         }
@@ -336,6 +338,11 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                     {isRegistering ? 'Creating account' : 'Create account'}
                                 </Button>
                             </CardFooter>
+                            {regError && (
+                                <div className="px-6 pb-4">
+                                    <p className="text-xs text-destructive font-medium animate-in slide-in-from-top-1">{regError}</p>
+                                </div>
+                            )}
                         </Card>
                     </TabsContent>
 
@@ -464,8 +471,8 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                     confirmText="Switch"
                     cancelText="Cancel"
                     isDestructive={true}
-                    onConfirm={() => {
-                        logout()
+                    onConfirm={async () => {
+                        await logout()
                         window.location.reload()
                     }}
                 />

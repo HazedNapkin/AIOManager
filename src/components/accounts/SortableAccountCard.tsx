@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { AccountCard } from './AccountCard'
 import { AccountAvatar } from './AccountAvatar'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { AlertCircle, GripVertical, ShieldCheck } from 'lucide-react'
@@ -9,7 +9,7 @@ import { getAccountEmail } from '@/store/accountStore'
 import { cn, getTimeAgo, maskEmail } from '@/lib/utils'
 
 interface SortableAccountCardProps {
-    account: StremioAccount
+    account: Account
     isSelected?: boolean
     onToggleSelect?: (accountId: string) => void
     onLongPress?: (accountId: string) => void
@@ -20,7 +20,7 @@ interface SortableAccountCardProps {
 }
 
 interface AccountReorderRowProps {
-    account: StremioAccount
+    account: Account
     dragHandleProps?: React.HTMLAttributes<HTMLDivElement>
     isDragging?: boolean
     isOverlay?: boolean
@@ -39,7 +39,7 @@ export const AccountReorderRow = memo(function AccountReorderRow({
     style,
 }: AccountReorderRowProps) {
     const accountEmail = getAccountEmail(account)
-    const isNameCustomized = account.name !== accountEmail && account.name !== 'Stremio Account'
+    const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
     const displayName = isPrivacyMode && !isNameCustomized
         ? account.name.includes('@') ? maskEmail(account.name) : '********'
         : (account.name || accountEmail || 'Unnamed Account')

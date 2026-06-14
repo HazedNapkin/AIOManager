@@ -3,7 +3,7 @@ import { mergeTombstones, filterResurrected, reconcileTombstones } from '@/lib/a
 import { readSyncedSettings } from '@/lib/synced-settings'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import type { Connection } from '@/types/connection'
 import { useProfileStore } from '@/store/profileStore'
 import localforage from 'localforage'
@@ -19,6 +19,9 @@ import {
     STORAGE_KEY,
     CHANGELOG_KEY,
     BACKUP_KEY,
+    getStremioAuthKey,
+    setAccountLoading,
+    clearAllAccountLoading,
 } from '../accountStore'
 import type { AccountStore } from '../accountStore'
 
@@ -29,8 +32,8 @@ async function getStore(): Promise<StoreRef> {
     return useAccountStore
 }
 
-// Incoming connections carry metadata only (credentials live server-side), so local credentials
-// must be preserved on the merge.
+// Sync incoming connections carry metadata only (credentials live server-side), so local
+// credentials must be preserved. Backup imports carry credentials, which take precedence.
 function mergeConnections(
     local: Connection[] | undefined,
     incoming: Partial<Connection>[] | undefined,
@@ -49,13 +52,16 @@ function mergeConnections(
                 consecutiveFailures: 0,
                 ...(existing || {}),
                 ...inc,
-                credentials: existing?.credentials ?? {},
+                credentials: { ...(existing?.credentials || {}), ...(inc.credentials || {}) },
             } as Connection
         })
     if (mode === 'merge') {
         const incomingIds = new Set(merged.map(c => c.id))
+        const mergedPlatforms = new Set(merged.map(c => c.platform))
         for (const c of local || []) {
-            if (!incomingIds.has(c.id)) merged.push(c)
+            if (incomingIds.has(c.id)) continue
+            if (mergedPlatforms.has(c.platform)) continue
+            merged.push(c)
         }
     }
     return merged
@@ -90,7 +96,7 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                 id: acc.id,
                 name: acc.name,
                 email: acc.email,
-                authKey: includeCredentialsValue ? await decrypt(acc.authKey, getEncryptionKey()!) : undefined,
+                authKey: includeCredentialsValue ? await decrypt(getStremioAuthKey(acc), getEncryptionKey()!) : undefined,
                 password:
                     includeCredentialsValue && acc.password
                         ? await decrypt(acc.password, getEncryptionKey()!)
@@ -102,13 +108,13 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                 activeProfileId: acc.activeProfileId,
                 deletedAddons: acc.deletedAddons,
                 addons: processAddons(acc.addons),
-                // metadata only; credentials live server-side in server_credentials
                 connections: (acc.connections || []).map(c => ({
                     id: c.id,
                     platform: c.platform,
                     connectionType: c.connectionType,
                     driverType: c.driverType,
                     enabled: c.enabled,
+                    credentials: c.credentials,
                     profileMapping: c.profileMapping,
                     capabilities: c.capabilities,
                     pluginList: c.pluginList,
@@ -128,11 +134,21 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
             }
         }
 
+        const { useNotesStore } = await import('@/store/notesStore')
+        const allNotes = await useNotesStore.getState().getAllNotesWithContent()
+        const notesTrash = useNotesStore.getState().trash || []
+
+        const apiKeys: Record<string, string> = {}
+        for (const acc of store.getState().accounts) {
+            if (acc.apiKey) apiKeys[acc.id] = acc.apiKey
+        }
+
         const data: Record<string, unknown> = {
             version: '2.0.0',
             exportedAt: new Date().toISOString(),
             manifests: manifestMap,
             accounts: exportedAccounts,
+            apiKeys,
             profiles: useProfileStore.getState().profiles.map((p) => ({
                 ...p,
                 createdAt: new Date(p.createdAt).toISOString(),
@@ -153,8 +169,9 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
             vaultTombstones: useVaultStore.getState().tombstones,
             watchEvents: (await import('@/store/watchEventStore')).useWatchEventStore.getState().events,
             watchSnapshot: (await import('@/store/watchEventStore')).useWatchEventStore.getState().snapshot,
+            notes: allNotes,
+            notesTrash,
             customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
-            accountTombstones: store.getState().tombstones,
         }
 
         return JSON.stringify(data, null, 2)
@@ -166,7 +183,8 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
 
 export async function importAccounts(json: string, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading('__import__')
     let mutexReleases: Array<() => void> = []
     try {
         mutexReleases = await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id)))
@@ -207,18 +225,6 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             applySyncedSettings({ customThemes: data.customThemes }, true)
         }
 
-        if (Array.isArray(data.accountTombstones)) {
-            const local = store.getState().tombstones
-            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-            const tsMap = new Map<string, { id: string; deletedAt: number }>()
-            ;[...(data.accountTombstones as { id: string; deletedAt: number }[]), ...local].forEach(t => {
-                if (t.deletedAt < cutoff) return
-                const existing = tsMap.get(t.id)
-                if (!existing || t.deletedAt > existing.deletedAt) tsMap.set(t.id, t)
-            })
-            store.getState().saveTombstones(Array.from(tsMap.values()))
-        }
-
         if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
             const { useVaultStore } = await import('@/store/vaultStore')
             await useVaultStore.getState().initialize()
@@ -250,6 +256,14 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 const sorted = deduped.sort((a, b) => ((b as Record<string, unknown>).event_ts as number) - ((a as Record<string, unknown>).event_ts as number))
                 const snapshot = data.watchSnapshot || useWatchEventStore.getState().snapshot
                 useWatchEventStore.getState().initialize(sorted as unknown as import('@/types/activity').WatchEvent[], snapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+            }
+        }
+
+        if (Array.isArray(data.notes) && data.notes.length > 0) {
+            const { useNotesStore } = await import('@/store/notesStore')
+            await useNotesStore.getState().importNotes(data.notes as import('@/store/notesStore').Note[])
+            if (Array.isArray(data.notesTrash)) {
+                await useNotesStore.getState().importTrash(data.notesTrash as import('@/store/notesStore').Note[])
             }
         }
 
@@ -309,15 +323,31 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     password = undefined
                 }
                 try {
-                    return { id: acc.id, key: await decrypt(acc.authKey, readEncryptionKey), password }
+                    return { id: acc.id, key: await decrypt(getStremioAuthKey(acc), readEncryptionKey), password }
                 } catch (e) {
+                    // Top-level authKey may be empty for connection-based accounts;
+                    // fall back to the authKey stored in Stremio connection credentials.
+                    const stremioConn = (acc.connections || []).find((c) => c.platform === 'stremio')
+                    if (stremioConn?.credentials?.authKey && readEncryptionKey) {
+                        try {
+                            return { id: acc.id, key: await decrypt(stremioConn.credentials.authKey, readEncryptionKey), password }
+                        } catch {
+                        }
+                    }
+                    const connWithCreds = (acc.connections || []).find(c => c.credentials?.authKey)
+                    if (connWithCreds && readEncryptionKey) {
+                        try {
+                            return { id: acc.id, key: await decrypt(connWithCreds.credentials.authKey, readEncryptionKey), password }
+                        } catch {
+                        }
+                    }
                     return { id: acc.id, key: null, password }
                 }
             })
         )
         const localSecretsById = new Map(localDecrypted.map((entry) => [entry.id, entry]))
 
-        const migrateLocalAccountSecrets = async (account: StremioAccount): Promise<StremioAccount> => {
+        const migrateLocalAccountSecrets = async (account: Account): Promise<Account> => {
             if (!localDecryptionKey) return account
             const secrets = localSecretsById.get(account.id)
             if (!secrets?.key) return account
@@ -328,30 +358,40 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             }
         }
 
-        const reconciledAccounts: StremioAccount[] = []
+        const reconciledAccounts: Account[] = []
         const processedLocalIds = new Set<string>()
-        const tombstoneIds = new Set(store.getState().tombstones.map(t => t.id))
 
         for (const ra of normalizedAccounts) {
-            if (tombstoneIds.has(ra.id)) continue
             let matchedAccount = currentAccounts.find((a) => a.id === ra.id)
 
             if (!matchedAccount && ra.rawKey) {
-                const found = localDecrypted.find((ld) => ld.key === ra.rawKey && !tombstoneIds.has(ld.id))
+                const found = localDecrypted.find((ld) => ld.key === ra.rawKey)
                 if (found) matchedAccount = currentAccounts.find((a) => a.id === found.id)
             }
 
+            const raHasCredentials = !!ra.rawKey || (ra.connections || []).some(c => c.credentials)
+
             if (!matchedAccount && ra.email) {
-                matchedAccount = currentAccounts.find(
-                    (a) => a.email?.toLowerCase() === ra.email?.toLowerCase()
-                )
+                matchedAccount = currentAccounts.find((a) => {
+                    if (a.email?.toLowerCase() !== ra.email?.toLowerCase()) return false
+                    const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
+                    return raHasCredentials === aHasCredentials
+                })
+            }
+
+            if (!matchedAccount && ra.apiKey) {
+                matchedAccount = currentAccounts.find((a) => {
+                    if (a.apiKey !== ra.apiKey) return false
+                    const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
+                    return raHasCredentials === aHasCredentials
+                })
             }
 
             if (matchedAccount) {
                 const matchedSecrets = localSecretsById.get(matchedAccount.id)
                 const mergedAuthKey = ra.rawKey || matchedSecrets?.key
                 const mergedPassword = ra.password !== undefined ? ra.password : matchedSecrets?.password
-                const updated: StremioAccount = {
+                const updated: Account = {
                     ...matchedAccount,
                     name: ra.name || matchedAccount.name,
                     authKey: mergedAuthKey
@@ -365,7 +405,17 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     note: ra.note ?? matchedAccount.note,
                     hideLastWatched: ra.hideLastWatched ?? matchedAccount.hideLastWatched,
                     apiKey: ra.apiKey ?? matchedAccount.apiKey,
-                    profiles: matchedAccount.profiles?.length ? matchedAccount.profiles : (ra.profiles?.length ? ra.profiles : matchedAccount.profiles),
+                    profiles: (() => {
+                        const localProfiles = matchedAccount.profiles || []
+                        const incomingProfiles = ra.profiles || []
+                        if (incomingProfiles.length === 0) return matchedAccount.profiles
+                        if (localProfiles.length === 0) return ra.profiles
+                        const byId = new Map(localProfiles.map(p => [p.id, p]))
+                        for (const p of incomingProfiles) {
+                            if (!byId.has(p.id)) byId.set(p.id, p)
+                        }
+                        return Array.from(byId.values())
+                    })(),
                     activeProfileId: matchedAccount.activeProfileId ?? ra.activeProfileId,
                     ...(() => {
                         // Union both devices' tombstones, suppress resurrected addons (a delete on
@@ -390,10 +440,10 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     ...ra,
                     addons: importedAddons,
                     deletedAddons: reconcileTombstones(importedTombstones, importedAddons),
-                    authKey: await encrypt(ra.rawKey, writeEncryptionKey),
+                    authKey: ra.rawKey ? await encrypt(ra.rawKey, writeEncryptionKey) : '',
                     password: ra.password ? await encrypt(ra.password, writeEncryptionKey) : undefined,
                     connections: mergeConnections(undefined, ra.connections, mode),
-                } as StremioAccount
+                } as Account
                 reconciledAccounts.push(importedAccount)
             }
         }
@@ -435,18 +485,18 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         if (currentAccounts.length > 0 && finalAccounts.length < currentAccounts.length) {
             if (import.meta.env.DEV) console.warn(`[Import] Would reduce accounts from ${currentAccounts.length} to ${finalAccounts.length}. Aborting write and pushing local state.`)
             setTimeout(() => triggerSync(), 500)
-            store.setState({ loading: false })
+            clearAllAccountLoading()
             return
         }
 
         if (finalAccounts.length === 0) {
-            const backup = await localforage.getItem<StremioAccount[]>(BACKUP_KEY)
+            const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
             if (backup && backup.length > 0) {
                 if (import.meta.env.DEV) console.warn(`[Import] Final accounts would be empty but backup has ${backup.length}. Restoring from backup.`)
                 const restoredBackup = localDecryptionKey
                     ? await Promise.all(backup.map(async (account) => {
                         try {
-                            const rawAuthKey = await decrypt(account.authKey, readEncryptionKey)
+                            const rawAuthKey = await decrypt(getStremioAuthKey(account), readEncryptionKey)
                             const rawPassword = account.password ? await decrypt(account.password, readEncryptionKey).catch(() => undefined) : undefined
                             return {
                                 ...account,
@@ -461,13 +511,13 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 store.setState({ accounts: restoredBackup })
                 await localforage.setItem(STORAGE_KEY, restoredBackup)
                 setTimeout(() => triggerSync(), 500)
-                store.setState({ loading: false })
+                clearAllAccountLoading()
                 return
             }
         }
 
         if (finalAccounts.length > 0) {
-            const diskData = await localforage.getItem<StremioAccount[]>(STORAGE_KEY)
+            const diskData = await localforage.getItem<Account[]>(STORAGE_KEY)
             if (diskData && Array.isArray(diskData) && diskData.length > 0) {
                 await localforage.setItem(BACKUP_KEY, diskData)
             }
@@ -494,6 +544,6 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         throw error
     } finally {
         mutexReleases.forEach(release => release())
-        store.setState({ loading: false })
+        clearAllAccountLoading()
     }
 }

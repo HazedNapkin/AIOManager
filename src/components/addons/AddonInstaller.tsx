@@ -20,7 +20,7 @@ export function AddonInstaller() {
   const closeDialog = useUIStore((state) => state.closeAddAddonDialog)
   const selectedAccountId = useUIStore((state) => state.selectedAccountId)
   const installAddon = useAccountStore((state) => state.installAddonToAccount)
-  const loading = useAccountStore((state) => state.loading)
+  const loading = useAccountStore((state) => state.loadingAccounts.size > 0)
 
   const [addonUrl, setAddonUrl] = useState('')
   const [error, setError] = useState('')

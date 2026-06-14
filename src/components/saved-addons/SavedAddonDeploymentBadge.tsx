@@ -1,15 +1,15 @@
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { User } from 'lucide-react'
 import { getAccountEmail } from '@/store/accountStore'
 
 interface SavedAddonDeploymentBadgeProps {
-  accounts: StremioAccount[]
+  accounts: Account[]
   className?: string
 }
 
-function getAccountLabel(account: StremioAccount) {
+function getAccountLabel(account: Account) {
   return account.name || getAccountEmail(account) || 'Unnamed account'
 }
 
@@ -34,7 +34,7 @@ export function SavedAddonDeploymentBadge({
     <Tooltip content={tooltipContent} side="top">
       <span
         className={cn(
-          'inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-border/40 bg-muted/35 px-1.5 text-[10px] font-medium text-muted-foreground',
+          'inline-flex h-6 max-w-full items-center gap-1.5 rounded-full border border-border/40 bg-muted/35 px-1.5 text-xs font-medium text-muted-foreground',
           className
         )}
       >
@@ -42,7 +42,7 @@ export function SavedAddonDeploymentBadge({
           {visibleAccounts.map(account => (
             <span
               key={account.id}
-              className="flex h-4 w-4 items-center justify-center rounded-full border border-background bg-background text-[10px] leading-none shadow-sm"
+              className="flex h-4 w-4 items-center justify-center rounded-full border border-background bg-background text-xs leading-none shadow-sm"
             >
               {account.emoji ? account.emoji : <User className="h-2.5 w-2.5 text-muted-foreground" />}
             </span>

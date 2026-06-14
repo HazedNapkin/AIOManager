@@ -329,7 +329,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                                 onClick={() => setShowCreatePassword(v => !v)}
                                 aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
                             >
@@ -464,7 +464,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                                 onClick={() => setShowBatchPassword(v => !v)}
                                 aria-label={showBatchPassword ? 'Hide password' : 'Show password'}
                             >
@@ -547,7 +547,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                     )}
                                     {r.installUrl && (
                                         <CopyButton value={r.installUrl} variant="ghost" aria-label={`Copy install URL for ${r.accountName}`}>
-                                            <span className="ml-1 text-[10px] font-medium">Copy URL</span>
+                                            <span className="ml-1 text-xs font-medium">Copy URL</span>
                                         </CopyButton>
                                     )}
                                 </div>
@@ -592,7 +592,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                                 onClick={() => setShowDeletePassword(v => !v)}
                                 aria-label={showDeletePassword ? 'Hide password' : 'Show password'}
                             >

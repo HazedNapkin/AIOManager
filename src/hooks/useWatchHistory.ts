@@ -41,8 +41,9 @@ export interface HistoryEntry {
     // State flags
     isInProgress: boolean  // currently mid-watch
     isFromEventLog: boolean // true = from accumulated events, false = live snapshot only
-    source?: string        // platform the watch came from (absent = stremio)
+    source?: string        // platform the watch came from (absent = unknown)
     backfill?: boolean     // recovered from the watched-bitfield (synthetic timestamp)
+    genres?: string[]
 
     // Live overlay (only set when this item is also in current library)
     liveProgress?: number
@@ -66,7 +67,9 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     const loading = useLibraryCache(s => s.loading)
     const accounts = useAccountStore(s => s.accounts)
 
-    return useMemo(() => {
+    const eventsKey = `${events.length}:${events.length > 0 ? events[0].id : ''}`
+
+    const { history, inProgress, hasEventLog } = useMemo(() => {
         // Build a lookup of live items for overlay data
         const liveByAccountItem = new Map<string, ActivityItem>()
         for (const item of liveItems) {
@@ -76,6 +79,17 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                     `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode)}`,
                     item
                 )
+            }
+        }
+
+        const seriesOverallTime = new Map<string, number>()
+        for (const item of liveItems) {
+            if (item.overallTimeWatched && item.overallTimeWatched > 0) {
+                const key = `${item.accountId}:${item.itemId}`
+                const existing = seriesOverallTime.get(key)
+                if (!existing || item.overallTimeWatched > existing) {
+                    seriesOverallTime.set(key, item.overallTimeWatched)
+                }
             }
         }
 
@@ -126,8 +140,50 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             }, new Map<string, (typeof dedupedEvents)[number]>()).values()
         )
 
+        const EPISODE_DEDUP_WINDOW_MS = 172800000
+        type SessionEvent = (typeof sessionEvents)[number]
+
+        const seriesGroups = new Map<string, SessionEvent[]>()
+        const nonSeriesEvents: SessionEvent[] = []
+        for (const event of sessionEvents) {
+            const isSeries = event.type === 'series' || event.type === 'anime' || event.type === 'episode'
+            if (!isSeries) {
+                nonSeriesEvents.push(event)
+                continue
+            }
+            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)
+            const key = `${event.accountId}:${episodeKey}`
+            const arr = seriesGroups.get(key)
+            if (arr) arr.push(event)
+            else seriesGroups.set(key, [event])
+        }
+
+        const seriesDeduped: SessionEvent[] = []
+        for (const arr of seriesGroups.values()) {
+            arr.sort((a, b) => a.event_ts - b.event_ts || a.detected_ts - b.detected_ts)
+            let kept: SessionEvent | null = null
+            for (const event of arr) {
+                if (kept === null) {
+                    kept = event
+                } else if (event.event_ts - kept.event_ts <= EPISODE_DEDUP_WINDOW_MS) {
+                    if (
+                        event.event_ts > kept.event_ts ||
+                        (event.event_ts === kept.event_ts && event.detected_ts > kept.detected_ts)
+                    ) {
+                        kept = event
+                    }
+                } else {
+                    seriesDeduped.push(kept)
+                    kept = event
+                }
+            }
+            if (kept) seriesDeduped.push(kept)
+        }
+
+        const seriesDedupedEvents = [...nonSeriesEvents, ...seriesDeduped]
+
         // Convert WatchEvents to HistoryEntries
-        const eventEntries: HistoryEntry[] = sessionEvents.map(event => {
+        const eventEntries: HistoryEntry[] = seriesDedupedEvents.map(event => {
             const live = liveByAccountItem.get(
                 `${event.accountId}:${getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)}`
             )
@@ -137,7 +193,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             const watched = event.time_watched_delta ?? event.time_watched ?? 0
             const progress = duration > 0
                 ? Math.min(100, Math.max(0, (watchedProgress / duration) * 100))
-                : (live?.progress ?? 0)
+                : Math.min(live?.progress ?? 0, 100)
 
             return {
                 id: event.id,
@@ -157,11 +213,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 duration,
                 watched,
                 progress,
-                overallTimeWatched: undefined,
+                overallTimeWatched: seriesOverallTime.get(`${event.accountId}:${event.itemId}`),
                 timesWatched: live?.timesWatched,
                 isInProgress: live?.isInProgress ?? false,
                 isFromEventLog: true,
-                source: event.source || live?.source || 'stremio',
+                source: event.source || live?.source || 'unknown',
                 backfill: event.backfill,
                 liveProgress: live?.progress,
                 liveWatched: live?.watched,
@@ -171,17 +227,28 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
 
         // Find live items not represented in the event log yet
         // (new items added since last diff, or first-run before any events)
-        const eventItemIds = new Set(sessionEvents.map(e =>
+        const eventItemIds = new Set(seriesDedupedEvents.map(e =>
             `${e.accountId}:${getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)}`
         ))
+        const eventIdentityKeys = new Set<string>()
+        for (const entry of seriesDedupedEvents) {
+            const name = entry.name?.toLowerCase().trim()
+            const episode = entry.episode
+            if (name && episode != null) {
+                eventIdentityKeys.add(`${entry.accountId}:${name}:${episode}`)
+            }
+        }
         const liveOnlyItems = (accountId
             ? liveItems.filter(i => i.accountId === accountId)
             : liveItems
         ).filter(item => {
             if (item.source && item.source !== 'stremio') return true
-            return !eventItemIds.has(
+            if (eventItemIds.has(
                 `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode)}`
-            )
+            )) return false
+            const name = item.name?.toLowerCase().trim()
+            if (name && item.episode != null && eventIdentityKeys.has(`${item.accountId}:${name}:${item.episode}`)) return false
+            return true
         })
 
         const liveOnlyEntries: HistoryEntry[] = liveOnlyItems.map(item => ({
@@ -200,7 +267,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             firstWatched: item.firstWatched,
             duration: item.duration,
             watched: item.watched,
-            progress: item.progress,
+            progress: Math.min(item.progress, 100),
             overallTimeWatched: item.overallTimeWatched,
             timesWatched: item.timesWatched,
             isInProgress: item.isInProgress,
@@ -215,6 +282,26 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         const allEntries = [...eventEntries, ...liveOnlyEntries]
             .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
 
+        const finalDedup = new Map<string, HistoryEntry>()
+        for (const entry of allEntries) {
+            const name = entry.name?.toLowerCase().trim() || ''
+            const episodeKey = entry.episode != null
+                ? `${entry.accountId}:${name}:${entry.season || 1}:${entry.episode}`
+                : `${entry.accountId}:${name}`
+
+            const existing = finalDedup.get(episodeKey)
+            if (!existing) {
+                finalDedup.set(episodeKey, entry)
+            } else {
+                const existingScore = (existing.progress || 0) + (existing.poster ? 50 : 0) + (existing.duration ? 50 : 0)
+                const newScore = (entry.progress || 0) + (entry.poster ? 50 : 0) + (entry.duration ? 50 : 0)
+                if (newScore > existingScore) {
+                    finalDedup.set(episodeKey, entry)
+                }
+            }
+        }
+        const dedupedList = Array.from(finalDedup.values())
+
         // In-progress items from live state (these are always current)
         const inProgress = (accountId
             ? liveItems.filter(i => i.accountId === accountId)
@@ -223,10 +310,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
 
         return {
-            history: allEntries,
+            history: dedupedList,
             inProgress,
             hasEventLog: events.length > 0,
-            loading,
         }
-    }, [events, liveItems, accounts, accountId, loading])
+    }, [eventsKey, liveItems, accounts, accountId])
+
+    return { history, inProgress, hasEventLog, loading }
 }

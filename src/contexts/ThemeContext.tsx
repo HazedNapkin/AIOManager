@@ -146,7 +146,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             const migrated = localStorage.getItem('aio-theme-migrated-v2')
             if (!migrated) {
                 if (saved === 'midnight') { saved = 'dark' }
-                else if (saved === 'dark') { saved = 'nightfall' }
                 if (saved) {
                     localStorage.setItem(STORAGE_KEY, saved)
                     localStorage.setItem('aio-theme-migrated-v2', '1')

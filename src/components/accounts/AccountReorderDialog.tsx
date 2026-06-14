@@ -27,13 +27,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { AccountReorderRow, SortableAccountCard } from './SortableAccountCard'
 import { useAccounts } from '@/hooks/useAccounts'
 import { createPortal } from 'react-dom'
 
 interface AccountReorderDialogProps {
-  accounts: StremioAccount[]
+  accounts: Account[]
   open: boolean
   onOpenChange: (open: boolean) => void
   isPrivacyMode?: boolean
@@ -45,7 +45,7 @@ export function AccountReorderDialog({
   onOpenChange,
   isPrivacyMode = false,
 }: AccountReorderDialogProps) {
-  const [items, setItems] = useState<StremioAccount[]>([])
+  const [items, setItems] = useState<Account[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)

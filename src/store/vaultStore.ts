@@ -8,6 +8,8 @@ import localforage from 'localforage'
 const STORAGE_KEY = 'stremio-manager:key-vault'
 const TOMBSTONE_KEY = `${STORAGE_KEY}:tombstones`
 
+let _vaultQueue: Promise<void> = Promise.resolve()
+
 export interface VaultTombstone {
     id: string
     deletedAt: number
@@ -81,91 +83,103 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
         }
     },
 
-    addKey: async (newKey) => {
-        const { encryptionKey } = useAuthStore.getState()
-        if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
+    addKey: (newKey) => {
+        _vaultQueue = _vaultQueue.then(async () => {
+            const { encryptionKey } = useAuthStore.getState()
+            if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
 
-        const key: VaultKey = {
-            ...newKey,
-            id: crypto.randomUUID(),
-            updatedAt: Date.now(),
-        }
+            const key: VaultKey = {
+                ...newKey,
+                id: crypto.randomUUID(),
+                updatedAt: Date.now(),
+            }
 
-        const updatedKeys = [...get().keys, key]
-        try {
-            const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
-            await localforage.setItem(STORAGE_KEY, encryptedData)
-        } catch (err) {
-            import.meta.env.DEV && console.error('[VaultStore] Failed to persist addKey:', err)
-            throw new Error('Failed to save key to vault. Please try again.')
-        }
+            const updatedKeys = [...get().keys, key]
+            try {
+                const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
+                await localforage.setItem(STORAGE_KEY, encryptedData)
+            } catch (err) {
+                import.meta.env.DEV && console.error('[VaultStore] Failed to persist addKey:', err)
+                throw new Error('Failed to save key to vault. Please try again.')
+            }
 
-        set({ keys: updatedKeys, tombstones: get().tombstones.filter(t => t.id !== key.id) })
-        triggerSync()
+            set({ keys: updatedKeys, tombstones: get().tombstones.filter(t => t.id !== key.id) })
+            triggerSync()
+        }).catch(() => {})
+        return _vaultQueue
     },
 
-    removeKey: async (id) => {
-        const { encryptionKey } = useAuthStore.getState()
-        if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
+    removeKey: (id) => {
+        _vaultQueue = _vaultQueue.then(async () => {
+            const { encryptionKey } = useAuthStore.getState()
+            if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
 
-        const updatedKeys = get().keys.filter((k) => k.id !== id)
-        const tombstones = mergeTombstones(get().tombstones, [{ id, deletedAt: Date.now() }])
-        try {
-            const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
-            await localforage.setItem(STORAGE_KEY, encryptedData)
-            await persistTombstones(tombstones)
-        } catch (err) {
-            import.meta.env.DEV && console.error('[VaultStore] Failed to persist removeKey:', err)
-            throw new Error('Failed to remove key from vault. Please try again.')
-        }
+            const updatedKeys = get().keys.filter((k) => k.id !== id)
+            const tombstones = mergeTombstones(get().tombstones, [{ id, deletedAt: Date.now() }])
+            try {
+                const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
+                await localforage.setItem(STORAGE_KEY, encryptedData)
+                await persistTombstones(tombstones)
+            } catch (err) {
+                import.meta.env.DEV && console.error('[VaultStore] Failed to persist removeKey:', err)
+                throw new Error('Failed to remove key from vault. Please try again.')
+            }
 
-        set({ keys: updatedKeys, tombstones })
-        triggerSync()
+            set({ keys: updatedKeys, tombstones })
+            triggerSync()
+        }).catch(() => {})
+        return _vaultQueue
     },
 
-    updateKey: async (id, updates) => {
-        const { encryptionKey } = useAuthStore.getState()
-        if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
+    updateKey: (id, updates) => {
+        _vaultQueue = _vaultQueue.then(async () => {
+            const { encryptionKey } = useAuthStore.getState()
+            if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
 
-        const updatedKeys = get().keys.map((k) =>
-            k.id === id ? { ...k, ...updates, updatedAt: Date.now() } : k
-        )
-        try {
-            const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
-            await localforage.setItem(STORAGE_KEY, encryptedData)
-        } catch (err) {
-            import.meta.env.DEV && console.error('[VaultStore] Failed to persist updateKey:', err)
-            throw new Error('Failed to update key in vault. Please try again.')
-        }
+            const updatedKeys = get().keys.map((k) =>
+                k.id === id ? { ...k, ...updates, updatedAt: Date.now() } : k
+            )
+            try {
+                const encryptedData = await encrypt(JSON.stringify(updatedKeys), encryptionKey)
+                await localforage.setItem(STORAGE_KEY, encryptedData)
+            } catch (err) {
+                import.meta.env.DEV && console.error('[VaultStore] Failed to persist updateKey:', err)
+                throw new Error('Failed to update key in vault. Please try again.')
+            }
 
-        set({ keys: updatedKeys })
-        triggerSync()
+            set({ keys: updatedKeys })
+            triggerSync()
+        }).catch(() => {})
+        return _vaultQueue
     },
 
-    moveKey: async (id, direction) => {
-        const { encryptionKey } = useAuthStore.getState()
-        if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
+    moveKey: (id, direction) => {
+        _vaultQueue = _vaultQueue.then(async () => {
+            const { encryptionKey } = useAuthStore.getState()
+            if (!encryptionKey) throw new Error('Session expired. Sign in again to continue.')
 
-        const keys = [...get().keys]
-        const index = keys.findIndex((k) => k.id === id)
-        if (index === -1) return
+            const keys = [...get().keys]
+            const index = keys.findIndex((k) => k.id === id)
+            if (index === -1) return
 
-        const newIndex = direction === 'up' ? index - 1 : index + 1
-        if (newIndex < 0 || newIndex >= keys.length) return
+            const newIndex = direction === 'up' ? index - 1 : index + 1
+            if (newIndex < 0 || newIndex >= keys.length) return
 
-        const [removed] = keys.splice(index, 1)
-        keys.splice(newIndex, 0, removed)
+            const [removed] = keys.splice(index, 1)
+            keys.splice(newIndex, 0, removed)
 
-        try {
-            const encryptedData = await encrypt(JSON.stringify(keys), encryptionKey)
-            await localforage.setItem(STORAGE_KEY, encryptedData)
-        } catch (err) {
-            import.meta.env.DEV && console.error('[VaultStore] Failed to persist moveKey:', err)
-            throw new Error('Failed to reorder keys in vault. Please try again.')
-        }
+            try {
+                const encryptedData = await encrypt(JSON.stringify(keys), encryptionKey)
+                await localforage.setItem(STORAGE_KEY, encryptedData)
+            } catch (err) {
+                import.meta.env.DEV && console.error('[VaultStore] Failed to persist moveKey:', err)
+                throw new Error('Failed to reorder keys in vault. Please try again.')
+            }
 
-        set({ keys })
-        triggerSync()
+            set({ keys })
+            triggerSync()
+        }).catch(() => {})
+        return _vaultQueue
     },
 
     clearVault: async () => {
@@ -237,7 +251,7 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
             set({ keys: mergedKeys, tombstones: mergedTombstones, isLocked: false })
             if (import.meta.env.DEV) console.log('[VaultStore] Vault import successful (merged', keys.length, 'keys into', mergedKeys.length, 'total).')
         } catch (e) {
-            import.meta.env.DEV && console.error('[VaultStore] Vault import failed:', e)
+            throw e
         }
     }
 }))
@@ -253,3 +267,11 @@ useAuthStore.subscribe((state, prevState) => {
         useVaultStore.setState({ keys: [], isLocked: true })
     }
 })
+
+if (useAuthStore.getState().encryptionKey) {
+    useVaultStore.getState().initialize().then(() => {
+        import('@/store/providerStore').then(({ useProviderStore }) => {
+            useProviderStore.getState().hydrateAndRefresh()
+        })
+    })
+}

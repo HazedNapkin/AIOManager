@@ -95,7 +95,7 @@ export function LibraryToolbar({
                 size="icon"
                 ripple={false}
                 onClick={() => onSearchChange('')}
-                className="absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 p-0 hover:bg-accent rounded-full transition-colors"
+                className="absolute right-2 top-1/2 h-7 w-7 flex items-center justify-center -translate-y-1/2 p-0 hover:bg-accent rounded-full transition-colors"
                 aria-label="Clear search"
               >
                 <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -125,7 +125,7 @@ export function LibraryToolbar({
           </div>
         </div>
 
-        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
+        <div className="grid w-full grid-cols-2 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
           {savedAddonsCount > 0 && (
             <div className="hidden sm:flex items-center gap-2 px-2.5 h-8 rounded-md bg-muted/40 border border-border/40 text-xs font-medium text-muted-foreground shrink-0">
               <Tooltip content={`${healthSummary.online} online`} side="top">

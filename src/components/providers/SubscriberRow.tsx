@@ -35,12 +35,12 @@ export const SubscriberRow = memo(function SubscriberRow({ subscriber, onRemove 
                 <div className="flex items-center gap-1.5">
                     <span className="text-sm font-semibold truncate">{subscriber.name}</span>
                     {stale ? (
-                        <StatusChip size="sm" variant="warning" className="text-[10px] h-4 px-1.5 gap-1">
+                        <StatusChip size="sm" variant="warning" className="text-xs h-4 px-1.5 gap-1">
                             <span className="h-1.5 w-1.5 rounded-full bg-warning" />
                             Stale
                         </StatusChip>
                     ) : (
-                        <StatusChip size="sm" variant="success" className="text-[10px] h-4 px-1.5 gap-1">
+                        <StatusChip size="sm" variant="success" className="text-xs h-4 px-1.5 gap-1">
                             <span className="h-1.5 w-1.5 rounded-full bg-success" />
                             Synced
                         </StatusChip>

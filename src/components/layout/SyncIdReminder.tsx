@@ -53,7 +53,7 @@ export function SyncIdReminder() {
                                 <span className="truncate max-w-[150px] md:max-w-[200px]">{auth.id}</span>
                                 <CopyButton
                                     value={auth.id || ''}
-                                    className="h-7 w-7 shrink-0"
+                                    className="h-7 w-7 flex items-center justify-center shrink-0"
                                     iconSize={12}
                                 />
                             </div>

@@ -1,5 +1,5 @@
 import { LibraryItem, ActivityItem } from '@/types/activity'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 
@@ -151,8 +151,8 @@ export function parseStremioDate(dateStr: string | undefined): Date | undefined 
  */
 export function transformLibraryItemToActivityItem(
     item: LibraryItem,
-    account: StremioAccount,
-    accounts: StremioAccount[]
+    account: Account,
+    accounts: Account[]
 ): ActivityItem {
     const uniqueItemId = getUniqueItemId(item)
     const timestamp = getWatchTimestamp(item)
@@ -196,7 +196,7 @@ export function transformLibraryItemToActivityItem(
         season,
         episode,
         overallTimeWatched,
-        source: 'stremio',
+        source: 'unknown',
     }
 }
 
@@ -220,25 +220,28 @@ interface NuvioProgressItem {
     last_watched?: number
 }
 
-const cinemetaCache = new Map<string, { name: string; poster: string; fetchedAt: number }>()
+const cinemetaCache = new Map<string, { name: string; poster: string; genres: string[]; fetchedAt: number }>()
 const CINEMETA_TTL = 24 * 60 * 60 * 1000
 
-async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string }> {
+async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string; genres: string[] }> {
     const cached = cinemetaCache.get(imdbId)
     if (cached && Date.now() - cached.fetchedAt < CINEMETA_TTL) {
-        return { name: cached.name, poster: cached.poster }
+        return { name: cached.name, poster: cached.poster, genres: cached.genres }
     }
     try {
         const mediaType = type === 'movie' ? 'movie' : 'series'
         const res = await fetch(`https://v3-cinemeta.strem.io/meta/${mediaType}/${imdbId}.json`, { signal: AbortSignal.timeout(5000) })
-        if (!res.ok) return { name: '', poster: '' }
+        if (!res.ok) return { name: '', poster: '', genres: [] }
         const data = await res.json()
         const meta = data?.meta
-        const entry = { name: meta?.name || '', poster: meta?.poster || '', fetchedAt: Date.now() }
+        const genres: string[] = typeof meta?.genre === 'string' && meta.genre.trim()
+            ? meta.genre.split(',').map((g: string) => g.trim()).filter(Boolean)
+            : []
+        const entry = { name: meta?.name || '', poster: meta?.poster || '', genres, fetchedAt: Date.now() }
         cinemetaCache.set(imdbId, entry)
-        return { name: entry.name, poster: entry.poster }
+        return { name: entry.name, poster: entry.poster, genres: entry.genres }
     } catch {
-        return { name: '', poster: '' }
+        return { name: '', poster: '', genres: [] }
     }
 }
 
@@ -247,23 +250,29 @@ function nuvioUniqueId(contentId: string, season?: number | null, episode?: numb
     return contentId
 }
 
-function accountActivityMeta(account: StremioAccount, accounts: StremioAccount[]) {
+function accountActivityMeta(account: Account, accounts: Account[]) {
     return {
         name: account.name || getAccountEmail(account)?.split('@')[0] || account.id || 'Unknown',
         colorIndex: accounts.indexOf(account) % 10,
     }
 }
 
-export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: StremioAccount, accounts: StremioAccount[]): Promise<ActivityItem> {
+export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[]): Promise<ActivityItem> {
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const watchedAt = Number(row.watched_at) || Date.now()
     let name = row.title || ''
     let poster = ''
+    let genres: string[] | undefined
     if (!name.trim()) {
         const resolved = await resolveCinemeta(row.content_id, row.content_type)
         name = resolved.name
         poster = resolved.poster
+        genres = resolved.genres.length > 0 ? resolved.genres : undefined
+    } else {
+        const resolved = await resolveCinemeta(row.content_id, row.content_type)
+        poster = resolved.poster
+        genres = resolved.genres.length > 0 ? resolved.genres : undefined
     }
     return {
         id: `${account.id}:nuvio:${uniqueItemId}`,
@@ -283,12 +292,13 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        genres,
     }
 }
 
 // Progress rows carry no title (only watched rows do), so the caller can pass a title resolved
 // from the watched-items list for the same content_id to avoid showing a raw id as the name.
-export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: StremioAccount, accounts: StremioAccount[], titleHint?: string): Promise<ActivityItem> {
+export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string): Promise<ActivityItem> {
     const uniqueItemId = row.video_id || nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const duration = Number(row.duration) || 0
@@ -297,10 +307,16 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const lastWatched = Number(row.last_watched) || Date.now()
     let name = titleHint?.trim() || ''
     let poster = ''
+    let genres: string[] | undefined
     if (!name) {
         const resolved = await resolveCinemeta(row.content_id, row.content_type)
         name = resolved.name
         poster = resolved.poster
+        genres = resolved.genres.length > 0 ? resolved.genres : undefined
+    } else {
+        const resolved = await resolveCinemeta(row.content_id, row.content_type)
+        poster = resolved.poster
+        genres = resolved.genres.length > 0 ? resolved.genres : undefined
     }
     return {
         id: `${account.id}:nuvio:${uniqueItemId}`,
@@ -320,6 +336,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        genres,
     }
 }
 
@@ -338,7 +355,7 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         firstWatched: entry.firstWatched,
         duration: entry.duration,
         watched: entry.isFromEventLog ? entry.watched : (entry.liveWatched ?? entry.watched),
-        progress: entry.isFromEventLog ? entry.progress : (entry.liveProgress ?? entry.progress),
+        progress: Math.min(entry.isFromEventLog ? entry.progress : (entry.liveProgress ?? entry.progress), 100),
         timesWatched: entry.timesWatched,
         isInProgress: entry.isInProgress,
         season: entry.season,
@@ -346,5 +363,6 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         overallTimeWatched: entry.overallTimeWatched,
         source: entry.source,
         backfill: entry.backfill,
+        genres: entry.genres,
     }
 }

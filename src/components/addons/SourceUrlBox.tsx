@@ -154,12 +154,12 @@ export function SourceUrlBox({
             />
             <div className="flex shrink-0 items-center gap-1">
               <Tooltip content="Cancel">
-                <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={resetEdit} disabled={saving} aria-label="Cancel URL edit">
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center" onClick={resetEdit} disabled={saving} aria-label="Cancel URL edit">
                   <X className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
               <Tooltip content={needsConfirm ? 'Replace anyway' : 'Check and replace'}>
-                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-primary hover:text-primary" onClick={() => handleReplace(needsConfirm)} disabled={saving} aria-label="Save URL">
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center text-primary hover:text-primary" onClick={() => handleReplace(needsConfirm)} disabled={saving} aria-label="Save URL">
                   <Check className="h-3.5 w-3.5" />
                 </Button>
               </Tooltip>
@@ -179,9 +179,9 @@ export function SourceUrlBox({
 
         {!isEditing && (
           <div className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/url:opacity-100 [@media(hover:hover)]:focus-within:opacity-100">
-            <CopyButton value={sourceUrl} variant="inline" iconSize={12} className="h-6 w-6 rounded-md text-muted-foreground hover:bg-background/70 hover:text-foreground" />
+            <CopyButton value={sourceUrl} variant="inline" iconSize={12} className="h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:bg-background/70 hover:text-foreground" />
             <Tooltip content="Open in Stremio">
-              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:bg-background/70 hover:text-foreground" onClick={() => { window.location.href = getStremioLink(sourceUrl) }} aria-label="Open in Stremio">
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:bg-background/70 hover:text-foreground" onClick={() => { window.location.href = getStremioLink(sourceUrl) }} aria-label="Open in Stremio">
                 <ExternalLink className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>

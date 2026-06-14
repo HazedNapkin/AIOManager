@@ -317,7 +317,7 @@ export function SettingsPage() {
 
         setImporting(true)
         try {
-            await importAccounts(pendingImport.text)
+            await importAccounts(pendingImport.text, false, 'merge', undefined)
             // Refresh the addon store to pick up any imported saved addons
             await initializeAddonStore()
             toast({ title: "Import Successful", description: "All accounts, addons, and settings have been restored." })
@@ -347,7 +347,7 @@ export function SettingsPage() {
     }
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-4 sm:space-y-8">
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-fit">
                     <TabsTrigger value="general" className="h-9 px-3 text-xs sm:px-4">
@@ -368,21 +368,21 @@ export function SettingsPage() {
                     </TabsTrigger>
                 </TabsList>
 
-                <div className="mt-8">
+                <div className="mt-4 sm:mt-8">
                     {/* General Tab */}
                     <TabsContent value="general" className="mt-0">
-                        <div className="grid gap-6">
+                        <div className="grid gap-4 sm:gap-6">
                             <AccountSection />
 
-                            <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                         <SquircleOverlay />
                                         <EyeOff className="relative z-10 h-4 w-4 text-muted-foreground" />
                                     </div>
                                     <div>
-                                        <Label htmlFor="privacy-mode" className="text-base font-medium cursor-pointer">Privacy Mode</Label>
-                                        <p className="text-sm text-muted-foreground">Mask secrets and sensitive data</p>
+                                        <Label htmlFor="privacy-mode" className="text-sm sm:text-base font-medium cursor-pointer">Privacy Mode</Label>
+                                        <p className="text-xs sm:text-sm text-muted-foreground">Mask secrets and sensitive data</p>
                                     </div>
                                 </div>
                                 <Switch
@@ -401,9 +401,9 @@ export function SettingsPage() {
                     </TabsContent>
 
                     {/* Data & Sync Tab */}
-                    <TabsContent value="data" className="mt-0 space-y-6">
+                    <TabsContent value="data" className="mt-0 space-y-4 sm:space-y-6">
                         {/* Backup & Restore */}
-                        <div className="flex flex-col justify-between gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm md:flex-row md:items-center">
+                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
                             <div className="flex flex-1 items-start gap-4">
                                 <div className="relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
@@ -440,16 +440,16 @@ export function SettingsPage() {
                         <SyncSummarySection />
 
                         {/* Non-destructive Clear History Cache */}
-                        <div className="flex flex-col justify-between gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm md:flex-row md:items-center">
-                            <div className="flex flex-1 items-start gap-4">
-                                <div className="relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
+                            <div className="flex flex-1 items-start gap-3 sm:gap-4">
+                                <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
                                     <Trash2 className="relative z-10 h-4 w-4 text-muted-foreground" />
                                 </div>
                                 <div className="space-y-1">
-                                    <h3 className="text-base font-semibold">Clear History Cache</h3>
+                                    <h3 className="text-sm sm:text-base font-semibold">Clear History Cache</h3>
                                     <p className="max-w-2xl text-sm text-muted-foreground">
-                                        Wipes all locally cached activity view data. Useful if you want to force a clean re-pull from your attached Stremio accounts immediately.
+                                        Wipes all locally cached activity view data. Useful if you want to force a clean re-pull from your accounts immediately.
                                     </p>
                                 </div>
                             </div>
@@ -463,7 +463,7 @@ export function SettingsPage() {
                     </TabsContent>
 
                     {/* Advanced Tab */}
-                    <TabsContent value="advanced" className="mt-0 space-y-6">
+                    <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
                         <NotificationsSection />
                         <SyncDiagnostics />
                         <DangerZone />

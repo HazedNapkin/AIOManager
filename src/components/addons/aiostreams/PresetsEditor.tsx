@@ -42,7 +42,7 @@ export function PresetsEditor({ value, onSave, onCancel }: PresetsEditorProps) {
         <div className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
             <div className="flex items-center justify-between border-b border-border/20 pb-3">
                 <h3 className="font-semibold text-sm">Addons Editor</h3>
-                <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1" onClick={addEmpty}>
+                <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" onClick={addEmpty}>
                     <Plus className="w-3 h-3" /> Add
                 </Button>
             </div>
@@ -69,7 +69,7 @@ export function PresetsEditor({ value, onSave, onCancel }: PresetsEditorProps) {
                                     name={name}
                                     logo={logo}
                                     className="h-5 w-5"
-                                    textClassName="text-[10px]"
+                                    textClassName="text-xs"
                                     imageClassName="p-0.5"
                                 />
                                 <Input
@@ -95,21 +95,21 @@ export function PresetsEditor({ value, onSave, onCancel }: PresetsEditorProps) {
 
                             <div className="grid grid-cols-2 gap-2 pl-7.5">
                                 <div className="space-y-0.5">
-                                    <span className="text-[10px] text-muted-foreground font-medium">ID</span>
+                                    <span className="text-xs text-muted-foreground font-medium">ID</span>
                                     <Input
                                         value={String(addon.id || '')}
                                         onChange={e => updateAddon(idx, 'id', e.target.value)}
                                         disabled={!!addon.id}
-                                        className="text-[10px] h-6 bg-muted/5 font-mono"
+                                        className="text-xs h-6 bg-muted/5 font-mono"
                                     />
                                 </div>
                                 <div className="space-y-0.5">
-                                    <span className="text-[10px] text-muted-foreground font-medium">Timeout (ms)</span>
+                                    <span className="text-xs text-muted-foreground font-medium">Timeout (ms)</span>
                                     <Input
                                         type="number"
                                         value={addon.timeout == null ? '' : Number(addon.timeout)}
                                         onChange={e => updateAddon(idx, 'timeout', e.target.value === '' ? undefined : Number(e.target.value))}
-                                        className="text-[10px] h-6 bg-muted/5 font-mono"
+                                        className="text-xs h-6 bg-muted/5 font-mono"
                                     />
                                 </div>
                             </div>

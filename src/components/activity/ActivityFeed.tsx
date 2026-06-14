@@ -247,7 +247,7 @@ export function ActivityFeed({
     }
 
     const renderTabCount = (count: number) => (
-        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-lg border border-border/35 bg-background/70 px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-lg border border-border/35 bg-background/70 px-1.5 text-xs font-semibold tabular-nums text-muted-foreground">
             {count}
         </span>
     )
@@ -258,12 +258,12 @@ export function ActivityFeed({
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <TabsList>
                         <TabsTrigger value="all">All Activity {renderTabCount(tabCounts.all)}</TabsTrigger>
-                        <TabsTrigger value="now">Now {renderTabCount(tabCounts.now)}</TabsTrigger>
+                        <TabsTrigger value="now">Recent {renderTabCount(tabCounts.now)}</TabsTrigger>
                         <TabsTrigger value="movies">Movies {renderTabCount(tabCounts.movies)}</TabsTrigger>
                         <TabsTrigger value="series">Series {renderTabCount(tabCounts.series)}</TabsTrigger>
                     </TabsList>
 
-                    <div className="hidden max-w-full flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm sm:flex">
+                    <div className="flex max-w-full flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
                         <span className="opacity-70">Showing</span>
                         <span className="font-semibold tabular-nums text-foreground">
                             {filteredHistory.length === 0

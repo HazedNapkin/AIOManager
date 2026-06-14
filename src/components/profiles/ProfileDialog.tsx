@@ -69,7 +69,7 @@ export function ProfileDialog({ profile, trigger, onDelete }: ProfileDialogProps
 
     return (
         <>
-            <div onClick={() => setOpen(true)} className="inline-block cursor-pointer">
+            <div onClick={() => setOpen(true)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} role="button" tabIndex={0} className="inline-block cursor-pointer">
                 {trigger || (
                     <Button className="gap-2">
                         <Plus className="h-4 w-4" />

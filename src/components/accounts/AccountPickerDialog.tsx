@@ -126,7 +126,7 @@ export function AccountPickerDialog({
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7"
+                                className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 flex items-center justify-center"
                                 onClick={() => setSearchQuery('')}
                             >
                                 <X className="h-4 w-4" />

@@ -1,5 +1,5 @@
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { isNewerVersion, getAddonConfigureUrl, cn, getTimeAgo } from '@/lib/utils'
 import { describeManifestChanges } from '@/lib/addon-manifest-diff'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -39,7 +39,7 @@ interface SavedAddonListRowProps {
     onToggleSelect?: (id: string) => void
     onLongPress?: (id: string) => void
     profileName?: string
-    deployedAccounts?: StremioAccount[]
+    deployedAccounts?: Account[]
     manifestChange?: SavedAddonManifestChangeSummary
 }
 
@@ -175,7 +175,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         <span className="hidden text-xs text-muted-foreground/60 shrink-0 min-[380px]:inline">v{savedAddon.manifest.version}</span>
                         {hasManifestShapeChange && (
                             <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'} side="top">
-                                <span className="inline-flex rounded-full border border-warning/25 bg-warning/10 px-1.5 text-[10px] font-bold uppercase leading-5 text-warning">
+                                <span className="inline-flex rounded-full border border-warning/25 bg-warning/10 px-1.5 text-xs font-bold uppercase leading-5 text-warning">
                                     Manifest
                                 </span>
                             </Tooltip>
@@ -186,7 +186,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                 size="sm"
                                 onClick={handleUpdate}
                                 disabled={updating}
-                                className="h-5 px-1.5 py-0 text-[10px] font-bold uppercase bg-warning/10 text-warning border border-warning/30 hover:bg-warning/20 hover:text-warning gap-1 shrink-0"
+                                className="h-5 px-1.5 py-0 text-xs font-bold uppercase bg-warning/10 text-warning border border-warning/30 hover:bg-warning/20 hover:text-warning gap-1 shrink-0"
                             >
                                 <AnimatedUpdateIcon className="h-2.5 w-2.5" isAnimating={updating} />
                                 {updating ? '...' : hasVersionUpdate ? 'Update' : 'Refresh'}
@@ -218,7 +218,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                         return (
                                             <span
                                                 key={tag}
-                                                className="text-[10px] pointer-events-none px-1.5 py-0 rounded-full shrink-0 leading-5 font-medium"
+                                                className="text-xs pointer-events-none px-1.5 py-0 rounded-full shrink-0 leading-5 font-medium"
                                                 style={{ background: color.bg, color: color.text, border: `1px solid ${color.border}` }}
                                             >
                                                 {tag}
@@ -226,7 +226,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                         )
                                     })}
                                     {savedAddon.tags.length > 2 && (
-                                        <span className="text-[10px] text-muted-foreground/60 shrink-0">+{savedAddon.tags.length - 2}</span>
+                                        <span className="text-xs text-muted-foreground/60 shrink-0">+{savedAddon.tags.length - 2}</span>
                                     )}
                                 </div>
                             </>
@@ -255,7 +255,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                 variant="ghost"
                                 size="icon"
                                 onClick={(e) => e.stopPropagation()}
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                             >
                                 <MoreVertical className="h-4 w-4" />
                             </Button>

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { ActivityItem } from '@/types/activity'
-import { useAccountStore, getAccountAuthKey, getAccountEmail } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, getAccountEmail } from '@/store/accountStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { stremioClient } from '@/api/stremio-client'
@@ -321,7 +321,7 @@ export function ActivityPage() {
                 const account = accountById.get(accountId)
                 if (!account) return
                 try {
-                    const authKey = await decrypt(getAccountAuthKey(account), encryptionKey)
+                    const authKey = await decrypt(getStremioAuthKey(account), encryptionKey)
                     await mapConcurrent(items, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
                         try {
                             await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
@@ -368,7 +368,7 @@ export function ActivityPage() {
                     const account = accountById.get(item.accountId)
                     if (account) {
                         try {
-                            const authKey = await decrypt(getAccountAuthKey(account), encryptionKey)
+                            const authKey = await decrypt(getStremioAuthKey(account), encryptionKey)
                             await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
                         } catch (e) {
                             if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
@@ -377,7 +377,6 @@ export function ActivityPage() {
                 }
             }
 
-            invalidate()
             toast({
                 title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
                 description: 'Removed from activity history.'
@@ -393,7 +392,7 @@ export function ActivityPage() {
     const loadingPercent = loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 0
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-x-hidden">
             {/* Single unified toolbar */}
             <ToolbarShell contentClassName="gap-2 sm:gap-3">
                 {/* Search */}

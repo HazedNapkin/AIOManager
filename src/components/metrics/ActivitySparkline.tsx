@@ -56,7 +56,7 @@ export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps
                     )
                 })}
             </div>
-            <div className="mt-2 flex justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            <div className="mt-2 flex justify-between text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
                 <span>{data[0]?.day}</span>
                 <span>Today</span>
             </div>

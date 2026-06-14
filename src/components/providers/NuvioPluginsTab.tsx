@@ -103,7 +103,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
             <div className="flex items-center gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground flex-1">Plugins</p>
                 {baseline.length > 0 && (
-                    <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+                    <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                         {plugins.length}
                     </span>
                 )}
@@ -120,7 +120,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                     onClick={load}
                     disabled={loading || saving}
                     aria-label="Reload plugins"
@@ -180,7 +180,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                                className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground hover:text-destructive"
                                 onClick={() => remove(i)}
                                 aria-label="Remove plugin"
                             >

@@ -153,7 +153,7 @@ export function DangerZone() {
                         className="h-10 gap-2 rounded-xl border-destructive/40 bg-background/40 text-destructive transition-[transform,opacity,box-shadow] hover:bg-destructive hover:text-white disabled:opacity-40"
                         onClick={() => requestDangerAction({
                             title: 'Wipe all accounts?',
-                            description: `This permanently removes ${accounts.length} local account${accounts.length !== 1 ? 's' : ''} and their installed addon state from AIOManager. It does not delete the Stremio accounts themselves.`,
+                            description: `This permanently removes ${accounts.length} local account${accounts.length !== 1 ? 's' : ''} and their installed addon state from AIOManager. It does not delete the connected accounts themselves.`,
                             confirmText: 'Wipe Accounts',
                             action: executeDeleteAllAccounts,
                         })}

@@ -65,7 +65,7 @@ export function DiscoverRow({
           type="button"
           aria-label="Scroll left"
           onClick={() => scroll(-1)}
-          className="absolute left-0 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/80 text-foreground/80 opacity-0 shadow-lg backdrop-blur transition-opacity hover:bg-card group-hover/row:opacity-100"
+          className="absolute left-0 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/80 text-foreground/80 opacity-100 shadow-lg backdrop-blur transition-opacity hover:bg-card md:opacity-0 md:group-hover/row:opacity-100"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
@@ -73,7 +73,7 @@ export function DiscoverRow({
           type="button"
           aria-label="Scroll right"
           onClick={() => scroll(1)}
-          className="absolute right-0 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/80 text-foreground/80 opacity-0 shadow-lg backdrop-blur transition-opacity hover:bg-card group-hover/row:opacity-100"
+          className="absolute right-0 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/80 text-foreground/80 opacity-100 shadow-lg backdrop-blur transition-opacity hover:bg-card md:opacity-0 md:group-hover/row:opacity-100"
         >
           <ChevronRight className="h-5 w-5" />
         </button>
@@ -85,7 +85,7 @@ export function DiscoverRow({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.4), ease: 'easeOut' }}
-            className="w-[300px] shrink-0 snap-start"
+            className="w-[260px] sm:w-[300px] shrink-0 snap-start"
           >
             <DiscoverCard
               addon={addon}

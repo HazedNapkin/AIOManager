@@ -149,12 +149,14 @@ export function loadSalt(): Uint8Array | null {
 /**
  * Save salt to localStorage
  */
-export function saveSalt(salt: Uint8Array): void {
+export function saveSalt(salt: Uint8Array): boolean {
   try {
     const saltBase64 = btoa(String.fromCharCode(...salt))
     localStorage.setItem(STORAGE_KEYS.USER_SALT, saltBase64)
+    return true
   } catch {
-    if (import.meta.env.DEV) console.error('[crypto] Failed to persist salt - vault will not survive page reload')
+    console.warn('Your session may not persist across page reloads.')
+    return false
   }
 }
 
@@ -172,11 +174,13 @@ export function loadPasswordHash(): string | null {
 /**
  * Save password hash to localStorage
  */
-export function savePasswordHash(hash: string): void {
+export function savePasswordHash(hash: string): boolean {
   try {
     localStorage.setItem(STORAGE_KEYS.PASSWORD_HASH, hash)
+    return true
   } catch {
-    if (import.meta.env.DEV) console.error('[crypto] Failed to persist password hash - vault will not survive page reload')
+    console.warn('Your session may not persist across page reloads.')
+    return false
   }
 }
 

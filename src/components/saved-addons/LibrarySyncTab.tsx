@@ -10,7 +10,7 @@ import { StatusChip } from '@/components/ui/status-chip'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn, getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import type { Profile } from '@/types/profile'
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import {
@@ -37,7 +37,7 @@ const hostOf = (url: string) => {
 
 export interface SyncDeploymentItem {
   addon: SavedAddon
-  deployedAccounts: StremioAccount[]
+  deployedAccounts: Account[]
 }
 
 interface LibrarySyncTabProps {
@@ -220,7 +220,7 @@ export function LibrarySyncTab({
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" disabled={disablingSyncIds.has(addon.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground" disabled={disablingSyncIds.has(addon.id)}>
                             {disablingSyncIds.has(addon.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreVertical className="h-3.5 w-3.5" />}
                           </Button>
                         </DropdownMenuTrigger>

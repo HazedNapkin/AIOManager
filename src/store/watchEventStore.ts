@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { WatchEvent, SnapshotItem, LibraryItem } from '@/types/activity'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { getSeasonEpisode, parseStremioDate, isActuallyWatched, getLocalDayKey, getEpisodeIdentity } from '@/lib/activity-utils'
 import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
@@ -11,6 +11,11 @@ const STORAGE_KEY = 'aio_watch_events_v2'
 // Per-session guard: `${accountId}:${seriesId}:${watchedString}` already attempted, so repeated
 // library refreshes don't re-decode + re-fetch Cinemeta for unchanged series.
 const backfillProcessed = new Set<string>()
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') backfillProcessed.clear()
+  })
+}
 
 // Snapshot: { [accountId]: { [itemId]: SnapshotItem } }
 type Snapshot = Record<string, Record<string, SnapshotItem>>
@@ -19,14 +24,20 @@ function isSeriesItem(item: LibraryItem): boolean {
     return item.type === 'series' || item.type === 'anime' || item.type === 'episode'
 }
 
+function sanitizeSeason(s: number | undefined | null): number | undefined {
+    if (s == null) return undefined
+    return s > 0 && s <= 100 ? s : undefined
+}
+
 function getSeasonEpisodeForVideoId(item: LibraryItem, videoId: string): { season?: number; episode?: number } {
-    return getSeasonEpisode({
+    const { season, episode } = getSeasonEpisode({
         ...item,
         state: {
             ...(item.state || {}),
             video_id: videoId
         }
     })
+    return { season: sanitizeSeason(season), episode }
 }
 
 interface WatchEventState {
@@ -40,11 +51,13 @@ interface WatchEventState {
     diffAndRecord: (
         accountId: string,
         items: LibraryItem[],
-        account: StremioAccount,
-        accounts: StremioAccount[]
+        account: Account,
+        accounts: Account[]
     ) => WatchEvent[]
 
     mergeServerEvents: (serverEvents: ServerActivityEvent[]) => void
+
+    mergeExternalWatchEvents: (accountId: string, platform: string, items: ExternalWatchItem[]) => void
 
     recordBackfillEpisodes: (accountId: string, items: LibraryItem[]) => Promise<number>
 
@@ -74,6 +87,23 @@ interface ServerActivityEvent {
     overallTimeWatched: number
 }
 
+export interface ExternalWatchItem {
+    itemId: string
+    video_id?: string
+    type: string
+    season?: number
+    episode?: number
+    name: string
+    poster?: string
+    duration?: number
+    progress?: number
+    timestamp: number
+}
+
+function capEvents(events: WatchEvent[]): WatchEvent[] {
+    return events.length > 500 ? events.slice(0, 500) : events
+}
+
 async function persistWatchEvents(events: WatchEvent[], snapshot: Snapshot) {
     try {
         await localforage.setItem(STORAGE_KEY, { events, snapshot })
@@ -91,13 +121,15 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const cleaned = events.filter(e => {
             const isSeries = e.type === 'series' || e.type === 'anime' || e.type === 'episode'
             if (!isSeries) return true
+            if (e.season != null && e.season > 100) return false
             if (e.episode != null) return true
             if (e.season != null) return true
             if (e.video_id !== e.itemId) return true
             return false
         })
-        set({ events: cleaned, snapshot, initialized: true })
-        persistWatchEvents(cleaned, snapshot)
+        const capped = capEvents(cleaned)
+        set({ events: capped, snapshot, initialized: true })
+        persistWatchEvents(capped, snapshot)
     },
 
     load: async () => {
@@ -109,6 +141,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 const cleaned = stored.events.filter(e => {
                     const isSeries = e.type === 'series' || e.type === 'anime' || e.type === 'episode'
                     if (!isSeries) return true
+                    if (e.season != null && e.season > 100) return false
                     if (e.episode != null) return true
                     if (e.season != null) return true
                     if (e.video_id !== e.itemId) return true
@@ -168,7 +201,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             if (!isSeriesItem(item) || !prior.mtime) return
 
             const { season: priorSeason, episode: priorEpisode } = getSeasonEpisodeForVideoId(item, prior.video_id)
-            const season = prior.season ?? priorSeason
+            const season = sanitizeSeason(prior.season ?? priorSeason)
             const episode = prior.episode ?? priorEpisode
             if (season == null && episode == null && (!prior.video_id || prior.video_id === item._id)) return
 
@@ -248,7 +281,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                                 time_watched: item.state?.timeWatched || 0,
                                 time_watched_delta: item.state?.overallTimeWatched || 0,
                                 duration: item.state?.duration || 0,
-                                season,
+                                season: sanitizeSeason(season),
                                 episode,
                             })
                             existingEventIds.add(seedId)
@@ -261,7 +294,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                     overallTimeWatched: item.state?.overallTimeWatched || 0,
                     timeWatched: item.state?.timeWatched || 0,
                     duration: item.state?.duration || 0,
-                    season: seedSeason,
+                    season: sanitizeSeason(seedSeason),
                     episode: seedEpisode,
                 })
                 continue
@@ -269,7 +302,8 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
 
 
             const mtimeChanged = mtime > prior.mtime
-            const { season: currentSeason, episode: currentEpisode } = getSeasonEpisode(item)
+            const { season: rawCurrentSeason, episode: currentEpisode } = getSeasonEpisode(item)
+            const currentSeason = sanitizeSeason(rawCurrentSeason)
             const episodeAdvanced = video_id !== prior.video_id ||
                 currentSeason !== prior.season ||
                 currentEpisode !== prior.episode
@@ -352,6 +386,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const merged = [...state.events, ...newEvents]
         const deduped = Array.from(new Map(merged.map(e => [e.id, e])).values())
         const sorted = deduped.sort((a, b) => b.event_ts - a.event_ts)
+        const capped = capEvents(sorted)
 
         const nextSnapshot = {
             ...state.snapshot,
@@ -359,11 +394,11 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         }
 
         set({
-            events: sorted,
+            events: capped,
             snapshot: nextSnapshot,
         })
 
-        persistWatchEvents(sorted, nextSnapshot)
+        persistWatchEvents(capped, nextSnapshot)
         return newEvents
     },
 
@@ -390,10 +425,11 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             if (backfillProcessed.has(guardKey)) continue
 
             const decoded = await decodeWatchedBitfield(item.state?.watched)
-            if (!decoded || decoded.watchedIndices.length === 0) { backfillProcessed.add(guardKey); continue }
+            if (!decoded || decoded.watchedIndices.length === 0) { backfillProcessed.add(guardKey); if (backfillProcessed.size > 2000) backfillProcessed.clear(); continue }
             const videos = await fetchSeriesVideos(seriesId)
             if (!videos) continue // transient (meta fetch failed) -> retry on a later refresh
             backfillProcessed.add(guardKey) // deterministic from here (resolved or fail-closed)
+            if (backfillProcessed.size > 2000) backfillProcessed.clear()
             const episodes = resolveWatchedEpisodes(decoded, videos)
             if (!episodes) continue // fail-closed checksum did not pass
 
@@ -436,8 +472,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const merged = [...cur.events, ...newEvents]
         const deduped = Array.from(new Map(merged.map(e => [e.id, e])).values())
         const sorted = deduped.sort((a, b) => b.event_ts - a.event_ts)
-        set({ events: sorted })
-        persistWatchEvents(sorted, cur.snapshot)
+        const capped = capEvents(sorted)
+        set({ events: capped })
+        persistWatchEvents(capped, cur.snapshot)
         return newEvents.length
     },
 
@@ -456,18 +493,16 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const state = get()
         const now = Date.now()
         const eventsById = new Map(state.events.map(e => [e.id, e]))
-        const localCanonical = new Map<string, number[]>()
+        const localDayKeys = new Set<string>()
         for (const e of state.events) {
-            const key = `${e.accountId}:${e.itemId}:${e.video_id || ''}`
-            let arr = localCanonical.get(key)
-            if (!arr) { arr = []; localCanonical.set(key, arr) }
-            arr.push(e.event_ts)
+            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)
+            localDayKeys.add(`${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`)
         }
-        const TWO_MINUTES = 2 * 60 * 1000
         const newEvents: WatchEvent[] = []
         let changed = false
 
         for (const se of serverEvents) {
+            if (se.season != null && se.season > 100) continue
             const video_id = se.videoId || se.uniqueItemId || se.itemId
             const event: WatchEvent = {
                 id: se.id,
@@ -503,19 +538,20 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 continue
             }
 
-            const canonicalKey = `${se.accountId}:${se.itemId}:${video_id || ''}`
-            const localTimestamps = localCanonical.get(canonicalKey)
-            if (localTimestamps && localTimestamps.some(ts => Math.abs(se.timestamp - ts) < TWO_MINUTES)) continue
+            const ek = getEpisodeIdentity(se.itemId, video_id, event.season, event.episode)
+            const dayKey = `${se.accountId}:${ek}:${getLocalDayKey(se.timestamp)}`
+            if (localDayKeys.has(dayKey)) continue
 
             newEvents.push(event)
             eventsById.set(se.id, event)
+            localDayKeys.add(dayKey)
             changed = true
         }
 
         if (newEvents.length === 0 && !changed) return
 
         const sorted = Array.from(eventsById.values()).sort((a, b) => b.event_ts - a.event_ts)
-
+        const capped = capEvents(sorted)
         const newSnapshot = { ...state.snapshot }
         for (const e of sorted) {
             if (!newSnapshot[e.accountId]) newSnapshot[e.accountId] = {}
@@ -536,7 +572,81 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             }
         }
 
-        set({ events: sorted, snapshot: newSnapshot })
-        persistWatchEvents(sorted, newSnapshot)
+        set({ events: capped, snapshot: newSnapshot })
+        persistWatchEvents(capped, newSnapshot)
+    },
+
+    mergeExternalWatchEvents: (accountId, platform, items) => {
+        if (!items || items.length === 0) return
+        const state = get()
+        const now = Date.now()
+        const eventsById = new Map(state.events.map(e => [e.id, e]))
+        const sessionKeys = new Set<string>()
+        for (const e of state.events) {
+            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)
+            sessionKeys.add(`${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`)
+        }
+        let changed = false
+
+        for (const item of items) {
+            const video_id = item.video_id || item.itemId
+            const episodeKey = getEpisodeIdentity(item.itemId, video_id, item.season, item.episode)
+            const dayKey = getLocalDayKey(item.timestamp)
+            const sessionKey = `${accountId}:${episodeKey}:${dayKey}`
+            const eventId = `ext:${platform}:${accountId}:${episodeKey}:${dayKey}`
+
+            const duration = item.duration || 0
+            const progress = item.progress ?? 0
+            const timeWatched = duration > 0 ? Math.round(duration * (progress / 100)) : 0
+
+            const existing = eventsById.get(eventId)
+            if (existing) {
+                const newDuration = Math.max(existing.duration || 0, duration)
+                const newTimeWatched = Math.max(existing.time_watched || 0, timeWatched)
+                if (newDuration !== existing.duration || newTimeWatched !== existing.time_watched) {
+                    eventsById.set(eventId, {
+                        ...existing,
+                        duration: newDuration,
+                        time_watched: newTimeWatched,
+                        name: item.name || existing.name,
+                        poster: item.poster || existing.poster,
+                        season: item.season ?? existing.season,
+                        episode: item.episode ?? existing.episode,
+                        detected_ts: now,
+                    })
+                    changed = true
+                }
+                continue
+            }
+
+            if (sessionKeys.has(sessionKey)) continue
+
+            const event: WatchEvent = {
+                id: eventId,
+                accountId,
+                itemId: item.itemId,
+                video_id,
+                event_ts: item.timestamp,
+                detected_ts: now,
+                name: item.name || 'Unknown',
+                type: item.type || 'other',
+                poster: item.poster || '',
+                time_watched: timeWatched,
+                duration,
+                season: item.season,
+                episode: item.episode,
+                source: platform,
+            }
+            eventsById.set(eventId, event)
+            sessionKeys.add(sessionKey)
+            changed = true
+        }
+
+        if (!changed) return
+
+        const sorted = Array.from(eventsById.values()).sort((a, b) => b.event_ts - a.event_ts)
+        const capped = capEvents(sorted)
+        set({ events: capped })
+        persistWatchEvents(capped, state.snapshot)
     },
 }))

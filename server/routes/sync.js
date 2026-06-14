@@ -167,7 +167,9 @@ export function registerSyncRoutes(fastify) {
                     if (typeof apiKey !== 'string' || !apiKey) continue
                     const keyHash = hashApiKey(apiKey)
                     await tx.run(
-                        'INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ($1, $2, $3, $4)',
+                        db.type === 'postgres'
+                            ? 'INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (sync_user, api_key_hash) DO UPDATE SET account_id = EXCLUDED.account_id, created_at = EXCLUDED.created_at'
+                            : 'INSERT OR REPLACE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ($1, $2, $3, $4)',
                         [accountId, id, keyHash, Date.now()]
                     )
                 }

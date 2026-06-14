@@ -24,6 +24,7 @@ export const corsOrigins = process.env.CORS_ORIGINS
     : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173']
 
 export const loggerConfig = process.env.LOG_PRETTY_PRINT !== 'false' ? {
+    level: process.env.LOG_LEVEL || 'info',
     stream: pinoPretty({
         colorize: true,
         translateTime: 'HH:MM:ss',
@@ -46,7 +47,7 @@ export const loggerConfig = process.env.LOG_PRETTY_PRINT !== 'false' ? {
             return `${levelEmoji} ${levelText} | ${category} | ${log[messageKey]}`
         }
     })
-} : true
+} : { level: process.env.LOG_LEVEL || 'info' }
 
 export function ensureDataDirectory(fastify) {
     if (!fs.existsSync(DATA_DIR)) {

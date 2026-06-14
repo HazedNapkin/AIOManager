@@ -269,7 +269,7 @@ export function Hero() {
                 The AIOManager <br /> Kronorium
             </h1>
             <p className="text-fd-muted-foreground max-w-xl text-lg md:text-xl leading-relaxed font-medium">
-                One manager to rule them all - local-first, encrypted, and powerful. Manage multiple Stremio accounts, addons, and automated failover.
+                One manager to rule them all - local-first, encrypted, and powerful. Manage multiple streaming accounts, addons, and automated failover.
             </p>
             <div className="flex gap-3 flex-wrap justify-center mt-4">
                 <RouterLink
@@ -492,7 +492,7 @@ export function DemoAddonCard({
                         </Tooltip>
                     </div>
                     <Tooltip content="Open in Stremio" side="top">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground shrink-0">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0">
                         <ExternalLink className="h-3.5 w-3.5" />
                     </Button>
                     </Tooltip>
@@ -753,7 +753,7 @@ export function DemoVaultKey({
                             variant="ghost"
                             size="icon"
                             onClick={() => setRevealed(v => !v)}
-                            className="h-6 w-6 text-muted-foreground hover:text-primary"
+                            className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-primary"
                         >
                             {revealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                         </Button>
@@ -763,7 +763,7 @@ export function DemoVaultKey({
                             variant="ghost"
                             size="icon"
                             onClick={handleCopy}
-                            className="h-6 w-6 text-muted-foreground hover:text-primary"
+                            className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-primary"
                         >
                             {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
                         </Button>
@@ -856,10 +856,10 @@ export function DemoRuleCard({
                     }`}>{active ? 'Active' : 'Paused'}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px] text-muted-foreground/60 hover:text-foreground">
+                    <Button variant="ghost" size="icon" className="text-muted-foreground/60 hover:text-foreground">
                         <FlaskConical className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="min-h-[44px] min-w-[44px] text-muted-foreground/60 hover:text-foreground">
+                    <Button variant="ghost" size="icon" className="text-muted-foreground/60 hover:text-foreground">
                         <Pencil className="h-4 w-4" />
                     </Button>
                     <div

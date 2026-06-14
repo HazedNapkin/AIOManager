@@ -91,7 +91,7 @@ export function ServicesEditor({ value, onSave, onCancel }: ServicesEditorProps)
                                     type="button"
                                     variant="ghost"
                                     size="icon"
-                                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                    className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-destructive"
                                     onClick={() => removeService(idx)}
                                     aria-label="Remove service"
                                 >
@@ -107,7 +107,7 @@ export function ServicesEditor({ value, onSave, onCancel }: ServicesEditorProps)
 
                                 return (
                                     <div key={field} className="space-y-1">
-                                        <Label className="text-[10px] font-semibold text-muted-foreground uppercase">{formatSvcName(field)}</Label>
+                                        <Label className="text-xs font-semibold text-muted-foreground uppercase">{formatSvcName(field)}</Label>
                                         <div className="relative">
                                             <Input
                                                 type={visible ? 'text' : 'password'}
@@ -120,7 +120,7 @@ export function ServicesEditor({ value, onSave, onCancel }: ServicesEditorProps)
                                                     type="button"
                                                     variant="ghost"
                                                     size="icon"
-                                                    className="absolute right-0 top-0 h-7 w-7 text-muted-foreground/60 hover:text-foreground"
+                                                    className="absolute right-0 top-0 h-7 w-7 flex items-center justify-center text-muted-foreground/60 hover:text-foreground"
                                                     onClick={() => toggleSecret(idx, field)}
                                                     aria-label={visible ? "Hide secret" : "Show secret"}
                                                 >

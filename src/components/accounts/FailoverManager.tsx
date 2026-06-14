@@ -301,9 +301,11 @@ export function FailoverManager({
         const messageTemplate = ruleMessageTemplate.trim() || undefined
 
         if (editingRuleId) {
+            const existingRule = rules.find(r => r.id === editingRuleId)
+            const chainChanged = !existingRule || JSON.stringify(existingRule.priorityChain) !== JSON.stringify(filteredChain)
             await updateRule(editingRuleId, {
                 priorityChain: filteredChain,
-                activeUrl: filteredChain[0],
+                activeUrl: chainChanged ? filteredChain[0] : existingRule!.activeUrl,
                 name: ruleName.trim() || undefined,
                 cooldown_ms: cooldownMs,
                 notifyEnabled,
@@ -341,7 +343,15 @@ export function FailoverManager({
 
         let imported = 0
         for (const rule of sourceRules) {
-            await addRule(accountId, [...rule.priorityChain])
+            await addRule(
+                accountId,
+                [...rule.priorityChain],
+                rule.name,
+                rule.cooldown_ms,
+                rule.webhookUrl,
+                rule.notifyEnabled,
+                rule.messageTemplate
+            )
             imported++
         }
 
@@ -599,7 +609,7 @@ export function FailoverManager({
                     <Dialog open={isRuleDialogOpen} onOpenChange={(open) => { if (!open) resetForm() }}>
                         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                             <DialogHeader>
-                                <DialogTitle className="flex items-center gap-2">
+                                <DialogTitle className="flex items-center gap-2 min-w-0">
                                     {editingRuleId
                                         ? <><Pencil className="w-5 h-5 text-primary" /> Edit Priority Chain</>
                                         : <><Plus className="w-5 h-5 text-primary" /> Create New Autopilot Rule</>
@@ -714,7 +724,7 @@ export function FailoverManager({
                                                                     name={selectedAddon.metadata?.customName || selectedAddon.manifest.name}
                                                                     logo={selectedAddon.metadata?.customLogo || selectedAddon.manifest.logo}
                                                                     className="h-5 w-5"
-                                                                    textClassName="text-[10px]"
+                                                                    textClassName="text-xs"
                                                                     imageClassName="p-0.5"
                                                                 />
                                                                 <span className="truncate">{selectedAddon.metadata?.customName || selectedAddon.manifest.name}</span>
@@ -733,7 +743,7 @@ export function FailoverManager({
                                                                 name={addon.metadata?.customName || addon.manifest.name}
                                                                 logo={addon.metadata?.customLogo || addon.manifest.logo}
                                                                 className="h-5 w-5"
-                                                                textClassName="text-[10px]"
+                                                                textClassName="text-xs"
                                                                 imageClassName="p-0.5"
                                                             />
                                                             <span>{addon.metadata?.customName || addon.manifest.name}</span>
@@ -1329,7 +1339,7 @@ function FailoverHistory({ addons, accountId }: { addons: any[]; accountId: stri
                                                 {log.type}
                                             </StatusChip>
                                             {latencyMs != null && (
-                                                <span className="text-[10px] font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
+                                                <span className="text-xs font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
                                                     {latencyMs < 1000 ? `${Math.round(latencyMs)}ms` : `${(latencyMs / 1000).toFixed(1)}s`}
                                                 </span>
                                             )}

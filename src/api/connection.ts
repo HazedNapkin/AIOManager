@@ -102,6 +102,11 @@ export async function getConnectionStates(accountId: string): Promise<Record<str
         headers: await getAuthHeaders(),
         timeout: 10000,
     })
+    if (res.status === 401) {
+        const err = new Error('Session expired')
+        ;(err as { isAuthError?: boolean }).isAuthError = true
+        throw err
+    }
     if (!res.ok) return {}
     const body = await res.json()
     return body.connectionStates || {}

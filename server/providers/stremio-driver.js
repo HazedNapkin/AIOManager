@@ -15,6 +15,7 @@ export function createStremioDriver() {
                 const body = await res.text().catch(() => '')
                 const err = new Error(`Stremio API ${res.status}: ${body}`)
                 err.status = res.status
+                err._authExpired = (res.status === 401 || res.status === 403)
                 throw err
             }
             const result = await res.json()
@@ -31,6 +32,7 @@ export function createStremioDriver() {
                 const body = await res.text().catch(() => '')
                 const err = new Error(`addonCollectionSet returned ${res.status}: ${body}`)
                 err.status = res.status
+                err._authExpired = (res.status === 401 || res.status === 403)
                 throw err
             }
             return res.json()

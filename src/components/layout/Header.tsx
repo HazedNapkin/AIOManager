@@ -73,7 +73,7 @@ export function MobileBottomNav() {
   const isMoreActive = MORE_NAV.some(item => item.match(location.pathname))
 
   return (
-    <div className="md:hidden flex-shrink-0 bg-card/95 backdrop-blur-lg border-t border-border flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
+    <div className="md:hidden flex-shrink-0 relative z-50 bg-card/95 backdrop-blur-lg border-t border-border flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
       {PRIMARY_NAV.map((item) => {
         const isActive = item.match(location.pathname)
         const Icon = item.icon
@@ -107,22 +107,22 @@ export function MobileBottomNav() {
           {moreOpen && (
             <>
               <motion.div
-                className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm"
+                className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setMoreOpen(false)}
               />
               <motion.div
-                className="fixed bottom-[100px] left-4 right-4 z-[100] bg-card/98 backdrop-blur-xl border border-border shadow-[0_-10px_40px_hsl(var(--background)/0.6)] rounded-2xl pb-2"
-                initial={{ y: 60, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 60, opacity: 0 }}
+                className="fixed bottom-[80px] left-0 right-0 z-40 bg-card/95 backdrop-blur-lg rounded-t-3xl border border-b-0 border-border/40 shadow-[0_-10px_40px_hsl(var(--background)/0.8)]"
+                initial={{ y: 280 }}
+                animate={{ y: 0 }}
+                exit={{ y: 280 }}
                 transition={{ type: 'spring', stiffness: 400, damping: 35 }}
               >
                 <div className="flex items-center justify-between px-5 pt-4 pb-2">
                   <span className="text-xs font-medium uppercase text-foreground/60">More</span>
-                  <Button variant="ghost" onClick={() => setMoreOpen(false)} className="min-h-[44px] min-w-[44px] p-1 text-muted-foreground/60 hover:text-foreground" aria-label="Close menu">
+                  <Button variant="ghost" onClick={() => setMoreOpen(false)} className="p-1 text-muted-foreground/60 hover:text-foreground" aria-label="Close menu">
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -177,7 +177,7 @@ function TabBadge({ count, dotColor, isActive, glow }: { count?: number; dotColo
   if (count !== undefined) {
     return (
       <span className={cn(
-        'ml-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1 text-[10px] font-semibold tabular-nums',
+        'ml-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1 text-xs font-semibold tabular-nums',
         isLight
           ? (isActive || glow ? 'bg-muted text-foreground' : 'bg-muted/60 text-muted-foreground')
           : (isActive || glow ? 'bg-white/[0.10] text-foreground' : 'bg-white/[0.06] text-muted-foreground')
@@ -276,7 +276,7 @@ export function Header() {
 
   return (
     <>
-    <header className="flex-shrink-0 md:sticky md:top-0 md:z-50">
+    <header className="flex-shrink-0 relative z-50 md:sticky md:top-0">
 
       {/* Tier 1 - Brand strip (attached) */}
       <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header'}`}>
@@ -312,7 +312,7 @@ export function Header() {
             >
               <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <span className="text-[12px] text-muted-foreground flex-1 text-left">Search accounts, addons, keys...</span>
-              <kbd className="text-[10px] px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground/60 shrink-0">⌘K</kbd>
+              <kbd className="text-xs px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground/60 shrink-0">⌘K</kbd>
             </button>
 
             <div className="relative flex items-center h-8 rounded-lg bg-muted/30 border border-border/40">
@@ -323,7 +323,7 @@ export function Header() {
                     aria-label="Vault keys"
                   >
                     <KeyRound className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-[10px] font-bold text-foreground/80 tabular-nums">{providerKeys.length}</span>
+                    <span className="text-xs font-bold text-foreground/80 tabular-nums">{providerKeys.length}</span>
                   </button>
                 </DropdownMenuTrigger>
 
@@ -384,7 +384,7 @@ export function Header() {
                             }}
                           >
                             <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-                            <div className="h-8 w-8 rounded-lg bg-muted/50 border border-border/40 flex items-center justify-center text-[10px] font-bold text-muted-foreground group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                            <div className="h-8 w-8 rounded-lg bg-muted/50 border border-border/40 flex items-center justify-center text-xs font-bold text-muted-foreground group-hover:border-primary/30 group-hover:text-primary transition-colors">
                               {getKeyAbbr(key)}
                             </div>
                             <div className="flex-1 min-w-0">
@@ -425,7 +425,7 @@ export function Header() {
                     ? <Zap className="h-3 w-3 text-warning" />
                     : <ZapOff className="h-3 w-3 text-muted-foreground" />
                   }
-                  <span className={`text-[10px] font-bold tabular-nums ${
+                  <span className={`text-xs font-bold tabular-nums ${
                     autopilotStatus === 'Live' ? 'text-warning' : 'text-foreground/60'
                   }`}>
                     {autopilotStatus === 'Live' ? activeRulesCount : autopilotStatus === 'Offline' ? 'Off' : autopilotStatus.charAt(0)}
@@ -447,7 +447,7 @@ export function Header() {
                     <Cloud className="h-3 w-3 text-muted-foreground" />
                   )}
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${syncDotColor}`} />
-                  <span className="text-[10px] font-bold text-foreground/60 tabular-nums">{syncLabel}</span>
+                  <span className="text-xs font-bold text-foreground/60 tabular-nums">{syncLabel}</span>
                 </button>
               </Tooltip>
 
@@ -456,7 +456,7 @@ export function Header() {
             {auth.isAuthenticated && (
               <div className="flex items-center gap-1.5">
                 <Tooltip content={auth.id} side="bottom">
-                  <div className="h-7 w-7 rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-[10px] font-bold text-primary cursor-default">
+                  <div className="h-7 w-7 rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary cursor-default">
                     {(auth.name || auth.id).charAt(0).toUpperCase()}
                   </div>
                 </Tooltip>
@@ -465,7 +465,7 @@ export function Header() {
                     variant="ghost"
                     type="button"
                     onClick={(e) => { e.preventDefault(); logout() }}
-                    className="text-muted-foreground/60 hover:text-destructive min-h-[44px] min-w-[44px] p-1"
+                    className="text-muted-foreground/60 hover:text-destructive p-1"
                     aria-label="Sign out"
                   >
                     <LogOut className="h-3.5 w-3.5" />
@@ -477,16 +477,16 @@ export function Header() {
         </div>
       </div>
 
-      <div className="md:hidden flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
-        <span className="flex items-center gap-1 text-[10px]">
+      <div className="md:hidden relative z-50 flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
+        <span className="flex items-center gap-1 text-xs">
           <KeyRound className="h-3 w-3" />
           <span className="font-semibold tabular-nums">{providerKeys.length}</span>
         </span>
-        <span className="flex items-center gap-1 text-[10px]">
+        <span className="flex items-center gap-1 text-xs">
           {autopilotStatus === 'Live' ? <Zap className="h-3 w-3 text-warning" /> : <ZapOff className="h-3 w-3" />}
           <span className={`font-semibold ${autopilotStatus === 'Live' ? 'text-warning' : ''}`}>{autopilotStatus === 'Live' ? `Live · ${activeRulesCount}` : autopilotStatus}</span>
         </span>
-        <span className="flex items-center gap-1 text-[10px]">
+        <span className="flex items-center gap-1 text-xs">
           {!auth.isAuthenticated ? <CloudOff className="h-3 w-3" /> : isSyncing || isRefreshingFromCloud ? <RefreshCw className="h-3 w-3 text-primary animate-spin" /> : <Cloud className="h-3 w-3" />}
           <span className={`w-1.5 h-1.5 rounded-full ${syncDotColor}`} />
           <span className="font-semibold">{syncLabel}</span>

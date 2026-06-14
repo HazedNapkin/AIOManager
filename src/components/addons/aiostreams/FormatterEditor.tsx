@@ -78,7 +78,7 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
                                 </div>
                                 <span className="text-xs font-semibold">{fmt.label}</span>
                             </div>
-                            <p className="text-[10px] text-muted-foreground pl-5.5">{fmt.description}</p>
+                            <p className="text-xs text-muted-foreground pl-5.5">{fmt.description}</p>
                         </button>
                     ))}
                     <button
@@ -101,7 +101,7 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
                             <Code className="w-3 h-3 text-muted-foreground" />
                             <span className="text-xs font-semibold">Custom</span>
                         </div>
-                        <p className="text-[10px] text-muted-foreground pl-5.5">Write your own formatter definition</p>
+                        <p className="text-xs text-muted-foreground pl-5.5">Write your own formatter definition</p>
                     </button>
                 </div>
             </div>
@@ -122,7 +122,7 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
                         <Textarea
                             value={customDefinition}
                             onChange={e => { setCustomDefinition(e.target.value); setJsonError('') }}
-                            className="font-mono text-[10px] min-h-[150px] bg-muted/5"
+                            className="font-mono text-xs min-h-[150px] bg-muted/5"
                             placeholder='{"nameTemplate": "...", "descriptionTemplate": "..."}'
                         />
                         {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}

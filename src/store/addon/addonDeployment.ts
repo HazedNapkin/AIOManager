@@ -6,8 +6,9 @@ import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
 import { normalizeAddonUrl } from '@/lib/utils'
 import { normalizeUrl, saveAccountAddonStates, saveAddonLibrary } from '@/lib/addon-storage'
 import { useAuthStore } from '@/store/authStore'
-import { getCachedAuthKey } from '@/store/accountStore'
+import { getCachedAuthKey, persistAccounts } from '@/store/accountStore'
 import type { AddonDescriptor } from '@/types/addon'
+import type { Account } from '@/types/account'
 import type {
   AccountAddonState,
   BulkResult,
@@ -20,6 +21,7 @@ import type { ReplaceTransportUrlResult } from '@/store/accountStore'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
+import { getStremioAuthKey } from '@/lib/account-compat'
 
 type StoreRef = { getState: () => AddonStore; setState: (partial: Partial<AddonStore> | ((state: AddonStore) => Partial<AddonStore>)) => void }
 
@@ -326,8 +328,18 @@ export async function bulkApplySavedAddons(
 
     await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
-        const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
-        const currentAddons = await getAddons(authKey, accountId)
+        const isLocalAccount = !accountAuthKey
+        let currentAddons: AddonDescriptor[]
+        let authKey = ''
+
+        if (isLocalAccount) {
+          const { useAccountStore } = await import('../accountStore')
+          const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+          currentAddons = account?.addons || []
+        } else {
+          authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+          currentAddons = await getAddons(authKey, accountId)
+        }
 
         const { addons: mergedAddons, result: mergeResult } = await mergeAddons(
           currentAddons,
@@ -344,7 +356,20 @@ export async function bulkApplySavedAddons(
           }
         }))
 
-        await updateAddons(authKey, updatedAddons, accountId)
+        if (isLocalAccount) {
+          const { useAccountStore } = await import('../accountStore')
+          const state = useAccountStore.getState()
+          const account = state.accounts.find(a => a.id === accountId)
+          if (account) {
+            const updatedAccount = { ...account, addons: updatedAddons, lastSync: new Date() }
+            useAccountStore.setState({
+              accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
+            })
+            persistAccounts(useAccountStore.getState().accounts)
+          }
+        } else {
+          await updateAddons(authKey, updatedAddons, accountId)
+        }
 
         result.success++
         result.details.push({ accountId, result: mergeResult })
@@ -411,6 +436,60 @@ export async function bulkRemoveAddons(
 
     await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
+        if (!accountAuthKey) {
+          const { useAccountStore } = await import('../accountStore')
+          const accountStore = useAccountStore.getState()
+          const localAddons = accountStore.accounts.find((account) => account.id === accountId)?.addons || []
+          const localMatches = localAddons.flatMap((addon) => {
+            const normAddonUrl = normalizeAddonUrl(addon.transportUrl)
+            if (!targetManifestIds.has(addon.manifest.id) && !targetUrlKeys.has(normAddonUrl)) return []
+            return [{ addon, normAddonUrl }]
+          })
+          const localProtected = localMatches.filter(({ addon }) => !allowProtected && addon.flags?.protected)
+          const localRemovableAddons = localMatches.filter(({ addon }) => {
+            return allowProtected || !addon.flags?.protected
+          })
+          const removedById = new Map<string, { addonId: string; name: string }>()
+          for (const { addon } of localRemovableAddons) {
+            removedById.set(addon.manifest.id, {
+              addonId: addon.manifest.id,
+              name: addon.manifest.name,
+            })
+          }
+          const removedDetails = Array.from(removedById.values())
+          const hasLocalRemoval = localRemovableAddons.length > 0
+
+          if (hasLocalRemoval) {
+            try {
+              const { useFailoverStore } = await import('@/store/failoverStore')
+              const failoverStore = useFailoverStore.getState()
+              for (const url of addonIds) {
+                await failoverStore.removeUrlFromRules(accountId, url)
+              }
+            } catch (e) {
+              if (import.meta.env.DEV) console.warn('[AddonStore] Failover cleanup failed during removal:', e)
+            }
+
+            await accountStore.removeLocalAddons(accountId, addonIds)
+          }
+
+          result.success++
+          result.details.push({
+            accountId,
+            result: {
+              added: [],
+              removed: removedDetails,
+              updated: [],
+              skipped: [],
+              protected: localProtected.map(({ addon }) => ({
+                addonId: addon.manifest.id,
+                name: addon.manifest.name,
+              })),
+            },
+          })
+          return
+        }
+
         const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
         const currentAddons = await getAddons(authKey, accountId)
         const currentAddonById = new Map(currentAddons.map((addon) => [addon.manifest.id, addon]))
@@ -568,6 +647,7 @@ export async function bulkReinstallAddons(
         const { useAccountStore } = await import('@/store/accountStore')
         const localAddons = useAccountStore.getState().accounts.find(a => a.id === accountId)?.addons || []
         const localByUrl = new Map(localAddons.map(a => [normalizeAddonUrl(a.transportUrl), a]))
+        const remoteUrls = new Set(currentAddons.map(a => normalizeAddonUrl(a.transportUrl)))
         const currentAddonsWithLocalMeta = currentAddons.map(remote => {
           const local = localByUrl.get(normalizeAddonUrl(remote.transportUrl))
           if (!local) return remote
@@ -580,7 +660,10 @@ export async function bulkReinstallAddons(
           }
         })
 
-        const targetCollection = [...currentAddonsWithLocalMeta]
+        const localOnlyAddons = localAddons.filter(
+          a => !remoteUrls.has(normalizeAddonUrl(a.transportUrl))
+        )
+        const targetCollection = [...currentAddonsWithLocalMeta, ...localOnlyAddons]
         let needsRemotePush = false
 
         const updateResults: Array<{
@@ -691,6 +774,69 @@ export async function bulkReinstallAddons(
         }
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, targetCollection)
+
+        const localOnlyUpdated = updateResults.filter(r => localOnlyAddons.some(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId)))
+        if (localOnlyUpdated.length > 0) {
+          const { useAccountStore: acctStore } = await import('@/store/accountStore')
+          const accountStore = acctStore.getState()
+          const account = accountStore.accounts.find(a => a.id === accountId)
+          if (account) {
+            const updatedByUrl = new Map(
+              localOnlyUpdated.map(r => {
+                const descriptor = targetCollection.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId))
+                return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
+              }).filter((e): e is [string, AddonDescriptor] => e !== null)
+            )
+            const patchedAddons = account.addons.map(addon => {
+              const updated = updatedByUrl.get(normalizeAddonUrl(addon.transportUrl))
+              if (!updated) return addon
+              return { ...addon, manifest: updated.manifest }
+            })
+            acctStore.setState({
+              accounts: accountStore.accounts.map(a =>
+                a.id === accountId ? { ...a, addons: patchedAddons } : a
+              ),
+            })
+            persistAccounts(acctStore.getState().accounts)
+          }
+        }
+
+        if (updateResults.length > 0) {
+          const { useAccountStore } = await import('@/store/accountStore')
+          const accountStore = useAccountStore.getState()
+          const account = accountStore.accounts.find(a => a.id === accountId)
+          if (account?.profiles?.length) {
+            const updatedByUrl = new Map(
+              updateResults.map(r => {
+                const descriptor = targetCollection.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId))
+                return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
+              }).filter((e): e is [string, AddonDescriptor] => e !== null)
+            )
+            let profilesChanged = false
+            const updatedProfiles = account.profiles.map(profile => {
+              if (profile.id === account.activeProfileId) return profile
+              if (!profile.addons?.length) return profile
+              let changed = false
+              const patchedAddons = profile.addons.map(addon => {
+                const updated = updatedByUrl.get(normalizeAddonUrl(addon.transportUrl))
+                if (!updated) return addon
+                changed = true
+                return { ...addon, manifest: updated.manifest }
+              })
+              if (changed) profilesChanged = true
+              return changed ? { ...profile, addons: patchedAddons } : profile
+            })
+            if (profilesChanged) {
+              useAccountStore.setState({
+                accounts: accountStore.accounts.map(a =>
+                  a.id === accountId ? { ...a, profiles: updatedProfiles } : a
+                ),
+              })
+              persistAccounts(useAccountStore.getState().accounts)
+            }
+          }
+        }
+
         return {
           success: 1,
           failed: 0,
@@ -1220,10 +1366,10 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
   }
 }
 
-export async function syncAllAccountStates(accounts: Array<{ id: string; authKey: string }>) {
+export async function syncAllAccountStates(accounts: Account[]) {
   await mapConcurrent(accounts, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (account) => {
     try {
-      await syncAccountState(account.id, account.authKey)
+      await syncAccountState(account.id, getStremioAuthKey(account))
     } catch (error) {
       if (import.meta.env.DEV) console.error(`Failed to sync account ${account.id}: `, error)
     }

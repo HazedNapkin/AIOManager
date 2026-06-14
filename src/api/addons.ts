@@ -52,7 +52,7 @@ export async function getAddons(authKey: string, accountContext: string = 'Unkno
         if (import.meta.env.DEV) console.warn(`[AddonCollection] Suspicious collection shrink (${knownCount} → ${addons.length}); using cached last-good collection.`)
         return cached.data
       }
-      throw new Error(`Safety guard: Stremio returned a suspicious addon collection shrink (${knownCount} → ${addons.length}).`)
+      throw new Error(`Safety guard: suspicious addon collection shrink detected (${knownCount} → ${addons.length}).`)
     }
     if ((addonCollectionVersions.get(authKey) || 0) === version) {
       if (addons.length > 0) {
@@ -337,7 +337,7 @@ function releaseDomainSlot(origin: string): void {
   const next = DOMAIN_QUEUE[origin]?.shift()
   if (next) {
     // Stagger slightly to avoid burst 429s
-    setTimeout(next, 500)
+    setTimeout(next, 100)
   }
 }
 

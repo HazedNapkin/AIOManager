@@ -3,7 +3,7 @@ import { ScrollToTop } from '@/components/ScrollToTop'
 import { Toaster } from '@/components/ui/toaster'
 import { WhatsNewModal } from '@/components/WhatsNewModal'
 import { AppRoutes } from '@/routes'
-import { useAccountStore } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
@@ -110,8 +110,8 @@ function App() {
       const t = setTimeout(() => {
         useSyncStore.getState().refreshFromCloud().then(() => {
           useAccountStore.getState().syncAllAccounts()
-        }).catch(e => { if (import.meta.env.DEV) console.error(e) })
-         useFailoverStore.getState().syncServerState().catch(e => { if (import.meta.env.DEV) console.error(e) })
+        }).catch(e => { if (import.meta.env.DEV) console.error(e); import('@/hooks/use-toast').then(({ toast }) => { toast({ title: 'Sync failed', description: 'Data may be stale. Try refreshing.', variant: 'destructive' }) }) })
+         useFailoverStore.getState().syncServerState().catch(e => { if (import.meta.env.DEV) console.error(e); import('@/hooks/use-toast').then(({ toast }) => { toast({ title: 'Sync failed', description: 'Data may be stale. Try refreshing.', variant: 'destructive' }) }) })
       }, 1500)
       return () => clearTimeout(t)
     }
@@ -165,8 +165,8 @@ function App() {
 
                             const updatableUrls = new Set(withUpdates.map(u => u.transportUrl))
                             const accountsWithUpdates = useAccountStore.getState().accounts
-                                .filter(a => a.authKey && a.addons.some(ad => updatableUrls.has(ad.transportUrl)))
-                                .map(a => ({ id: a.id, authKey: a.authKey }))
+                                .filter(a => getStremioAuthKey(a) && a.addons.some(ad => updatableUrls.has(ad.transportUrl)))
+                                .map(a => ({ id: a.id, authKey: getStremioAuthKey(a) }))
 
                             if (accountsWithUpdates.length > 0 && !aborted) {
                                 const result = await useAddonStore.getState().bulkReinstallAddons(
@@ -347,6 +347,7 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={700} skipDelayDuration={0}>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-0 focus:left-0 focus:z-50 focus:p-4 focus:bg-background focus:text-foreground">Skip to main content</a>
       <Layout>
         <ScrollToTop />
         <AppRoutes />

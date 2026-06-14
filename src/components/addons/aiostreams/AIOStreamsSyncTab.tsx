@@ -1310,7 +1310,7 @@ export function AIOStreamsSyncTab({
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="absolute right-1 top-1/2 min-h-[44px] min-w-[44px] -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                                        className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                                         onClick={() => setShowCreateTargetPassword(value => !value)}
                                                         aria-label={showCreateTargetPassword ? 'Hide new setup password' : 'Show new setup password'}
                                                     >
@@ -1350,7 +1350,7 @@ export function AIOStreamsSyncTab({
                                                             <div className="flex items-center gap-1" title="Install URLs include the encrypted AIOStreams password. Only share with trusted Stremio accounts.">
                                                                 <AlertTriangle className="h-3 w-3 text-warning" />
                                                                 <CopyButton value={result.installUrl} variant="ghost" aria-label={`Copy credentialed install URL for ${result.accountName}`}>
-                                                                    <span className="ml-1 text-[10px] font-medium">Copy URL</span>
+                                                                    <span className="ml-1 text-xs font-medium">Copy URL</span>
                                                                 </CopyButton>
                                                             </div>
                                                         )}
@@ -1452,7 +1452,7 @@ export function AIOStreamsSyncTab({
                                                             name={target.addonName}
                                                             logo={target.logo}
                                                             className="h-10 w-10"
-                                                            textClassName="text-[10px]"
+                                                            textClassName="text-xs"
                                                             imageClassName="p-1"
                                                         />
                                                         <Label htmlFor={targetId} className="min-w-0 flex-1 cursor-pointer">
@@ -1488,7 +1488,7 @@ export function AIOStreamsSyncTab({
                                                                     type="button"
                                                                     variant="ghost"
                                                                     size="icon"
-                                                                    className="absolute right-1 top-1/2 min-h-[44px] min-w-[44px] -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                                                    className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                                                     onClick={() => setShowPasswords(v => ({ ...v, [target.transportUrl]: !v[target.transportUrl] }))}
                                                                     aria-label={showPwd ? 'Hide target password' : 'Show target password'}
                                                                 >
@@ -1564,7 +1564,7 @@ export function AIOStreamsSyncTab({
                                             name={preview.target.addonName}
                                             logo={preview.target.logo}
                                             className="h-8 w-8"
-                                            textClassName="text-[10px]"
+                                            textClassName="text-xs"
                                         />
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate text-sm font-semibold">{preview.target.addonName}</p>
@@ -1583,7 +1583,7 @@ export function AIOStreamsSyncTab({
                                         {preview.entries.map(entry => {
                                             const sectionDef = getSyncGroupDefinition(entry.section)
                                             return (
-                                                <div key={entry.section} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs">
+                                                <div key={entry.section} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs">
                                                     <span className="flex min-w-0 items-center gap-2 font-medium">
                                                         {entry.changed ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />}
                                                         <span className="truncate">{sectionDef?.label ?? formatPreviewSection(entry.section)}</span>
@@ -1637,7 +1637,7 @@ export function AIOStreamsSyncTab({
                         </div>
                         {receipt && (
                             <>
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                     <PreviewStat label="Updated" value={receipt.updatedCount} tone="success" />
                                     <PreviewStat label="Matched" value={receipt.skippedCount} tone="success" />
                                     <PreviewStat label="Failed" value={receipt.failedCount} tone="destructive" />
@@ -1796,7 +1796,7 @@ function PreviewStat({
     return (
         <div className={cn('rounded-xl border px-3 py-2 text-center', toneClass)}>
             <p className="text-sm font-semibold">{value}</p>
-            <p className="text-[10px] uppercase tracking-wide opacity-75">{label}</p>
+            <p className="text-xs uppercase tracking-wide opacity-75">{label}</p>
         </div>
     )
 }

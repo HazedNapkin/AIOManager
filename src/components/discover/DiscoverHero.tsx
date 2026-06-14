@@ -109,7 +109,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
 
           {description && <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground line-clamp-2">{description}</p>}
 
-          <div className="flex flex-wrap items-center gap-3" onClick={(e) => e.stopPropagation()}>
+          <div className="flex flex-wrap items-center gap-3" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             <span className="flex items-center gap-1 text-sm font-semibold">
               <Star className="h-4 w-4 fill-warning text-warning" />
               {addon.stars.toLocaleString()}
@@ -158,7 +158,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
           >
             <ChevronRight className="h-5 w-5" />
           </button>
-          <div className="absolute bottom-3 right-4 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute bottom-3 right-4 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             {addons.map((a, i) => (
               <button
                 key={a.uuid}

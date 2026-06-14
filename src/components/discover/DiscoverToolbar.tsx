@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { cn } from '@/lib/utils'
-import { Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
+import { LayoutGrid, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
 import { RESOURCE_LABELS, type DiscoverCategory, type DiscoverSortBy } from '@/api/discover'
 
 // Refine facets applied client-side to the loaded results (the public directory API does not
@@ -27,6 +27,8 @@ interface DiscoverToolbarProps {
   showAdult: boolean
   onToggleAdult: () => void
   showSort?: boolean
+  compact?: boolean
+  onToggleCompact?: () => void
 }
 
 function FacetChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -61,6 +63,8 @@ export function DiscoverToolbar({
   showAdult,
   onToggleAdult,
   showSort = true,
+  compact,
+  onToggleCompact,
 }: DiscoverToolbarProps) {
   const activeFilterCount = selectedResources.length + selectedTypes.length
 
@@ -81,7 +85,7 @@ export function DiscoverToolbar({
               size="icon"
               ripple={false}
               onClick={() => onSearchChange('')}
-              className="absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 p-0 hover:bg-accent rounded-full transition-colors"
+              className="absolute right-2 top-1/2 h-7 w-7 flex items-center justify-center -translate-y-1/2 p-0 hover:bg-accent rounded-full transition-colors"
               aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -109,6 +113,31 @@ export function DiscoverToolbar({
               >
                 <Sparkles className="h-3.5 w-3.5" />
                 New
+              </Button>
+            </div>
+          )}
+
+          {showSort && onToggleCompact && (
+            <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                ripple={false}
+                aria-label="Grid view"
+                className={cn('h-7 rounded-lg px-2', !compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
+                onClick={() => { if (compact) onToggleCompact() }}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                ripple={false}
+                aria-label="Compact view"
+                className={cn('h-7 rounded-lg px-2', compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
+                onClick={() => { if (!compact) onToggleCompact() }}
+              >
+                <Rows3 className="h-3.5 w-3.5" />
               </Button>
             </div>
           )}

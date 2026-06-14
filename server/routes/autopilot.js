@@ -294,14 +294,14 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     fastify.post('/api/autopilot/sync', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { id, accountId, name, authKey, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate } = request.body
 
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
         const validationError = await validateRulePayload({ id, accountId, authKey, priorityChain, activeUrl, addonList })
         if (validationError) {
             reply.status(400);
             return { error: validationError }
         }
-
-        const authUser = await verifyAuth(request)
-        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
         const existingRule = await db.get('SELECT auth_key, priority_chain, addon_list, active_url, webhook_url, is_active, is_automatic, cooldown_ms, message_template, name, owner_sync_user FROM autopilot_rules WHERE id = $1', [id])
 
@@ -341,6 +341,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     fastify.post('/api/autopilot/sync-batch', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
         const rules = request.body
         if (!Array.isArray(rules)) return reply.code(400).send({ error: 'Expected array' })
+        if (rules.length > 100) return reply.code(400).send({ error: 'Batch too large. Maximum 100 rules per request.' })
 
         const authUser = await verifyAuth(request)
         if (!authUser) return reply.code(401).send({ error: 'Unauthorized' })
@@ -544,7 +545,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         const result = await db.tx(async (tx) => {
             await tx.run('DELETE FROM autopilot_rule_stats WHERE rule_id IN (SELECT id FROM autopilot_rules WHERE account_id = $1 AND owner_sync_user = $2)', [accountId, authUser])
             const r = await tx.run('DELETE FROM autopilot_rules WHERE account_id = $1 AND owner_sync_user = $2', [accountId, authUser])
-            await tx.run('DELETE FROM failover_history WHERE account_id = $1', [accountId])
+            await tx.run('DELETE FROM failover_history WHERE account_id = $1 AND rule_id IN (SELECT id FROM autopilot_rules WHERE owner_sync_user = $2)', [accountId, authUser])
             return r
         })
         clearAccountRuleRuntimeState?.(accountId)
@@ -563,7 +564,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             if (hasRules) { reply.status(403); return { error: 'Forbidden' } }
         }
 
-        const result = await db.run('DELETE FROM failover_history WHERE account_id = $1', [accountId])
+        const result = await db.run('DELETE FROM failover_history WHERE account_id = $1 AND rule_id IN (SELECT id FROM autopilot_rules WHERE owner_sync_user = $2)', [accountId, authUser])
         fastify.log.info({ category: 'Autopilot' }, `Cleared autopilot history for account ${maskContext(accountId)}`)
         return { success: true, deleted: result?.changes || 0 }
     })

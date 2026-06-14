@@ -56,14 +56,14 @@ function TabToolbar({ label, count, loading, onReload }: {
             )}
             {!label && <span className="flex-1" />}
             {count !== undefined && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                     {count}
                 </span>
             )}
             <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                 onClick={onReload}
                 disabled={loading}
                 aria-label="Reload"
@@ -120,7 +120,7 @@ function LibrarySection({ accountId, connection }: { accountId: string; connecti
                                 {item.name || item.content_id}
                             </p>
                             {(item.release_info || item.imdb_rating) && (
-                                <p className="truncate text-[10px] text-muted-foreground">
+                                <p className="truncate text-xs text-muted-foreground">
                                     {[item.release_info, item.imdb_rating ? `★ ${item.imdb_rating}` : null].filter(Boolean).join(' · ')}
                                 </p>
                             )}
@@ -238,20 +238,20 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); doRename(p) } if (e.key === 'Escape') setEditId(null) }}
                                         autoFocus
                                     />
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-primary hover:text-primary hover:bg-primary/10" onClick={() => doRename(p)} disabled={busy} aria-label="Save name">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-primary hover:text-primary hover:bg-primary/10" onClick={() => doRename(p)} disabled={busy} aria-label="Save name">
                                         <Check className="h-3.5 w-3.5" />
                                     </Button>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground" onClick={() => setEditId(null)} disabled={busy} aria-label="Cancel">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground" onClick={() => setEditId(null)} disabled={busy} aria-label="Cancel">
                                         <X className="h-3.5 w-3.5" />
                                     </Button>
                                 </>
                             ) : (
                                 <>
                                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground" onClick={() => { setEditId(p.id); setEditName(p.name) }} disabled={busy} aria-label="Rename">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground" onClick={() => { setEditId(p.id); setEditName(p.name) }} disabled={busy} aria-label="Rename">
                                         <Pencil className="h-3.5 w-3.5" />
                                     </Button>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setConfirm(p)} disabled={busy} aria-label="Delete">
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground hover:text-destructive" onClick={() => setConfirm(p)} disabled={busy} aria-label="Delete">
                                         <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                 </>

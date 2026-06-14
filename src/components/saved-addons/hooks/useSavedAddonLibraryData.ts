@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import { getHealthSummary } from '@/lib/addon-health'
 import { getLatestAddonVersion, isNewerVersion, normalizeAddonUrl } from '@/lib/utils'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import type { Profile } from '@/types/profile'
 import type { AccountAddonState, SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 
 export interface SavedAddonDeploymentSummary {
-  deployedAccounts: StremioAccount[]
+  deployedAccounts: Account[]
 }
 
 interface UseSavedAddonLibraryDataOptions {
@@ -14,7 +14,7 @@ interface UseSavedAddonLibraryDataOptions {
   getAllTags: () => string[]
   profiles: Profile[]
   accountStates: Record<string, AccountAddonState>
-  accounts: StremioAccount[]
+  accounts: Account[]
   selectedProfileId: string | null
   selectedTag: string | null
   debouncedSearchQuery: string
@@ -114,8 +114,8 @@ export function useSavedAddonLibraryData({
   const deploymentSummaryByAddonId = useMemo(() => {
     const accountById = new Map(accounts.map(account => [account.id, account]))
     const libraryIds = new Set(savedAddons.map(addon => addon.id))
-    const addonIdsByUrl = new Map<string, string[]>()
 
+    const addonIdsByUrl = new Map<string, string[]>()
     for (const addon of savedAddons) {
       const key = getSafeAddonUrlKey(addon.installUrl)
       if (!key) continue
@@ -124,42 +124,46 @@ export function useSavedAddonLibraryData({
       else addonIdsByUrl.set(key, [addon.id])
     }
 
-    const accountIdsByAddonId = new Map<string, Set<string>>()
+    const urlToAccountIds = new Map<string, Set<string>>()
+    const directMatchToAccountIds = new Map<string, Set<string>>()
 
     for (const accountState of Object.values(accountStates)) {
-      const account = accountById.get(accountState.accountId)
-      if (!account) continue
-
-      const matchedAddonIds = new Set<string>()
+      const accountId = accountState.accountId
+      if (!accountById.has(accountId)) continue
 
       for (const installedAddon of accountState.installedAddons) {
         if (installedAddon.savedAddonId && libraryIds.has(installedAddon.savedAddonId)) {
-          matchedAddonIds.add(installedAddon.savedAddonId)
+          let set = directMatchToAccountIds.get(installedAddon.savedAddonId)
+          if (!set) { set = new Set(); directMatchToAccountIds.set(installedAddon.savedAddonId, set) }
+          set.add(accountId)
         }
 
-        const installedUrlKey = getSafeAddonUrlKey(installedAddon.installUrl)
-        if (!installedUrlKey) continue
-
-        const idsByUrl = addonIdsByUrl.get(installedUrlKey)
-        if (idsByUrl) {
-          idsByUrl.forEach(id => matchedAddonIds.add(id))
-        }
+        const urlKey = getSafeAddonUrlKey(installedAddon.installUrl)
+        if (!urlKey) continue
+        let set = urlToAccountIds.get(urlKey)
+        if (!set) { set = new Set(); urlToAccountIds.set(urlKey, set) }
+        set.add(accountId)
       }
-
-      matchedAddonIds.forEach(addonId => {
-        const existing = accountIdsByAddonId.get(addonId)
-        if (existing) existing.add(account.id)
-        else accountIdsByAddonId.set(addonId, new Set([account.id]))
-      })
     }
 
     const summaries: Record<string, SavedAddonDeploymentSummary> = {}
     for (const addon of savedAddons) {
-      const deployedAccounts = Array.from(accountIdsByAddonId.get(addon.id) ?? [])
-        .map(accountId => accountById.get(accountId))
-        .filter((account): account is StremioAccount => Boolean(account))
+      const accountIds = new Set<string>()
 
-      summaries[addon.id] = { deployedAccounts }
+      const directSet = directMatchToAccountIds.get(addon.id)
+      if (directSet) for (const id of directSet) accountIds.add(id)
+
+      const key = getSafeAddonUrlKey(addon.installUrl)
+      if (key) {
+        const urlSet = urlToAccountIds.get(key)
+        if (urlSet) for (const id of urlSet) accountIds.add(id)
+      }
+
+      summaries[addon.id] = {
+        deployedAccounts: Array.from(accountIds)
+          .map(id => accountById.get(id))
+          .filter((a): a is Account => Boolean(a))
+      }
     }
 
     return summaries

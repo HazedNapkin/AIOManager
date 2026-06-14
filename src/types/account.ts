@@ -14,7 +14,7 @@ export interface AccountProfile {
   apRules?: FailoverRule[]
 }
 
-export interface StremioAccount {
+export interface Account {
   id: string
   name: string
   email?: string

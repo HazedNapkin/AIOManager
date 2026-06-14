@@ -176,7 +176,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             // ### Subheader
             if (line.startsWith('### ')) {
                 elements.push(
-                    <h4 key={i} className="mt-4 mb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-[0.14em] break-words leading-tight">
+                    <h4 key={i} className="mt-4 mb-2 text-xs font-bold text-muted-foreground uppercase tracking-[0.14em] break-words leading-tight">
                         {line.replace('### ', '')}
                     </h4>
                 )
@@ -276,7 +276,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                                         <span className="text-sm font-semibold text-foreground">{release.name || release.tag_name}</span>
                                         <span className="ml-auto text-xs text-muted-foreground">{date}</span>
                                         {isCurrentVersion && (
-                                            <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-success">
+                                            <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-success">
                                                 <CheckCircle2 className="h-3 w-3" />
                                                 Current
                                             </span>

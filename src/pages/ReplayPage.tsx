@@ -15,12 +15,12 @@ import { ReplayMonths } from '@/components/replay/ReplayMonths'
 import { ReplayMilestones } from '@/components/replay/ReplayMilestones'
 import { ReplayInsights } from '@/components/replay/ReplayInsights'
 import { ReplayShareCard } from '@/components/replay/ReplayShareCard'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { cn, ACCOUNT_COLORS } from '@/lib/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 interface AccountSwitcherProps {
-    accounts: StremioAccount[]
+    accounts: Account[]
     selectedAccountId: string
     onSelect: (id: string) => void
 }

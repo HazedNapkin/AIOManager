@@ -11,7 +11,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useMetricsWorker } from '@/hooks/useMetricsWorker'
 import { useAccountStore } from '@/store/accountStore'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import {
     Activity,
@@ -395,7 +395,7 @@ export function MetricsPage() {
                                                     className="w-full h-full object-cover"
                                                 />
                                                 {episodeLabel && (
-                                                    <div className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                                    <div className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-xs font-bold text-white">
                                                         {episodeLabel}
                                                     </div>
                                                 )}
@@ -698,7 +698,7 @@ export function MetricsPage() {
                                                                 />
                                                                 <div className="absolute inset-0 bg-black/20 group-hover/poster:bg-transparent transition-colors rounded-md" />
                                                                 {episodeLabel && (
-                                                                    <div className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                                                                    <div className="absolute bottom-1.5 left-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-xs font-bold text-white shadow-sm">
                                                                         {episodeLabel}
                                                                     </div>
                                                                 )}
@@ -804,7 +804,7 @@ export function MetricsPage() {
                             {stats.sharedUniverse?.map((c, i: number) => {
                                 const sharedAccs = c.accounts.map(
                                     (acc: { id: string }) => accounts.find(a => a.id === acc.id)
-                                ).filter((acc): acc is StremioAccount => acc !== undefined)
+                                ).filter((acc): acc is Account => acc !== undefined)
                                 return (
                                     <div
                                         key={i}
@@ -830,11 +830,11 @@ export function MetricsPage() {
                                                         </div>
                                                     ))}
                                                 </div>
-                                                <span className="text-[10px] font-bold text-primary">{c.accounts.length}</span>
+                                                <span className="text-xs font-bold text-primary">{c.accounts.length}</span>
                                             </div>
                                             <div className="text-xs font-bold text-white truncate">{c.item.name}</div>
                                             {c.firstSeen && (
-                                                <div className="text-[10px] text-white/50 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
+                                                <div className="text-xs text-white/50 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
                                                     First watched {new Date(c.firstSeen).toLocaleDateString()}
                                                 </div>
                                             )}

@@ -4,22 +4,25 @@ import localforage from 'localforage'
 import { ActivityItem, LibraryItem } from '@/types/activity'
 import { stremioClient } from '@/api/stremio-client'
 import { encrypt, decrypt as decryptData } from '@/lib/crypto'
-import { getCachedAuthKey, getAccountAuthKey } from '@/store/accountStore'
+import { getCachedAuthKey, getStremioAuthKey, isAuthError } from '@/store/accountStore'
 import { useAuthStore } from '@/store/authStore'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { toast } from '@/hooks/use-toast'
+import { mapConcurrent } from '@/lib/concurrency'
 
 const CACHE_KEY = 'aio_library_cache_v3'
 const OLD_CACHE_KEY = 'aio_library_cache'
 const DELETED_ITEMS_KEY = 'aio_library_deleted'
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const LIBRARY_FETCH_CONCURRENCY = 5
+const CACHE_VERSION = 3
 
 let loadPromise: Promise<void> | null = null
 let loadPromiseGeneration = 0
 let cacheGeneration = 0
 let removeItemsLock: Promise<void> = Promise.resolve()
 const toastedNuvioFailures = new Set<string>()
+const toastedRealStreamFailures = new Set<string>()
 
 const bumpCacheGeneration = () => {
     cacheGeneration += 1
@@ -27,7 +30,7 @@ const bumpCacheGeneration = () => {
 
 const hasAccountCoverage = (
     lastMtimeByAccount: Record<string, string> | undefined,
-    accounts: StremioAccount[]
+    accounts: Account[]
 ) => {
     const mtimes = lastMtimeByAccount || {}
     return accounts.every(account => Object.prototype.hasOwnProperty.call(mtimes, account.id))
@@ -51,7 +54,7 @@ interface LibraryCacheState {
     loadingProgress: { current: number; total: number }
     isStale: boolean
 
-    ensureLoaded: (accounts: StremioAccount[]) => Promise<void>
+    ensureLoaded: (accounts: Account[]) => Promise<void>
     invalidate: () => void
     clear: () => Promise<void>
     removeItems: (itemIds: string[]) => void
@@ -99,9 +102,11 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
     removeItemsForAccount: (accountId: string) => {
         bumpCacheGeneration()
-        const { items } = get()
+        const { items, lastMtimeByAccount } = get()
         const filtered = items.filter(item => item.accountId !== accountId)
-        set({ items: filtered })
+        const newMtimes = { ...lastMtimeByAccount }
+        delete newMtimes[accountId]
+        set({ items: filtered, lastMtimeByAccount: newMtimes, isStale: true })
         localforage.removeItem(CACHE_KEY).catch(() => {})
     },
 
@@ -112,7 +117,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
     invalidate: () => {
         bumpCacheGeneration()
-        set({ items: [], isStale: true })
+        set({ items: [], lastMtimeByAccount: {}, isStale: true })
         localforage.removeItem(CACHE_KEY).catch(() => {})
     },
 
@@ -123,8 +128,15 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
         await localforage.removeItem(DELETED_ITEMS_KEY)
     },
 
-    ensureLoaded: async (accounts: StremioAccount[]) => {
+    ensureLoaded: async (accounts: Account[]) => {
         if (accounts.length === 0) return
+
+        const storedVersion = localStorage.getItem('aio-cache-version')
+        if (storedVersion !== String(CACHE_VERSION)) {
+            await localforage.removeItem(CACHE_KEY)
+            localStorage.setItem('aio-cache-version', String(CACHE_VERSION))
+            set({ items: [], lastMtimeByAccount: {} })
+        }
 
         let shouldRetry = true
         while (shouldRetry) {
@@ -182,25 +194,25 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             const decrypted = await decryptData(encrypted, encryptionKey)
                             const cached = JSON.parse(decrypted) as CacheData
                             const cachedMtimes = cached.lastMtimeByAccount || {}
-                            if (
-                                now - cached.lastFetched < CACHE_TTL &&
-                                hasAccountCoverage(cachedMtimes, accounts)
-                            ) {
-                                const savedDeleted = await localforage.getItem<Record<string, DeletedEntry>>(DELETED_ITEMS_KEY)
-                                if (generation !== cacheGeneration) return
-                                const deletedEntries = savedDeleted || {}
-                                const filteredItems = cached.items.filter(item =>
-                                    activeAccountIds.has(item.accountId) && !deletedEntries[item.id]
-                                )
+                            const isFresh = now - cached.lastFetched < CACHE_TTL
+                            const hasCov = hasAccountCoverage(cachedMtimes, accounts)
+                            const savedDeleted = await localforage.getItem<Record<string, DeletedEntry>>(DELETED_ITEMS_KEY)
+                            if (generation !== cacheGeneration) return
+                            const deletedEntries = savedDeleted || {}
+                            const filteredItems = cached.items.filter(item =>
+                                activeAccountIds.has(item.accountId) && !deletedEntries[item.id]
+                            )
+                            const hydratedItems = filteredItems.map(i => {
+                                const t = new Date(i.timestamp)
+                                return {
+                                    ...i,
+                                    timestamp: t.getTime() > now ? new Date(now) : t
+                                }
+                            })
 
+                            if (isFresh && hasCov) {
                                 set({
-                                    items: filteredItems.map(i => {
-                                        const t = new Date(i.timestamp)
-                                        return {
-                                            ...i,
-                                            timestamp: t.getTime() > now ? new Date(now) : t
-                                        }
-                                    }),
+                                    items: hydratedItems,
                                     lastFetched: cached.lastFetched,
                                     lastMtimeByAccount: cachedMtimes,
                                     isStale: false,
@@ -208,6 +220,14 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     deletedItemIds: new Set(Object.keys(deletedEntries))
                                 })
                                 return
+                            }
+
+                            if (hydratedItems.length > 0) {
+                                set({
+                                    items: hydratedItems,
+                                    lastMtimeByAccount: cachedMtimes,
+                                    deletedItemIds: new Set(Object.keys(deletedEntries))
+                                })
                             }
                         } catch (e) {
                             if (import.meta.env.DEV) console.error('[LibraryCache] Failed to decrypt cache:', e)
@@ -284,9 +304,33 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     throw new Error('App is locked')
                 }
 
-                const allItems: ActivityItem[] = []
-                const newMtimes: Record<string, string> = { ...state.lastMtimeByAccount }
-                const allMtimes = new Map<string, number>() // accountId:itemId -> mtime
+                const staleByAccount = new Map<string, ActivityItem[]>()
+                const currentItems = get().items
+                for (const item of currentItems) {
+                    if (activeAccountIds.has(item.accountId)) {
+                        const list = staleByAccount.get(item.accountId)
+                        if (list) list.push(item)
+                        else staleByAccount.set(item.accountId, [item])
+                    }
+                }
+                const fetchedByAccount = new Map<string, ActivityItem[]>()
+                const newMtimes: Record<string, string> = { ...get().lastMtimeByAccount }
+                const allMtimes = new Map<string, number>()
+
+                const buildMergedItems = (): ActivityItem[] => {
+                    const merged: ActivityItem[] = []
+                    for (const accId of activeAccountIds) {
+                        const fetched = fetchedByAccount.get(accId)
+                        if (fetched) {
+                            merged.push(...fetched)
+                        } else {
+                            const stale = staleByAccount.get(accId)
+                            if (stale) merged.push(...stale)
+                        }
+                    }
+                    merged.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+                    return merged
+                }
 
                 const executing = new Set<Promise<void>>()
                 let completedCount = 0
@@ -294,48 +338,52 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 for (let i = 0; i < accounts.length; i++) {
                     const account = accounts[i]
                     const p = (async () => {
+                        const accountItems: ActivityItem[] = []
+                        const nuvioConns = (account.connections || []).filter(c => c.enabled && c.platform === 'nuvio')
                         try {
-                            const stremioAuthKey = getAccountAuthKey(account)
+                            const stremioAuthKey = getStremioAuthKey(account)
                             if (stremioAuthKey) {
                                 const authKey = await getCachedAuthKey(stremioAuthKey, encryptionKey)
                                 const libraryItems = await stremioClient.getLibraryItems(authKey, account.id) as LibraryItem[]
-
-                                libraryItems.forEach(item => {
-                                    if (item._mtime) {
-                                        const key = `${account.id}:${item._id}`
-                                        allMtimes.set(key, new Date(item._mtime).getTime())
-                                    }
-                                })
-
-                                const { useWatchEventStore } = await import('@/store/watchEventStore')
-                                await useWatchEventStore.getState().load()
-                                const newEvents = useWatchEventStore.getState().diffAndRecord(
-                                    account.id, libraryItems, account, accounts
-                                )
-                                if (newEvents.length > 0) {
-                                    triggerSync()
-                                }
-
-                                // Recover complete per-episode history from Stremio's watched-bitfield
-                                // (fills binge/batch-sync gaps the live video_id sampling misses). Run it
-                                // non-blocking so the feed isn't held up by per-series Cinemeta lookups.
-                                useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
-                                    .then(backfilled => { if (backfilled > 0) triggerSync() })
-                                    .catch(e => { if (import.meta.env.DEV) console.error(`[LibraryCache] bitfield backfill failed for ${account.name || account.id}:`, e) })
-
-                                const accountActivity = libraryItems
-                                    .filter(item => isActuallyWatched(item))
-                                    .map(item => transformLibraryItemToActivityItem(item, account, accounts))
-
-                                for (let k = 0; k < accountActivity.length; k++) {
-                                    allItems.push(accountActivity[k])
-                                }
 
                                 const latestMtime = libraryItems.reduce((max, item) => {
                                     if (!item._mtime) return max
                                     return item._mtime > max ? item._mtime : max
                                 }, '0')
-                                newMtimes[account.id] = latestMtime
+
+                                const oldMtime = get().lastMtimeByAccount[account.id]
+                                if (oldMtime && latestMtime === oldMtime && nuvioConns.length === 0) {
+                                    const stale = staleByAccount.get(account.id) || []
+                                    fetchedByAccount.set(account.id, stale)
+                                    newMtimes[account.id] = latestMtime
+                                } else {
+                                    libraryItems.forEach(item => {
+                                        if (item._mtime) {
+                                            const key = `${account.id}:${item._id}`
+                                            allMtimes.set(key, new Date(item._mtime).getTime())
+                                        }
+                                    })
+
+                                    const { useWatchEventStore } = await import('@/store/watchEventStore')
+                                    await useWatchEventStore.getState().load()
+                                    const newEvents = useWatchEventStore.getState().diffAndRecord(
+                                        account.id, libraryItems, account, accounts
+                                    )
+                                    if (newEvents.length > 0) {
+                                        triggerSync()
+                                    }
+
+                                    useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
+                                        .then(backfilled => { if (backfilled > 0) triggerSync() })
+                                        .catch(e => { if (import.meta.env.DEV) console.error(`[LibraryCache] bitfield backfill failed for ${account.name || account.id}:`, e) })
+
+                                    const accountActivity = libraryItems
+                                        .filter(item => isActuallyWatched(item))
+                                        .map(item => transformLibraryItemToActivityItem(item, account, accounts))
+
+                                    accountItems.push(...accountActivity)
+                                    newMtimes[account.id] = latestMtime
+                                }
                             } else {
                                 newMtimes[account.id] = newMtimes[account.id] ?? '0'
                             }
@@ -345,7 +393,12 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             newMtimes[account.id] = newMtimes[account.id] ?? '0'
                         }
 
-                        const nuvioConns = (account.connections || []).filter(c => c.enabled && c.platform === 'nuvio')
+                        const existingKeys = new Set<string>()
+                        for (const it of accountItems) {
+                            existingKeys.add(`${account.id}:${it.itemId}`)
+                            if (it.uniqueItemId) existingKeys.add(`${account.id}:${it.uniqueItemId}`)
+                        }
+
                         if (nuvioConns.length > 0) {
                             const { fetchConnectionToken } = await import('@/api/connection')
                             const { nuvioDriverFor } = await import('@/lib/drivers/factory')
@@ -368,33 +421,59 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))
                                     }
-                                    const progressActivities = await Promise.all(
-                                        progress.map(async (row) => {
-                                            try {
-                                                return await transformNuvioProgressToActivityItem(row, account, accounts, nuvioTitles.get(String(row.content_id)))
-                                            } catch {
-                                                return null
-                                            }
-                                        })
-                                    )
+                                    const progressActivities = await mapConcurrent(progress, 5, async (row) => {
+                                        try {
+                                            return await transformNuvioProgressToActivityItem(row, account, accounts, nuvioTitles.get(String(row.content_id)))
+                                        } catch {
+                                            return null
+                                        }
+                                    })
                                     const seenIds = new Set<string>()
                                     for (const activity of progressActivities) {
                                         if (!activity) continue
+                                        const pk1 = `${account.id}:${activity.uniqueItemId}`
+                                        const pk2 = `${account.id}:${activity.itemId}`
+                                        if (existingKeys.has(pk1) || existingKeys.has(pk2)) continue
                                         seenIds.add(activity.uniqueItemId)
-                                        allItems.push(activity)
+                                        existingKeys.add(pk1)
+                                        existingKeys.add(pk2)
+                                        accountItems.push(activity)
                                     }
-                                    const watchedActivities = await Promise.all(
-                                        watched.map(async (row) => {
-                                            try {
-                                                return await transformNuvioWatchedItemToActivityItem(row, account, accounts)
-                                            } catch {
-                                                return null
-                                            }
-                                        })
-                                    )
+                                    const watchedActivities = await mapConcurrent(watched, 5, async (row) => {
+                                        try {
+                                            return await transformNuvioWatchedItemToActivityItem(row, account, accounts)
+                                        } catch {
+                                            return null
+                                        }
+                                    })
                                     for (const activity of watchedActivities) {
                                         if (!activity || seenIds.has(activity.uniqueItemId)) continue
-                                        allItems.push(activity)
+                                        const wk1 = `${account.id}:${activity.uniqueItemId}`
+                                        const wk2 = `${account.id}:${activity.itemId}`
+                                        if (existingKeys.has(wk1) || existingKeys.has(wk2)) continue
+                                        existingKeys.add(wk1)
+                                        existingKeys.add(wk2)
+                                        accountItems.push(activity)
+                                    }
+                                    const nuvioActivities = [
+                                        ...progressActivities.filter((a): a is ActivityItem => a !== null),
+                                        ...watchedActivities.filter((a): a is ActivityItem => a !== null && !seenIds.has(a.uniqueItemId)),
+                                    ]
+                                    if (nuvioActivities.length > 0) {
+                                        const { useWatchEventStore } = await import('@/store/watchEventStore')
+                                        await useWatchEventStore.getState().load()
+                                        useWatchEventStore.getState().mergeExternalWatchEvents(account.id, 'nuvio', nuvioActivities.map(a => ({
+                                            itemId: a.itemId,
+                                            video_id: a.uniqueItemId,
+                                            type: a.type,
+                                            season: a.season,
+                                            episode: a.episode,
+                                            name: a.name,
+                                            poster: a.poster,
+                                            duration: a.duration,
+                                            progress: a.progress,
+                                            timestamp: a.timestamp.getTime(),
+                                        })))
                                     }
                                 } catch (err) {
                                     invalidateNuvioToken(conn.id)
@@ -404,16 +483,92 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         toast({ title: 'Nuvio history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
                                         setTimeout(() => toastedNuvioFailures.delete(conn.id), 3600000)
                                     }
-                                    const existingNuvio = state.items.filter(item => item.accountId === account.id && item.source === 'nuvio')
+                                    const existingNuvio = currentItems.filter(item => item.accountId === account.id && item.source === 'nuvio')
                                     if (existingNuvio.length > 0) {
-                                        allItems.push(...existingNuvio)
+                                        accountItems.push(...existingNuvio)
                                     }
                                 }
                             }
                         }
+                        const realstreamConns = (account.connections || []).filter(c => c.enabled && c.platform === 'realstream')
+                        if (realstreamConns.length > 0) {
+                            const { fetchConnectionToken } = await import('@/api/connection')
+                            const { realStreamDriverFor } = await import('@/lib/drivers/factory')
+                            for (const conn of realstreamConns) {
+                                try {
+                                    const userId = conn.credentials?.userId || ''
+                                    if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
+                                    const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
+                                    const driver = realStreamDriverFor(conn)
+                                    const progress = await driver.readWatchProgress(token.accessToken, userId).catch(async (e) => {
+                                        if (!isAuthError(e)) throw e
+                                        const refreshed = await driver.refreshAccessToken(token.accessToken)
+                                        return driver.readWatchProgress(refreshed.accessToken, userId)
+                                    })
+                                    console.info(`[LibraryCache] RealStream fetched ${progress.length} progress for ${account.name || account.id}`)
+                                    const progressActivities = await Promise.all(
+                                        progress.map(async (row) => {
+                                            try {
+                                                const activity = await transformNuvioProgressToActivityItem(row, account, accounts)
+                                                activity.id = `${account.id}:realstream:${activity.uniqueItemId}`
+                                                activity.source = 'realstream'
+                                                return activity
+                                            } catch {
+                                                return null
+                                            }
+                                        })
+                                    )
+                                    const seenIds = new Set<string>()
+                                    for (const activity of progressActivities) {
+                                        if (!activity || seenIds.has(activity.uniqueItemId)) continue
+                                        const rk1 = `${account.id}:${activity.uniqueItemId}`
+                                        const rk2 = `${account.id}:${activity.itemId}`
+                                        if (existingKeys.has(rk1) || existingKeys.has(rk2)) continue
+                                        seenIds.add(activity.uniqueItemId)
+                                        existingKeys.add(rk1)
+                                        existingKeys.add(rk2)
+                                        accountItems.push(activity)
+                                    }
+                                    const realstreamActivities = progressActivities.filter((a): a is ActivityItem => a !== null)
+                                    if (realstreamActivities.length > 0) {
+                                        const { useWatchEventStore } = await import('@/store/watchEventStore')
+                                        await useWatchEventStore.getState().load()
+                                        useWatchEventStore.getState().mergeExternalWatchEvents(account.id, 'realstream', realstreamActivities.map(a => ({
+                                            itemId: a.itemId,
+                                            video_id: a.uniqueItemId,
+                                            type: a.type,
+                                            season: a.season,
+                                            episode: a.episode,
+                                            name: a.name,
+                                            poster: a.poster,
+                                            duration: a.duration,
+                                            progress: a.progress,
+                                            timestamp: a.timestamp.getTime(),
+                                        })))
+                                    }
+                                } catch (err) {
+                                    console.warn(`[LibraryCache] RealStream history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
+                                    if (!toastedRealStreamFailures.has(conn.id)) {
+                                        toastedRealStreamFailures.add(conn.id)
+                                        toast({ title: 'RealStream history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
+                                        setTimeout(() => toastedRealStreamFailures.delete(conn.id), 3600000)
+                                    }
+                                    const existingRealStream = currentItems.filter(item => item.accountId === account.id && item.source === 'realstream')
+                                    if (existingRealStream.length > 0) {
+                                        accountItems.push(...existingRealStream)
+                                    }
+                                }
+                            }
+                        }
+                        if (!fetchedByAccount.has(account.id)) {
+                            fetchedByAccount.set(account.id, accountItems)
+                        }
                     })().then(() => {
                         completedCount++
-                        set({ loadingProgress: { current: completedCount, total: accounts.length } })
+                        set({
+                            items: buildMergedItems(),
+                            loadingProgress: { current: completedCount, total: accounts.length }
+                        })
                         executing.delete(p)
                     })
                     executing.add(p)
@@ -426,7 +581,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                 if (generation !== cacheGeneration) return
 
-                const finalItems = allItems.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+                const finalItems = buildMergedItems()
 
                 const savedDeletedMap = await localforage.getItem<Record<string, DeletedEntry>>(DELETED_ITEMS_KEY)
                 if (generation !== cacheGeneration) return

@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/hooks/use-toast'
 
 type WizardStep = 'details' | 'test' | 'confirm'
 
@@ -116,7 +117,9 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
         }
         try {
             await onComplete(config, authValue.trim())
-        } catch {}
+        } catch (e) {
+            toast({ title: 'Setup failed', description: e instanceof Error ? e.message : 'Failed to configure provider', variant: 'destructive' })
+        }
         handleClose(false)
     }
 
@@ -271,7 +274,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                                     {testResult.capabilities.length > 0 && (
                                         <div className="flex flex-wrap gap-1.5 mt-1">
                                             {testResult.capabilities.map(cap => (
-                                                <StatusChip key={cap} size="sm" className="text-[10px] h-5 px-2 bg-success/10 text-success border border-success/20">
+                                                <StatusChip key={cap} size="sm" className="text-xs h-5 px-2 bg-success/10 text-success border border-success/20">
                                                     {cap}
                                                 </StatusChip>
                                             ))}
@@ -315,7 +318,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                                 {testResult && testResult.capabilities.length > 0 && (
                                     <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border/40">
                                         {testResult.capabilities.map(cap => (
-                                            <StatusChip key={cap} size="sm" className="text-[10px] h-5 px-2 bg-muted/50">
+                                            <StatusChip key={cap} size="sm" className="text-xs h-5 px-2 bg-muted/50">
                                                 {cap}
                                             </StatusChip>
                                         ))}

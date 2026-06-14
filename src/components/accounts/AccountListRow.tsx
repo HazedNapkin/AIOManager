@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AccountAvatar } from './AccountAvatar'
 import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
@@ -17,14 +17,14 @@ import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRi
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
-import { useAccountStore, getAccountEmail, getAccountAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useToast } from '@/hooks/use-toast'
 
 interface AccountListRowProps {
-    account: StremioAccount
+    account: Account
     isPrivacyMode?: boolean
     isSelected?: boolean
     isSelectionMode?: boolean
@@ -47,7 +47,7 @@ export const AccountListRow = memo(function AccountListRow({
     const [isMenuOpen, setIsMenuOpen] = useState(false)
 
     const accountEmail = getAccountEmail(account)
-    const isNameCustomized = account.name !== accountEmail && account.name !== 'Stremio Account'
+    const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
     const displayName =
         isPrivacyMode && !isNameCustomized
             ? account.name.includes('@') ? maskEmail(account.name) : '********'
@@ -155,7 +155,7 @@ export const AccountListRow = memo(function AccountListRow({
                         </Tooltip>
                     )}
                     {account.status === 'expired' && (
-                        <Tooltip content="Stremio rejected this token. Use Email & Password for auto-refresh, or paste a fresh OAuth/AuthKey token." side="top">
+                        <Tooltip content="A session token was rejected. Re-authenticate this account to refresh it." side="top">
                             <span className="inline-flex items-center gap-1 text-xs font-medium text-warning shrink-0">
                                 <AlertCircle className="w-3 h-3" /> Session expired
                             </span>
@@ -165,9 +165,9 @@ export const AccountListRow = memo(function AccountListRow({
 
 
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    {(getAccountAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                    {(getStremioAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
                         <div className="flex items-center gap-0.5">
-                            {getAccountAuthKey(account) && (
+                            {getStremioAuthKey(account) && (
                                 <PlatformLogo platform="stremio" className="h-4 w-4" />
                             )}
                             {(account.connections || []).filter(c => c.platform !== 'stremio').map(conn => (
@@ -257,7 +257,7 @@ export const AccountListRow = memo(function AccountListRow({
             </div>
 
 
-            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                 <Tooltip content="Sync" side="top">
                     <Button
                         variant="ghost"
@@ -338,7 +338,7 @@ export const AccountListRow = memo(function AccountListRow({
                             try {
                                 toast({ title: 'Refreshing...', description: `Reinstalling all addons on ${displayName}` })
                                 const { useAddonStore } = await import('@/store/addonStore')
-                                await useAddonStore.getState().bulkReinstallAllOnAccount(account.id, getAccountAuthKey(account))
+                                await useAddonStore.getState().bulkReinstallAllOnAccount(account.id, getStremioAuthKey(account))
                                 toast({ title: 'Refresh Complete', description: `All addons on ${displayName} reinstalled` })
                             } catch {
                                 toast({ variant: 'destructive', title: 'Refresh Failed', description: `Could not reinstall addons on ${displayName}` })

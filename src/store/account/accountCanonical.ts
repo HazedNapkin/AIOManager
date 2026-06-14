@@ -5,7 +5,6 @@ import {
     getAccountById,
     persistAccounts,
     syncMutexes,
-    getAccountAuthKey,
 } from '../accountStore'
 import type { AccountStore } from '../accountStore'
 import type { AddonDescriptor } from '@/types/addon'
@@ -18,7 +17,7 @@ async function getStore(): Promise<StoreRef> {
 }
 
 /**
- * Fold inbound canonical-store writes (e.g. AIOStreams) into non-Stremio Hubs via the
+ * Fold inbound canonical-store writes (e.g. AIOStreams) into all accounts via the
  * tested three-way merge, BEFORE the client's blob push so the push reflects the merge.
  * The client is the single merger (D2).
  *
@@ -32,8 +31,8 @@ async function getStore(): Promise<StoreRef> {
  */
 export async function reconcileInboundCanonical(): Promise<boolean> {
     const store = await getStore()
-    // Only non-Stremio Hubs use the canonical store; Stremio is served Stremio-first.
-    const targets = store.getState().accounts.filter(a => !getAccountAuthKey(a))
+    // All accounts use the canonical store for three-way merge.
+    const targets = store.getState().accounts
     if (targets.length === 0) return false
 
     let remote: Record<string, { addons: AddonDescriptor[]; updatedAt: number }>

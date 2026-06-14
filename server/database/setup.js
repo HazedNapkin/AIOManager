@@ -303,6 +303,7 @@ export async function initializeDatabase(fastify) {
     `, [
         `CREATE INDEX IF NOT EXISTS idx_creds_sync_user ON server_credentials (sync_user)`,
         `CREATE INDEX IF NOT EXISTS idx_creds_account ON server_credentials (account_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_creds_type_updated ON server_credentials (credential_type, updated_at DESC, id ASC)`,
     ], ['id', 'sync_user', 'account_id', 'auth_key'], {
         sync_user: 'ALTER TABLE server_credentials ADD COLUMN sync_user TEXT NOT NULL DEFAULT \'\'',
         account_id: 'ALTER TABLE server_credentials ADD COLUMN account_id TEXT NOT NULL DEFAULT \'\'',
@@ -317,9 +318,10 @@ export async function initializeDatabase(fastify) {
       CREATE TABLE IF NOT EXISTS account_api_keys (
         account_id TEXT NOT NULL,
         sync_user TEXT NOT NULL,
-        api_key_hash TEXT NOT NULL UNIQUE,
+        api_key_hash TEXT NOT NULL,
         created_at BIGINT NOT NULL,
-        last_used_at BIGINT
+        last_used_at BIGINT,
+        UNIQUE (sync_user, api_key_hash)
       );
     `, [
         `CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON account_api_keys (api_key_hash)`,
@@ -395,6 +397,8 @@ export async function initializeDatabase(fastify) {
             try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_worker_scan ON autopilot_rules (is_active, is_automatic, id)`) } catch (e) { }
 
             try { await db.run(`ALTER TABLE failover_history ADD COLUMN IF NOT EXISTS latency_ms INTEGER`) } catch (e) { }
+
+            try { await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`) } catch (e) { }
 
             fastify.log.info({ category: 'Database' }, 'Postgres Migration: Verified columns and types for encryption support.')
         } else {
@@ -476,6 +480,9 @@ export async function initializeDatabase(fastify) {
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`)
             } catch (e) { }
+            try {
+                await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
+            } catch (e) { }
         }
 
         // Backfill any rules that lack a stats row. Idempotent and cheap when fully populated.
@@ -549,6 +556,7 @@ export async function initializeDatabase(fastify) {
             }
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_creds_connection ON server_credentials (connection_id)`)
+                await db.run(`CREATE INDEX IF NOT EXISTS idx_creds_type_updated ON server_credentials (credential_type, updated_at DESC, id ASC)`)
             } catch (e) { }
         } catch (e) { }
     } catch (migrationErr) {

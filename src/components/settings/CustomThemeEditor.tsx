@@ -618,10 +618,10 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 </div>
 
                 <div className="flex items-center gap-1 px-5 py-2 border-b border-border/30 shrink-0">
-                    <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground">
+                    <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
                         <Undo2 className="w-3.5 h-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} className="h-7 w-7 rounded-md text-muted-foreground hover:text-foreground">
+                    <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
                         <Redo2 className="w-3.5 h-3.5" />
                     </Button>
                     <div className="w-px h-4 bg-border mx-1.5 shrink-0" />
@@ -763,7 +763,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                                     <Icon className="w-3.5 h-3.5" />
                                                     <span className="text-xs font-semibold">{label}</span>
                                                 </div>
-                                                <span className="relative z-10 text-[10px] text-muted-foreground">{desc}</span>
+                                                <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
                                             </button>
                                         ))}
                                     </div>
@@ -789,7 +789,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                                 )}
                                             >
                                                 <span className="relative z-10 text-xs font-semibold">{label}</span>
-                                                <span className="relative z-10 text-[10px] text-muted-foreground">{desc}</span>
+                                                <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
                                             </button>
                                         ))}
                                     </div>

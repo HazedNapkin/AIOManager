@@ -167,7 +167,7 @@ export const ActivityItemCard = memo(({
                     <p className="font-bold text-xs text-foreground leading-tight line-clamp-1 truncate">{item.name}</p>
                     <div className="flex items-center gap-1.5">
                         {episodeLabel && (
-                            <span className="shrink-0 font-mono text-[10px] font-bold text-primary">
+                            <span className="shrink-0 font-mono text-xs font-bold text-primary">
                                 {episodeLabel}
                             </span>
                         )}

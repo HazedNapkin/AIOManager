@@ -134,7 +134,7 @@ export function ReplayMonths({ data }: ReplayMonthsProps) {
                                 <PlayCircle className="w-4 h-4 text-primary" />
                                 <h4 className="text-sm font-bold text-white/90 uppercase">Top Highlights</h4>
                             </div>
-                            <div className="grid grid-cols-3 gap-3 md:gap-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
                                 {selectedMonth?.top3Titles?.map((title, i) => (
                                     <div
                                         key={title.itemId}

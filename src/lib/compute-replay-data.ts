@@ -83,6 +83,12 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         current.totalHours += hours
         current.years.add(new Date(item.timestamp).getFullYear())
         titleMap.set(uniqueId, current)
+
+        if (item.genres) {
+            for (const genre of item.genres) {
+                genreMap.set(genre, (genreMap.get(genre) || 0) + 1)
+            }
+        }
     })
 
     // Monthly aggregation (time-based: excludes backfill).
@@ -281,8 +287,7 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         { id: 'streak-7', icon: '📅', title: 'Week Warrior', description: 'Binge streak of 7+ days', value: longestStreak, threshold: 7, unlocked: longestStreak >= 7 },
         { id: 'streak-14', icon: '🎯', title: 'Fortnight Force', description: 'Binge streak of 14+ days', value: longestStreak, threshold: 14, unlocked: longestStreak >= 14 },
         { id: 'streak-30', icon: '⚡', title: 'Monthly Marathon', description: 'Binge streak of 30+ days', value: longestStreak, threshold: 30, unlocked: longestStreak >= 30 },
-        // Genres milestone hidden until Cinemeta genre data is available in ActivityItem
-        // { id: 'genres-5', icon: '🔍', title: 'Genre Explorer', description: 'Watched across 5+ categories', value: genreMap.size, threshold: 5, unlocked: genreMap.size >= 5 },
+        { id: 'genres-5', icon: '🔍', title: 'Genre Explorer', description: 'Watched across 5+ categories', value: genreMap.size, threshold: 5, unlocked: genreMap.size >= 5 },
         { id: 'discoveries-25', icon: '🔍', title: 'Trailblazer', description: 'Discovered 25+ new titles', value: discoveryCount, threshold: 25, unlocked: discoveryCount >= 25 },
     ]
 

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { useAccountStore, getAccountAuthKey } from './accountStore'
+import { useAccountStore, getStremioAuthKey } from './accountStore'
 import type { AddonDescriptor } from '@/types/addon'
 import { useAddonStore } from './addonStore'
 import { useProfileStore } from './profileStore'
@@ -15,12 +15,20 @@ import { decompressSyncPayload } from '@/lib/utils'
 import { applySyncedSettings } from '@/lib/synced-settings'
 import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { createSafeStorage } from './safe-storage'
+import { wipeAllData } from '@/lib/storage-reset'
+import { resetAllStores } from '@/lib/store-coordinator'
 
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
 let _appReady = false
 setTimeout(() => { _appReady = true }, 3000)
 
-let _lastPushedState: string | null = null
+let _lastPushedHash: string | null = null
+
+async function computeHash(data: string): Promise<string> {
+    const encoded = new TextEncoder().encode(data)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded)
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
 let _pendingRetry = false
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _accountsHydrated = false
@@ -377,10 +385,11 @@ export const useSyncStore = create<SyncState>()(
                             } : { changelog: [] },
                             changelog: Array.isArray(d.changelog) ? d.changelog : [],
                             customThemes: Array.isArray(d.customThemes) ? d.customThemes : [],
-                            accountTombstones: Array.isArray(d.accountTombstones) ? d.accountTombstones : [],
                             watchEvents: Array.isArray(d.watchEvents) ? d.watchEvents : [],
                             watchSnapshot: d.watchSnapshot || {},
                             apiKeys: d.apiKeys,
+                            discoverFavorites: d.discoverFavorites,
+                            discoverPrefs: d.discoverPrefs,
                         }
 
                     } catch (e) {
@@ -558,17 +567,12 @@ export const useSyncStore = create<SyncState>()(
                         applySyncedSettings({ customThemes: syncData.customThemes }, true)
                     }
 
-                    {
-                        const remote = Array.isArray(syncData.accountTombstones) ? syncData.accountTombstones as { id: string; deletedAt: number }[] : []
-                        const local = useAccountStore.getState().tombstones
-                        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-                        const tsMap = new Map<string, { id: string; deletedAt: number }>()
-                        ;[...remote, ...local].forEach(t => {
-                            if (t.deletedAt < cutoff) return
-                            const existing = tsMap.get(t.id)
-                            if (!existing || t.deletedAt > existing.deletedAt) tsMap.set(t.id, t)
-                        })
-                        useAccountStore.setState({ tombstones: Array.from(tsMap.values()) })
+                    if (Array.isArray(syncData.discoverFavorites)) {
+                        try { localStorage.setItem('aio-discover-favorites', JSON.stringify(syncData.discoverFavorites)) } catch {}
+                    }
+
+                    if (syncData.discoverPrefs && typeof syncData.discoverPrefs === 'object') {
+                        try { localStorage.setItem('aio-discover-prefs', JSON.stringify(syncData.discoverPrefs)) } catch {}
                     }
 
                     savePasswordToSession(password)
@@ -599,9 +603,21 @@ export const useSyncStore = create<SyncState>()(
 
                     setTimeout(() => {
                         import('@/lib/activity-server').then(async m => {
-                            try { await m.pushCredentialsToServer() } catch (e) { if (import.meta.env.DEV) console.error('[Sync] Credential push failed:', e) }
-                            m.fetchAndMergeServerEvents().catch(e => { if (import.meta.env.DEV) console.error('[Sync] Server event fetch failed:', e) })
-                        }).catch(e => { if (import.meta.env.DEV) console.error('[Sync] Activity server import failed:', e) })
+                            try { await m.pushCredentialsToServer() } catch (e) {
+                                const msg = (e as Error).message
+                                get().addLogEntry({ type: 'push', status: 'error', message: `Credential push failed: ${msg}`, isAuto: true })
+                                console.warn('[Sync] Credential push failed:', e)
+                            }
+                            m.fetchAndMergeServerEvents().catch(e => {
+                                const msg = (e as Error).message
+                                get().addLogEntry({ type: 'pull', status: 'error', message: `Server event fetch failed: ${msg}`, isAuto: true })
+                                console.warn('[Sync] Server event fetch failed:', e)
+                            })
+                        }).catch(e => {
+                            const msg = (e as Error).message
+                            get().addLogEntry({ type: 'push', status: 'error', message: `Activity server import failed: ${msg}`, isAuto: true })
+                            console.warn('[Sync] Activity server import failed:', e)
+                        })
                     }, 2000)
 
                     // App-open: fold in any inbound canonical writes (AIOStreams) that landed
@@ -631,7 +647,16 @@ export const useSyncStore = create<SyncState>()(
             },
 
             logout: async () => {
-                _lastPushedState = null
+                if (get().auth.isAuthenticated && get().isInitialSyncCompleted && !get().isSyncing) {
+                    try {
+                        await Promise.race([
+                            get().syncToRemote(true, false),
+                            new Promise(resolve => setTimeout(resolve, 5000))
+                        ])
+                    } catch { }
+                }
+
+                _lastPushedHash = null
                 _pendingRetry = false
                 _accountsHydrated = false
                 if (_syncDebounceTimer) { clearTimeout(_syncDebounceTimer); _syncDebounceTimer = null }
@@ -645,15 +670,10 @@ export const useSyncStore = create<SyncState>()(
                     isInitialSyncCompleted: false
                 })
 
-                // Clear ALL local data on logout to prevent state leakage
                 const { useWatchEventStore } = await import('@/store/watchEventStore')
-                await Promise.allSettled([
-                    useAccountStore.getState().reset(),
-                    useAddonStore.getState().reset(),
-                    useProfileStore.getState().reset?.(),
-                    useFailoverStore.getState().reset?.(),
-                    useWatchEventStore.getState().reset()
-                ])
+                await useWatchEventStore.getState().reset()
+                await wipeAllData()
+                await resetAllStores({ includeSync: false })
 
                 toast({ title: "Logged Out", description: "See you next time." })
             },
@@ -766,7 +786,8 @@ export const useSyncStore = create<SyncState>()(
                         syncedAt: new Date().toISOString(),
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
-                        accountTombstones: useAccountStore.getState().tombstones,
+                        discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
+                        discoverPrefs: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-prefs') || '{}') } catch { return {} } })(),
                     }
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')
@@ -783,7 +804,7 @@ export const useSyncStore = create<SyncState>()(
                         throw new Error(`Sync payload too large (${mb}MB). Remove some accounts or data.`)
                     }
 
-                    if (_lastPushedState !== null && stringifiedState === _lastPushedState) {
+                    if (_lastPushedHash !== null && await computeHash(stringifiedState) === _lastPushedHash) {
                         return
                     }
 
@@ -799,7 +820,7 @@ export const useSyncStore = create<SyncState>()(
                     // minimises both new server-side exposure and sync payload size. Captured
                     // so it can become the merge base on a CONFIRMED push (see success branch).
                     const canonicalPayload = useAccountStore.getState().accounts.reduce<Record<string, AddonDescriptor[]>>((map, a) => {
-                        if (!getAccountAuthKey(a)) map[a.id] = a.addons || []
+                        if (!getStremioAuthKey(a)) map[a.id] = a.addons || []
                         return map
                     }, {})
 
@@ -848,7 +869,7 @@ export const useSyncStore = create<SyncState>()(
                         return
                     }
 
-                    _lastPushedState = stringifiedState
+                    _lastPushedHash = await computeHash(stringifiedState)
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the
@@ -992,17 +1013,6 @@ export const useSyncStore = create<SyncState>()(
                     }
                     if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
                         applySyncedSettings({ customThemes: data.customThemes }, true)
-                    }
-                    if (Array.isArray(data.accountTombstones)) {
-                        const local = useAccountStore.getState().tombstones
-                        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-                        const tsMap = new Map<string, { id: string; deletedAt: number }>()
-                        ;[...(data.accountTombstones as { id: string; deletedAt: number }[]), ...local].forEach(t => {
-                            if (t.deletedAt < cutoff) return
-                            const existing = tsMap.get(t.id)
-                            if (!existing || t.deletedAt > existing.deletedAt) tsMap.set(t.id, t)
-                        })
-                        useAccountStore.getState().saveTombstones(Array.from(tsMap.values()))
                     }
                     if (Array.isArray(data.notesTrash)) {
                         const { useNotesStore } = await import('@/store/notesStore')

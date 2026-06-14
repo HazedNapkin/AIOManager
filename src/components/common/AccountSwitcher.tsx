@@ -38,7 +38,7 @@ const OUTLINE_BTN = "inline-flex items-center justify-center gap-1.5 whitespace-
 
 function AccountAvatar({ account, size = 'sm' }: { account: Account; size?: 'sm' | 'md' }) {
     const dim = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6'
-    const fontSize = size === 'sm' ? 'text-[9px]' : 'text-[10px]'
+    const fontSize = size === 'sm' ? 'text-xs' : 'text-xs'
     return (
         <div className={`relative ${dim} shrink-0 flex items-center justify-center`}>
             <SquircleOverlay />

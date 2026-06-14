@@ -34,7 +34,7 @@ export function Layout({ children }: LayoutProps) {
     // Don't swap bg-[#08080f] for bg-background - the override is by design.
     return (
       <div className="min-h-screen bg-[#08080f] flex flex-col overflow-hidden">
-        <main className="flex-1 overflow-hidden">{children}</main>
+        <main id="main-content" className="flex-1 overflow-hidden">{children}</main>
         <CommandPalette />
       </div>
     )
@@ -59,7 +59,7 @@ export function Layout({ children }: LayoutProps) {
       </svg>
       <SyncIdReminder />
       <Header />
-      <main className="relative z-10 max-w-[1800px] mx-auto w-full px-4 py-6 md:py-10 flex-1 overflow-y-auto md:overflow-visible">{children}</main>
+      <main id="main-content" className="relative z-10 max-w-[1800px] mx-auto w-full px-4 py-6 md:py-10 flex-1 overflow-y-auto md:overflow-visible">{children}</main>
       <MobileBottomNav />
       <Footer className="hidden md:block" />
       <CommandPalette />

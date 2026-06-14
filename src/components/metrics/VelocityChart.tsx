@@ -42,7 +42,7 @@ export function VelocityChart({ contentVelocity, loading }: VelocityChartProps) 
                         </div>
                         <div className="text-right">
                             <div className="text-sm font-bold tabular-nums">{entry.velocity}</div>
-                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">eps/day</div>
+                            <div className="text-xs uppercase tracking-wide text-muted-foreground">eps/day</div>
                         </div>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-muted/50">

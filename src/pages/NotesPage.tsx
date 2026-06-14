@@ -447,7 +447,7 @@ function TB({ label, icon: Icon, onClick, disabled, className }: { label: string
                 variant="ghost"
                 onClick={onClick}
                 disabled={disabled}
-                className={cn("h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30", className)}
+                className={cn("h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30", className)}
             >
                 <Icon className="h-3.5 w-3.5" />
             </Button>
@@ -1078,7 +1078,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="font-medium text-xs truncate">{n.title}</p>
-                                <p className="text-[10px] text-muted-foreground truncate opacity-60">
+                                <p className="text-xs text-muted-foreground truncate opacity-60">
                                     {formatDistanceToNow(new Date(n.updatedAt), { addSuffix: true })}
                                 </p>
                             </div>
@@ -1158,12 +1158,12 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
 
                     <Tooltip content={note.pinned ? 'Unpin' : 'Pin'} side="top">
                         <Button variant="ghost" onClick={() => updateNote(note.id, { pinned: !note.pinned })}
-                            className={cn('h-7 w-7 p-0 rounded-md transition-colors', note.pinned ? 'text-warning bg-warning/10' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
+                            className={cn('h-7 w-7 flex items-center justify-center p-0 rounded-md transition-colors', note.pinned ? 'text-warning bg-warning/10' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
                             <Pin className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
                     <Tooltip content="Delete" side="top">
-                        <Button variant="ghost" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                        <Button variant="ghost" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 flex items-center justify-center p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
@@ -1224,7 +1224,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <div ref={helpRef} className="relative">
                     <Tooltip content="Syntax Help" side="top">
                         <Button variant="ghost" onClick={() => setShowHelp(v => !v)}
-                            className={cn('h-7 w-7 text-muted-foreground hover:text-foreground transition-colors rounded-md', showHelp ? 'bg-muted/60' : 'hover:bg-muted/50')}>
+                            className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showHelp ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                             <HelpCircle className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
@@ -1233,52 +1233,52 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                             <div className="px-3 py-2 text-[13px] font-medium text-foreground/60 border-b border-border/40 bg-muted/30">Markdown Syntax</div>
                             <div className="p-3 space-y-2.5 max-h-[400px] overflow-y-auto">
                                 <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-tighter">Text Formatting</p>
+                                    <p className="text-xs font-bold text-muted-foreground/60 uppercase tracking-tighter">Text Formatting</p>
                                     <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">**bold**</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">**bold**</code>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">*italic*</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">*italic*</code>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">~~strike~~</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">~~strike~~</code>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">`code`</code>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-tighter">Organization</p>
-                                    <div className="flex flex-col gap-1.5 text-[11px]">
-                                        <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40"># Heading 1</code>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">## Heading 2</code>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">- List Item</code>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">- [ ] Task</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">`code`</code>
                                         </div>
                                     </div>
                                 </div>
                                 <div className="space-y-1">
-                                    <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-tighter">Special Features</p>
+                                    <p className="text-xs font-bold text-muted-foreground/60 uppercase tracking-tighter">Organization</p>
                                     <div className="flex flex-col gap-1.5 text-[11px]">
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-primary/12 text-primary px-1 py-0.5 rounded border border-primary/25">[[Note Title]]</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40"># Heading 1</code>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">## Heading 2</code>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">- List Item</code>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">- [ ] Task</code>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <p className="text-xs font-bold text-muted-foreground/60 uppercase tracking-tighter">Special Features</p>
+                                    <div className="flex flex-col gap-1.5 text-[11px]">
+                                        <div className="flex items-center gap-2">
+                                            <code className="text-xs bg-primary/12 text-primary px-1 py-0.5 rounded border border-primary/25">[[Note Title]]</code>
                                             <span className="text-muted-foreground/60 scale-90">Wikilink</span>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-info/10 text-info px-1 py-0.5 rounded border border-info/20">#tag</code>
+                                            <code className="text-xs bg-info/10 text-info px-1 py-0.5 rounded border border-info/20">#tag</code>
                                             <span className="text-muted-foreground/60 scale-90">Tagging</span>
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <code className="text-[10px] bg-muted px-1 py-0.5 rounded border border-border/40">/</code>
+                                            <code className="text-xs bg-muted px-1 py-0.5 rounded border border-border/40">/</code>
                                             <span className="text-muted-foreground/60 scale-90">Slash Commands</span>
                                         </div>
                                     </div>
@@ -1289,7 +1289,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 </div>
                 <Tooltip content="Shortcuts" side="top">
                     <Button variant="ghost" onClick={() => setShowShortcuts(v => !v)}
-                        className={cn('h-7 w-7 text-muted-foreground hover:text-foreground transition-colors rounded-md', showShortcuts ? 'bg-muted/60' : 'hover:bg-muted/50')}>
+                        className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showShortcuts ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                         <Keyboard className="h-3.5 w-3.5" />
                     </Button>
                 </Tooltip>
@@ -1328,7 +1328,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     />
                     <Button variant="ghost" size="sm" onClick={handleReplaceNext} disabled={!findText} className="h-6 px-2 text-xs">Replace</Button>
                     <Button variant="ghost" size="sm" onClick={handleReplaceAll} disabled={!findText} className="h-6 px-2 text-xs">All</Button>
-                    <Button variant="ghost" size="icon" onClick={() => setShowFind(false)} className="h-6 w-6 shrink-0" aria-label="Close find bar">
+                    <Button variant="ghost" size="icon" onClick={() => setShowFind(false)} className="h-6 w-6 flex items-center justify-center shrink-0" aria-label="Close find bar">
                         <X className="h-3 w-3" />
                     </Button>
                 </div>
@@ -1441,7 +1441,7 @@ function NoteCard({
                     {tags.length > 0 && (
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
                             {tags.slice(0, 3).map(tag => (
-                                <span key={tag} className="px-1 py-0 rounded bg-info/10 text-info text-[10px] font-medium">
+                                <span key={tag} className="px-1 py-0 rounded bg-info/10 text-info text-xs font-medium">
                                     #{tag}
                                 </span>
                             ))}
@@ -1462,6 +1462,7 @@ export function NotesPage() {
     const emptyTrash = useNotesStore(s => s.emptyTrash)
     const loadNoteContent = useNotesStore(s => s.loadNoteContent)
     const activeNote = useNotesStore(s => s.activeNote)
+    const saveFailed = useNotesStore(s => s.saveFailed)
 
     const [selectedId, setSelectedId] = useState<string | null>(null)
     const [search, setSearch] = useState('')
@@ -1623,6 +1624,13 @@ export function NotesPage() {
     }, [selectedIds])
 
     return (
+        <div className="flex flex-col gap-4">
+            {saveFailed && (
+                <div className="flex items-center gap-2 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-600 dark:text-yellow-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                    <span>Failed to save changes. Your latest edits may not be persisted.</span>
+                </div>
+            )}
         <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-16rem)] min-h-[500px]">
             <div className={cn(
                 'flex flex-col w-full md:w-[300px] min-h-0 flex-1 md:flex-none md:shrink-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden',
@@ -1644,19 +1652,19 @@ export function NotesPage() {
                         <div className="flex items-center gap-1.5">
                             <Tooltip content={selectionMode ? "Exit Selection" : "Select Notes"} side="left">
                                 <Button variant={selectionMode ? 'default' : 'ghost'} onClick={() => { setSelectionMode(!selectionMode); setSelectedIds(new Set()) }}
-                                    className={cn("h-7 w-7 p-0 shrink-0 shadow-none", selectionMode ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-muted-foreground hover:text-foreground")}>
+                                    className={cn("h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-none", selectionMode ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-muted-foreground hover:text-foreground")}>
                                     <ListChecks className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="left">
                                 <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
-                                    className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground">
+                                    className="h-7 w-7 flex items-center justify-center p-0 shrink-0 text-muted-foreground hover:text-foreground">
                                     <Network className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content="New note" side="right">
                                 <Button variant="default" onClick={handleCreate}
-                                    className="relative h-7 w-7 p-0 shrink-0 shadow-sm rounded-lg">
+                                    className="relative h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-sm rounded-lg">
                                     <Plus className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
@@ -1679,13 +1687,13 @@ export function NotesPage() {
                             className={cn('h-8 rounded-xl border border-transparent text-xs font-semibold transition-colors', view !== 'trash' ? 'border-border/40 bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40')}>
                             <StickyNote className="h-3.5 w-3.5" />
                             Notes
-                            <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-[10px] tabular-nums text-muted-foreground">{notes.length}</span>
+                            <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{notes.length}</span>
                         </Button>
                         <Button variant="ghost" onClick={() => setView('trash')}
                             className={cn('h-8 rounded-xl border border-transparent text-xs font-semibold transition-colors', view === 'trash' ? 'border-border/40 bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40')}>
                             <Trash className="h-3.5 w-3.5" />
                             Deleted
-                            {trash.length > 0 && <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-[10px] tabular-nums text-muted-foreground">{trash.length}</span>}
+                            {trash.length > 0 && <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{trash.length}</span>}
                         </Button>
                     </div>
                 </div>
@@ -1780,7 +1788,7 @@ export function NotesPage() {
                                                 </div>
                                                 <Tooltip content="Restore note" side="left">
                                                     <button onClick={() => restoreNote(item.note.id)}
-                                                        className="shrink-0 min-h-[44px] min-w-[44px] flex items-center justify-center rounded hover:bg-muted/60 text-muted-foreground/60 hover:text-primary transition-colors">
+                                                        className="shrink-0 flex items-center justify-center rounded hover:bg-muted/60 text-muted-foreground/60 hover:text-primary transition-colors">
                                                         <RotateCcw className="h-3.5 w-3.5" />
                                                     </button>
                                                 </Tooltip>
@@ -1854,6 +1862,7 @@ export function NotesPage() {
                     </div>
                 )}
             </div>
+        </div>
         </div>
     )
 }

@@ -263,7 +263,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                                 ) : (
                                     searchResults.map(([groupName, entries]) => (
                                         <div key={groupName} className="space-y-1.5">
-                                            <div className="px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                                            <div className="px-1 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
                                                 {groupName}
                                             </div>
                                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -333,7 +333,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
 
                         {selected.setup && (
                             <div className="space-y-2 rounded-xl border border-border/40 bg-muted/15 p-3">
-                                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                                <div className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
                                     How to get your {selected.credentialLabel.toLowerCase()}
                                 </div>
                                 {selected.setup.intro && (
@@ -403,7 +403,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-primary"
+                                        className="absolute right-1 top-1/2 h-7 w-7 flex items-center justify-center -translate-y-1/2 text-muted-foreground hover:text-primary"
                                         onClick={() => setShowKeyValue(v => !v)}
                                         aria-label={showKeyValue ? 'Hide value' : 'Show value'}
                                     >

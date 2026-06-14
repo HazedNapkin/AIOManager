@@ -171,7 +171,7 @@ export function LibrarySidebar({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground"
                     onClick={() => setShowProfileReorderDialog(true)}
                     disabled={profiles.length === 0}
                     aria-label="Reorder profiles"
@@ -181,7 +181,7 @@ export function LibrarySidebar({
                 </Tooltip>
                 <ProfileDialog trigger={
                   <Tooltip content="Create Profile">
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" aria-label="Create profile">
+                    <Button variant="ghost" size="icon" className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground" aria-label="Create profile">
                       <Plus className="h-3.5 w-3.5" />
                     </Button>
                   </Tooltip>
@@ -216,7 +216,7 @@ export function LibrarySidebar({
                         profile={profile}
                         onDelete={onDeleteProfile}
                         trigger={
-                          <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground" aria-label="Edit profile">
+                           <Button variant="ghost" size="icon" className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground" aria-label="Edit profile">
                             <AnimatedSettingsIcon className="h-3 w-3" />
                           </Button>
                         }
@@ -236,7 +236,7 @@ export function LibrarySidebar({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground"
                     onClick={onManageTags}
                     aria-label="Manage tags"
                   >

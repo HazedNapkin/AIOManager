@@ -2,6 +2,13 @@ import type { AddonManifest } from '@/types/addon'
 
 const BASE_URL = 'https://stremio-addons.net/api/v0'
 
+const CACHE_TTL = 10 * 60 * 1000
+const _cache = new Map<string, { data: unknown; ts: number }>()
+
+export function _invalidateCache(): void {
+  _cache.clear()
+}
+
 export type DiscoverSortBy = 'stars' | 'createdAt'
 export type DiscoverOrder = 'asc' | 'desc'
 export type DiscoverNsfw = 'only' | 'exclude'
@@ -57,7 +64,7 @@ export interface DiscoverQuery {
 // All stremio-addons.net network access is isolated here. The endpoint is
 // public, read-only, and CORS-open, so it is fetched directly from the client.
 // If that ever changes, route these two functions through the server proxy.
-export async function fetchDiscoverAddons(query: DiscoverQuery = {}): Promise<DiscoverAddonsResponse> {
+export async function fetchDiscoverAddons(query: DiscoverQuery = {}, signal?: AbortSignal): Promise<DiscoverAddonsResponse> {
   const params = new URLSearchParams()
   if (query.search?.trim()) params.set('search', query.search.trim())
   if (query.sortBy) params.set('sort_by', query.sortBy)
@@ -68,26 +75,44 @@ export async function fetchDiscoverAddons(query: DiscoverQuery = {}): Promise<Di
   if (query.limit != null) params.set('limit', String(query.limit))
   for (const slug of query.category ?? []) params.append('category', slug)
 
-  const res = await fetch(`${BASE_URL}/addons?${params.toString()}`)
+  const key = `addons:${params.toString()}`
+  const cached = _cache.get(key)
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as DiscoverAddonsResponse
+
+  const res = await fetch(`${BASE_URL}/addons?${params.toString()}`, { signal })
   if (!res.ok) throw new Error(`Discover request failed (${res.status})`)
   const data = (await res.json()) as DiscoverAddonsResponse
-  return {
+  const result = {
     addons: Array.isArray(data.addons) ? data.addons : [],
     pagination: data.pagination,
   }
+  if (!signal?.aborted) _cache.set(key, { data: result, ts: Date.now() })
+  return result
 }
 
-export async function fetchDiscoverCategories(): Promise<DiscoverCategory[]> {
-  const res = await fetch(`${BASE_URL}/categories`)
+export async function fetchDiscoverCategories(signal?: AbortSignal): Promise<DiscoverCategory[]> {
+  const key = 'categories'
+  const cached = _cache.get(key)
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as DiscoverCategory[]
+
+  const res = await fetch(`${BASE_URL}/categories`, { signal })
   if (!res.ok) throw new Error(`Discover categories request failed (${res.status})`)
   const data = (await res.json()) as { categories?: DiscoverCategory[] }
-  return Array.isArray(data.categories) ? data.categories : []
+  const result = Array.isArray(data.categories) ? data.categories : []
+  if (!signal?.aborted) _cache.set(key, { data: result, ts: Date.now() })
+  return result
 }
 
-export async function fetchDiscoverAddon(slugOrUuid: string): Promise<DiscoverAddonDetail> {
-  const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(slugOrUuid)}`)
+export async function fetchDiscoverAddon(slugOrUuid: string, signal?: AbortSignal): Promise<DiscoverAddonDetail> {
+  const key = `addon:${slugOrUuid}`
+  const cached = _cache.get(key)
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data as DiscoverAddonDetail
+
+  const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(slugOrUuid)}`, { signal })
   if (!res.ok) throw new Error(`Discover detail request failed (${res.status})`)
-  return (await res.json()) as DiscoverAddonDetail
+  const result = (await res.json()) as DiscoverAddonDetail
+  if (!signal?.aborted) _cache.set(key, { data: result, ts: Date.now() })
+  return result
 }
 
 // Human-readable labels for the manifest resource keys an addon advertises.

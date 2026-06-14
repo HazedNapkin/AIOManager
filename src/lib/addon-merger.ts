@@ -5,6 +5,7 @@ import { normalizeAddonUrl } from './utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from './concurrency'
 import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
+import { getEffectiveManifest } from '@/lib/addon-utils'
 
 /**
  * Addon Merger
@@ -19,14 +20,6 @@ import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
  * @param savedAddons - Saved addons to apply
  * @returns Updated addon collection and merge result
  */
-async function getManifestWithCache(installUrl: string, accountId: string): Promise<any> {
-  const cached = getCachedManifest(installUrl)
-  if (cached) return cached
-  const { manifest } = await fetchAddonManifest(installUrl, accountId)
-  setCachedManifest(installUrl, manifest)
-  return manifest
-}
-
 export async function mergeAddons(
   currentAddons: AddonDescriptor[],
   savedAddons: SavedAddon[],
@@ -42,12 +35,15 @@ export async function mergeAddons(
 
   const updatedAddons = [...currentAddons]
 
-  const urlsToFetch = [...new Set(savedAddons.filter(s => !s.manifest).map(s => s.installUrl))]
-  if (urlsToFetch.length > 0) {
-    await mapConcurrent(urlsToFetch, 5, async (url) => {
-      try { await getManifestWithCache(url, accountId) } catch { /* best effort; loop handles misses */ }
-    })
-  }
+  await mapConcurrent(savedAddons, 5, async (savedAddon) => {
+    const installUrl = savedAddon.installUrl
+    try {
+      const fresh = await fetchAddonManifest(installUrl, accountId)
+      if (fresh?.manifest?.id && fresh?.manifest?.name && fresh?.manifest?.version) {
+        setCachedManifest(installUrl, fresh.manifest)
+      }
+    } catch { /* fall back to stored manifest */ }
+  })
 
   for (const savedAddon of savedAddons) {
     const addonId = savedAddon.manifest.id
@@ -80,7 +76,10 @@ export async function mergeAddons(
       }
 
       try {
-        const manifestToApply = savedAddon.manifest || (await getManifestWithCache(installUrl, accountId))
+        const cached = getCachedManifest(installUrl)
+        const manifestToApply = (cached?.id && cached?.name && cached?.version)
+          ? cached
+          : savedAddon.manifest
 
         const updatedDescriptor: AddonDescriptor = {
           transportUrl: installUrl,
@@ -112,7 +111,10 @@ export async function mergeAddons(
       }
     } else {
       try {
-        const manifestToApply = savedAddon.manifest || (await getManifestWithCache(installUrl, accountId))
+        const cached = getCachedManifest(installUrl)
+        const manifestToApply = (cached?.id && cached?.name && cached?.version)
+          ? cached
+          : savedAddon.manifest
 
         const newDescriptor: AddonDescriptor = {
           transportUrl: installUrl,
@@ -146,7 +148,11 @@ export async function mergeAddons(
     }
   }
 
-  return { addons: dedupeAddonsByTransportUrl(updatedAddons), result }
+  const merged = dedupeAddonsByTransportUrl(updatedAddons)
+    .map(addon => ({ ...addon, manifest: getEffectiveManifest(addon) }))
+    .filter(addon => addon.manifest?.id && addon.manifest?.name && addon.manifest?.version)
+
+  return { addons: merged, result }
 }
 
 /**

@@ -16,7 +16,7 @@ import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
 import { AlertCircle, AlertTriangle, ShieldCheck, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -27,10 +27,10 @@ import { useShallow } from 'zustand/react/shallow'
 import { useLongPress } from '@/hooks/useLongPress'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
-import { useAccountStore, getAccountEmail, getAccountAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
 
 interface AccountCardProps {
-  account: StremioAccount
+  account: Account
   isSelected?: boolean
   onToggleSelect?: (accountId: string) => void
   onLongPress?: (accountId: string) => void
@@ -221,7 +221,7 @@ export const AccountCard = memo(function AccountCard({
   }
 
   const accountEmail = getAccountEmail(account)
-  const isNameCustomized = account.name !== accountEmail && account.name !== 'Stremio Account'
+  const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
   const displayName =
     isPrivacyMode && !isNameCustomized
       ? account.name.includes('@')
@@ -319,9 +319,9 @@ export const AccountCard = memo(function AccountCard({
                     {isPrivacyMode ? maskEmail(accountEmail) : accountEmail}
                   </p>
                 )}
-                {(getAccountAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                {(getStremioAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
                   <div className="flex items-center gap-1 mt-1">
-                    {getAccountAuthKey(account) && (
+                    {getStremioAuthKey(account) && (
                       <Tooltip content="Stremio" side="bottom">
                         <PlatformLogo platform="stremio" className="h-5 w-5" />
                       </Tooltip>
@@ -401,7 +401,7 @@ export const AccountCard = memo(function AccountCard({
                         try {
                           toast({ title: 'Refreshing...', description: `Reinstalling all addons on ${displayName}` });
                           const { useAddonStore } = await import('@/store/addonStore');
-                          await useAddonStore.getState().bulkReinstallAllOnAccount(account.id, getAccountAuthKey(account));
+                          await useAddonStore.getState().bulkReinstallAllOnAccount(account.id, getStremioAuthKey(account));
                           toast({ title: 'Refresh Complete', description: `All addons on ${displayName} have been reinstalled` });
                         } catch (err) {
                           toast({ variant: 'destructive', title: 'Refresh Failed', description: `Could not reinstall addons on ${displayName}` });
@@ -507,7 +507,7 @@ export const AccountCard = memo(function AccountCard({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-destructive">Sync Failed</p>
                     <p className="text-xs text-destructive/80 mt-0.5">
-                      Could not reach Stremio. Try a re-sync; if it keeps failing, update the account credentials.
+                      Could not reach the server. Try a re-sync; if it keeps failing, update the account credentials.
                     </p>
                   </div>
                 </div>
@@ -536,7 +536,7 @@ export const AccountCard = memo(function AccountCard({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-warning">Session Expired</p>
                     <p className="text-xs text-warning/80 mt-0.5">
-                      Stremio rejected this token. OAuth links can be revoked after Web logout; AuthKeys are usually durable. Use Email & Password for auto-refresh, or paste a fresh token.
+                      A session token was rejected. Re-authenticate this account to refresh it.
                     </p>
                   </div>
                 </div>
@@ -571,7 +571,7 @@ export const AccountCard = memo(function AccountCard({
                 variant="ghost"
                 size="icon"
                 onClick={handleNoteOpen}
-                className={`h-7 w-7 rounded-full p-1 transition-colors ${account.note ? 'text-primary bg-primary/12' : 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50'}`}
+                className={`h-7 w-7 flex items-center justify-center rounded-full p-1 transition-colors ${account.note ? 'text-primary bg-primary/12' : 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50'}`}
                 aria-label="Toggle note"
               >
                 <StickyNote className="w-3.5 h-3.5" />
@@ -606,7 +606,7 @@ export const AccountCard = memo(function AccountCard({
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <DialogTitle className="truncate text-base">{account.name || getAccountEmail(account)}</DialogTitle>
+                <DialogTitle className="truncate text-base min-w-0">{account.name || getAccountEmail(account)}</DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
                   {noteValue.trim() ? 'Quick sticky note' : 'Write a quick sticky note'}
                 </DialogDescription>

@@ -2,7 +2,7 @@ import { useAccountStore } from '@/store/accountStore'
 
 export function useAccounts() {
   const accounts = useAccountStore((state) => state.accounts)
-  const loading = useAccountStore((state) => state.loading)
+  const loading = useAccountStore((state) => state.loadingAccounts.size > 0)
   const error = useAccountStore((state) => state.error)
 
   const addAccountByAuthKey = useAccountStore((state) => state.addAccountByAuthKey)

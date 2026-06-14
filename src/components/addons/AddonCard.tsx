@@ -38,7 +38,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useShallow } from 'zustand/react/shallow'
+
 import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { AddonMetadataDialog } from './AddonMetadataDialog'
 import { CinemetaConfigurationDialog } from './CinemetaConfigurationDialog'
@@ -147,6 +147,7 @@ interface AddonCardProps {
   failoverPaused?: boolean
   isPrimary?: boolean
   isPrimaryPaused?: boolean
+  isInstalled?: boolean
   compact?: boolean
 }
 
@@ -170,14 +171,9 @@ export const AddonCard = React.memo(function AddonCard({
   failoverPaused,
   isPrimary,
   isPrimaryPaused,
+  isInstalled = false,
   compact = false,
 }: AddonCardProps) {
-  const isInstalled = useAddonStore(useShallow((state) =>
-    Object.values(state.library).some(
-      (savedAddon) =>
-        savedAddon.manifest.id === addon.manifest.id && savedAddon.installUrl === addon.transportUrl
-    )
-  ))
   const navigate = useNavigate()
   const createSavedAddon = useAddonStore((state) => state.createSavedAddon)
   const profiles = useProfileStore((state) => state.profiles)

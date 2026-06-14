@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
-import { getAccountAuthKey } from '@/store/accountStore'
+import { getStremioAuthKey } from '@/store/accountStore'
 import type { MergeResult, SavedAddon } from '@/types/saved-addon'
 
 interface BulkEditData {
@@ -145,7 +145,7 @@ export function useSavedAddonSelectionActions({
       const accountStore = useAccountStore.getState()
       const targetAccounts = accountIds.map(accountId => {
         const account = accountStore.accounts.find(a => a.id === accountId)
-        return account ? { id: account.id, authKey: getAccountAuthKey(account) } : null
+        return account ? { id: account.id, authKey: getStremioAuthKey(account) } : null
       }).filter(Boolean) as { id: string, authKey: string }[]
 
       if (targetAccounts.length === 0) {
@@ -244,7 +244,7 @@ export function useSavedAddonSelectionActions({
 
       const targetAccounts = accountIds.map(id => {
         const account = accountStore.accounts.find(a => a.id === id)
-        return account ? { id: account.id, authKey: getAccountAuthKey(account) } : null
+        return account ? { id: account.id, authKey: getStremioAuthKey(account) } : null
       }).filter(Boolean) as { id: string, authKey: string }[]
 
       if (targetAccounts.length === 0) {
@@ -265,9 +265,10 @@ export function useSavedAddonSelectionActions({
           description: `${deploymentSummary} across ${result.success} account${result.success !== 1 ? 's' : ''}.`,
         })
       } else {
+        const firstError = result.errors[0]?.error || ''
         toast({
           title: 'Deployment Completed with Errors',
-          description: `${deploymentSummary}. Succeeded: ${result.success}, failed: ${result.failed}.`,
+          description: `${deploymentSummary}. Succeeded: ${result.success}, failed: ${result.failed}.${firstError ? ` Error: ${firstError}` : ''}`,
           variant: 'destructive',
         })
       }

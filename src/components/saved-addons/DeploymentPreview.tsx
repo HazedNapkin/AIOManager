@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import { useAccountStore } from '@/store/accountStore'
 import { cn, normalizeAddonUrl } from '@/lib/utils'
 import type { SavedAddon } from '@/types/saved-addon'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { Info, Plus, RefreshCw, ShieldAlert, Trash2, Users } from 'lucide-react'
 import { SavedAddonIcon } from './SavedAddonIcon'
 
@@ -70,7 +70,7 @@ export function DeploymentPreview({
     const accountById = new Map(accounts.map(account => [account.id, account]))
     const targetAccounts = accountIds
       .map(id => accountById.get(id))
-      .filter((account): account is StremioAccount => Boolean(account))
+      .filter((account): account is Account => Boolean(account))
 
     const totals = {
       rows: [] as Array<{

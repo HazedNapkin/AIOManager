@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/hooks/use-toast'
 
 type WizardStep = 'login' | 'profile' | 'confirm'
 
@@ -110,7 +111,9 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
         if (!tokens) return
         try {
             await onComplete(tokens, selectedProfileId, profiles, email)
-        } catch {}
+        } catch (e) {
+            toast({ title: 'Setup failed', description: e instanceof Error ? e.message : 'Failed to configure provider', variant: 'destructive' })
+        }
         handleClose(false)
     }
 
@@ -266,7 +269,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
                                 {profiles.length > 1 && selectedProfileId && (
                                     <div className="flex flex-wrap gap-1.5 pt-1 border-t border-border/40">
                                         {profiles.filter(p => p.id === selectedProfileId).map(p => (
-                                            <StatusChip key={p.id} size="sm" className="text-[10px] h-5 px-2 bg-muted/50">
+                                            <StatusChip key={p.id} size="sm" className="text-xs h-5 px-2 bg-muted/50">
                                                 {p.name}
                                             </StatusChip>
                                         ))}

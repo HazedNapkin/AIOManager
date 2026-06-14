@@ -225,7 +225,7 @@ export function AccountForm() {
       } else {
         if (editingAccount) {
           await updateAccount(editingAccount.id, {
-            name: name.trim() || oauthEmail || editingAccount.name || 'Stremio Account',
+            name: name.trim() || oauthEmail || editingAccount.name || 'Account',
             authKey: oauthAuthKey,
             accentColor: accentColor === 'none' ? undefined : accentColor,
             emoji: emoji.trim() || undefined,
@@ -234,7 +234,7 @@ export function AccountForm() {
         } else {
           await addAccountByAuthKey(
             oauthAuthKey,
-            name.trim() || oauthEmail || 'Stremio Account',
+            name.trim() || oauthEmail || 'Account',
             accentColor === 'none' ? undefined : accentColor,
             emoji.trim() || undefined
           )
@@ -376,16 +376,28 @@ export function AccountForm() {
 
     if (editingAccount) {
       const resolvedEmail = email.trim() || editingAccount.email || ''
+      const expiredConnection = editingAccount.connections?.find(c => c.status === 'expired')
+      const isStremioExpired = !expiredConnection || expiredConnection.platform === 'stremio'
       if (mode === 'credentials' && password.trim() && !resolvedEmail) {
         setError('Email is required when updating Stremio credentials.')
         return
       }
       if (editingAccount.status === 'expired' && mode === 'credentials' && (!resolvedEmail || !password.trim())) {
-        setError('Enter the Stremio email and password to restore this expired session.')
+        if (isStremioExpired) {
+          setError('Enter the Stremio email and password to restore this expired session.')
+        } else {
+          const platformName = expiredConnection.platform.charAt(0).toUpperCase() + expiredConnection.platform.slice(1)
+          setError(`Session expired. Reconnect your ${platformName} account in the Connections tab to restore it.`)
+        }
         return
       }
       if (editingAccount.status === 'expired' && mode === 'authKey' && !authKey.trim()) {
-        setError('Paste a fresh AuthKey to replace this expired token.')
+        if (isStremioExpired) {
+          setError('Paste a fresh AuthKey to replace this expired token.')
+        } else {
+          const platformName = expiredConnection.platform.charAt(0).toUpperCase() + expiredConnection.platform.slice(1)
+          setError(`Session expired. Reconnect your ${platformName} account in the Connections tab to restore it.`)
+        }
         return
       }
     }

@@ -5,11 +5,11 @@ import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { AlertCircle, Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import { useState, useRef, useMemo, useCallback } from 'react'
+import { useState, useRef, useMemo, useCallback, lazy, Suspense } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountCard } from './AccountCard'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
-import { BatchOperationsDialog } from './BatchOperationsDialog'
+const BatchOperationsDialog = lazy(() => import('./BatchOperationsDialog').then(m => ({ default: m.BatchOperationsDialog })))
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import {
@@ -27,7 +27,7 @@ import { checkAddonUpdates } from '@/api/addons'
 import { useAddonStore } from '@/store/addonStore'
 import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
 import { getPlatformEntry } from '@/lib/platform-registry'
-import { useAccountStore, getAccountAuthKey, getAccountEmail } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, getAccountEmail } from '@/store/accountStore'
 
 import { Tooltip } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -105,7 +105,7 @@ export function AccountList() {
           return latest && isNewerVersion(addon.manifest.version, latest)
         })
         if (addonsToUpdate.length > 0) {
-          accountsWithUpdates.push({ id: account.id, authKey: getAccountAuthKey(account) })
+          accountsWithUpdates.push({ id: account.id, authKey: getStremioAuthKey(account) })
           addonsToUpdate.forEach(a => updatableUrls.add(a.transportUrl))
         }
       }
@@ -134,7 +134,7 @@ export function AccountList() {
 
   const handleClearAllChangelog = async () => {
     try {
-      await useAccountStore.getState().clearChangelog(undefined, 24 * 60 * 60 * 1000)
+      await useAccountStore.getState().clearChangelog()
       toast({ title: 'Notifications Cleared', description: 'All changelog notifications have been dismissed.' })
     } catch {
       toast({ title: 'Clear Failed', variant: 'destructive' })
@@ -167,14 +167,14 @@ export function AccountList() {
     for (const account of expiredAccounts) {
       const failing = (account.connections || []).filter(c => c.status === 'expired' || c.status === 'error')
       if (failing.length === 0) {
-        names.add('Stremio')
+        names.add(getStremioAuthKey(account) ? 'Stremio' : 'Account')
       } else {
         for (const c of failing) names.add(getPlatformEntry(c.platform)?.name || c.platform)
       }
     }
     return names.size === 1 ? [...names][0] : null
   }, [expiredAccounts])
-  const isStremioExpiry = expiredPlatformLabel === 'Stremio' || expiredPlatformLabel === null
+  const isStremioExpiry = expiredPlatformLabel === 'Stremio'
 
   const toggleAccountSelection = useCallback((accountId: string) => {
     setSelectedAccountIds((prev) => {
@@ -292,9 +292,9 @@ export function AccountList() {
               </p>
               <p className="text-xs opacity-85">
                 {isSessionExpiredError
-                  ? (isStremioExpiry
-                    ? 'Stremio rejected a stored token. Use Email & Password for persistent auto-refresh, or paste a fresh OAuth/AuthKey token if you prefer not to store the password.'
-                    : `${expiredPlatformLabel} rejected a stored token. Re-authenticate this connection from the account's Connections tab.`)
+                  ? (expiredPlatformLabel
+                    ? `${expiredPlatformLabel} rejected a stored token. Re-authenticate this account to refresh it.`
+                    : 'Session tokens were rejected. Re-authenticate the affected accounts to refresh them.')
                   : error}
               </p>
               {isSessionExpiredError && isStremioExpiry && firstExpiredAccount && (
@@ -384,7 +384,7 @@ export function AccountList() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" collisionPadding={16} className="w-64 max-w-[calc(100vw-2rem)] p-1.5">
-                  <Tooltip content="Re-fetch addons from Stremio for all accounts" side="right">
+                  <Tooltip content="Re-fetch addons from connected platforms for all accounts" side="right">
                     <DropdownMenuItem
                       onClick={handleRefreshAll}
                       disabled={loading}
@@ -438,16 +438,17 @@ export function AccountList() {
                   Clear All ({totalChangelogCount})
                 </Button>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto"
-                onClick={() => setReorderDialogOpen(true)}
-                disabled={accounts.length < 2}
-              >
-                <GripHorizontal className="h-3.5 w-3.5" />
-                <span>Reorder</span>
-              </Button>
+              {accounts.length >= 2 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto"
+                  onClick={() => setReorderDialogOpen(true)}
+                >
+                  <GripHorizontal className="h-3.5 w-3.5" />
+                  <span>Reorder</span>
+                </Button>
+              )}
             </>
           )}
 
@@ -576,14 +577,16 @@ export function AccountList() {
               Apply installs, syncs, removals, and protection changes across selected accounts.
             </DialogDescription>
           </DialogHeader>
-          <BatchOperationsDialog
-            selectedAccounts={accounts.filter((a) => selectedAccountIds.has(a.id))}
-            allAccounts={accounts}
-            onClose={() => {
-              setShowBulkActions(false)
-              clearSelection()
-            }}
-          />
+          <Suspense fallback={null}>
+            <BatchOperationsDialog
+              selectedAccounts={accounts.filter((a) => selectedAccountIds.has(a.id))}
+              allAccounts={accounts}
+              onClose={() => {
+                setShowBulkActions(false)
+                clearSelection()
+              }}
+            />
+          </Suspense>
         </DialogContent>
       </Dialog>
 

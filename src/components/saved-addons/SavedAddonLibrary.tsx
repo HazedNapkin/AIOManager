@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { AnimatedTrashIcon, AnimatedRefreshIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { useEffect, useState, useCallback, useRef, lazy, Suspense } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 const DiscoverPanel = lazy(() => import('@/components/discover/DiscoverPanel').then(m => ({ default: m.DiscoverPanel })))
 import { useProfileStore } from '@/store/profileStore'
@@ -47,18 +48,29 @@ export function SavedAddonLibrary() {
   const formatRelativeTime = useRelativeTime()
 
 
-  const library = useAddonStore(state => state.library)
-  const getAllTags = useAddonStore(state => state.getAllTags)
-  const initialize = useAddonStore(state => state.initialize)
-  const loading = useAddonStore(state => state.loading)
-  const isUpdatingAddon = useAddonStore(state => state.isUpdatingAddon)
-  const error = useAddonStore(state => state.error)
-  const checkAllHealth = useAddonStore(state => state.checkAllHealth)
-  const checkingHealth = useAddonStore(state => state.checkingHealth)
-  const lastHealthCheck = useAddonStore(state => state.lastHealthCheck)
-  const createSavedAddon = useAddonStore(state => state.createSavedAddon)
-  const updateSavedAddonManifest = useAddonStore(state => state.updateSavedAddonManifest)
-  const accountStates = useAddonStore(state => state.accountStates)
+  const {
+    library, getAllTags, initialize, loading, isUpdatingAddon, error,
+    checkAllHealth, checkingHealth, lastHealthCheck, createSavedAddon,
+    updateSavedAddonManifest, accountStates, latestVersions,
+    manifestChangeHints, updateLatestVersions, updateManifestChangeHints
+  } = useAddonStore(useShallow(state => ({
+    library: state.library,
+    getAllTags: state.getAllTags,
+    initialize: state.initialize,
+    loading: state.loading,
+    isUpdatingAddon: state.isUpdatingAddon,
+    error: state.error,
+    checkAllHealth: state.checkAllHealth,
+    checkingHealth: state.checkingHealth,
+    lastHealthCheck: state.lastHealthCheck,
+    createSavedAddon: state.createSavedAddon,
+    updateSavedAddonManifest: state.updateSavedAddonManifest,
+    accountStates: state.accountStates,
+    latestVersions: state.latestVersions,
+    manifestChangeHints: state.manifestChangeHints,
+    updateLatestVersions: state.updateLatestVersions,
+    updateManifestChangeHints: state.updateManifestChangeHints,
+  })))
   const accounts = useAccountStore(state => state.accounts)
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
@@ -81,10 +93,6 @@ export function SavedAddonLibrary() {
   const [addError, setAddError] = useState<string | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [updatingAll, setUpdatingAll] = useState(false)
-  const latestVersions = useAddonStore((state) => state.latestVersions)
-  const manifestChangeHints = useAddonStore((state) => state.manifestChangeHints)
-  const updateLatestVersions = useAddonStore((state) => state.updateLatestVersions)
-  const updateManifestChangeHints = useAddonStore((state) => state.updateManifestChangeHints)
   const { toast } = useToast()
 
   // Profile Store

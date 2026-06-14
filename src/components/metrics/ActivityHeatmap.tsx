@@ -66,7 +66,7 @@ export function ActivityHeatmap({ itemsByHour, loading }: ActivityHeatmapProps) 
                     )
                 })}
             </div>
-            <div className="mt-2 flex justify-between text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            <div className="mt-2 flex justify-between text-xs font-medium uppercase tracking-wide text-muted-foreground/70">
                 <span>00</span>
                 <span>06</span>
                 <span>12</span>

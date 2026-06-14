@@ -601,7 +601,7 @@ function SectionContent({
                                 <span className="text-muted-foreground">UUID</span>
                                 <div className="flex items-center gap-1.5">
                                     <code className="text-xs font-mono">{uuid}</code>
-                                    <CopyButton value={uuid} variant="ghost" className="h-6 w-6" iconSize={12} />
+                                    <CopyButton value={uuid} variant="ghost" className="h-6 w-6 flex items-center justify-center" iconSize={12} />
                                 </div>
                             </div>
                             <div className="flex items-center justify-between">
@@ -693,7 +693,7 @@ function SectionContent({
                     {linkedAccounts.length > 0 && (
                         <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                             <h3 className="text-sm font-semibold">Other Users On This Instance</h3>
-                            <p className="text-xs text-muted-foreground">Other Stremio accounts using different AIOStreams users on this same instance</p>
+                            <p className="text-xs text-muted-foreground">Other accounts using different AIOStreams users on this same instance</p>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 {linkedAccounts.map(acc => (
                                     <span key={acc.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/30 border border-border/30">
@@ -803,7 +803,7 @@ function SectionContent({
                                                 <p className="text-xs text-muted-foreground font-mono truncate">{String(ad.id || '')}</p>
                                             </div>
                                             <span className={cn(
-                                                "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                                "rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
                                                 isEnabled ? "bg-success/10 text-success" : "bg-muted/35 text-muted-foreground"
                                             )}>
                                                 {isEnabled ? 'On' : 'Off'}

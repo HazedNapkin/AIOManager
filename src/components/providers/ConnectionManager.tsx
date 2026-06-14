@@ -13,7 +13,7 @@ import { getAccountEmail } from '@/store/accountStore'
 import { toast } from '@/hooks/use-toast'
 import { useShallow } from 'zustand/react/shallow'
 import type { Connection } from '@/types/connection'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import type { HydraDriverConfig } from '@/types/provider'
 import { RefreshCw, Plus, Zap, Link2, Key, ChevronRight } from 'lucide-react'
 import { useState, useEffect, useCallback } from 'react'
@@ -27,7 +27,7 @@ import { SubscriberRow } from './SubscriberRow'
 
 interface ConnectionManagerProps {
     accountId: string
-    account?: StremioAccount
+    account?: Account
     connections?: Connection[]
     onSubDialogChange?: (open: boolean) => void
 }
@@ -343,7 +343,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                         <DialogTitle>Add Connection</DialogTitle>
                         <DialogDescription>Connect a platform to manage its addons from AIOManager.</DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-3 mt-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                         {PLATFORM_REGISTRY
                             .filter(p => p.available)
                             .filter(p => p.connectionType !== 'hydra-outbound')
@@ -356,14 +356,22 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                             .map(p => (
                                 <button
                                     key={p.id}
-                                    className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md"
+                                    className="group/card flex flex-col gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/95 hover:shadow-md"
                                     onClick={() => handlePlatformClick(p.id)}
                                 >
-                                    <PlatformLogo platform={p.id} className="h-11 w-11 shrink-0" />
-                                    <div>
-                                        <p className="text-sm font-semibold">{p.name}</p>
-                                        <p className="text-xs text-muted-foreground">{p.description}</p>
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted/60 ring-1 ring-border/40 transition-colors group-hover/card:bg-background">
+                                            <PlatformLogo platform={p.id} className="h-9 w-9" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-sm font-semibold">{p.name}</p>
+                                            <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
+                                        </div>
                                     </div>
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                                        Connect
+                                        <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5" />
+                                    </span>
                                 </button>
                             ))}
 

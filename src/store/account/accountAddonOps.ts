@@ -1,4 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import { setCanonicalBases } from '@/lib/canonical-base'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
     updateAddons,
@@ -20,11 +21,13 @@ import {
     getAccountById,
     persistAccounts,
     acquireSyncMutex,
-    isAuthExpiredError,
-    getAccountAuthKey,
+    isAuthError,
+    getStremioAuthKey,
+    setAccountLoading,
+    clearAccountLoading,
 } from '../accountStore'
 import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
-import type { StremioAccount, AccountProfile } from '@/types/account'
+import type { Account, AccountProfile } from '@/types/account'
 import type { Connection } from '@/types/connection'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
@@ -33,9 +36,6 @@ async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
 }
-
-const isConnAuthError = (err: unknown): boolean =>
-    Boolean(err && typeof err === 'object' && (err as { isAuthError?: boolean }).isAuthError)
 
 const pluginUrlKey = (url?: string): string => (url ? url.trim().replace(/\/+$/, '').toLowerCase() : '')
 
@@ -63,7 +63,7 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
                 || [...platformUrls].some(u => !canonicalUrls.has(u))
             if (needsPush) await driver.writePlugins(token.accessToken, canonicalPlugins, profileId)
         } catch (err) {
-            if (isConnAuthError(err)) throw err
+            if (isAuthError(err)) throw err
         }
     }
 }
@@ -74,15 +74,15 @@ async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accou
     const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
 
     const { realStreamDriverFor } = await import('@/lib/drivers/factory')
-    // userId is a stable PocketBase identity set at auth time — it never changes between refreshes.
+    // userId is a stable PocketBase identity set at auth time; it never changes between refreshes.
     const userId = conn.credentials?.userId || ''
-    if (!userId) throw Object.assign(new Error('RealStream user ID missing — re-authenticate this connection'), { isAuthError: true })
+    if (!userId) throw Object.assign(new Error('RealStream user ID missing; re-authenticate this connection'), { isAuthError: true })
 
     await realStreamDriverFor(conn).writeAddons(token.accessToken, addons, userId)
 }
 
 // Hydra (CORS-fragile against arbitrary servers) + any client-side failure fall back to the server.
-async function serverReconcile(accountId: string, account: StremioAccount, connections: Connection[]) {
+async function serverReconcile(accountId: string, account: Account, connections: Connection[]) {
     try {
         const { triggerReconciliation } = await import('@/api/connection')
         const result = await triggerReconciliation(accountId, account.primaryConnectionId, connections, account.addons)
@@ -158,7 +158,7 @@ export async function pushToConnections(accountId: string) {
             setStatus(conn.id, 'active')
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Connection sync failed'
-            if (isConnAuthError(err)) {
+            if (isAuthError(err)) {
                 setStatus(conn.id, 'expired', msg)
                 authFailures++
             } else {
@@ -181,33 +181,34 @@ export async function pushToConnections(accountId: string) {
     }
 }
 
-function backgroundSync(accountId: string, account: StremioAccount, updatedAddons: AddonDescriptor[]) {
+function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[]) {
     const promises: Promise<void>[] = []
 
-    const authKey = getAccountAuthKey(account)
+    const authKey = getStremioAuthKey(account)
     if (authKey) {
         promises.push(
             getCachedAuthKey(authKey, getEncryptionKey())
                 .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, accountId, { previousCollection: account.addons }))
                 .catch(err => {
-                    if (isAuthExpiredError(err)) {
-                        toast({ title: 'Session expired', description: 'Re-login required for Stremio sync.', variant: 'destructive' })
+                    if (isAuthError(err)) {
+                        toast({ title: 'Session expired', description: 'Session expired. Re-authenticate your connection.', variant: 'destructive' })
                     }
                 })
         )
     }
 
-    promises.push(pushToConnections(accountId).catch(() => { }))
+    promises.push(pushToConnections(accountId).catch(err => { console.error('Failed to push to connections:', err) }))
 
     Promise.all(promises).finally(() => {
         triggerSync()
+        setCanonicalBases({ [accountId]: updatedAddons })
         getStore().then(store => {
             store.getState().syncAutopilotRules(accountId)
         }).catch(() => { })
     })
 }
 
-function updateActiveProfile(account: StremioAccount, updatedAddons: AddonDescriptor[]): StremioAccount {
+function updateActiveProfile(account: Account, updatedAddons: AddonDescriptor[]): Account {
     if (!account.activeProfileId || !account.profiles) return account
     return {
         ...account,
@@ -219,7 +220,8 @@ function updateActiveProfile(account: StremioAccount, updatedAddons: AddonDescri
 
 export async function installAddonToAccount(accountId: string, addonUrl: string) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const account = getAccountById(store.getState().accounts, accountId)
@@ -244,7 +246,7 @@ export async function installAddonToAccount(accountId: string, addonUrl: string)
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: StremioAccount = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -253,7 +255,7 @@ export async function installAddonToAccount(accountId: string, addonUrl: string)
         backgroundSync(accountId, account, finalAddons)
 
         const { useAddonStore } = await import('@/store/addonStore')
-        await useAddonStore.getState().syncAccountState(accountId, getAccountAuthKey(account), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
+        await useAddonStore.getState().syncAccountState(accountId, getStremioAuthKey(account), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
 
         const installedAddon = finalAddons.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(addonUrl))
         if (installedAddon) {
@@ -272,14 +274,15 @@ export async function installAddonToAccount(accountId: string, addonUrl: string)
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 
 export async function installAddonsToAccount(accountId: string, addonUrls: string[], concurrency = 4) {
     const store = await getStore()
     if (addonUrls.length === 0) return { successCount: 0, failCount: 0 }
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const account = getAccountById(store.getState().accounts, accountId)
@@ -333,7 +336,7 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: StremioAccount = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (
             acc.id === accountId ? updatedAccount : acc
@@ -344,7 +347,7 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
         backgroundSync(accountId, account, finalAddons)
 
         const { useAddonStore } = await import('@/store/addonStore')
-        await useAddonStore.getState().syncAccountState(accountId, getAccountAuthKey(account), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
+        await useAddonStore.getState().syncAccountState(accountId, getStremioAuthKey(account), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
 
         for (const fetchedAddon of fetchedAddons) {
             const installedAddon = finalAddons.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(fetchedAddon.transportUrl))
@@ -367,13 +370,14 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 
 export async function removeAddonFromAccount(accountId: string, transportUrl: string) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const account = getAccountById(store.getState().accounts, accountId)
@@ -385,7 +389,7 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
             (a) => normalizeAddonUrl(a.transportUrl) !== normalizeAddonUrl(transportUrl)
         )
 
-        let updatedAccount: StremioAccount = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -411,14 +415,15 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
         setTimeout(() => syncManager.removePendingRemoval(accountId, transportUrl), 5000)
     }
 }
 
 export async function removeAddonByIndexFromAccount(accountId: string, index: number) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     let transportUrl = ''
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
@@ -440,7 +445,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
         const updatedAddons = [...account.addons]
         updatedAddons.splice(index, 1)
 
-        let updatedAccount: StremioAccount = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -462,7 +467,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
         setTimeout(() => syncManager.removePendingRemoval(accountId, transportUrl), 5000)
     }
 }
@@ -477,13 +482,14 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         }
     }))
 
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const account = getAccountById(store.getState().accounts, accountId)
         if (!account) throw new Error('Account not found')
 
-        let updatedAccount: StremioAccount = { ...account, addons: timestampedOrder, lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: timestampedOrder, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, timestampedOrder)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -496,7 +502,7 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 
@@ -601,11 +607,12 @@ export async function bulkToggleAddonEnabled(accountId: string, addonUrls: strin
 
 export async function reinstallAddon(accountId: string, transportUrl: string) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
 
     const timeoutId = setTimeout(() => {
-        if (store.getState().loading) {
-            store.setState({ loading: false })
+        if (store.getState().loadingAccounts.has(accountId)) {
+            clearAccountLoading(accountId)
             if (import.meta.env.DEV) console.warn("[AccountStore] Reinstall timeout reached. Forcing loading off.")
         }
     }, 15000)
@@ -616,7 +623,7 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
         if (!account) throw new Error('Account not found')
 
         const { reinstallAddon: apiReinstallAddon } = await import('@/api/addons')
-        const authKey = await getCachedAuthKey(getAccountAuthKey(account), getEncryptionKey())
+        const authKey = await getCachedAuthKey(getStremioAuthKey(account), getEncryptionKey())
 
         const { updatedAddon } = await apiReinstallAddon(authKey, transportUrl, accountId)
 
@@ -634,7 +641,7 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
             return addon
         })
 
-        let updatedAccount: StremioAccount = { ...account, addons: updatedAddons, lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updatedAccount : acc
@@ -645,7 +652,7 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
         backgroundSync(accountId, account, updatedAddons)
 
         const { useAddonStore } = await import('@/store/addonStore')
-        await useAddonStore.getState().syncAccountState(accountId, getAccountAuthKey(account), updatedAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
+        await useAddonStore.getState().syncAccountState(accountId, getStremioAuthKey(account), updatedAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
 
         if (updatedAddon?.manifest?.id && updatedAddon?.manifest?.version) {
             const { useAddonStore: addonStoreForVersions } = await import('@/store/addonStore')
@@ -692,14 +699,15 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
     } finally {
         releaseMutex()
         clearTimeout(timeoutId)
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 
 export async function reinstallAddons(accountId: string, transportUrls: string[], concurrency = 4) {
     const store = await getStore()
     if (transportUrls.length === 0) return { successCount: 0, failCount: 0 }
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const account = getAccountById(store.getState().accounts, accountId)
@@ -749,7 +757,7 @@ export async function reinstallAddons(accountId: string, transportUrls: string[]
             }
         })
 
-        let updatedAccount: StremioAccount = { ...account, addons: updatedAddons, lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updatedAccount : acc
@@ -761,7 +769,7 @@ export async function reinstallAddons(accountId: string, transportUrls: string[]
 
         const { useAddonStore } = await import('@/store/addonStore')
         const addonStore = useAddonStore.getState()
-        await addonStore.syncAccountState(accountId, getAccountAuthKey(account), updatedAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
+        await addonStore.syncAccountState(accountId, getStremioAuthKey(account), updatedAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
 
         if (Object.keys(latestVersions).length > 0) {
             addonStore.updateLatestVersions(latestVersions)
@@ -797,7 +805,7 @@ export async function reinstallAddons(accountId: string, transportUrls: string[]
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 

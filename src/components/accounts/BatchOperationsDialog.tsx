@@ -11,10 +11,10 @@ import {
 import { mapConcurrent } from '@/lib/concurrency'
 import { cn, getAddonGroupKey, getCanonicalAddonUrl, normalizeAddonUrl } from '@/lib/utils'
 import { useAddonStore } from '@/store/addonStore'
-import { useAccountStore } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey } from '@/store/accountStore'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { useProfileStore } from '@/store/profileStore'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { BulkResult, MergeResult, SavedAddon } from '@/types/saved-addon'
 import { AccountAvatar } from './AccountAvatar'
@@ -26,8 +26,8 @@ import { Progress } from '@/components/ui/progress'
 
 
 interface BatchOperationsDialogProps {
-  selectedAccounts: StremioAccount[]
-  allAccounts?: StremioAccount[]
+  selectedAccounts: Account[]
+  allAccounts?: Account[]
   onClose: () => void
 }
 type BulkAction =
@@ -193,7 +193,7 @@ function getReceiptLabels(action?: BulkAction) {
   }
 }
 
-function getAccountName(account?: StremioAccount) {
+function getAccountName(account?: Account) {
   return account?.name || account?.email || (account?.id ? `${account.id.substring(0, 8)}...` : 'Unknown account')
 }
 
@@ -253,7 +253,7 @@ function uniquePreviewAddons(addons: PreviewAddon[]) {
   return unique
 }
 
-function countByUrl(account: StremioAccount, urls: string[]) {
+function countByUrl(account: Account, urls: string[]) {
   if (urls.length === 0) return 0
   const targetUrls = new Set(urls.map(url => normalizeAddonUrl(url)).filter(Boolean))
   return account.addons.reduce((count, addon) => (
@@ -261,7 +261,7 @@ function countByUrl(account: StremioAccount, urls: string[]) {
   ), 0)
 }
 
-function countByCanonicalUrl(account: StremioAccount, urls: string[]) {
+function countByCanonicalUrl(account: Account, urls: string[]) {
   if (urls.length === 0) return 0
   const targetUrls = new Set(urls.map(url => getCanonicalAddonUrl(url)).filter(Boolean))
   return account.addons.reduce((count, addon) => (
@@ -269,7 +269,7 @@ function countByCanonicalUrl(account: StremioAccount, urls: string[]) {
   ), 0)
 }
 
-function countProtectedMatches(account: StremioAccount, urls: string[]) {
+function countProtectedMatches(account: Account, urls: string[]) {
   if (urls.length === 0) return 0
   const targetUrls = new Set(urls.map(url => normalizeAddonUrl(url)).filter(Boolean))
   return account.addons.reduce((count, addon) => {
@@ -278,7 +278,7 @@ function countProtectedMatches(account: StremioAccount, urls: string[]) {
   }, 0)
 }
 
-function countProtectedCanonicalMatches(account: StremioAccount, urls: string[]) {
+function countProtectedCanonicalMatches(account: Account, urls: string[]) {
   if (urls.length === 0) return 0
   const targetUrls = new Set(urls.map(url => getCanonicalAddonUrl(url)).filter(Boolean))
   return account.addons.reduce((count, addon) => {
@@ -300,7 +300,7 @@ function createPickFirstPreview(title: string, description: string, targetCount:
   }
 }
 
-function createProtectionMergeResult(account: StremioAccount | undefined, isProtected: boolean): MergeResult {
+function createProtectionMergeResult(account: Account | undefined, isProtected: boolean): MergeResult {
   const addons = account?.addons ?? []
   const changed = addons.filter(addon => Boolean(addon.flags?.protected) !== isProtected)
   const unchanged = addons.filter(addon => Boolean(addon.flags?.protected) === isProtected)
@@ -321,7 +321,7 @@ function createProtectionMergeResult(account: StremioAccount | undefined, isProt
   }
 }
 
-function summarizeResult(result: BulkResult, accounts: StremioAccount[], action?: BulkAction): ResultSummary {
+function summarizeResult(result: BulkResult, accounts: Account[], action?: BulkAction): ResultSummary {
   const accountsById = new Map(accounts.map(account => [account.id, account]))
   const labels = getReceiptLabels(action)
 
@@ -374,7 +374,7 @@ function PreviewStatCard({ stat }: { stat: PreviewStat }) {
   )
 }
 
-function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; accounts: StremioAccount[] }) {
+function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; accounts: Account[] }) {
   const accountsById = new Map(accounts.map(account => [account.id, account]))
 
   return (
@@ -425,7 +425,7 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
                   name={addon.name}
                   logo={addon.logo}
                   className="h-7 w-7"
-                  textClassName="text-[10px]"
+                  textClassName="text-xs"
                   imageClassName="p-0.5"
                 />
                 <div className="min-w-0">
@@ -488,7 +488,7 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
   )
 }
 
-function ResultReceipt({ result, accounts, action }: { result: BulkResult; accounts: StremioAccount[]; action: BulkAction }) {
+function ResultReceipt({ result, accounts, action }: { result: BulkResult; accounts: Account[]; action: BulkAction }) {
   const summary = summarizeResult(result, accounts, action)
   const accountsById = new Map(accounts.map(account => [account.id, account]))
   const labels = getReceiptLabels(action)
@@ -748,9 +748,9 @@ export function BatchOperationsDialog({
   const isInvalidTag = isTagAction && selectedInstallTagName !== '' && currentTagAddonsCount === 0
 
   const allAddonsRaw = useMemo(() => {
-    const allAddonsMap = new Map<string, { addon: AddonDescriptor, accounts: StremioAccount[] }>()
+    const allAddonsMap = new Map<string, { addon: AddonDescriptor, accounts: Account[] }>()
 
-    selectedAccounts.forEach((acc: StremioAccount) => {
+    selectedAccounts.forEach((acc: Account) => {
       acc.addons.forEach((addon: AddonDescriptor) => {
         const key = getAddonGroupKey(addon)
         if (!allAddonsMap.has(key)) {
@@ -1301,9 +1301,9 @@ export function BatchOperationsDialog({
     setResult(null)
     cancelRequestedRef.current = false
 
-    const accountsData: BulkAccountTarget[] = selectedAccounts.map((a: StremioAccount) => ({
+    const accountsData: BulkAccountTarget[] = selectedAccounts.map((a: Account) => ({
       id: a.id,
-      authKey: a.authKey,
+      authKey: getStremioAuthKey(a),
     }))
 
     const aggregate: BulkResult = {
@@ -1379,7 +1379,7 @@ export function BatchOperationsDialog({
           }
           targets = accountsData.filter(target => target.id !== sourceAccount.id)
           runForAccount = (target) => bulkCloneAccount(
-            { id: sourceAccount.id, authKey: sourceAccount.authKey },
+            { id: sourceAccount.id, authKey: getStremioAuthKey(sourceAccount) },
             [target],
             overwriteClone
           )

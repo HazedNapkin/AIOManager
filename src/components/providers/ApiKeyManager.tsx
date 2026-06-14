@@ -3,14 +3,14 @@ import { Input } from '@/components/ui/input'
 import { CopyButton } from '@/components/ui/copy-button'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { StatusChip } from '@/components/ui/status-chip'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { useAccountStore, persistAccounts } from '@/store/accountStore'
 import { toast } from '@/hooks/use-toast'
 import { useState, memo } from 'react'
 import { Key, RefreshCw, Eye, EyeOff } from 'lucide-react'
 
 interface ApiKeyManagerProps {
-    account: StremioAccount
+    account: Account
 }
 
 export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyManagerProps) {
@@ -62,7 +62,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center"
                         onClick={() => setShowKey(!showKey)}
                     >
                         {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}

@@ -66,6 +66,7 @@ async function resolveConnections(accountId, syncUser = null) {
         if (seenPlatforms.has(type)) continue
         seenPlatforms.add(type)
 
+        // Stremio uses raw auth key string, not JSON credential bundle
         if (type === 'stremio') {
             const authKey = decrypt(row.auth_key, FALLBACK_KEYS)
             if (authKey) {
@@ -105,6 +106,7 @@ async function resolveConnections(accountId, syncUser = null) {
 }
 
 async function loadDriver(platform, credentials, connection) {
+    // Stremio uses a separate driver module with different API contract
     if (platform === 'stremio') {
         const { createStremioDriver } = await import('./stremio-driver.js')
         return createStremioDriver()
@@ -137,7 +139,7 @@ async function loadDriver(platform, credentials, connection) {
                     }
                 }
             } catch (err) {
-                if (err.isAuthError || err._nuvioRefreshExpired) {
+                if (err.isAuthError || err._authExpired) {
                     throw err
                 }
             }
@@ -164,7 +166,7 @@ async function loadDriver(platform, credentials, connection) {
                     }
                 }
             } catch (err) {
-                if (err.isAuthError || err._realstreamRefreshExpired) {
+                if (err.isAuthError || err._authExpired) {
                     throw err
                 }
             }
@@ -172,7 +174,7 @@ async function loadDriver(platform, credentials, connection) {
 
         return driver
     }
-    if (platform === 'hydra' || (connection && connection.driverType === 'hydra')) {
+    if (platform === 'hydra' || (connection && (connection.driverType === 'hydra' || connection.driverType === 'hydra-outbound'))) {
         const config = connection?.driverConfig
         if (!config?.baseUrl) return null
 
@@ -190,6 +192,7 @@ async function loadDriver(platform, credentials, connection) {
 
 async function readPlatformAddons(driver, connection) {
     const c = connection.credentials
+    // Stremio API takes single authKey param (no profile/user context)
     if (connection.platform === 'stremio') {
         return driver.readAddons(c.authKey)
     }
@@ -204,6 +207,7 @@ async function readPlatformAddons(driver, connection) {
 
 async function writePlatformAddons(driver, connection, addons) {
     const c = connection.credentials
+    // Stremio API takes (authKey, addons) — no profile/user context
     if (connection.platform === 'stremio') {
         if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
         return driver.writeAddons(c.authKey, addons)
@@ -216,7 +220,7 @@ async function writePlatformAddons(driver, connection, addons) {
         if (!c?.accessToken) { const e = new Error('RealStream credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
         return driver.writeAddons(c.accessToken, addons, c.userId)
     }
-    if (connection.platform === 'hydra' || connection.driverType === 'hydra') {
+    if (connection.platform === 'hydra' || connection.driverType === 'hydra' || connection.driverType === 'hydra-outbound') {
         return driver.writeAddons(addons)
     }
 }
@@ -318,6 +322,7 @@ export function createReconciler(fastify) {
         const canonical = Array.isArray(canonicalAddons) ? canonicalAddons : []
         const enabledCanonical = canonical.filter(a => a?.flags?.enabled !== false)
 
+        // Stremio uses client-side sync pipeline, not server-side reconciliation
         const targetConnections = connections.filter(c => c.enabled && c.platform !== 'stremio')
 
         if (enabledCanonical.length === 0 || targetConnections.length === 0) {
@@ -375,6 +380,7 @@ export function createReconciler(fastify) {
                 continue
             }
             try {
+                // Stremio uses client-side writer callback instead of server driver
                 if (connection.platform === 'stremio') {
                     if (!stremioWriter) continue
                     await stremioWriter(connection)

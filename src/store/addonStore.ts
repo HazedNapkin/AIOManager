@@ -13,6 +13,7 @@ import { normalizeTagName } from '@/lib/addon-validator'
 
 import { useAccountStore, type ReplaceTransportUrlResult } from '@/store/accountStore'
 import { AddonManifest, AddonDescriptor } from '@/types/addon'
+import type { Account } from '@/types/account'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import {
   AccountAddonState,
@@ -190,7 +191,7 @@ export interface AddonStore {
   bulkReinstallAllOnAccount: (accountId: string, accountAuthKey: string) => Promise<BulkResult>
 
   syncAccountState: (accountId: string, accountAuthKey: string, addons?: AddonDescriptor[]) => Promise<void>
-  syncAllAccountStates: (accounts: Array<{ id: string; authKey: string }>) => Promise<void>
+  syncAllAccountStates: (accounts: Account[]) => Promise<void>
   toggleAutoRestore: (id: string, enabled: boolean) => Promise<void>
   lastHealthCheck?: number
 

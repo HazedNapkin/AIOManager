@@ -1,6 +1,7 @@
 const DEFAULT_BASE_URL = 'https://realbase.fortheweak.cloud'
 const REFRESH_PATH = '/api/collections/users/auth-refresh'
 const ADDONS_PATH = '/api/collections/addons/records'
+const PROGRESS_PATH = '/api/collections/progress/records'
 const AUTH_TIMEOUT_MS = 30000
 const DEFAULT_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
@@ -11,6 +12,17 @@ export interface RealStreamTokens {
     accessToken: string
     userId: string | null
     expiresAt: number
+}
+
+export interface RealStreamProgressItem {
+    content_id: string
+    content_type?: string
+    video_id?: string
+    season?: number | null
+    episode?: number | null
+    position?: number
+    duration?: number
+    last_watched?: number
 }
 
 interface RealStreamError extends Error {
@@ -38,6 +50,20 @@ function deriveAddonName(url?: string): string {
         return first.charAt(0).toUpperCase() + first.slice(1) + ' Addon'
     } catch {
         return 'Untitled Addon'
+    }
+}
+
+function mapProgressRecord(r: Record<string, any>): RealStreamProgressItem {
+    const contentId = String(r.itemId ?? r.content_id ?? r.item_id ?? '')
+    return {
+        content_id: contentId,
+        content_type: r.type ?? r.content_type ?? r.itemType ?? undefined,
+        video_id: r.videoId ?? r.video_id ?? undefined,
+        season: r.season != null ? Number(r.season) : null,
+        episode: r.episode != null ? Number(r.episode) : null,
+        position: Number(r.progress ?? r.position ?? r.current_time ?? 0) || 0,
+        duration: Number(r.duration ?? r.total_duration ?? 0) || 0,
+        last_watched: Number(r.timestamp ?? r.last_watched ?? r.updated ?? r.created ?? Date.now()) || Date.now(),
     }
 }
 
@@ -135,6 +161,14 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
             const records = await listRecords(accessToken, userId)
             const data = records[0]?.data
             return Array.isArray(data) ? data : []
+        },
+
+        async readWatchProgress(accessToken: string, userId: string): Promise<RealStreamProgressItem[]> {
+            if (!userId) throw new Error('RealStream readWatchProgress requires a userId')
+            const filter = encodeURIComponent(`${USER_FIELD}='${userId}'`)
+            const data = await request('GET', `${PROGRESS_PATH}?filter=${filter}&perPage=200`, accessToken)
+            const items = Array.isArray(data?.items) ? data.items : []
+            return items.map((r: Record<string, any>) => mapProgressRecord(r))
         },
 
         async writeAddons(accessToken: string, addons: Array<Record<string, any>>, userId: string) {

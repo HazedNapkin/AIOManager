@@ -20,7 +20,7 @@ import { restorationManager } from '@/lib/autopilot/restorationManager'
 
 import React, { useState } from 'react'
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { SavedAddonDetails } from './SavedAddonDetails'
 import { getTagColor } from '@/lib/tag-utils'
 import { HighlightText } from '@/components/ui/highlight-text'
@@ -39,7 +39,7 @@ interface SavedAddonCardProps {
   onToggleSelect?: (id: string) => void
   onLongPress?: (id: string) => void
   profileName?: string
-  deployedAccounts?: StremioAccount[]
+  deployedAccounts?: Account[]
   highlight?: string
   manifestChange?: SavedAddonManifestChangeSummary
 }
@@ -270,7 +270,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   variant="ghost"
                   size="icon"
                   onClick={(e) => e.stopPropagation()}
-                  className="shrink-0 -mr-2 h-7 w-7 text-muted-foreground hover:text-foreground"
+                  className="shrink-0 -mr-2 h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                   aria-label="More options"
                 >
                   <MoreVertical className="h-4 w-4" />
@@ -321,14 +321,14 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
 
             <div className="flex-grow" />
 
-            <div className="flex flex-wrap gap-1 relative z-20 mt-auto pt-2" onClick={(e) => e.stopPropagation()}>
+            <div className="flex flex-wrap gap-1 relative z-20 mt-auto pt-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
               {hasUpdate && onUpdate && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleUpdate}
                   disabled={updating}
-                  className="h-5 px-2 gap-0.5 text-[10px] font-bold uppercase bg-primary/12 text-primary border border-primary/25 hover:bg-primary/20 hover:text-primary shrink-0"
+                  className="h-5 px-2 gap-0.5 text-xs font-bold uppercase bg-primary/12 text-primary border border-primary/25 hover:bg-primary/20 hover:text-primary shrink-0"
                 >
                   {updating ? 'Updating...' : <><AnimatedUpdateIcon className="h-3 w-3" isAnimating={updating} /> {hasVersionUpdate ? 'Update' : 'Refresh'}</>}
                 </Button>
@@ -338,7 +338,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                 return (
                   <span
                     key={tag}
-                    className="text-[10px] pointer-events-none px-1.5 py-0 rounded-full leading-5 font-medium"
+                    className="text-xs pointer-events-none px-1.5 py-0 rounded-full leading-5 font-medium"
                     style={{
                       background: color.bg,
                       color: color.text,

@@ -7,7 +7,7 @@ export function Toaster() {
   const { toasts, dismiss } = useToast()
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-0 z-[100] flex flex-col items-center gap-2 px-3 pt-[calc(env(safe-area-inset-top,0px)+12px)] sm:left-auto sm:right-4 sm:w-full sm:max-w-sm sm:items-stretch">
+    <div aria-live="polite" aria-atomic="true" className="pointer-events-none fixed inset-x-0 top-0 z-[100] flex flex-col items-center gap-2 px-3 pt-[calc(env(safe-area-inset-top,0px)+12px)] sm:left-auto sm:right-4 sm:w-full sm:max-w-sm sm:items-stretch">
       <AnimatePresence initial={false} mode="sync">
         {toasts.map((toast) => {
           const isDestructive = toast.variant === 'destructive'

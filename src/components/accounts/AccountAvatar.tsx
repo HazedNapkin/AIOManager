@@ -1,12 +1,12 @@
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { Tooltip } from '@/components/ui/tooltip'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { cn } from '@/lib/utils'
 
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 interface AccountAvatarProps {
-    account: Pick<StremioAccount, 'name' | 'email' | 'emoji' | 'status'>
+    account: Pick<Account, 'name' | 'email' | 'emoji' | 'status'>
     size?: Size
     showStatus?: boolean
     pulse?: boolean
@@ -14,7 +14,7 @@ interface AccountAvatarProps {
 }
 
 const SIZE_MAP: Record<Size, { box: string; letter: string; emoji: string; dot: string }> = {
-    xs: { box: 'w-6 h-6', letter: 'text-[10px]', emoji: 'text-xs', dot: 'w-2 h-2' },
+    xs: { box: 'w-6 h-6', letter: 'text-xs', emoji: 'text-xs', dot: 'w-2 h-2' },
     sm: { box: 'w-8 h-8', letter: 'text-xs', emoji: 'text-sm', dot: 'w-2 h-2' },
     md: { box: 'w-9 h-9', letter: 'text-sm', emoji: 'text-base', dot: 'w-2.5 h-2.5' },
     lg: { box: 'w-10 h-10', letter: 'text-sm', emoji: 'text-lg', dot: 'w-2.5 h-2.5' },

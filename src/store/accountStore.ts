@@ -9,7 +9,7 @@ import { decrypt, encrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 import { updateLatestVersions as updateLatestVersionsCoordinator } from '@/lib/store-coordinator'
 import { toast } from '@/hooks/use-toast'
-import { StremioAccount, AddonChangelogEntry } from '@/types/account'
+import { Account, AddonChangelogEntry } from '@/types/account'
 import { AddonDescriptor } from '@/types/addon'
 import { identifyAddon } from '@/lib/addon-identifier'
 import type { AddonCollectionDiff } from '@/lib/addon-collection-diff'
@@ -18,7 +18,6 @@ import localforage from 'localforage'
 import { create } from 'zustand'
 
 export const STORAGE_KEY = 'stremio-manager:accounts'
-const TOMBSTONE_KEY = 'stremio-manager:account-tombstones'
 export const CHANGELOG_KEY = 'stremio-manager:changelog'
 export const BACKUP_KEY = 'stremio-manager:accounts:backup'
 
@@ -33,12 +32,12 @@ export const safeUUID = () => {
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null
 
-export const persistAccounts = (accounts: StremioAccount[]) => {
+export const persistAccounts = (accounts: Account[]) => {
     if (_persistTimer) clearTimeout(_persistTimer)
     _persistTimer = setTimeout(async () => {
         _persistTimer = null
         try { await localforage.setItem(STORAGE_KEY, accounts) } catch (e) { if (import.meta.env.DEV) console.error('[persistAccounts] Failed to save accounts:', e) }
-    }, 300)
+    }, 1000)
 }
 
 if (typeof window !== 'undefined') {
@@ -66,10 +65,11 @@ export const acquireSyncMutex = async (accountId: string): Promise<() => void> =
     }
 }
 
-export const getAccountById = (accounts: StremioAccount[], id: string): StremioAccount | undefined =>
+export const getAccountById = (accounts: Account[], id: string): Account | undefined =>
   accounts.find(a => a.id === id)
 
-export { getStremioConnection, getAccountAuthKey, getAccountEmail } from '@/lib/account-compat'
+import { getStremioConnection, getStremioAuthKey, getAccountEmail } from '@/lib/account-compat'
+export { getStremioConnection, getStremioAuthKey, getAccountEmail }
 
 const AUTH_KEY_CACHE_MAX = 250
 const authKeyCache = new Map<string, string>()
@@ -154,14 +154,15 @@ export const getEncryptionKey = () => {
       return key
 }
 
-export const isAuthExpiredError = (error: unknown) => {
+export const isAuthError = (error: unknown) => {
       const message = error instanceof Error ? error.message : String((error as Record<string, unknown>)?.message || '')
       const lowerMsg = message.toLowerCase()
       return (
+            (error as any)?.isAuthError === true ||
             (error as Record<string, unknown>)?.status === 401 ||
-            lowerMsg.includes('session') ||
-            lowerMsg.includes('expired') ||
-            lowerMsg.includes('invalid auth') ||
+            lowerMsg.includes('invalid or expired auth key') ||
+            lowerMsg.includes('invalid auth key') ||
+            lowerMsg.includes('session does not exist') ||
             lowerMsg.includes('unauthorized')
       )
 }
@@ -184,24 +185,30 @@ export const needsDisabledAddonIdentityRepair = (addon: AddonDescriptor) => (
 )
 
 export const refreshAuthKeyFromStoredPassword = async (
-      account: StremioAccount,
+      account: Account,
       encryptionKey: CryptoKey
-): Promise<{ account: StremioAccount; authKey: string } | null> => {
+): Promise<{ account: Account; authKey: string } | null> => {
       if (!account.email || !account.password) return null
 
       const password = await decrypt(account.password, encryptionKey)
       const response = await loginWithCredentials(account.email, password)
       const encryptedAuthKey = await encrypt(response.authKey, encryptionKey)
 
-      authKeyCache.delete(account.authKey)
+      authKeyCache.delete(getStremioAuthKey(account))
       authKeyCache.set(encryptedAuthKey, response.authKey)
 
+      const updatedConnections = (account.connections || []).map(c =>
+            c.platform === 'stremio'
+                  ? { ...c, credentials: { ...c.credentials, authKey: encryptedAuthKey } }
+                  : c
+      )
       return {
             authKey: response.authKey,
             account: {
                   ...account,
                   email: response.user?.email || account.email,
                   authKey: encryptedAuthKey,
+                  connections: updatedConnections,
                   status: 'active',
             },
       }
@@ -213,16 +220,36 @@ const scheduleSessionBoundAuthCheck = (accountId: string) => {
        setTimeout(() => {
              pendingSessionBoundChecks.delete(accountId)
              const account = getAccountById(useAccountStore.getState().accounts, accountId)
-             if (!account || !account.authKey || account.status !== 'active' || account.password) return
+              if (!account || !getStremioAuthKey(account) || account.status !== 'active' || account.password) return
             useAccountStore.getState().syncAccount(accountId).catch((error) => {
                   if (import.meta.env.DEV) console.warn('[Account] Delayed OAuth/auth-key health check failed:', error)
             })
       }, SESSION_BOUND_AUTH_CHECK_DELAY)
 }
 
-interface AccountTombstone {
-      id: string
-      deletedAt: number
+export const setAccountLoading = (accountId: string) => {
+  const store = useAccountStore.getState()
+  useAccountStore.setState({ loadingAccounts: new Set([...store.loadingAccounts, accountId]) })
+}
+
+export const clearAccountLoading = (accountId: string) => {
+  const store = useAccountStore.getState()
+  useAccountStore.setState({ loadingAccounts: new Set([...store.loadingAccounts].filter(id => id !== accountId)) })
+}
+
+export const setAccountsLoading = (accountIds: string[]) => {
+  const store = useAccountStore.getState()
+  useAccountStore.setState({ loadingAccounts: new Set([...store.loadingAccounts, ...accountIds]) })
+}
+
+export const clearAccountsLoading = (accountIds: string[]) => {
+  const store = useAccountStore.getState()
+  const toRemove = new Set(accountIds)
+  useAccountStore.setState({ loadingAccounts: new Set([...store.loadingAccounts].filter(id => !toRemove.has(id))) })
+}
+
+export const clearAllAccountLoading = () => {
+  useAccountStore.setState({ loadingAccounts: new Set<string>() })
 }
 
 export interface ReplaceTransportUrlResult {
@@ -231,11 +258,10 @@ export interface ReplaceTransportUrlResult {
 }
 
 export interface AccountStore {
-      accounts: StremioAccount[]
-      loading: boolean
+      accounts: Account[]
+      loadingAccounts: Set<string>
       error: string | null
       changelog: AddonChangelogEntry[]
-      tombstones: AccountTombstone[]
 
       initialize: () => Promise<void>
       updateLatestVersions: (versions: Record<string, string>) => void
@@ -243,7 +269,6 @@ export interface AccountStore {
       addAccountByCredentials: (email: string, password: string, name: string, accentColor?: string, emoji?: string, intent?: 'login' | 'signup') => Promise<void>
       addLocalAccount: (name: string, accentColor?: string, emoji?: string) => Promise<string>
       removeAccount: (id: string) => Promise<void>
-      saveTombstones: (tombstones: AccountTombstone[]) => void
       syncAccount: (id: string, forceRefresh?: boolean) => Promise<void>
       syncAllAccounts: (silent?: boolean) => Promise<void>
       repairAccount: (id: string) => Promise<void>
@@ -311,15 +336,14 @@ export interface ProfileSwitchResult {
       targetProfileId: string
       targetName: string
       addonChanges: AddonCollectionDiff
-      stremioWriteSkipped: boolean
+      remoteWriteSkipped: boolean
 }
 
 export const useAccountStore = create<AccountStore>((set, get) => ({
       accounts: [],
-      loading: false,
+      loadingAccounts: new Set<string>(),
       error: null,
       changelog: [],
-      tombstones: [],
 
       syncAutopilotRules: async (accountId: string) => {
             try {
@@ -332,12 +356,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       initialize: async () => {
             try {
-                  let storedAccounts = await localforage.getItem<StremioAccount[]>(STORAGE_KEY)
+                  let storedAccounts = await localforage.getItem<Account[]>(STORAGE_KEY)
                   const storedChangelog = await localforage.getItem<AddonChangelogEntry[]>(CHANGELOG_KEY)
 
                   // This catches the case where a corrupted re-login wiped accounts between sessions.
                   if (!storedAccounts || !Array.isArray(storedAccounts) || storedAccounts.length === 0) {
-                        const backup = await localforage.getItem<StremioAccount[]>(BACKUP_KEY)
+                        const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
                         if (backup && Array.isArray(backup) && backup.length > 0) {
                               if (import.meta.env.DEV) console.warn(`[AccountStore] Accounts empty on disk. Restoring ${backup.length} accounts from backup.`)
                               storedAccounts = backup
@@ -353,9 +377,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
                         // One-time migration: colorIndex -> accentColor
                         let didHubMigrate = false
-                        const migratedAccounts = accounts.map(acc => {
+                        let migratedAccounts = accounts.map(acc => {
                               const connections = acc.connections || []
-                              const needsHubMigration = acc.authKey && connections.length === 0
+                              const needsHubMigration = acc.authKey && acc.authKey.length > 60 && connections.length === 0
                               let migrated = {
                                     ...acc,
                                     profiles: acc.profiles ?? [],
@@ -383,7 +407,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                               driverType: 'native',
                               connectionType: 'native' as const,
                               enabled: true,
-                                                status: acc.status === 'active' ? 'active' : 'expired',
+                                                status: acc.status === 'expired' ? 'expired' : 'active',
                                                 credentials: {
                                                       authKey: acc.authKey || '',
                                                       email: acc.email || '',
@@ -400,6 +424,19 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                               return migrated
                         })
 
+                        let needsCleanup = false
+                        const cleaned = migratedAccounts.map(acc => {
+                              if (acc.authKey && acc.authKey.length <= 60) {
+                                    needsCleanup = true
+                                    return { ...acc, authKey: '' }
+                              }
+                              return acc
+                        })
+                        if (needsCleanup) {
+                              migratedAccounts = cleaned
+                              persistAccounts(cleaned)
+                        }
+
                         set({ accounts: migratedAccounts })
                         if (didHubMigrate) {
                             persistAccounts(migratedAccounts)
@@ -409,13 +446,6 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
                   if (storedChangelog && Array.isArray(storedChangelog)) {
                         set({ changelog: storedChangelog })
-                  }
-
-                  const storedTombstones = await localforage.getItem<AccountTombstone[]>(TOMBSTONE_KEY)
-                  if (storedTombstones && Array.isArray(storedTombstones)) {
-                        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
-                        const valid = storedTombstones.filter(t => t.deletedAt >= cutoff)
-                        set({ tombstones: valid })
                   }
             } catch (error) {
                   if (import.meta.env.DEV) console.error('Failed to load accounts from storage:', error)
@@ -428,7 +458,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       addAccountByAuthKey: async (authKey: string, name: string, accentColor?: string, emoji?: string) => {
-            set({ loading: true, error: null })
+            const opId = '__add_account__'
+            set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             try {
                   const { stremioClient } = await import('@/api/stremio-client')
 
@@ -449,7 +480,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         hasAddons: addons.length > 0
                   })
 
-                  const accountName = name.trim() || user?.email || 'Stremio Account'
+                  const accountName = name.trim() || user?.email || 'Account'
                   if (import.meta.env.DEV) console.log('[AccountStore] Resolved account name:', accountName)
 
                   const existingAccount = await (async () => {
@@ -457,18 +488,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         if (!encKey) return null
                         for (const a of get().accounts) {
                             try {
-                                const decrypted = await decrypt(a.authKey, encKey)
+                                const decrypted = await decrypt(getStremioAuthKey(a), encKey)
                                 if (decrypted === authKey) return a
                             } catch { continue }
                         }
                         return null
                   })()
                   if (existingAccount) {
-                        throw new Error(`This Stremio account is already added as "${existingAccount.name}"`)
+                        throw new Error(`This account is already added as "${existingAccount.name}"`)
                   }
 
                   const stremioConnectionId = safeUUID()
-                  const account: StremioAccount = {
+                  const account: Account = {
                         id: safeUUID(),
                         name: accountName,
                         authKey: '',
@@ -486,7 +517,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                               connectionType: 'native' as const,
                               enabled: true,
                               status: 'active',
-                              credentials: {},
+                              credentials: {
+                                    authKey: await encrypt(authKey, getEncryptionKey()!),
+                              },
                               lastSync: Date.now(),
                               lastKnownAddonCount: normalizedAddons.length,
                               capabilities: ['addons'],
@@ -499,6 +532,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   set({ accounts })
                   persistAccounts(accounts)
 
+                  const { useLibraryCache } = await import('@/store/libraryCache')
+                  useLibraryCache.setState({ isStale: true })
+
                   triggerSync()
                   scheduleSessionBoundAuthCheck(account.id)
             } catch (error) {
@@ -506,21 +542,22 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   set({ error: message })
                   throw error
             } finally {
-                  set({ loading: false })
+                  set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
             }
       },
 
       addAccountByCredentials: async (email: string, password: string, name: string, accentColor?: string, emoji?: string, intent: 'login' | 'signup' = 'login') => {
             if (_registrationInProgress) throw new Error('Registration already in progress')
             _registrationInProgress = true
-            set({ loading: true, error: null })
+            const opId = '__add_account__'
+            set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             try {
                   let response: LoginResponse
                   if (intent === 'signup') {
                         const { registerAccount } = await import('@/api/auth')
                         response = await registerAccount(email, password)
                         toast({
-                              title: 'Stremio Account Created',
+                              title: 'Account Created',
                               description: `Successfully registered ${email} on Stremio.`,
                         })
                   } else {
@@ -534,7 +571,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     (typeof err.message === 'string' && (err.message as string).includes('User not found')) ||
                                     (typeof err.code === 'string' && (err.code as string).includes('USER_NOT_FOUND'))
                               if (isUserNotFound) {
-                                    throw new Error('No Stremio account found for that email. Switch to "Create Account" to register a new one.')
+                                    throw new Error('No account found for that email. Switch to "Create Account" to register a new one.')
                               }
                               throw loginError
                         }
@@ -552,11 +589,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         } catch { return false }
                   })
                   if (existingAccount) {
-                        throw new Error(`This Stremio account is already added as "${existingAccount.name}"`)
+                        throw new Error(`This account is already added as "${existingAccount.name}"`)
                   }
 
                   const stremioConnectionId = safeUUID()
-                  const account: StremioAccount = {
+                  const account: Account = {
                         id: safeUUID(),
                         name: name || email,
                         authKey: '',
@@ -591,21 +628,25 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   set({ accounts })
                   persistAccounts(accounts)
 
+                  const { useLibraryCache } = await import('@/store/libraryCache')
+                  useLibraryCache.setState({ isStale: true })
+
                   triggerSync()
             } catch (error) {
                   const message = error instanceof Error ? error.message : 'Failed to add account'
                   set({ error: message })
                   throw error
             } finally {
-                  set({ loading: false })
+                  set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
                   _registrationInProgress = false
              }
        },
 
       addLocalAccount: async (name: string, accentColor?: string, emoji?: string) => {
-            set({ loading: true, error: null })
+            const opId = '__add_account__'
+            set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             try {
-                  const account: StremioAccount = {
+                  const account: Account = {
                         id: safeUUID(),
                         name: name.trim() || 'Local Account',
                         authKey: '',
@@ -620,16 +661,22 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const accounts = [...get().accounts, account]
                   set({ accounts })
                   persistAccounts(accounts)
+
+                  const { useLibraryCache } = await import('@/store/libraryCache')
+                  useLibraryCache.setState({ isStale: true })
+
                   return account.id
             } catch (error) {
                   set({ error: error instanceof Error ? error.message : 'Failed to create account' })
                   throw error
             } finally {
-                  set({ loading: false })
+                  set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
             }
       },
 
       removeAccount: async (id: string) => {
+            const releaseMutex = await acquireSyncMutex(id)
+            try {
             try {
                   const { useFailoverStore } = await import('@/store/failoverStore')
                   const failoverState = useFailoverStore.getState()
@@ -669,6 +716,29 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   if (import.meta.env.DEV) console.warn('[Account] Autopilot rule cleanup failed (non-blocking):', e)
             }
 
+            try {
+                  const account = get().accounts.find(a => a.id === id)
+                  if (account) {
+                        const connIds = (account.connections || []).map(c => c.id)
+                        if (connIds.length > 0) {
+                              const { useSyncStore } = await import('./syncStore')
+                              const { auth, serverUrl } = useSyncStore.getState()
+                              if (auth.isAuthenticated) {
+                                    const baseUrl = serverUrl || ''
+                                    const credApiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+                                    const { deriveSyncToken } = await import('@/lib/crypto')
+                                    const syncToken = await deriveSyncToken(auth.password)
+                                    for (const connId of connIds) {
+                                          await fetch(`${credApiPath}/providers/connections/${connId}/credentials`, {
+                                                method: 'DELETE',
+                                                headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
+                                          }).catch(() => {})
+                                    }
+                              }
+                        }
+                  }
+            } catch (_) { }
+
             const { useLibraryCache } = await import('@/store/libraryCache')
             useLibraryCache.getState().removeItemsForAccount(id)
 
@@ -684,18 +754,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             }
 
             const accounts = get().accounts.filter((acc) => acc.id !== id)
-            const tombstones = [...get().tombstones, { id, deletedAt: Date.now() }]
-                .filter(t => Date.now() - t.deletedAt < 30 * 24 * 60 * 60 * 1000)
-            set({ accounts, tombstones })
+            set({ accounts })
             persistAccounts(accounts)
-            localforage.setItem(TOMBSTONE_KEY, tombstones).catch(() => { /* noop */ })
 
             triggerSync()
-      },
-
-      saveTombstones: (tombstones: AccountTombstone[]) => {
-            set({ tombstones })
-            localforage.setItem(TOMBSTONE_KEY, tombstones).catch(() => { /* noop */ })
+            } finally {
+                  releaseMutex()
+            }
       },
 
       syncAccount: async (id: string, forceRefresh: boolean = false) => {
@@ -753,12 +818,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             // await, which would clobber any addon op that landed meanwhile. Hold the per-account
             // mutex so this serializes with addon writes instead of racing them.
             const releaseMutex = await acquireSyncMutex(id)
-            set({ loading: true, error: null })
+            set({ loadingAccounts: new Set([...get().loadingAccounts, id]), error: null })
             try {
                   const account = getAccountById(get().accounts, id)
                   if (!account) throw new Error('Account not found')
 
-                  const updatedAccount: StremioAccount = {
+                  const updatedAccount: Account = {
                         ...account,
                         name: data.name,
                         accentColor: data.accentColor,
@@ -780,9 +845,15 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                               updatedAccount.password = await encrypt(data.password!, encryptionKey)
                         }
 
-                        authKeyCache.delete(account.authKey)
-                        updatedAccount.authKey = await encrypt(authKey, encryptionKey)
-                        authKeyCache.set(updatedAccount.authKey, authKey)
+                        authKeyCache.delete(getStremioAuthKey(account))
+                        const encryptedNewKey = await encrypt(authKey, encryptionKey)
+                        updatedAccount.authKey = encryptedNewKey
+                        updatedAccount.connections = (updatedAccount.connections || []).map(c =>
+                              c.platform === 'stremio'
+                                    ? { ...c, credentials: { ...c.credentials, authKey: encryptedNewKey } }
+                                    : c
+                        )
+                        authKeyCache.set(getStremioAuthKey(updatedAccount), authKey)
                         const addons = await getAddons(authKey, updatedAccount.id)
                         updatedAccount.addons = addons.map((a) => ({
                               ...a,
@@ -804,7 +875,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   set({ error: (error as Error).message })
                   throw error
             } finally {
-                  set({ loading: false })
+                  set({ loadingAccounts: new Set([...get().loadingAccounts].filter(x => x !== id)) })
                   releaseMutex()
             }
       },
@@ -900,7 +971,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       reorderAccounts: async (newOrder: string[]) => {
             const accounts = newOrder
                   .map((id) => getAccountById(get().accounts, id))
-                  .filter(Boolean) as StremioAccount[]
+                  .filter(Boolean) as Account[]
             set({ accounts })
             persistAccounts(accounts)
             triggerSync()
@@ -910,7 +981,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       reset: async () => {
             set({
                   accounts: [],
-                  loading: false,
+                  loadingAccounts: new Set<string>(),
                   error: null,
                   changelog: [],
             })
@@ -939,7 +1010,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   nextChangelog = nextChangelog.filter((entry) => entry.accountId !== accountId)
             }
             if (cutoff) {
-                  nextChangelog = nextChangelog.filter((entry) => new Date(entry.timestamp).getTime() < cutoff)
+                  nextChangelog = nextChangelog.filter((entry) => new Date(entry.timestamp).getTime() > cutoff)
             } else if (!accountId) {
                   nextChangelog = []
             }

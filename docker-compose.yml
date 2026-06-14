@@ -21,6 +21,7 @@ services:
         condition: service_healthy
 
     environment:
+      - DB_TYPE=postgres
       - DATABASE_URL=postgres://aio_user:aio_password@aiomanager-db:5432/aio_manager
 
   # --- Internal PostgreSQL Service ---

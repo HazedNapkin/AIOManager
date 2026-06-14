@@ -1,5 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { checkAddonUpdates } from '@/api/addons'
+import { checkAddonUpdates, updateAddons } from '@/api/addons'
+import { loadSessionKey, decrypt } from '@/lib/crypto'
 import { HealthStatus } from '@/lib/addon-health'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
@@ -7,7 +8,7 @@ import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
 import { getLatestAddonVersion, maskEmail, isNewerVersion, cn } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
-import { useAccountStore, getAccountEmail, getAccountAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
 import type { AddonDescriptor } from '@/types/addon'
 import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
@@ -16,7 +17,7 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, Copy, Download, User, Edit2, LayoutGrid, List } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { AnimatedRefreshIcon, AnimatedUpdateIcon, AnimatedShieldIcon } from '../ui/AnimatedIcons'
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from "react"
 import { Input } from '@/components/ui/input'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AddonCard } from './AddonCard'
@@ -26,7 +27,10 @@ import { AddonReorderDialog } from './AddonReorderDialog'
 import { InstallSavedAddonDialog } from './InstallSavedAddonDialog'
 import { BulkSaveDialog } from './BulkSaveDialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { FailoverManager, type FailoverView } from '@/components/accounts/FailoverManager'
+const FailoverManager = React.lazy(() =>
+  import('@/components/accounts/FailoverManager').then((m) => ({ default: m.FailoverManager }))
+)
+type FailoverView = import('@/components/accounts/FailoverManager').FailoverView
 import { ConnectionManager } from '@/components/providers/ConnectionManager'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -43,6 +47,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -66,7 +71,7 @@ const BULK_ADDON_FETCH_CONCURRENCY = 4
 function getProfileSwitchDescription(result: {
   targetName: string
   addonChanges: AddonCollectionDiff
-  stremioWriteSkipped: boolean
+  remoteWriteSkipped: boolean
 }) {
   const { addonChanges } = result
   const parts = []
@@ -76,7 +81,7 @@ function getProfileSwitchDescription(result: {
   if (addonChanges.orderChanged) parts.push('order updated')
 
   const summary = parts.length > 0 ? parts.join(', ') : 'No add-on changes needed'
-  const writeSummary = result.stremioWriteSkipped ? 'No Stremio add-on write needed.' : 'Stremio add-on collection updated.'
+  const writeSummary = result.remoteWriteSkipped ? 'No remote add-on write needed.' : 'Remote add-on collection updated.'
   return `${result.targetName}: ${summary}. ${writeSummary}`
 }
 
@@ -251,6 +256,7 @@ export function AddonList({ accountId }: AddonListProps) {
   }, [accountId, syncAccount, encryptionKey, account?.lastSync, pullServerState])
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showClearAllConfirm, setShowClearAllConfirm] = useState(false)
   const [protectedInSelection, setProtectedInSelection] = useState(0)
 
   const handleBulkDeleteClick = () => {
@@ -262,7 +268,7 @@ export function AddonList({ accountId }: AddonListProps) {
     }).length
 
     if (selectedAddonUrls.size >= addons.length) {
-      toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your Stremio collection.' })
+      toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your addon collection.' })
       return
     }
 
@@ -291,7 +297,7 @@ export function AddonList({ accountId }: AddonListProps) {
     } catch (e) {
       const msg = (e as Error)?.message || ''
       if (msg.includes('Anti-wipe guard')) {
-        toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your Stremio collection.' })
+        toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your addon collection.' })
       } else {
         toast({ variant: 'destructive', title: 'Delete Failed', description: 'Could not delete selected addons.' })
       }
@@ -300,9 +306,47 @@ export function AddonList({ accountId }: AddonListProps) {
     }
   }
 
+  const handleClearAllAddons = useCallback(async () => {
+    if (!account) return
+    if (account?.addons?.length === 0) return
+    const stremioKey = getStremioAuthKey(account)
+    if (!stremioKey) {
+      toast({ variant: 'destructive', title: 'Not available', description: 'Clear All Addons requires a Stremio connection.' })
+      setShowClearAllConfirm(false)
+      return
+    }
+    try {
+      setUpdatingAll(true)
+      const sessionKey = await loadSessionKey()
+      if (!sessionKey) throw new Error('Session expired')
+      const authKey = await decrypt(getStremioAuthKey(account), sessionKey)
+      await updateAddons(authKey, [], 'Clear All Addons', {
+        allowCollectionShrink: true,
+        previousCollection: account.addons,
+      })
+      useAccountStore.getState().reorderAddons(account.id, [])
+      toast({ title: 'All Addons Cleared', description: `Removed ${account.addons.length} addons from ${account.name}.` })
+      setShowClearAllConfirm(false)
+      await syncAccount(account.id)
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Clear Failed', description: (e as Error)?.message || 'Could not clear addons.' })
+      setShowClearAllConfirm(false)
+    } finally {
+      setUpdatingAll(false)
+    }
+  }, [account])
+
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [healthStatus, setHealthStatus] = useState<Record<string, HealthStatus>>({})
   const latestVersions = useAddonStore((state) => state.latestVersions)
+  const library = useAddonStore(useShallow((state) => state.library))
+  const installedKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const saved of Object.values(library)) {
+      keys.add(`${saved.manifest.id}::${saved.installUrl}`)
+    }
+    return keys
+  }, [library])
   const updateLatestVersions = useAccountStore((state) => state.updateLatestVersions)
   const [updatingAll, setUpdatingAll] = useState(false)
   const [showBulkAccountPicker, setShowBulkAccountPicker] = useState(false)
@@ -832,7 +876,7 @@ export function AddonList({ accountId }: AddonListProps) {
   }
 
   const accountEmail = account ? getAccountEmail(account) : undefined
-  const isNameCustomized = account.name !== accountEmail && account.name !== 'Stremio Account'
+  const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
   const displayName =
     isPrivacyModeEnabled && !isNameCustomized
       ? account.name.includes('@')
@@ -904,7 +948,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       </DropdownMenuItem>
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                         <DropdownMenuItem
-                          className="h-7 w-7 min-w-[28px] p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
+                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
                             setProfileEditName(p.name);
@@ -915,7 +959,7 @@ export function AddonList({ accountId }: AddonListProps) {
                           <Edit2 className="h-3.5 w-3.5" />
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="h-7 w-7 min-w-[28px] p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
                             setProfileToDelete({ id: p.id, name: p.name });
@@ -963,7 +1007,7 @@ export function AddonList({ accountId }: AddonListProps) {
           <TabsTrigger value="addons" className="relative">
             Installed Addons
             {addons.length > 0 && (
-              <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+              <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                 {addons.length}
               </span>
             )}
@@ -1057,7 +1101,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       <span className="sm:hidden">Actions</span>
                       <span className="hidden sm:inline">Bulk Actions</span>
                       {updatesAvailable.length > 0 && (
-                        <span className="ml-1 w-4 h-4 flex items-center justify-center text-[10px] font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
+                        <span className="ml-1 w-4 h-4 flex items-center justify-center text-xs font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
                           {updatesAvailable.length}
                         </span>
                       )}
@@ -1113,8 +1157,13 @@ export function AddonList({ accountId }: AddonListProps) {
                       Enable All
                     </DropdownMenuItem>
                     <DropdownMenuItem className="gap-2" onClick={handleDisableAll}>
-                      <X className="h-4 w-4 text-destructive" />
+                        <X className="h-4 w-4 text-destructive" />
                       Disable All
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!getStremioAuthKey(account) || addons.length === 0}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                        Clear All Addons
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -1198,7 +1247,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       index={originalIndex}
                       addon={addon}
                       accountId={accountId}
-                      accountAuthKey={account ? getAccountAuthKey(account) : ''}
+                      accountAuthKey={account ? getStremioAuthKey(account) : ''}
                       onRemove={async () => { await removeAddonByIndex(accountId, originalIndex) }}
                       onUpdate={handleUpdateAddon}
                       latestVersion={getLatestAddonVersion(latestVersions, addon)}
@@ -1213,6 +1262,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       failoverPaused={linkedRule ? !linkedRule.isActive : undefined}
                       isPrimary={!!primaryRule}
                       isPrimaryPaused={primaryRule ? !primaryRule.isActive : undefined}
+                      isInstalled={installedKeys.has(`${addon.manifest.id}::${addon.transportUrl}`)}
                       compact={effectiveAddonListView === 'list'}
                     />
                   </StaggerItem>
@@ -1236,11 +1286,13 @@ export function AddonList({ accountId }: AddonListProps) {
         </TabsContent>
 
         <TabsContent value="failover">
-          <FailoverManager
-            accountId={accountId}
-            activeView={failoverViewByTab[activeTab as keyof typeof failoverViewByTab] ?? 'rules'}
-            onActiveViewChange={handleFailoverViewChange}
-          />
+          <Suspense fallback={null}>
+            <FailoverManager
+              accountId={accountId}
+              activeView={failoverViewByTab[activeTab as keyof typeof failoverViewByTab] ?? 'rules'}
+              onActiveViewChange={handleFailoverViewChange}
+            />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="changelog">
@@ -1273,7 +1325,7 @@ export function AddonList({ accountId }: AddonListProps) {
           <>
             <InstallSavedAddonDialog
               accountId={accountId}
-              accountAuthKey={account ? getAccountAuthKey(account) : ''}
+              accountAuthKey={account ? getStremioAuthKey(account) : ''}
               open={installFromLibraryOpen}
               onOpenChange={setInstallFromLibraryOpen}
               installedAddons={addons}
@@ -1318,6 +1370,18 @@ export function AddonList({ accountId }: AddonListProps) {
         confirmText="Delete Addons"
         isDestructive={true}
         onConfirm={handleBulkDeleteConfirm}
+        isLoading={updatingAll}
+        disabled={updatingAll}
+      />
+
+      <ConfirmationDialog
+        open={showClearAllConfirm}
+        onOpenChange={setShowClearAllConfirm}
+        title="Clear All Addons"
+        description={`This will permanently remove all ${account?.addons.length || 0} addons from ${displayName}. This action cannot be undone.`}
+        confirmText="Clear All"
+        isDestructive={true}
+        onConfirm={handleClearAllAddons}
         isLoading={updatingAll}
         disabled={updatingAll}
       />

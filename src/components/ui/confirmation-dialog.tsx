@@ -80,7 +80,7 @@ export function ConfirmationDialog({
           </DialogDescription>
           {impactItems && impactItems.length > 0 && (
             <div className="mt-4 w-full rounded-2xl border border-border/40 bg-muted/25 p-3 text-left">
-              <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Impact</div>
+              <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Impact</div>
               <div className="space-y-1.5">
                 {impactItems.map((item, index) => (
                   <div key={index} className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">

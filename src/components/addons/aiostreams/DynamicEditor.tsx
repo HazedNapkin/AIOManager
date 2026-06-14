@@ -48,7 +48,7 @@ function PasswordInputWithVault({
                 <Label className="text-xs font-semibold">{label}</Label>
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[10px] gap-1 bg-primary/12 text-primary hover:bg-primary/20">
+                        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1 bg-primary/12 text-primary hover:bg-primary/20">
                             <KeyRound className="w-3 h-3" />
                             Vault
                         </Button>
@@ -61,7 +61,7 @@ function PasswordInputWithVault({
                                 <DropdownMenuItem key={k.id} onClick={() => handleInject(k.value)}>
                                     <div className="flex flex-col min-w-0">
                                         <span className="text-xs font-medium truncate">{k.name}</span>
-                                        <span className="text-[10px] text-muted-foreground truncate">{k.provider}</span>
+                                        <span className="text-xs text-muted-foreground truncate">{k.provider}</span>
                                     </div>
                                 </DropdownMenuItem>
                             ))
@@ -175,7 +175,7 @@ function RecursiveEditor({
                         onChange={(e) => {
                             try { onChange(JSON.parse(e.target.value)) } catch { /* ignore */ }
                         }}
-                        className="font-mono text-[10px] min-h-[100px] bg-muted/5"
+                        className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />
                 </div>
             )
@@ -193,7 +193,7 @@ function RecursiveEditor({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-6 px-2 text-[10px] gap-1"
+                            className="h-6 px-2 text-xs gap-1"
                             onClick={() => onChange([...value, ''])}
                         >
                             <Plus className="w-3 h-3" /> Add
@@ -202,7 +202,7 @@ function RecursiveEditor({
                 </div>
                 
                 {value.length === 0 ? (
-                    <div className="text-[10px] text-muted-foreground italic">Empty array</div>
+                    <div className="text-xs text-muted-foreground italic">Empty array</div>
                 ) : (
                     <div className="space-y-2">
                         {value.map((item, idx) => {
@@ -212,7 +212,7 @@ function RecursiveEditor({
                                 return (
                                     <div key={idx} className="border border-border/20 rounded-lg p-3 bg-background relative pt-6">
                                         <div className="absolute top-2 right-2 flex items-center gap-1">
-                                            <span className="text-[10px] text-muted-foreground mr-2">Item {idx + 1}</span>
+                                            <span className="text-xs text-muted-foreground mr-2">Item {idx + 1}</span>
                                             {canDelete && (
                                                 <Button
                                                     type="button"
@@ -308,7 +308,7 @@ function RecursiveEditor({
                         onChange={(e) => {
                             try { onChange(JSON.parse(e.target.value)) } catch { /* ignore */ }
                         }}
-                        className="font-mono text-[10px] min-h-[100px] bg-muted/5"
+                        className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />
                 </div>
             )
@@ -391,7 +391,7 @@ export function DynamicEditor({ sectionKey, value, onSave, onCancel }: DynamicEd
                         }
                         setIsJsonMode(!isJsonMode)
                     }}
-                    className="h-6 text-[10px] text-muted-foreground hover:text-foreground"
+                    className="h-6 text-xs text-muted-foreground hover:text-foreground"
                 >
                     {isJsonMode ? 'Visual Editor' : 'JSON Mode'}
                 </Button>

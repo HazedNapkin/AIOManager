@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { useAccountStore, persistAccounts, acquireSyncMutex } from './accountStore'
 import { getConnectionStates } from '@/api/connection'
 import type { Connection, ConnectionStatus } from '@/types/connection'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import { toast } from '@/hooks/use-toast'
 
 interface ConnectionStateEntry {
@@ -38,7 +38,7 @@ const safeUUID = () => {
 
 // Holds the per-account mutex so a connection-CRUD write can't be clobbered by an in-flight addon
 // op that snapshotted the account before its await. Re-reads accounts inside the lock.
-async function updateAccount(accountId: string, updater: (account: StremioAccount) => StremioAccount) {
+async function updateAccount(accountId: string, updater: (account: Account) => Account) {
     const release = await acquireSyncMutex(accountId)
     try {
         const { accounts } = useAccountStore.getState()
@@ -102,11 +102,26 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             await storeConnectionCredential(accountId, connection.id, bundle, 'realstream').catch(() => {})
         }
 
-        await updateAccount(accountId, account => ({
-            ...account,
-            connections: [...(account.connections || []), connection],
-            primaryConnectionId: account.primaryConnectionId || connection.id,
-        }))
+        let duplicateFound = false
+        let duplicateId = ''
+        await updateAccount(accountId, account => {
+            const existing = (account.connections || []).find(c => c.platform === partial.platform)
+            if (existing) {
+                duplicateFound = true
+                duplicateId = existing.id
+                return account
+            }
+            return {
+                ...account,
+                connections: [...(account.connections || []), connection],
+                primaryConnectionId: account.primaryConnectionId || connection.id,
+            }
+        })
+        if (duplicateFound) {
+            const { updateConnection } = get()
+            updateConnection(accountId, duplicateId, { ...partial, status: 'active' })
+            return
+        }
 
         toast({ title: `${connection.platform} connection added` })
 

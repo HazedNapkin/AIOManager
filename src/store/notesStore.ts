@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { triggerSync } from '@/lib/sync-trigger'
+import { encrypt, decrypt } from '@/lib/crypto'
+import { useAuthStore } from '@/store/authStore'
 
 const OLD_STORAGE_KEY = 'aiom-notes'
 const INDEX_KEY = 'aiom-notes-index'
@@ -10,9 +12,34 @@ const MAX_NOTE_CONTENT = 50000
 const MAX_NOTE_TITLE = 200
 const NOTE_KEY_PREFIX = 'aiom-note:'
 const CACHE_MAX = 10
+const ENC_PREFIX = 'AIOMENC1:'
 
 function noteKey(id: string): string {
     return `${NOTE_KEY_PREFIX}${id}`
+}
+
+function getEncryptionKey(): CryptoKey | null {
+    return useAuthStore.getState().encryptionKey
+}
+
+async function encryptContent(content: string): Promise<string> {
+    const key = getEncryptionKey()
+    if (!key) return content
+    return ENC_PREFIX + await encrypt(content, key)
+}
+
+async function readNoteFromStorage(id: string): Promise<Note | null> {
+    const stored = await localforage.getItem<Note>(noteKey(id))
+    if (!stored) return null
+    const raw = String(stored.content ?? '')
+    if (!raw.startsWith(ENC_PREFIX)) return { ...stored, content: raw }
+    const key = getEncryptionKey()
+    if (!key) return null
+    try {
+        return { ...stored, content: await decrypt(raw.slice(ENC_PREFIX.length), key) }
+    } catch {
+        return null
+    }
 }
 
 export function extractTags(content: string): string[] {
@@ -77,7 +104,8 @@ async function persistIndex(metas: NoteMeta[]) {
 }
 
 async function persistNote(note: Note) {
-    await localforage.setItem(noteKey(note.id), note)
+    const stored: Note = { ...note, content: await encryptContent(note.content) }
+    await localforage.setItem(noteKey(note.id), stored)
 }
 
 async function removeNoteKey(id: string) {
@@ -114,12 +142,42 @@ async function migrateFromOldFormat(): Promise<{ metas: NoteMeta[]; notes: Note[
         }
         notes.push(note)
         metas.push(toMeta(note))
-        await localforage.setItem(noteKey(note.id), note)
+        await persistNote(note)
     }
 
     await localforage.setItem(INDEX_KEY, metas)
     await localforage.removeItem(OLD_STORAGE_KEY)
     return { metas, notes }
+}
+
+let migrationDone = false
+
+async function migratePlaintextNotes(): Promise<void> {
+    if (migrationDone) return
+    const key = getEncryptionKey()
+    if (!key) return
+    try {
+        const index = await localforage.getItem<NoteMeta[]>(INDEX_KEY)
+        if (!index || !Array.isArray(index)) {
+            migrationDone = true
+            return
+        }
+        for (const meta of index) {
+            try {
+                const stored = await localforage.getItem<Note>(noteKey(meta.id))
+                if (!stored) continue
+                const raw = String(stored.content ?? '')
+                if (raw.startsWith(ENC_PREFIX)) continue
+                const encryptedContent = ENC_PREFIX + await encrypt(raw, key)
+                await localforage.setItem(noteKey(meta.id), { ...stored, content: encryptedContent })
+            } catch (e) {
+                if (import.meta.env.DEV) console.error('[NotesStore] Failed to migrate note ' + meta.id + ':', e)
+            }
+        }
+        migrationDone = true
+    } catch (e) {
+        if (import.meta.env.DEV) console.error('[NotesStore] Content encryption migration failed:', e)
+    }
 }
 
 interface NotesStore {
@@ -138,6 +196,7 @@ interface NotesStore {
     importNotes: (notes: Note[]) => Promise<void>
     importTrash: (trash: Note[]) => Promise<void>
     getAllNotesWithContent: () => Promise<Note[]>
+    saveFailed: boolean
 }
 
 const noteCache = new Map<string, { note: Note; ts: number }>()
@@ -184,7 +243,11 @@ function schedulePersist(note: Note, notes: NoteMeta[]) {
         try {
             await persistNote(pending.note)
             await persistIndex(pending.notes)
-        } catch (e) { if (import.meta.env.DEV) console.error(e) }
+            useNotesStore.setState({ saveFailed: false })
+        } catch (e) {
+            useNotesStore.setState({ saveFailed: true })
+            if (import.meta.env.DEV) console.error(e)
+        }
     }, 1000)
 }
 
@@ -193,6 +256,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     trash: [],
     loading: false,
     activeNote: null,
+    saveFailed: false,
 
     initialize: async () => {
         set({ loading: true })
@@ -208,17 +272,19 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             }
             set({ notes: metas })
 
+            await migratePlaintextNotes()
+
             try {
                 const emergencyRaw = localStorage.getItem('aiom-note-emergency-save')
                 if (emergencyRaw) {
                     localStorage.removeItem('aiom-note-emergency-save')
-                    const emergency = JSON.parse(emergencyRaw) as Note
-                    const idx = metas.findIndex(n => n.id === emergency.id)
-                    if (idx !== -1 && new Date(emergency.updatedAt) > new Date(metas[idx].updatedAt)) {
-                        await persistNote(emergency)
-                        metas = metas.map(n => n.id === emergency.id ? toMeta(emergency) : n)
-                        set({ notes: metas, activeNote: emergency })
-                        triggerSync()
+                    const emergency = JSON.parse(emergencyRaw) as { id?: string; recovered?: boolean }
+                    if (emergency.recovered && emergency.id) {
+                        const note = await readNoteFromStorage(emergency.id)
+                        if (note) {
+                            cachePut(note)
+                            set({ activeNote: note })
+                        }
                     }
                 }
             } catch (e) { if (import.meta.env.DEV) console.error(e) }
@@ -245,7 +311,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             return cached.note
         }
         try {
-            const note = await localforage.getItem<Note>(noteKey(id))
+            const note = await readNoteFromStorage(id)
             if (note) {
                 cachePut(note)
                 set({ activeNote: note })
@@ -320,7 +386,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         if (cached) {
             fullNote = cached.note
         } else {
-            fullNote = await localforage.getItem<Note>(noteKey(id))
+            fullNote = await readNoteFromStorage(id)
         }
 
         if (fullNote) {
@@ -476,7 +542,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
                 results.push({ ...meta, content: cached.note.content })
                 continue
             }
-            const note = await localforage.getItem<Note>(noteKey(meta.id))
+            const note = await readNoteFromStorage(meta.id)
             if (note) {
                 results.push({ ...meta, content: note.content })
             } else {
@@ -493,8 +559,23 @@ if (typeof window !== 'undefined') {
         const store = useNotesStore.getState()
         if (store.activeNote) {
             try {
-                localStorage.setItem('aiom-note-emergency-save', JSON.stringify(store.activeNote))
+                localStorage.setItem('aiom-note-emergency-save', JSON.stringify({ id: store.activeNote.id, recovered: true }))
             } catch (e) { if (import.meta.env.DEV) console.error(e) }
         }
     })
 }
+
+useAuthStore.subscribe((state, prevState) => {
+    const prevKey = prevState.encryptionKey
+    const currentKey = state.encryptionKey
+    if (prevKey && currentKey && prevKey !== currentKey) {
+        noteCache.clear()
+        useNotesStore.setState({ activeNote: null })
+        migrationDone = false
+    } else if (currentKey && !prevKey) {
+        migratePlaintextNotes().catch(() => {})
+    } else if (!currentKey && prevKey) {
+        noteCache.clear()
+        useNotesStore.setState({ activeNote: null })
+    }
+})

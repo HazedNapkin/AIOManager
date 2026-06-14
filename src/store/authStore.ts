@@ -81,8 +81,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const hash = await hashPassword(String(password), salt)
     const key = await deriveKey(String(password), salt)
 
-    saveSalt(salt)
-    savePasswordHash(hash)
+    if (!saveSalt(salt) || !savePasswordHash(hash)) {
+      console.warn('Your session may not persist across page reloads.')
+    }
     try {
       await saveSessionKey(key)
     } catch {
@@ -92,8 +93,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     await wipeAllData()
     await resetAllStores({ includeSync: options?.resetSyncStore ?? true })
 
-    saveSalt(salt)
-    savePasswordHash(hash)
+    if (!saveSalt(salt) || !savePasswordHash(hash)) {
+      console.warn('Your session may not persist across page reloads.')
+    }
     try {
       await saveSessionKey(key)
     } catch {
@@ -185,7 +187,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     if (saltBase64) {
       try {
         salt = Uint8Array.from(atob(saltBase64), (c) => c.charCodeAt(0))
-        saveSalt(salt)
+        if (!saveSalt(salt)) {
+          console.warn('Your session may not persist across page reloads.')
+        }
       } catch (e) {
         import.meta.env.DEV && console.error('Failed to decode sync salt:', e)
       }
@@ -204,7 +208,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         throw new Error('Encryption salt missing; this account can only be restored from the device or browser where it was created.')
       }
       salt = generateSalt()
-      saveSalt(salt)
+      if (!saveSalt(salt)) {
+        console.warn('Your session may not persist across page reloads.')
+      }
       if (import.meta.env.DEV) console.warn('[Auth] No salt available; generated fresh local encryption metadata for an empty account.')
     }
 
@@ -213,7 +219,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     // Save password hash locally to satisfy isPasswordSetup()
     // This removes the "Master password not set up" barrier for synced accounts
     const hash = await hashPassword(password, salt)
-    savePasswordHash(hash)
+    if (!savePasswordHash(hash)) {
+      console.warn('Your session may not persist across page reloads.')
+    }
 
     await saveSessionKey(key)
 

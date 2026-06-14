@@ -78,7 +78,7 @@ export function Footer({ className }: { className?: string }) {
             </Link>
           </nav>
 
-          <div className="inline-flex max-w-full flex-wrap items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-white/[0.04] text-[10px] font-semibold uppercase tracking-[0.05em] shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)]">
+          <div className="inline-flex max-w-full flex-wrap items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-white/[0.04] text-xs font-semibold uppercase tracking-[0.05em] shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)]">
             <Tooltip content="Developer GitHub Profile" side="top">
               <a
                 href="https://github.com/sonicx161"

@@ -1,5 +1,5 @@
 import { normalizeAddonUrl } from '@/lib/utils'
-import type { StremioAccount } from '@/types/account'
+import type { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { CinemetaManifest } from '@/types/cinemeta'
 
@@ -31,7 +31,7 @@ function normalizeRawEntry(platform: string, raw: Record<string, unknown>): { ur
 }
 
 
-export async function discoverFromConnections(account: StremioAccount, accountId: string): Promise<DiscoveryResult> {
+export async function discoverFromConnections(account: Account, accountId: string): Promise<DiscoveryResult> {
     const connections = (account.connections || []).filter(
         c => c.enabled && (c.platform === 'nuvio' || c.platform === 'realstream')
     )
@@ -94,7 +94,7 @@ export interface AbsorbResult {
     changed: boolean
 }
 
-export async function absorbConnectionAddons(account: StremioAccount, accountId: string): Promise<AbsorbResult> {
+export async function absorbConnectionAddons(account: Account, accountId: string): Promise<AbsorbResult> {
     const { discovered, failedReadConnIds } = await discoverFromConnections(account, accountId)
     const existing = account.addons || []
     if (discovered.length === 0) return { addons: existing, failedReadConnIds, changed: false }

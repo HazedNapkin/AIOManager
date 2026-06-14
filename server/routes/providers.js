@@ -199,7 +199,7 @@ export function registerProviderRoutes(fastify, reconciler) {
                 if (!bundle?.accessToken) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
                 return { accessToken: bundle.accessToken, expiresAt: bundle.expiresAt, profileId: bundle.profileId ?? null }
             } catch (err) {
-                if (err.isAuthError || err._nuvioRefreshExpired) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
+                if (err.isAuthError || err._authExpired) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
                 fastify.log.error({ err, connectionId, accountId, category: 'ConnectionToken' }, `Nuvio token fetch failed: ${err.message}`)
                 reply.code(502); return { error: 'Nuvio token refresh failed' }
             }
@@ -219,7 +219,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             if (!bundle?.accessToken) { reply.code(401); return { error: 'RealStream session expired, re-authenticate' } }
             return { accessToken: bundle.accessToken, expiresAt: bundle.expiresAt, profileId: null }
         } catch (err) {
-            if (err.isAuthError || err._realstreamRefreshExpired) { reply.code(401); return { error: 'RealStream session expired, re-authenticate' } }
+            if (err.isAuthError || err._authExpired) { reply.code(401); return { error: 'RealStream session expired, re-authenticate' } }
             fastify.log.error({ err, connectionId, accountId, category: 'ConnectionToken' }, `RealStream token fetch failed: ${err.message}`)
             reply.code(502); return { error: 'RealStream token refresh failed' }
         }
@@ -254,19 +254,8 @@ export function registerProviderRoutes(fastify, reconciler) {
         )
         const rowsAffected = result.changes
         if (rowsAffected === 0) {
-            const retry = await db.get(
-                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND sync_user = $2 AND credential_type = 'nuvio' LIMIT 1",
-                [connectionId, authUser]
-            )
-            if (!retry?.auth_key) { reply.code(404); return { error: 'Connection not found' } }
-            let retryBundle
-            try { retryBundle = JSON.parse(decrypt(retry.auth_key, FALLBACK_KEYS)) } catch { reply.code(500); return { error: 'Could not read connection credential' } }
-            retryBundle.profileId = profileId
-            const retryEncrypted = encrypt(JSON.stringify(retryBundle), PRIMARY_KEY)
-            await db.run(
-                "UPDATE server_credentials SET auth_key = $1, updated_at = $2 WHERE connection_id = $3 AND sync_user = $4 AND credential_type = 'nuvio'",
-                [retryEncrypted, Date.now(), connectionId, authUser]
-            )
+            reply.code(409)
+            return { error: 'Conflict', message: 'Profile was updated by another operation. Please retry.' }
         }
         return { ok: true }
     })

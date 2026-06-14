@@ -66,7 +66,7 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                         <div className="text-xl font-bold">{total}</div>
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">plays</div>
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">plays</div>
                     </div>
                 </div>
             </div>

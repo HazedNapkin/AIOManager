@@ -1,7 +1,7 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { create } from 'zustand'
 import localforage from 'localforage'
-import { useAccountStore, getCachedAuthKey, getAccountAuthKey } from '@/store/accountStore'
+import { useAccountStore, getCachedAuthKey, getStremioAuthKey } from '@/store/accountStore'
 import { decrypt, encrypt, loadSessionKey } from '@/lib/crypto'
 import { normalizeAddonUrl } from '@/lib/utils'
 import { resilientFetch } from '@/lib/api-resilience'
@@ -218,7 +218,7 @@ const syncRuleToServer = async (rule: FailoverRule) => {
         const sessionKey = await loadSessionKey()
         if (!sessionKey) throw new Error('Encryption key not found')
 
-        const authKey = await getCachedAuthKey(getAccountAuthKey(account), sessionKey)
+        const authKey = await getCachedAuthKey(getStremioAuthKey(account), sessionKey)
         if (!authKey) throw new Error('Failed to decrypt auth key')
         const baseUrl = serverUrl || ''
         const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
@@ -280,7 +280,7 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
         for (const rule of rules) {
             const account = useAccountStore.getState().accounts.find(a => a.id === rule.accountId)
             if (!account) continue
-            const authKey = await getCachedAuthKey(getAccountAuthKey(account), sessionKey)
+            const authKey = await getCachedAuthKey(getStremioAuthKey(account), sessionKey)
             if (!authKey) continue
             const addonList = account.addons || []
             payload.push({
@@ -458,9 +458,11 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             const validRules = rules.filter(r => currentAccountIds.has(r.accountId))
 
             if (validRules.length !== rules.length) {
-                if (import.meta.env.DEV) console.log(`[Failover] Pruning ${rules.length - validRules.length} orphan rules.`)
+                const orphanIds = rules.filter(r => !currentAccountIds.has(r.accountId)).map(r => r.id)
+                if (import.meta.env.DEV) console.log(`[Failover] Pruning ${orphanIds.length} orphan rules.`)
                 set({ rules: validRules })
                 await localforage.setItem(STORAGE_KEY, validRules)
+                for (const id of orphanIds) deleteRuleFromServer(id).catch(() => {})
             }
 
             failoverHydrated = true
@@ -731,12 +733,10 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         // Re-sync all rules using default webhook mode so the server gets the updated URL.
         // Rules in "default" mode have notifyEnabled=true and no custom webhookUrl.
         // Their webhook_url on the server was baked in at last-sync time and is now stale.
-        if (url) {
-            const defaultModeRules = get().rules.filter(
-                r => r.notifyEnabled !== false && !r.webhookUrl
-            )
-            syncRulesToServerBatch(defaultModeRules).catch(e => { if (import.meta.env.DEV) console.error(e) })
-        }
+        const defaultModeRules = get().rules.filter(
+            r => r.notifyEnabled !== false && !r.webhookUrl
+        )
+        syncRulesToServerBatch(defaultModeRules).catch(e => { if (import.meta.env.DEV) console.error(e) })
     },
 
     addRule: async (accountId, priorityChain, name, cooldown_ms, webhookUrl, notifyEnabled, messageTemplate) => {

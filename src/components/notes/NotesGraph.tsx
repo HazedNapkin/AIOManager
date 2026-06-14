@@ -60,6 +60,7 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
     const [isDragging, setIsDragging] = useState(false)
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
+    const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
     
     // Persistent settings
     const [linkDistance, setLinkDistance] = useState(() => Number(localStorage.getItem('notes-graph-linkDist')) || 150)
@@ -306,16 +307,17 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
             const fgAlpha = fgColor.startsWith('#') ? fgColor + '33' : 'rgba(255,255,255,0.2)'
             nodes.forEach(n => {
                 const isHovered = hoveredNodeId === n.id
+                const isFocused = focusedNodeId === n.id
                 const alpha = getAlpha(n.id)
                 ctx.beginPath(); ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2)
                 ctx.globalAlpha = alpha
-                ctx.fillStyle = isHovered ? primaryColor : n.isTag ? getThemeColor('--info', '#8b5cf6') : getTagColor(n.primaryTag)
+                ctx.fillStyle = (isHovered || isFocused) ? primaryColor : n.isTag ? getThemeColor('--info', '#8b5cf6') : getTagColor(n.primaryTag)
                 ctx.fill()
-                ctx.strokeStyle = isHovered ? fgColor : fgAlpha
+                ctx.strokeStyle = (isHovered || isFocused) ? fgColor : fgAlpha
                 ctx.lineWidth = 1.5; ctx.stroke()
-                if (showText || isHovered || (isSearching && alpha === 1)) {
-                    ctx.fillStyle = isHovered ? fgColor : mutedFg
-                    ctx.font = `${isHovered ? 'bold ' : ''}12px Inter, sans-serif`
+                if (showText || isHovered || isFocused || (isSearching && alpha === 1)) {
+                    ctx.fillStyle = (isHovered || isFocused) ? fgColor : mutedFg
+                    ctx.font = `${(isHovered || isFocused) ? 'bold ' : ''}12px Inter, sans-serif`
                     ctx.textAlign = 'center'
                     ctx.fillText(n.title, n.x, n.y + n.radius + 14)
                 }
@@ -326,7 +328,7 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
         }
         draw()
         return () => cancelAnimationFrame(animationFrameId)
-    }, [nodes, links, transform, hoveredNodeId, repelStrength, linkDistance, centerGravity, rotation, searchQuery])
+    }, [nodes, links, transform, hoveredNodeId, focusedNodeId, repelStrength, linkDistance, centerGravity, rotation, searchQuery])
 
     useEffect(() => {
         const resize = () => { if (canvasRef.current && containerRef.current) { canvasRef.current.width = containerRef.current.clientWidth; canvasRef.current.height = containerRef.current.clientHeight } }
@@ -364,12 +366,37 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
         setTransform(prev => ({ ...prev, scale: Math.min(Math.max(0.1, prev.scale * zoomDelta), 4) }))
     }
 
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        const nonTagNodes = nodes.filter(n => !n.isTag)
+        if (nonTagNodes.length === 0) return
+
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault()
+            setFocusedNodeId(prev => {
+                if (!prev) return nonTagNodes[0].id
+                const idx = nonTagNodes.findIndex(n => n.id === prev)
+                return nonTagNodes[(idx + 1) % nonTagNodes.length].id
+            })
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            setFocusedNodeId(prev => {
+                if (!prev) return nonTagNodes[nonTagNodes.length - 1].id
+                const idx = nonTagNodes.findIndex(n => n.id === prev)
+                return nonTagNodes[(idx - 1 + nonTagNodes.length) % nonTagNodes.length].id
+            })
+        } else if (e.key === 'Enter' && focusedNodeId) {
+            e.preventDefault()
+            onNodeClick(focusedNodeId)
+        }
+    }
+
     return (
         <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-background"
             onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onMouseUp={() => setIsDragging(false)} onMouseLeave={() => setIsDragging(false)}
             onTouchStart={handlePointerDown} onTouchMove={handlePointerMove} onTouchEnd={() => setIsDragging(false)}
             onClick={() => { if (hoveredNodeId && !isDragging && !hoveredNodeId.startsWith('tag-')) onNodeClick(hoveredNodeId) }} onWheel={handleWheel}>
-            <canvas ref={canvasRef} className={cn("block w-full h-full outline-none", hoveredNodeId ? 'cursor-pointer' : isDragging ? 'cursor-grabbing' : 'cursor-grab')} />
+            <canvas ref={canvasRef} role="img" aria-label={`Notes graph showing ${nodes.filter(n => !n.isTag).length} notes and ${links.length} connections. Use arrow keys to navigate nodes, Enter to select.`} tabIndex={0} onKeyDown={handleKeyDown} className={cn("block w-full h-full outline-none", hoveredNodeId || focusedNodeId ? 'cursor-pointer' : isDragging ? 'cursor-grabbing' : 'cursor-grab')} />
+            <span className="sr-only">Interactive force-directed graph visualizing connections between notes. Nodes represent notes, lines represent wikilink connections. Tab to focus the graph, use arrow keys to move between note nodes, and press Enter to open a note.</span>
             <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
                 <button onClick={() => setSettingsOpen(!settingsOpen)} className={cn("w-8 h-8 rounded-lg border flex items-center justify-center shadow-sm", settingsOpen ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/40 text-muted-foreground hover:text-foreground")}>
                     <Settings2 className="w-4 h-4" />

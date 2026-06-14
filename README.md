@@ -79,6 +79,15 @@ Mirror your addon configuration to external platforms and keep them in sync auto
 * **Manifest Updates**: Refresh the name, logo, and version of selected addons from their source URLs while keeping your tags and profile assignments intact.
 * **Conflict Resolution**: When saving addons from an account, choose to skip existing entries, update them with merged tags, or create a new copy.
 
+### 🔍 Discover
+
+Browse and install addons from the community directory at stremio-addons.net. Search, filter by category, view details, and install directly.
+
+* **Similar Addons**: See related addons based on shared categories.
+* **Trending & Recently Updated**: Curated shelves of popular and fresh addons.
+* **Personalized Shelves**: Recommendations based on your installed addon categories.
+* **Favorites**: Star addons for quick access (synced across devices).
+
 ### 📊 Metrics
 
 * **Pulse**: Real-time activity tracking, Trending Now clusters, and the **Streak Hall of Fame**.

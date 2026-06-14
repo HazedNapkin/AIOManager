@@ -1,5 +1,7 @@
 
 import { SavedAddon } from '@/types/saved-addon'
+import { useSyncStore } from '@/store/syncStore'
+import { deriveSyncToken } from '@/lib/crypto'
 
 export interface HealthStatus {
   isOnline: boolean
@@ -37,41 +39,50 @@ export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> 
 
   const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
 
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 5000)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 5000)
 
+  const directFetch = (async (): Promise<HealthStatus> => {
     const response = await fetch(manifestUrl, {
       method: 'GET',
       signal: controller.signal,
       cache: 'no-cache'
     })
+    if (!response.ok) throw new Error('Direct fetch not ok')
+    const data = await response.json()
+    if (!data || typeof data !== 'object') throw new Error('Invalid manifest')
+    return { isOnline: true, latencyMs: Date.now() - startTime }
+  })()
 
-    clearTimeout(timeoutId)
-
-    if (response.ok) {
-      try {
-        const data = await response.json()
-        if (data && typeof data === 'object') {
-          return { isOnline: true, latencyMs: Date.now() - startTime }
-        }
-      } catch {}
+  const proxyFetch = (async (): Promise<HealthStatus> => {
+    const { auth } = useSyncStore.getState()
+    const headers: Record<string, string> = {}
+    if (auth.id && auth.password) {
+      headers['x-sync-user'] = auth.id
+      headers['x-sync-password'] = await deriveSyncToken(auth.password)
     }
-  } catch {}
-
-  try {
-    const response = await fetch(`/api/addon-health?url=${encodeURIComponent(addonUrl)}`);
-    if (!response.ok) {
-      return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime };
-    }
-    const data = await response.json();
+    const response = await fetch(`/api/addon-health?url=${encodeURIComponent(addonUrl)}`, {
+      signal: controller.signal,
+      headers
+    })
+    if (!response.ok) throw new Error('Proxy fetch not ok')
+    const data = await response.json()
     return {
       isOnline: data.isOnline,
       error: data.error,
       latencyMs: Date.now() - startTime
-    };
-  } catch (err) {
-    return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime };
+    }
+  })()
+
+  try {
+    const result = await Promise.any([directFetch, proxyFetch])
+    clearTimeout(timeoutId)
+    controller.abort()
+    return result
+  } catch {
+    clearTimeout(timeoutId)
+    controller.abort()
+    return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime }
   }
 }
 

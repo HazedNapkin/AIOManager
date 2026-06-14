@@ -53,7 +53,7 @@ const accountStateHashes = new Map()
 function deterministicEventId(syncUser, accountId, itemId, eventType, eventTs, season, episode) {
     const bucket = Math.floor(Number(eventTs || Date.now()) / 60000)
     const raw = `${syncUser}:${accountId}:${itemId}:${season ?? ''}:${episode ?? ''}:${eventType}:${bucket}`
-    const hash = createHash('sha256').update(raw).digest('hex').slice(0, 16)
+    const hash = createHash('sha256').update(raw).digest('hex').slice(0, 32)
     return `evt_${hash}`
 }
 

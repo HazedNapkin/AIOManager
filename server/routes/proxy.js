@@ -323,7 +323,12 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             }
         }
     }, async (request, reply) => {
+        const ALLOWED_IMAGE_DOMAINS = ['metahub.space', 'strem.io']
         const { url } = request.query
+        if (!ALLOWED_IMAGE_DOMAINS.some(domain => url.includes(domain))) {
+            reply.status(403)
+            return { error: 'Domain not allowed' }
+        }
 
         if (!(await isSafeUrlResolved(url))) {
             reply.status(403);
@@ -396,7 +401,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 return { error: 'Payload Too Large (>10MB)' }
             }
 
-            reply.header('Cache-Control', 'public, max-age=31536000')
+            reply.header('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400')
             reply.type(contentType)
 
             return buffer
@@ -903,10 +908,13 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
 
         return enqueueProxyRequest(targetDomain, async () => {
+            let customName = null, customLogo = null
             try {
                 const configStr = Buffer.from(token, 'base64').toString('utf-8')
                 const config = JSON.parse(configStr)
-                const { url: originalUrl, name: customName, logo: customLogo } = config
+                const { url: originalUrl, name, logo } = config
+                customName = name || null
+                customLogo = logo || null
 
                 if (!originalUrl) {
                     reply.status(400);
@@ -994,6 +1002,9 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     fastify.get('/api/addon-health', {
         config: { rateLimit: { max: 30, timeWindow: '1 minute' } }
     }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Authentication required' } }
+
         const { url } = request.query
 
         if (!url) {

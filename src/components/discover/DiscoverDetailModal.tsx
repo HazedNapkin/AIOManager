@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -9,6 +9,7 @@ import { Check, ChevronDown, ExternalLink, FileText, Plus, Settings2, Star, Uplo
 import { cn } from '@/lib/utils'
 import {
   fetchDiscoverAddon,
+  fetchDiscoverAddons,
   getAddonResources,
   getConfigureUrl,
   lastUpdatedLabel,
@@ -20,6 +21,10 @@ import {
 import { AddonLogo } from './AddonLogo'
 
 const DiscoverMarkdown = lazy(() => import('./DiscoverMarkdown'))
+
+const SIMILAR_LIMIT = 6
+const SIMILAR_TTL = 10 * 60 * 1000
+const _similarCache = new Map<string, { data: DiscoverAddon[]; ts: number }>()
 
 interface DiscoverDetailModalProps {
   addon: DiscoverAddon | null
@@ -37,6 +42,8 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
   const [loading, setLoading] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
   const [docsExpanded, setDocsExpanded] = useState(false)
+  const [similar, setSimilar] = useState<DiscoverAddon[]>([])
+  const [loadingSimilar, setLoadingSimilar] = useState(false)
 
   useEffect(() => {
     if (!open || !addon) return
@@ -54,6 +61,65 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, addon?.slug, addon?.uuid])
 
+  useEffect(() => {
+    if (!open || !addon) return
+    const key = addon.slug || addon.uuid
+    const categorySlugs = (addon.categories ?? []).map((c) => c.slug).filter(Boolean).slice(0, 2)
+    if (categorySlugs.length === 0) { setSimilar([]); return }
+
+    const hit = _similarCache.get(key)
+    if (hit && Date.now() - hit.ts < SIMILAR_TTL) { setSimilar(hit.data); return }
+
+    let active = true
+    const ctrl = new AbortController()
+    setLoadingSimilar(true)
+    Promise.all(
+      categorySlugs.map((slug) =>
+        fetchDiscoverAddons({ category: [slug], sortBy: 'stars', limit: 10 }, ctrl.signal)
+          .then((r) => Array.isArray(r.addons) ? r.addons : [])
+          .catch(() => [] as DiscoverAddon[]),
+      ),
+    )
+      .then((lists) => {
+        if (!active) return
+        const seen = new Set<string>()
+        seen.add(addon.uuid)
+        if (addon.slug) seen.add(addon.slug)
+        const merged: DiscoverAddon[] = []
+        for (const a of lists.flat()) {
+          if (!a?.uuid) continue
+          if (seen.has(a.uuid) || (a.slug && seen.has(a.slug))) continue
+          seen.add(a.uuid)
+          if (a.slug) seen.add(a.slug)
+          merged.push(a)
+        }
+        const limited = merged.slice(0, SIMILAR_LIMIT)
+        _similarCache.set(key, { data: limited, ts: Date.now() })
+        if (_similarCache.size > 50) {
+            const firstKey = _similarCache.keys().next().value
+            if (firstKey !== undefined) _similarCache.delete(firstKey)
+        }
+        setSimilar(limited)
+      })
+      .finally(() => { if (active) setLoadingSimilar(false) })
+
+    return () => { active = false; ctrl.abort() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, addon?.slug, addon?.uuid])
+
+  const instances = detail?.instances ?? []
+
+  const visibleSimilar = useMemo(() => {
+    if (!addon || similar.length === 0) return []
+    const excluded = new Set<string>([addon.uuid])
+    if (addon.slug) excluded.add(addon.slug)
+    for (const inst of instances) {
+      excluded.add(inst.uuid)
+      if (inst.slug) excluded.add(inst.slug)
+    }
+    return similar.filter((a) => !excluded.has(a.uuid) && !(a.slug && excluded.has(a.slug)))
+  }, [similar, instances, addon])
+
   if (!addon) return null
 
   // Fall back to the list payload until the detail request resolves.
@@ -65,7 +131,6 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
   const resources = getAddonResources(view)
   const needsConfig = requiresConfiguration(view)
   const configureUrl = getConfigureUrl(view)
-  const instances = detail?.instances ?? []
   const documentation = detail?.documentation?.trim() || ''
   const updated = lastUpdatedLabel(view)
 
@@ -73,8 +138,8 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-3 pr-6">
-            <AddonLogo src={manifest.logo} name={name} className="h-10 w-10" />
+          <DialogTitle className="flex items-center gap-3 pr-6 min-w-0">
+            <AddonLogo src={manifest.logo} name={name} className="h-10 w-10 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{name}</span>
           </DialogTitle>
         </DialogHeader>
@@ -167,34 +232,34 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                             </span>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                           {instSaved ? (
                             <Tooltip content="In Library" side="top">
-                              <Button size="sm" variant="subtle" disabled className="h-7 w-7 p-0">
+                              <Button size="sm" variant="subtle" disabled className="h-7 w-7 flex items-center justify-center p-0">
                                 <Check className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                           ) : (
                             <Tooltip content={instNeedsConfig ? 'Save unconfigured' : 'Save to Library'} side="top">
-                              <Button size="sm" variant="subtle" className="h-7 w-7 p-0" onClick={() => onSave(inst)}>
+                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onSave(inst)}>
                                 <Plus className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                           )}
                           {instConfigUrl && (
                             <Tooltip content="Configure" side="top">
-                              <Button size="sm" variant="subtle" className="h-7 w-7 p-0" onClick={() => onConfigure(inst)}>
+                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onConfigure(inst)}>
                                 <Settings2 className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                           )}
                           <Tooltip content="Deploy to account(s)" side="top">
-                            <Button size="sm" variant="subtle" className="h-7 w-7 p-0" onClick={() => onDeploy(inst)}>
+                             <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onDeploy(inst)}>
                               <Upload className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                           <Tooltip content="View on stremio-addons.net" side="top">
-                            <Button asChild size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground">
+                             <Button asChild size="sm" variant="ghost" className="h-7 w-7 flex items-center justify-center p-0 text-muted-foreground hover:text-foreground">
                               <a href={inst.url} target="_blank" rel="noopener noreferrer">
                                 <ExternalLink className="h-3.5 w-3.5" />
                               </a>
@@ -205,6 +270,72 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {(loadingSimilar || visibleSimilar.length > 0) && (
+              <div>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Similar addons
+                </p>
+                {loadingSimilar ? (
+                  <div className="flex gap-2 overflow-hidden">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <Skeleton key={i} className="h-[104px] w-[196px] shrink-0 rounded-lg" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]">
+                    {visibleSimilar.map((s) => {
+                      const sName = s.manifest?.name?.trim() || s.slug || 'Unknown addon'
+                      const sDesc = s.manifest?.description?.trim() || ''
+                      const sSaved = isSaved?.(s) ?? false
+                      const sConfigUrl = getConfigureUrl(s)
+                      return (
+                        <div key={s.uuid} className="flex w-[196px] shrink-0 flex-col gap-1.5 rounded-lg border border-border/40 bg-muted/20 p-2.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <AddonLogo src={s.manifest?.logo} name={sName} className="h-8 w-8" letterClassName="text-xs" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium">{sName}</p>
+                              <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                <Star className="h-3 w-3 fill-warning text-warning" />
+                                {(s.stars ?? 0).toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                          {sDesc && <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">{sDesc}</p>}
+                          <div className="mt-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                            {sSaved ? (
+                              <Tooltip content="In Library" side="top">
+                                <Button size="sm" variant="subtle" disabled className="h-7 w-7 flex items-center justify-center p-0">
+                                  <Check className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            ) : (
+                              <Tooltip content="Save to Library" side="top">
+                                <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onSave(s)}>
+                                  <Plus className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            )}
+                            {sConfigUrl && (
+                              <Tooltip content="Configure" side="top">
+                                <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onConfigure(s)}>
+                                  <Settings2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            )}
+                            <Tooltip content="Deploy to account(s)" side="top">
+                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onDeploy(s)}>
+                                <Upload className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

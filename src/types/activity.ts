@@ -44,7 +44,8 @@ export interface ActivityItem {
     season?: number
     episode?: number
     overallTimeWatched?: number
-    source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = stremio)
+    genres?: string[]
+    source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = unknown)
     backfill?: boolean // recovered from Stremio's watched-bitfield; no real per-episode time, so excluded from time-based Replay stats
 }
 

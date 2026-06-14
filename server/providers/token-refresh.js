@@ -84,7 +84,7 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
         return newBundle
     } catch (err) {
         if (err.isAuthError) {
-            err._nuvioRefreshExpired = true
+            err._authExpired = true
         }
         throw err
     }
@@ -154,12 +154,12 @@ async function refreshRealStreamTokenInner(connectionId) {
                 return newBundle
             } catch (reauthErr) {
                 // Both refresh and re-auth failed — credentials may have changed.
-                reauthErr._realstreamRefreshExpired = true
+                reauthErr._authExpired = true
                 throw reauthErr
             }
         }
 
-        err._realstreamRefreshExpired = true
+        err._authExpired = true
         throw err
     }
 }

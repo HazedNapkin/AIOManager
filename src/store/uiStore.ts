@@ -1,5 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { StremioAccount } from '@/types/account'
+import { Account } from '@/types/account'
 import { create } from 'zustand'
 
 interface UIStore {
@@ -12,7 +12,7 @@ interface UIStore {
   accountsView: 'grid' | 'list'
   addonListView: 'grid' | 'list'
 
-  openAddAccountDialog: (account?: StremioAccount) => void
+  openAddAccountDialog: (account?: Account) => void
   closeAddAccountDialog: () => void
   openAddAddonDialog: (accountId: string) => void
   closeAddAddonDialog: () => void
@@ -23,7 +23,7 @@ interface UIStore {
   setAccountsView: (mode: 'grid' | 'list') => void
   setAddonListView: (mode: 'grid' | 'list') => void
   initialize: () => void
-  editingAccount: StremioAccount | null
+  editingAccount: Account | null
   selectedAccountId: string | null
 }
 
@@ -69,7 +69,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   editingAccount: null,
   selectedAccountId: null,
 
-  openAddAccountDialog: (account?: StremioAccount) =>
+  openAddAccountDialog: (account?: Account) =>
     set({ isAddAccountDialogOpen: true, editingAccount: account || null }),
   closeAddAccountDialog: () => set({ isAddAccountDialogOpen: false, editingAccount: null }),
   openAddAddonDialog: (accountId: string) =>

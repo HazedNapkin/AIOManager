@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertCircle, ArrowLeft, Bookmark, Flame, Loader2, Search, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Bookmark, Flame, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore } from '@/store/accountStore'
 import { useProfileStore } from '@/store/profileStore'
-import { normalizeAddonUrl } from '@/lib/utils'
+import { cn, normalizeAddonUrl } from '@/lib/utils'
+import { mapConcurrent } from '@/lib/concurrency'
 import {
   fetchDiscoverAddons,
   fetchDiscoverCategories,
@@ -34,6 +35,14 @@ const TRENDING_SIZE = 30
 // Favorites are bookmarked addons the user wants to revisit without installing. The full
 // DiscoverAddon is persisted (not just the id) so the shelf renders offline without refetching.
 const FAVORITES_KEY = 'aio-discover-favorites'
+const PREFS_KEY = 'aio-discover-prefs'
+
+interface DiscoverPrefs {
+  sortBy?: DiscoverSortBy
+  showAdult?: boolean
+  selectedCategories?: string[]
+  compact?: boolean
+}
 
 function loadFavorites(): DiscoverAddon[] {
   try {
@@ -52,20 +61,45 @@ function saveFavorites(list: DiscoverAddon[]) {
   }
 }
 
+function loadPrefs(): DiscoverPrefs {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function savePrefs(prefs: DiscoverPrefs) {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+  } catch {
+  }
+}
+
+function normalizeCategoryKey(s: string): string {
+  return s.toLowerCase().replace(/s$/, '')
+}
+
 export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const { toast } = useToast()
   const library = useAddonStore((state) => state.library)
   const createSavedAddon = useAddonStore((state) => state.createSavedAddon)
   const createProfile = useProfileStore((state) => state.createProfile)
 
+  const initialPrefs = useMemo(() => loadPrefs(), [])
+
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [sortBy, setSortBy] = useState<DiscoverSortBy>('stars')
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
+  const [sortBy, setSortBy] = useState<DiscoverSortBy>(initialPrefs.sortBy === 'createdAt' ? 'createdAt' : 'stars')
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    Array.isArray(initialPrefs.selectedCategories) ? initialPrefs.selectedCategories : []
+  )
   const [selectedResources, setSelectedResources] = useState<string[]>([])
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
-  const [showAdult, setShowAdult] = useState(false)
+  const [showAdult, setShowAdult] = useState<boolean>(!!initialPrefs.showAdult)
   const [forceGrid, setForceGrid] = useState(false)
+  const [compact, setCompact] = useState<boolean>(!!initialPrefs.compact)
   const [favorites, setFavorites] = useState<DiscoverAddon[]>(() => loadFavorites())
 
   // Storefront shelves
@@ -76,6 +110,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [storeReloadKey, setStoreReloadKey] = useState(0)
   const [categories, setCategories] = useState<DiscoverCategory[]>([])
   const [categoryShelves, setCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
+  const [userCategoryShelves, setUserCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
 
   // Filtered grid
   const [addons, setAddons] = useState<DiscoverAddon[]>([])
@@ -118,50 +153,95 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   const categoryKey = selectedCategories.join(',')
 
+  const userCategories = useMemo<DiscoverCategory[]>(() => {
+    if (categories.length === 0) return []
+    const counts = new Map<string, number>()
+    const libraryList = Object.values(library)
+    for (const category of categories) {
+      const key = normalizeCategoryKey(category.slug)
+      let n = 0
+      for (const addon of libraryList) {
+        const types = Array.isArray(addon.manifest?.types) ? addon.manifest.types : []
+        if (types.some((t) => typeof t === 'string' && normalizeCategoryKey(t) === key)) n++
+      }
+      if (n > 0) counts.set(category.slug, n)
+    }
+    return categories
+      .filter((c) => counts.has(c.slug))
+      .sort((a, b) => (counts.get(b.slug) ?? 0) - (counts.get(a.slug) ?? 0))
+      .slice(0, 3)
+  }, [library, categories])
+
+  const userCategorySlugs = useMemo(() => new Set(userCategories.map((c) => c.slug)), [userCategories])
+  const userCategoryKey = userCategories.map((c) => c.slug).join(',')
+
   useEffect(() => {
-    fetchDiscoverCategories().then(setCategories).catch(() => {})
+    savePrefs({ sortBy, showAdult, selectedCategories, compact })
+  }, [sortBy, showAdult, selectedCategories, compact])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    fetchDiscoverCategories(ac.signal).then(setCategories).catch(() => {})
+    return () => ac.abort()
   }, [storeReloadKey])
 
-  // Category shelves: top addons in the first handful of categories.
   useEffect(() => {
     if (categories.length === 0) return
-    let active = true
+    const ac = new AbortController()
     const nsfw = showAdult ? undefined : 'exclude'
-    const picks = categories.slice(0, 6)
+    const picks = categories.filter((c) => !userCategorySlugs.has(c.slug)).slice(0, 6)
     Promise.all(
       picks.map((category) =>
-        fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE })
+        fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal)
           .then((res) => ({ category, addons: res.addons }))
           .catch(() => ({ category, addons: [] as DiscoverAddon[] }))
       )
     ).then((shelves) => {
-      if (active) setCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
+      if (!ac.signal.aborted) setCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
     })
-    return () => { active = false }
-  }, [categories, showAdult])
+    return () => ac.abort()
+  }, [categories, showAdult, userCategorySlugs])
+
+  useEffect(() => {
+    if (userCategories.length === 0) { setUserCategoryShelves([]); return }
+    const ac = new AbortController()
+    const nsfw = showAdult ? undefined : 'exclude'
+    const picks = userCategories
+    Promise.all(
+      picks.map((category) =>
+        fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal)
+          .then((res) => ({ category, addons: res.addons }))
+          .catch(() => ({ category, addons: [] as DiscoverAddon[] }))
+      )
+    ).then((shelves) => {
+      if (!ac.signal.aborted) setUserCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
+    })
+    return () => ac.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userCategoryKey, showAdult])
 
   // Storefront shelves: trending + newest.
   useEffect(() => {
-    let active = true
+    const ac = new AbortController()
     setStoreLoading(true)
     setStoreError(false)
     const nsfw = showAdult ? undefined : 'exclude'
     Promise.all([
-      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, limit: TRENDING_SIZE }),
-      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: SHELF_SIZE }),
+      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, limit: TRENDING_SIZE }, ac.signal),
+      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal),
     ])
       .then(([top, fresh]) => {
-        if (!active) return
+        if (ac.signal.aborted) return
         setTrending(top.addons)
         setNewest(fresh.addons)
       })
-      .catch(() => { if (active) { setTrending([]); setNewest([]); setStoreError(true) } })
-      .finally(() => { if (active) setStoreLoading(false) })
-    return () => { active = false }
+      .catch(() => { if (!ac.signal.aborted) { setTrending([]); setNewest([]); setStoreError(true) } })
+      .finally(() => { if (!ac.signal.aborted) setStoreLoading(false) })
+    return () => ac.abort()
   }, [showAdult, storeReloadKey])
 
   const runQuery = useCallback(
-    async (targetPage: number) => {
+    async (targetPage: number, signal?: AbortSignal) => {
       const token = ++requestRef.current
       if (targetPage === 1) setLoading(true)
       else setLoadingMore(true)
@@ -175,7 +255,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           nsfw: showAdult ? undefined : 'exclude',
           page: targetPage,
           limit: PAGE_SIZE,
-        })
+        }, signal)
         if (token !== requestRef.current) return
         setAddons((prev) => (targetPage === 1 ? res.addons : [...prev, ...res.addons]))
         setHasNextPage(res.pagination?.hasNextPage ?? false)
@@ -196,7 +276,9 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   useEffect(() => {
     if (!gridMode) return
-    runQuery(1)
+    const ac = new AbortController()
+    runQuery(1, ac.signal)
+    return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridMode, debouncedSearch, sortBy, categoryKey, showAdult])
 
@@ -242,6 +324,15 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const trendingRow = useMemo(
     () => trending.filter((a) => !featuredIds.has(a.uuid)),
     [trending, featuredIds]
+  )
+  const trendingThisWeek = useMemo(() => trendingRow.slice(0, 12), [trendingRow])
+  const recentlyUpdated = useMemo(
+    () =>
+      [...trending]
+        .filter((a) => a.updatedAt && Number.isFinite(new Date(a.updatedAt).getTime()))
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .slice(0, SHELF_SIZE),
+    [trending]
   )
 
   // Resource/type facets refine the already-loaded grid client-side: the public directory API
@@ -292,14 +383,14 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     const accountStore = useAccountStore.getState()
     let ok = 0
     let fail = 0
-    for (const id of accountIds) {
+    await mapConcurrent(accountIds, 5, async (id) => {
       try {
         await accountStore.installAddonToAccount(id, deployAddon.manifestUrl)
         ok++
       } catch {
         fail++
       }
-    }
+    })
     toast({
       title: 'Deploy Complete',
       description: `Installed to ${ok} account${ok !== 1 ? 's' : ''}.${fail > 0 ? ` Failed: ${fail}.` : ''}`,
@@ -348,6 +439,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         showAdult={showAdult}
         onToggleAdult={() => setShowAdult((v) => !v)}
         showSort={gridMode}
+        compact={compact}
+        onToggleCompact={() => setCompact((v) => !v)}
       />
 
       {/* Keyed so the entrance animation replays each time Discover is opened, without refetching. */}
@@ -371,7 +464,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
             <>
               <Skeleton className="h-56 w-full rounded-xl" />
               <div className="flex gap-4 overflow-hidden">
-                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-52 w-[300px] shrink-0 rounded-xl" />)}
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-52 w-[260px] sm:w-[300px] shrink-0 rounded-xl" />)}
               </div>
             </>
           )}
@@ -398,10 +491,33 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
           {!storeLoading && !storeError && (
             <>
+              {userCategoryShelves.map(({ category, addons: shelf }) => (
+                <DiscoverRow
+                  key={`user-${category.slug}`}
+                  title={`Your ${category.name}`}
+                  icon={<Sparkles className="h-4 w-4 text-primary" />}
+                  addons={shelf}
+                  isSaved={isSaved}
+                  savingKey={savingKey}
+                  onSeeAll={() => seeAllCategory(category.slug)}
+                  isFavorite={isFavorite}
+                  {...cardCallbacks}
+                />
+              ))}
               <DiscoverRow
-                title="Trending"
+                title="Trending This Week"
                 icon={<Flame className="h-4 w-4 text-warning" />}
-                addons={trendingRow}
+                addons={trendingThisWeek}
+                isSaved={isSaved}
+                savingKey={savingKey}
+                onSeeAll={() => seeAll('stars')}
+                isFavorite={isFavorite}
+                {...cardCallbacks}
+              />
+              <DiscoverRow
+                title="Recently Updated"
+                icon={<RefreshCw className="h-4 w-4 text-primary" />}
+                addons={recentlyUpdated}
                 isSaved={isSaved}
                 savingKey={savingKey}
                 onSeeAll={() => seeAll('stars')}
@@ -433,15 +549,15 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
             </>
           )}
 
-          <p className="pt-1 text-center text-xs text-muted-foreground">
-            Addon data from{' '}
-            <a href="https://stremio-addons.net" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
-              stremio-addons.net
-            </a>
-          </p>
         </>
       )}
 
+      <p className="pt-1 text-center text-xs text-muted-foreground">
+        Addon data from{' '}
+        <a href="https://stremio-addons.net" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">
+          stremio-addons.net
+        </a>
+      </p>
 
       {gridMode && (
         <>
@@ -466,8 +582,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           )}
 
           {loading && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className="h-[252px] rounded-xl" />)}
+            <div className={cn('grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4', compact && 'gap-2 lg:grid-cols-3 xl:grid-cols-3')}>
+              {Array.from({ length: 12 }).map((_, i) => <Skeleton key={i} className={cn('rounded-xl', compact ? 'h-20' : 'h-[252px]')} />)}
             </div>
           )}
 
@@ -489,7 +605,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           )}
 
           {!loading && visibleAddons.length > 0 && (
-            <StaggerContainer className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <StaggerContainer className={cn(
+              'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4',
+              compact ? 'gap-2 lg:grid-cols-3 xl:grid-cols-3' : 'gap-4'
+            )}>
               {visibleAddons.map((addon) => (
                 <StaggerItem key={addon.uuid}>
                   <DiscoverCard
@@ -497,6 +616,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
                     saved={isSaved(addon)}
                     saving={savingKey === addon.uuid}
                     favorite={isFavorite(addon)}
+                    compact={compact}
                     {...cardCallbacks}
                   />
                 </StaggerItem>

@@ -3,6 +3,11 @@ import localforage from 'localforage'
 import { deriveSyncToken } from '@/lib/crypto'
 import { resilientFetch } from '@/lib/api-resilience'
 
+const parseSafe = (s: unknown): Record<string, unknown> | undefined => {
+    if (!s || typeof s !== 'string') return undefined
+    try { return JSON.parse(s) } catch { return undefined }
+}
+
 const STORAGE_KEY = 'stremio-manager:failover-history'
 const MAX_LOGS = 25
 
@@ -50,23 +55,18 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
                     const accountStore = (await import('@/store/accountStore')).useAccountStore.getState()
                     const syncToken = await deriveSyncToken(auth.password)
-                    const BATCH = 5
-                    const promiseResults: { response: Record<string, unknown> | null, accountId: string }[] = []
-                    for (let i = 0; i < accountStore.accounts.length; i += BATCH) {
-                        const batch = accountStore.accounts.slice(i, i + BATCH)
-                        const results = await Promise.all(batch.map(account =>
+                    const promiseResults = await Promise.allSettled(
+                        accountStore.accounts.map(account =>
                             resilientFetch(`${apiPath}/autopilot/history/${account.id}`, {
                                 headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
                             }).then(r => r.ok ? r.json() : null).catch(() => null)
                             .then(response => ({ response, accountId: account.id }))
-                        ))
-                        promiseResults.push(...results)
-                        if (i + BATCH < accountStore.accounts.length) {
-                            await new Promise(r => setTimeout(r, 500))
-                        }
-                    }
+                        )
+                    )
 
-                        promiseResults.forEach(({ response, accountId }) => {
+                    promiseResults.forEach(r => {
+                        if (r.status !== 'fulfilled') return
+                        const { response, accountId } = r.value
                         if (response?.history) {
                             const serverLogs = (response.history as Record<string, unknown>[]).map((h): HistoryLog => ({
                                 id: h.id as string,
@@ -77,7 +77,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
                                 primaryName: h.primary_name as string,
                                 backupName: h.backup_name as string,
                                 message: h.message as string,
-                                metadata: h.metadata ? JSON.parse(h.metadata as string) : undefined
+                                metadata: parseSafe(h.metadata)
                             }))
                             allLogs = [...allLogs, ...serverLogs]
                         }
@@ -126,20 +126,15 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
                 const accountStore = (await import('@/store/accountStore')).useAccountStore.getState()
                 const syncToken = await deriveSyncToken(auth.password)
-                const BATCH = 5
-                for (let i = 0; i < accountStore.accounts.length; i += BATCH) {
-                    const batch = accountStore.accounts.slice(i, i + BATCH)
-                    await Promise.all(batch.map(account =>
+                await Promise.allSettled(
+                    accountStore.accounts.map(account =>
                         resilientFetch(`${apiPath}/autopilot/history/${account.id}`, {
                             method: 'DELETE',
                             retries: 1,
                             headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
                         }).catch(e => { if (import.meta.env.DEV) console.warn(e) })
-                    ))
-                    if (i + BATCH < accountStore.accounts.length) {
-                        await new Promise(r => setTimeout(r, 300))
-                    }
-                }
+                    )
+                )
             }
         } catch (err) {
             import.meta.env.DEV && console.warn('Server log clear failed, clearing locally anyway:', err)

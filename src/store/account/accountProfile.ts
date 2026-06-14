@@ -7,11 +7,14 @@ import { buildAddonCollectionDiff } from '@/lib/addon-collection-diff'
 import {
     safeUUID,
     getAccountById,
-    getAccountAuthKey,
+    getStremioAuthKey,
     persistAccounts,
     acquireSyncMutex,
+    setAccountLoading,
+    clearAccountLoading,
 } from '../accountStore'
 import type { AccountStore, ProfileSwitchResult } from '../accountStore'
+import type { AddonDescriptor } from '@/types/addon'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
@@ -55,7 +58,7 @@ export async function createSubProfile(accountId: string, name: string, cloneFro
 
 export async function deleteSubProfile(accountId: string, profileId: string) {
     const store = await getStore()
-    store.setState({ loading: true })
+    setAccountLoading(accountId)
     try {
         const { accounts } = store.getState()
         const account = getAccountById(accounts, accountId)
@@ -83,7 +86,7 @@ export async function deleteSubProfile(accountId: string, profileId: string) {
 
         triggerSync()
     } finally {
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }
 
@@ -111,7 +114,8 @@ export async function renameSubProfile(accountId: string, profileId: string, new
 
 export async function switchProfile(accountId: string, targetProfileId: string) {
     const store = await getStore()
-    store.setState({ loading: true, error: null })
+    store.setState({ error: null })
+    setAccountLoading(accountId)
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
         const { accounts } = store.getState()
@@ -155,18 +159,25 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
             else updatedProfiles.unshift(defaultState)
         }
 
-        const newAddons = targetProfile ? targetProfile.addons : (updatedProfiles.find(p => p.id === 'default')?.addons || account.addons)
+        let newAddons: AddonDescriptor[]
+        if (isTargetDefault) {
+            const defaultProfile = updatedProfiles.find(p => p.id === 'default')
+            newAddons = defaultProfile?.addons?.length ? defaultProfile.addons : account.addons
+        } else {
+            newAddons = targetProfile?.addons ?? []
+        }
         const addonChanges = buildAddonCollectionDiff(account.addons, newAddons)
 
         if (addonChanges.hasChanges) {
             const sessionKey = await loadSessionKey()
             if (!sessionKey) throw new Error('Session expired. Sign in again before switching setups.')
-            const authKey = await decrypt(getAccountAuthKey(account), sessionKey)
-            if (!authKey) throw new Error('Failed to decrypt auth key')
-            await updateAddons(authKey, newAddons, 'Setup Swap', {
-                allowCollectionShrink: true,
-                previousCollection: account.addons,
-            })
+            const authKey = await decrypt(getStremioAuthKey(account), sessionKey)
+            if (authKey) {
+                await updateAddons(authKey, newAddons, 'Setup Swap', {
+                    allowCollectionShrink: true,
+                    previousCollection: account.addons,
+                })
+            }
         }
 
         const updatedAccount = {
@@ -192,7 +203,7 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
             targetProfileId,
             targetName,
             addonChanges,
-            stremioWriteSkipped: !addonChanges.hasChanges,
+            remoteWriteSkipped: !addonChanges.hasChanges,
         } as ProfileSwitchResult
     } catch (error) {
         if (import.meta.env.DEV) console.error('Failed to switch setup:', error)
@@ -207,6 +218,6 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
         throw error
     } finally {
         releaseMutex()
-        store.setState({ loading: false })
+        clearAccountLoading(accountId)
     }
 }

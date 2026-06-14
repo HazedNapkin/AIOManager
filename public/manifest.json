@@ -1,8 +1,10 @@
 {
-  "name": "AIOManager v2.0.0",
+  "name": "AIOManager",
+  "short_name": "AIOMan",
   "id": "/",
+  "start_url": "/",
+  "scope": "/",
   "version": "2.0.0",
-  "short_name": "AIOMan v2.0.0",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
