@@ -14,7 +14,7 @@ import {
   ArrowLeft, Link2,
   Check, Compass, Info
 } from 'lucide-react'
-import { AnimatedTrashIcon, AnimatedRefreshIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
+import { AnimatedTrashIcon, AnimatedRefreshIcon } from '../ui/AnimatedIcons'
 import { useEffect, useState, useCallback, useRef, lazy, Suspense } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -95,7 +95,6 @@ export function SavedAddonLibrary() {
   const [updatingAll, setUpdatingAll] = useState(false)
   const { toast } = useToast()
 
-  // Profile Store
   const profiles = useProfileStore(s => s.profiles)
   const initProfiles = useProfileStore(s => s.initialize)
   const deleteProfile = useProfileStore(s => s.deleteProfile)
@@ -189,6 +188,7 @@ export function SavedAddonLibrary() {
   const {
     isSelectionMode,
     selectedIds,
+    setSelectedIds,
     showBulkEditDialog,
     setShowBulkEditDialog,
     showBulkDeleteConfirmation,
@@ -197,15 +197,11 @@ export function SavedAddonLibrary() {
     setShowAccountPicker,
     showRemoveAccountPicker,
     setShowRemoveAccountPicker,
-    showUpdateManifestConfirmation,
-    setShowUpdateManifestConfirmation,
-    updatingManifests,
     clearSelection,
     enterSelectionMode,
     toggleSelectionMode,
     handleToggleSelect,
     handleSelectAll,
-    handleUpdateSelectedManifests,
     handleRemoveFromAccounts,
     handleBulkDelete,
     handleBulkEdit,
@@ -221,15 +217,12 @@ export function SavedAddonLibrary() {
 
     setCheckingUpdates(true)
     try {
-      // 1. Check ALL Health
       await useAddonStore.getState().checkAllHealth()
 
-      // 2. Check Updates
       const updateInfoList = await checkSavedAddonUpdates(savedAddons)
       const versions: Record<string, string> = {}
       const manifestHints: typeof manifestChangeHints = {}
 
-      // Update health from update check results (bonus)
       const healthUpdates = updateInfoList.map(info => ({
         id: info.addonId,
         isOnline: info.health.isOnline,
@@ -435,10 +428,8 @@ export function SavedAddonLibrary() {
 
   const handleDeleteProfile = async () => {
     if (deleteProfileId) {
-      // 1. Delete all addons in this profile
       await useAddonStore.getState().deleteSavedAddonsByProfile(deleteProfileId)
 
-      // 2. Delete the profile itself
       await deleteProfile(deleteProfileId)
 
       if (selectedProfileId === deleteProfileId) {
@@ -545,13 +536,6 @@ export function SavedAddonLibrary() {
               onClick: handleSelectAll,
               variant: 'outline',
               icon: <Check className="h-4 w-4" />,
-            },
-            {
-              label: 'Update',
-              onClick: () => setShowUpdateManifestConfirmation(true),
-              variant: 'outline',
-              icon: <AnimatedUpdateIcon className="h-4 w-4" />,
-              disabled: updatingManifests,
             },
             {
               label: 'Deploy',
@@ -726,6 +710,10 @@ export function SavedAddonLibrary() {
                 manifestChangeHints={manifestChangeHints}
                 deploymentSummaryByAddonId={deploymentSummaryByAddonId}
                 onUpdate={handleUpdateSavedAddon}
+                onDeploy={(savedAddonId) => {
+                  setSelectedIds(new Set([savedAddonId]))
+                  setShowAccountPicker(true)
+                }}
                 isSelectionMode={isSelectionMode}
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
@@ -824,14 +812,7 @@ export function SavedAddonLibrary() {
           )}
         />
 
-        <ConfirmationDialog
-          open={showUpdateManifestConfirmation}
-          onOpenChange={setShowUpdateManifestConfirmation}
-          title={`Update ${selectedIds.size} Manifests?`}
-          description="This will re-fetch the manifest (version and logo) for the selected addons from their source URLs. Custom names, tags, and profile assignments will be preserved."
-          confirmText="Update Manifests"
-          onConfirm={handleUpdateSelectedManifests}
-        />
+
         <TagManagerDialog isOpen={showTagManager} onClose={() => setShowTagManager(false)} />
           </div>}
         </div>

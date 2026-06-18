@@ -104,6 +104,23 @@ function capEvents(events: WatchEvent[]): WatchEvent[] {
     return events.length > 500 ? events.slice(0, 500) : events
 }
 
+function collapseDayDuplicates(events: WatchEvent[]): WatchEvent[] {
+    const byKey = new Map<string, WatchEvent>()
+    for (const e of events) {
+        const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)
+        const key = `${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`
+        const existing = byKey.get(key)
+        if (
+            !existing ||
+            e.event_ts > existing.event_ts ||
+            (e.event_ts === existing.event_ts && e.detected_ts > existing.detected_ts)
+        ) {
+            byKey.set(key, e)
+        }
+    }
+    return byKey.size === events.length ? events : Array.from(byKey.values()).sort((a, b) => b.event_ts - a.event_ts)
+}
+
 async function persistWatchEvents(events: WatchEvent[], snapshot: Snapshot) {
     try {
         await localforage.setItem(STORAGE_KEY, { events, snapshot })
@@ -127,7 +144,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             if (e.video_id !== e.itemId) return true
             return false
         })
-        const capped = capEvents(cleaned)
+        const capped = capEvents(collapseDayDuplicates(cleaned))
         set({ events: capped, snapshot, initialized: true })
         persistWatchEvents(capped, snapshot)
     },
@@ -147,7 +164,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                     if (e.video_id !== e.itemId) return true
                     return false
                 })
-                set({ events: cleaned, snapshot: stored.snapshot || {}, initialized: true })
+                const collapsed = collapseDayDuplicates(cleaned)
+                set({ events: collapsed, snapshot: stored.snapshot || {}, initialized: true })
+                if (collapsed.length !== stored.events.length) persistWatchEvents(collapsed, stored.snapshot || {})
             } else {
                 set({ initialized: true })
             }
@@ -168,7 +187,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         let snapshotChanged = false
 
         for (const event of state.events) {
-            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)
+            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
             const key = `${event.accountId}:${episodeKey}:${getLocalDayKey(event.event_ts)}`
             const existing = existingSessionEvents.get(key)
             if (
@@ -205,7 +224,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             const episode = prior.episode ?? priorEpisode
             if (season == null && episode == null && (!prior.video_id || prior.video_id === item._id)) return
 
-            const episodeKey = getEpisodeIdentity(item._id, prior.video_id, season, episode)
+            const episodeKey = getEpisodeIdentity(item._id, prior.video_id, season, episode, item.type || 'other')
             const sessionKey = `${accountId}:${episodeKey}:${getLocalDayKey(prior.mtime)}`
             if (existingSessionEvents.has(sessionKey)) return
 
@@ -320,7 +339,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 const priorTW = prior.timeWatched || 0
                 const deltaTW = Math.max(0, currentTW - priorTW)
                 const watchedDelta = delta || deltaTW
-                const episodeKey = getEpisodeIdentity(item._id, video_id, currentSeason, currentEpisode)
+                const episodeKey = getEpisodeIdentity(item._id, video_id, currentSeason, currentEpisode, item.type || 'other')
                 const sessionKey = `${accountId}:${episodeKey}:${getLocalDayKey(mtime)}`
                 const mergeCandidate = !episodeAdvanced
                     ? existingSessionEvents.get(sessionKey)
@@ -411,7 +430,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const existingIdentities = new Set<string>()
         for (const e of state.events) {
             if (e.accountId !== accountId) continue
-            existingIdentities.add(getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode))
+            existingIdentities.add(getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type))
         }
         const existingIds = new Set(state.events.map(e => e.id))
         const now = Date.now()
@@ -440,7 +459,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             for (const ep of episodes) {
                 const season = ep.season ?? undefined
                 const episode = ep.episode ?? undefined
-                const identity = getEpisodeIdentity(seriesId, ep.videoId, season, episode)
+                const identity = getEpisodeIdentity(seriesId, ep.videoId, season, episode, item.type || 'series')
                 if (existingIdentities.has(identity)) continue // real event already covers this episode
                 const id = `bf:${accountId}:${ep.videoId}`
                 if (existingIds.has(id)) continue
@@ -495,7 +514,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const eventsById = new Map(state.events.map(e => [e.id, e]))
         const localDayKeys = new Set<string>()
         for (const e of state.events) {
-            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)
+            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)
             localDayKeys.add(`${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`)
         }
         const newEvents: WatchEvent[] = []
@@ -538,7 +557,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 continue
             }
 
-            const ek = getEpisodeIdentity(se.itemId, video_id, event.season, event.episode)
+            const ek = getEpisodeIdentity(se.itemId, video_id, event.season, event.episode, event.type)
             const dayKey = `${se.accountId}:${ek}:${getLocalDayKey(se.timestamp)}`
             if (localDayKeys.has(dayKey)) continue
 
@@ -583,14 +602,14 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const eventsById = new Map(state.events.map(e => [e.id, e]))
         const sessionKeys = new Set<string>()
         for (const e of state.events) {
-            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)
+            const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)
             sessionKeys.add(`${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`)
         }
         let changed = false
 
         for (const item of items) {
             const video_id = item.video_id || item.itemId
-            const episodeKey = getEpisodeIdentity(item.itemId, video_id, item.season, item.episode)
+            const episodeKey = getEpisodeIdentity(item.itemId, video_id, item.season, item.episode, item.type)
             const dayKey = getLocalDayKey(item.timestamp)
             const sessionKey = `${accountId}:${episodeKey}:${dayKey}`
             const eventId = `ext:${platform}:${accountId}:${episodeKey}:${dayKey}`

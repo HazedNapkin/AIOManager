@@ -142,7 +142,6 @@ export function DiscoverToolbar({
             </div>
           )}
 
-          {/* Filters popover replaces the two chip rows */}
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -202,7 +201,6 @@ export function DiscoverToolbar({
         </div>
       </ToolbarShell>
 
-      {/* Category chips — single scrollable row, no wrapping */}
       {categories.length > 0 && (
         <div className="flex overflow-x-auto gap-1.5 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {categories.map((c) => {

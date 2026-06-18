@@ -1,4 +1,5 @@
 import { source } from '@/lib/source'
+import type { ComponentProps } from 'react'
 import { DocsPage, DocsBody, DocsTitle, DocsDescription } from 'fumadocs-ui/page'
 import { useLocation, Navigate } from 'react-router-dom'
 import defaultMdxComponents from 'fumadocs-ui/mdx'
@@ -12,7 +13,6 @@ import { InstanceTabs } from '@/components/kronorium/InstanceTabs'
 
 export function KronoriumPage() {
   const location = useLocation()
-  // Strip the /kronorium prefix and split into slug parts
   const slug = location.pathname
     .replace(/^\/kronorium\/?/, '')
     .split('/')
@@ -23,15 +23,16 @@ export function KronoriumPage() {
   if (!page) return <Navigate to="/404" replace />
 
   const isIndex = slug.length === 0
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { body: MDX, toc } = page.data as any
 
   const content = (
     <MDX
       components={{
         ...defaultMdxComponents,
-        Note: (props: any) => <Callout type="info" {...props} />,
-        Warning: (props: any) => <Callout type="warn" {...props} />,
-        Tip: (props: any) => <Callout type="info" {...props} />,
+        Note: (props: ComponentProps<typeof Callout>) => <Callout type="info" {...props} />,
+        Warning: (props: ComponentProps<typeof Callout>) => <Callout type="warn" {...props} />,
+        Tip: (props: ComponentProps<typeof Callout>) => <Callout type="info" {...props} />,
         Callout,
         Card,
         Cards,

@@ -53,18 +53,15 @@ export function InstallSavedAddonDialog({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
-  // View State
   const viewMode = useUIStore(s => s.libraryViewMode)
   const setViewMode = useUIStore(s => s.setLibraryViewMode)
 
-  // Filter states
   const [searchTerm, setSearchTerm] = useState('')
   const [tagFilter, setTagFilter] = useState<string>('all')
   const [profileFilter, setProfileFilter] = useState<string>('all')
 
   const profiles = useProfileStore(s => s.profiles)
 
-  // Memoized data
   const savedAddons = useMemo(() =>
     Object.values(library).sort((a, b) => a.name.localeCompare(b.name)),
     [library])
@@ -75,7 +72,6 @@ export function InstallSavedAddonDialog({
     return Array.from(tags).sort()
   }, [savedAddons])
 
-  // Helper to check status
   const getAddonStatus = (savedAddon: { id: string, installUrl: string }) => {
     // Check if installed by comparing transport URLs (ignoring trailing slashes)
     const isInstalled = installedAddons.some(a => {
@@ -87,7 +83,6 @@ export function InstallSavedAddonDialog({
     return { isInstalled, isSelected }
   }
 
-  // Filtered list
   const filteredAddons = useMemo(() => {
     return savedAddons.filter(addon => {
       const matchesSearch = addon.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -195,7 +190,6 @@ export function InstallSavedAddonDialog({
 
         </DialogHeader>
 
-        {/* Content Area */}
         <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
           <aside className="shrink-0 border-b border-border/40 bg-card/40 p-4 lg:border-b-0 lg:border-r">
             <div className="grid gap-2 sm:grid-cols-2 lg:sticky lg:top-0 lg:block lg:space-y-3">
@@ -298,7 +292,6 @@ export function InstallSavedAddonDialog({
           <div className="h-[34dvh] min-h-[220px] flex-1 overflow-y-auto overscroll-contain p-0 sm:h-[45vh] lg:h-[58vh]">
             <div className="space-y-4 p-4 sm:p-6">
 
-            {/* Addon Grid/List */}
             <div className={cn(
               "grid gap-3",
               viewMode === 'grid' ? "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3" : "grid-cols-1"
@@ -326,7 +319,6 @@ export function InstallSavedAddonDialog({
                       )}
                       onClick={() => toggleSavedAddon(addon.id)}
                     >
-                      {/* Selection Indicator */}
                       <div className={cn(
                         "rounded-full border border-primary/20 flex items-center justify-center transition-[transform,opacity,box-shadow] z-10 shrink-0",
                         viewMode === 'grid' ? "absolute top-3 right-3 h-6 w-6" : "h-6 w-6",
@@ -335,7 +327,6 @@ export function InstallSavedAddonDialog({
                         {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
                       </div>
 
-                      {/* Header: Logo + Name */}
                       <div className={cn("flex min-w-0 flex-1 items-start gap-3", viewMode === 'grid' ? "mb-3 pr-6" : "")}>
                         <AddonIcon
                           name={addon.name}
@@ -354,7 +345,6 @@ export function InstallSavedAddonDialog({
                         </div>
                       </div>
 
-                      {/* Footer: Tags + Status */}
                       <div className={cn(
                         "flex items-center gap-2",
                         viewMode === 'grid' ? "mt-auto justify-between w-full" : "justify-end shrink-0"
@@ -383,7 +373,6 @@ export function InstallSavedAddonDialog({
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-4 pb-4 pt-2">
           {selectedSavedAddonIds.size > 0 && (
             <div className="mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-3 shadow-sm">

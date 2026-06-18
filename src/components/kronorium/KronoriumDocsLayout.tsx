@@ -39,6 +39,7 @@ export function KronoriumDocsLayout({ children }: { children: ReactNode }) {
       },
       refresh: () => window.location.reload(),
     }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Link: ({ href, children, ...props }: any) => {
       if (typeof href === 'string' && isExternal(href)) {
         return <a href={href} {...props}>{children}</a>;
@@ -61,7 +62,7 @@ export function KronoriumDocsLayout({ children }: { children: ReactNode }) {
   );
 }
 
-function KronoriumContent({ location, children }: { location: any, children: ReactNode }) {
+function KronoriumContent({ location, children }: { location: { pathname: string }, children: ReactNode }) {
     const isHome = location.pathname.replace(/\/$/, '') === '/kronorium';
     const search = useSearchContext();
 

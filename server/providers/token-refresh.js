@@ -137,8 +137,6 @@ async function refreshRealStreamTokenInner(connectionId) {
     } catch (err) {
         if (!err.isAuthError) throw err
 
-        // Token is fully expired — try a silent full re-authentication using the stored
-        // credentials (server-encrypted at rest when the user first connected).
         if (bundle.email && bundle.password) {
             try {
                 const reauthed = await driver.authenticate(bundle.email, bundle.password)
@@ -153,7 +151,6 @@ async function refreshRealStreamTokenInner(connectionId) {
                 await persistRotatedToken(connectionId, 'realstream', newBundle)
                 return newBundle
             } catch (reauthErr) {
-                // Both refresh and re-auth failed — credentials may have changed.
                 reauthErr._authExpired = true
                 throw reauthErr
             }

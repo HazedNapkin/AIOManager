@@ -1,12 +1,3 @@
-/**
- * Addon Validator
- *
- * Provides validation and fetching of addon manifests for saved addons.
- */
-
-/**
- * Normalize tag name
- */
 export function normalizeTagName(tag: string): string {
   return tag
     .toLowerCase()

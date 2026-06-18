@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Clock } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
-// GlassPill removed for performance
 import { ReplayData } from '@/types/ReplayTypes'
 import { openStremioDetail } from '@/lib/utils'
 import { Poster } from '@/components/common/Poster'
@@ -118,7 +117,6 @@ export function ReplayTopTitles({ data, allTimeData }: ReplayTopTitlesProps) {
                                 onClick={() => handleTitleClick(title)}
                                 style={{ borderRadius: '24px', padding: '1px', background: i < 3 ? 'linear-gradient(135deg, rgba(99,102,241,0.5), rgba(244,114,182,0.3), rgba(139,92,246,0.5))' : 'rgba(255,255,255,0.08)' }}
                             >
-                                {/* Hover glow */}
                                 <div
                                     className="absolute inset-[-8px] rounded-[32px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
                                     style={{ background: 'radial-gradient(circle at center, rgba(99,102,241,0.12) 0%, transparent 70%)', filter: 'blur(12px)' }}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { Check, ChevronLeft, ChevronRight, Plus, Settings2, Star } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Plus, Settings2, Star, Upload } from 'lucide-react'
 import { getConfigureUrl, requiresConfiguration, type DiscoverAddon } from '@/api/discover'
 
 interface DiscoverHeroProps {
@@ -12,11 +12,14 @@ interface DiscoverHeroProps {
   onSave: (addon: DiscoverAddon) => void
   onConfigure: (addon: DiscoverAddon) => void
   onOpenDetail: (addon: DiscoverAddon) => void
+  onDeploy?: (addon: DiscoverAddon) => void
+  deployedCount?: (addon: DiscoverAddon) => number
+  accountTotal?: number
 }
 
 const ROTATE_MS = 7000
 
-export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, onOpenDetail }: DiscoverHeroProps) {
+export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, onOpenDetail, onDeploy, deployedCount }: DiscoverHeroProps) {
   const [index, setIndex] = useState(0)
   const [paused, setPaused] = useState(false)
   const [failedBackgrounds, setFailedBackgrounds] = useState<Set<string>>(new Set())
@@ -46,6 +49,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
   const needsConfig = requiresConfiguration(addon)
   const canConfigure = !!getConfigureUrl(addon)
   const saved = isSaved(addon)
+  const deployedOn = deployedCount?.(addon) ?? 0
   
   const showBackground = background && !failedBackgrounds.has(addon.uuid)
   const showLogo = logo && !failedLogos.has(addon.uuid)
@@ -114,15 +118,21 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
               <Star className="h-4 w-4 fill-warning text-warning" />
               {addon.stars.toLocaleString()}
             </span>
-            {saved ? (
-              <Button variant="outline" disabled className="gap-1.5">
-                <Check className="h-4 w-4" />
-                In Library
-              </Button>
-            ) : needsConfig ? (
+            {deployedOn > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                <Upload className="h-3 w-3" />
+                On {deployedOn} account{deployedOn !== 1 ? 's' : ''}
+              </span>
+            )}
+            {needsConfig ? (
               <Button className="gap-1.5" onClick={() => onConfigure(addon)}>
                 <Settings2 className="h-4 w-4" />
                 Configure
+              </Button>
+            ) : onDeploy ? (
+              <Button className="gap-1.5" onClick={() => onDeploy(addon)}>
+                <Upload className="h-4 w-4" />
+                Install to accounts
               </Button>
             ) : (
               <Button className="gap-1.5" onClick={() => onSave(addon)} disabled={savingKey === addon.uuid}>
@@ -130,6 +140,17 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
                 {savingKey === addon.uuid ? 'Saving...' : 'Save to Library'}
               </Button>
             )}
+            {saved ? (
+              <Button variant="outline" disabled className="gap-1.5">
+                <Check className="h-4 w-4" />
+                In Library
+              </Button>
+            ) : !needsConfig && onDeploy ? (
+              <Button variant="outline" className="gap-1.5" onClick={() => onSave(addon)} disabled={savingKey === addon.uuid}>
+                <Plus className="h-4 w-4" />
+                {savingKey === addon.uuid ? 'Saving...' : 'Save'}
+              </Button>
+            ) : null}
             {!needsConfig && canConfigure && (
               <Button variant="outline" className="gap-1.5" onClick={() => onConfigure(addon)}>
                 <Settings2 className="h-4 w-4" />
@@ -146,7 +167,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
             type="button"
             aria-label="Previous featured addon"
             onClick={(e) => { e.stopPropagation(); go(-1) }}
-            className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 opacity-0 shadow-lg backdrop-blur transition-opacity hover:bg-card group-hover:opacity-100"
+            className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -154,7 +175,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
             type="button"
             aria-label="Next featured addon"
             onClick={(e) => { e.stopPropagation(); go(1) }}
-            className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 opacity-0 shadow-lg backdrop-blur transition-opacity hover:bg-card group-hover:opacity-100"
+            className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"
           >
             <ChevronRight className="h-5 w-5" />
           </button>

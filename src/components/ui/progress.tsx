@@ -26,10 +26,8 @@ const Progress = React.forwardRef<
       animate={{ width: `${value || 0}%` }}
       transition={{ type: 'spring', stiffness: 100, damping: 20 }}
     >
-      {/* Leading edge glow */}
       <div className="absolute right-0 top-0 bottom-0 w-4 bg-gradient-to-r from-transparent to-white/20 rounded-full" />
 
-      {/* Shimmer stripe */}
       {shimmer && (value || 0) > 0 && (
         <div
           className="absolute inset-0 overflow-hidden rounded-full"

@@ -73,7 +73,6 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
         }
     }, [disabled, isCreating, onError])
 
-    // Polling logic
     useEffect(() => {
         if (!isPolling || !stremioCode || disabled) return
 
@@ -131,7 +130,6 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
         }
     }, [isPolling, stremioCode, isExpired, onAuthKey, disabled])
 
-    // Timer tick
     useEffect(() => {
         if (!expiresAt || isExpired) return
         const interval = setInterval(() => setTick((t) => t + 1), 1000)

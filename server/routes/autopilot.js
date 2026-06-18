@@ -8,22 +8,23 @@ import { maskContext } from '../utils/log-helpers.js'
 import { proxyQueue, proxyQueueKeyCounts, serverState } from '../state.js'
 
 export function registerAutopilotRoutes(fastify, autopilotEngine) {
-    async function upsertCredential(owner, accountId, accountName, encryptedAuthKey) {
+    async function upsertCredential(owner, accountId, accountName, encryptedAuthKey, credentialType = 'stremio', connectionId = null) {
+        if (!encryptedAuthKey && !connectionId) return
         try {
-            const credId = `${owner}:${accountId}`
+            const credId = connectionId ? `${owner}:${connectionId}` : `${owner}:${accountId}`
             const now = Date.now()
             if (db.type === 'postgres') {
                 await db.run(
-                    `INSERT INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     ON CONFLICT (id) DO UPDATE SET auth_key = EXCLUDED.auth_key, updated_at = EXCLUDED.updated_at`,
-                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now]
+                    `INSERT INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (id) DO UPDATE SET auth_key = EXCLUDED.auth_key, updated_at = EXCLUDED.updated_at, credential_type = EXCLUDED.credential_type, connection_id = EXCLUDED.connection_id`,
+                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId]
                 )
             } else {
                 await db.run(
-                    `INSERT OR REPLACE INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, $6)`,
-                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now]
+                    `INSERT OR REPLACE INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId]
                 )
             }
         } catch (credErr) {
@@ -54,8 +55,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     const isSafeAutopilotUrl = async (url) =>
         typeof url === 'string' && await isSafeUrlResolved(url.replace(/^stremio:\/\//i, 'https://'))
 
-    const validateRulePayload = async ({ id, accountId, authKey, priorityChain, activeUrl, addonList }) => {
-        if (!id || !accountId || !authKey || !Array.isArray(priorityChain) || priorityChain.length === 0) {
+    const validateRulePayload = async ({ id, accountId, authKey, connectionId, priorityChain, activeUrl, addonList }) => {
+        if (!id || !accountId || (!authKey && !connectionId) || !Array.isArray(priorityChain) || priorityChain.length === 0) {
             return 'Missing required Autopilot data'
         }
         const chainResults = await Promise.all(priorityChain.map(isSafeAutopilotUrl))
@@ -67,15 +68,15 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
     async function checkPlaintextEqual(existingRule, { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name }) {
         if (!existingRule) return false
-        const existingAuthKey = decrypt(existingRule.auth_key, FALLBACK_KEYS)
-        const existingChainStr = decrypt(existingRule.priority_chain, FALLBACK_KEYS)
-        if (!existingAuthKey || !existingChainStr) throw new Error('Decryption failed')
-        const existingChain = JSON.parse(existingChainStr)
+        const existingAuthKey = existingRule.auth_key ? decrypt(existingRule.auth_key, FALLBACK_KEYS) : ''
+        const existingChainStr = existingRule.priority_chain ? decrypt(existingRule.priority_chain, FALLBACK_KEYS) : ''
+        if (existingRule.priority_chain && !existingChainStr) throw new Error('Decryption failed')
+        const existingChain = existingChainStr ? JSON.parse(existingChainStr) : []
         const existingAddonList = existingRule.addon_list ? JSON.parse(decrypt(existingRule.addon_list, FALLBACK_KEYS) || 'null') : null
         const existingActiveUrl = existingRule.active_url ? decrypt(existingRule.active_url, FALLBACK_KEYS) : null
         const existingWebhookUrl = existingRule.webhook_url ? decrypt(existingRule.webhook_url, FALLBACK_KEYS) : null
 
-        return existingAuthKey === authKey &&
+        return existingAuthKey === (authKey || '') &&
             JSON.stringify(existingChain) === JSON.stringify(priorityChain) &&
             JSON.stringify(existingAddonList) === JSON.stringify(addonList ?? null) &&
             (existingActiveUrl || null) === (activeUrl || null) &&
@@ -87,8 +88,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             existingRule.name === name
     }
 
-    async function upsertRuleRecord({ id, accountId, name, authKey, priorityChain, activeUrl, addonList, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate }, existingRule, authUser) {
-        const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
+    async function upsertRuleRecord({ id, accountId, name, authKey, priorityChain, activeUrl, addonList, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, platform, connectionId }, existingRule, authUser) {
+        const effectivePlatform = (platform || 'stremio').toLowerCase()
+        const encryptedAuthKey = authKey ? encrypt(authKey, PRIMARY_KEY) : null
         const encryptedChain = encrypt(JSON.stringify(priorityChain), PRIMARY_KEY)
         const encryptedActiveUrl = activeUrl ? encrypt(activeUrl, PRIMARY_KEY) : null
         const encryptedAddonList = addonList ? encrypt(JSON.stringify(addonList), PRIMARY_KEY) : null
@@ -98,8 +100,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
         if (db.type === 'postgres') {
             await db.run(`
-                INSERT INTO autopilot_rules (id, account_id, name, auth_key, priority_chain, addon_list, active_url, webhook_url, is_active, is_automatic, updated_at, cooldown_ms, message_template, owner_sync_user)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                INSERT INTO autopilot_rules (id, account_id, name, auth_key, priority_chain, addon_list, active_url, webhook_url, is_active, is_automatic, updated_at, cooldown_ms, message_template, owner_sync_user, platform, connection_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     auth_key = EXCLUDED.auth_key,
@@ -112,7 +114,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     updated_at = EXCLUDED.updated_at,
                     cooldown_ms = EXCLUDED.cooldown_ms,
                     message_template = EXCLUDED.message_template,
-                    owner_sync_user = EXCLUDED.owner_sync_user
+                    owner_sync_user = EXCLUDED.owner_sync_user,
+                    platform = EXCLUDED.platform,
+                    connection_id = EXCLUDED.connection_id
                 WHERE
                     autopilot_rules.name IS DISTINCT FROM EXCLUDED.name OR
                     autopilot_rules.auth_key IS DISTINCT FROM EXCLUDED.auth_key OR
@@ -123,12 +127,14 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     autopilot_rules.is_active IS DISTINCT FROM EXCLUDED.is_active OR
                     autopilot_rules.is_automatic IS DISTINCT FROM EXCLUDED.is_automatic OR
                     autopilot_rules.cooldown_ms IS DISTINCT FROM EXCLUDED.cooldown_ms OR
-                    autopilot_rules.message_template IS DISTINCT FROM EXCLUDED.message_template
-            `, [id, accountId, name, encryptedAuthKey, encryptedChain, encryptedAddonList, encryptedActiveUrl, encryptedWebhookUrl, is_active ? 1 : 0, is_automatic ? 1 : 0, now, cooldown_ms, messageTemplate || null, resolvedOwner])
+                    autopilot_rules.message_template IS DISTINCT FROM EXCLUDED.message_template OR
+                    autopilot_rules.platform IS DISTINCT FROM EXCLUDED.platform OR
+                    autopilot_rules.connection_id IS DISTINCT FROM EXCLUDED.connection_id
+            `, [id, accountId, name, encryptedAuthKey, encryptedChain, encryptedAddonList, encryptedActiveUrl, encryptedWebhookUrl, is_active ? 1 : 0, is_automatic ? 1 : 0, now, cooldown_ms, messageTemplate || null, resolvedOwner, effectivePlatform, connectionId || null])
         } else {
             await db.run(`
-                INSERT INTO autopilot_rules (id, account_id, name, auth_key, priority_chain, addon_list, active_url, webhook_url, is_active, is_automatic, updated_at, cooldown_ms, message_template, owner_sync_user)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                INSERT INTO autopilot_rules (id, account_id, name, auth_key, priority_chain, addon_list, active_url, webhook_url, is_active, is_automatic, updated_at, cooldown_ms, message_template, owner_sync_user, platform, connection_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     auth_key = excluded.auth_key,
@@ -141,10 +147,12 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     updated_at = excluded.updated_at,
                     cooldown_ms = excluded.cooldown_ms,
                     message_template = excluded.message_template,
-                    owner_sync_user = excluded.owner_sync_user
+                    owner_sync_user = excluded.owner_sync_user,
+                    platform = excluded.platform,
+                    connection_id = excluded.connection_id
                 WHERE
                     COALESCE(autopilot_rules.name, '') != COALESCE(excluded.name, '') OR
-                    autopilot_rules.auth_key != excluded.auth_key OR
+                    autopilot_rules.auth_key IS NOT excluded.auth_key OR
                     autopilot_rules.priority_chain != excluded.priority_chain OR
                     COALESCE(autopilot_rules.addon_list, '') != COALESCE(excluded.addon_list, '') OR
                     COALESCE(autopilot_rules.active_url, '') != COALESCE(excluded.active_url, '') OR
@@ -152,11 +160,15 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     autopilot_rules.is_active != excluded.is_active OR
                     autopilot_rules.is_automatic != excluded.is_automatic OR
                     COALESCE(autopilot_rules.cooldown_ms, 0) != COALESCE(excluded.cooldown_ms, 0) OR
-                    COALESCE(autopilot_rules.message_template, '') != COALESCE(excluded.message_template, '')
-            `, [id, accountId, name, encryptedAuthKey, encryptedChain, encryptedAddonList, encryptedActiveUrl, encryptedWebhookUrl, is_active ? 1 : 0, is_automatic ? 1 : 0, now, cooldown_ms, messageTemplate || null, resolvedOwner])
+                    COALESCE(autopilot_rules.message_template, '') != COALESCE(excluded.message_template, '') OR
+                    COALESCE(autopilot_rules.platform, 'stremio') != COALESCE(excluded.platform, 'stremio') OR
+                    autopilot_rules.connection_id IS NOT excluded.connection_id
+            `, [id, accountId, name, encryptedAuthKey, encryptedChain, encryptedAddonList, encryptedActiveUrl, encryptedWebhookUrl, is_active ? 1 : 0, is_automatic ? 1 : 0, now, cooldown_ms, messageTemplate || null, resolvedOwner, effectivePlatform, connectionId || null])
         }
 
-        await upsertCredential(resolvedOwner, accountId, name, encryptedAuthKey)
+        if (effectivePlatform === 'stremio' && encryptedAuthKey) {
+            await upsertCredential(resolvedOwner, accountId, name, encryptedAuthKey, 'stremio', null)
+        }
         return { resolvedOwner, encryptedAuthKey }
     }
 
@@ -255,8 +267,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         }
     }
 
-    const scheduleRuleEnforcement = async ({ id, accountId, authKey, priorityChain, activeUrl, addonList, is_active, is_automatic }) => {
-        if (!syncStremioLive || !authKey || is_active === 0 || is_active === false || is_automatic === 0 || is_automatic === false) return
+    const scheduleRuleEnforcement = async ({ id, accountId, authKey, connectionId, platform, ownerSyncUser, priorityChain, activeUrl, addonList, is_active, is_automatic }) => {
+        if (!syncStremioLive || (!authKey && !connectionId) || is_active === 0 || is_active === false || is_automatic === 0 || is_automatic === false) return
         if (!Array.isArray(priorityChain) || priorityChain.length === 0) return
 
         const chainSafety = await Promise.all(priorityChain.map(isSafeAutopilotUrl))
@@ -265,13 +277,13 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
         const targetActiveUrl = (activeUrl && await isSafeAutopilotUrl(activeUrl)) ? activeUrl : safeChain[0]
         const storedAddons = Array.isArray(addonList) ? addonList : []
-        const payloadHash = hashEnforcementPayload({ authKey, safeChain, targetActiveUrl, storedAddons })
+        const payloadHash = hashEnforcementPayload({ authKey: authKey || connectionId, safeChain, targetActiveUrl, storedAddons })
         if (shouldDebounceEnforcement(id, payloadHash)) return
 
         // Route sync is user initiated; enforce immediately so backups are hidden
         // without waiting for the next worker pass or a frontend refresh.
         Promise.resolve()
-            .then(() => syncStremioLive(authKey, safeChain, targetActiveUrl, accountId, id, storedAddons, false))
+            .then(() => syncStremioLive({ authKey, platform: (platform || 'stremio').toLowerCase(), connectionId, accountId, ownerSyncUser }, safeChain, targetActiveUrl, accountId, id, storedAddons, false))
             .then(async (reconciledList) => {
                 if (id && Array.isArray(reconciledList)) {
                     const storedAddonList = await loadStoredAddonList(id)
@@ -292,12 +304,12 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     }
 
     fastify.post('/api/autopilot/sync', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
-        const { id, accountId, name, authKey, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate } = request.body
+        const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate } = request.body
 
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
-        const validationError = await validateRulePayload({ id, accountId, authKey, priorityChain, activeUrl, addonList })
+        const validationError = await validateRulePayload({ id, accountId, authKey, connectionId, priorityChain, activeUrl, addonList })
         if (validationError) {
             reply.status(400);
             return { error: validationError }
@@ -320,20 +332,22 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             const isEqual = await checkPlaintextEqual(existingRule, rulePayload)
             if (isEqual) {
                 fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Rule unchanged, skipping write.`)
-                const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
-                await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey)
-                scheduleRuleEnforcement({ id, accountId, authKey, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                if (authKey) {
+                    const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
+                    await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey, (platform || 'stremio').toLowerCase(), connectionId || null)
+                }
+                scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
                 return { success: true, skipped: true }
             }
         } catch (cmpErr) {
             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Plaintext comparison failed, falling back to upsert: ${cmpErr.message}`)
         }
 
-        await upsertRuleRecord({ id, accountId, name, ...rulePayload }, existingRule, authUser)
+        await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser)
 
         fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Rule synced to server (Swap & Hide Mode).`)
         clearRuleRuntimeState?.(id)
-        scheduleRuleEnforcement({ id, accountId, authKey, priorityChain, activeUrl, addonList, is_active, is_automatic })
+        scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
         return { success: true }
     })
 
@@ -352,9 +366,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                 results.push({ id: null, ok: false, error: 'Invalid rule payload' })
                 continue
             }
-            const { id, accountId, name, authKey, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate } = ruleData
+            const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate } = ruleData
 
-            const validationError = await validateRulePayload({ id, accountId, authKey, priorityChain, activeUrl, addonList })
+            const validationError = await validateRulePayload({ id, accountId, authKey, connectionId, priorityChain, activeUrl, addonList })
             if (validationError) {
                 results.push({ id: id || null, ok: false, error: validationError })
                 continue
@@ -373,9 +387,11 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                 try {
                     const isEqual = await checkPlaintextEqual(existingRule, rulePayload)
                     if (isEqual) {
-                        const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
-                        await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey)
-                        scheduleRuleEnforcement({ id, accountId, authKey, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                        if (authKey) {
+                            const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
+                            await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey, (platform || 'stremio').toLowerCase(), connectionId || null)
+                        }
+                        scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
                         results.push({ id, ok: true, skipped: true })
                         continue
                     }
@@ -383,11 +399,11 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Plaintext comparison failed, falling back to upsert: ${cmpErr.message}`)
                 }
 
-                await upsertRuleRecord({ id, accountId, name, ...rulePayload }, existingRule, authUser)
+                await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser)
 
                 results.push({ id, ok: true })
                 clearRuleRuntimeState?.(id)
-                scheduleRuleEnforcement({ id, accountId, authKey, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
             } catch (e) {
                 fastify.log.error({ category: 'Autopilot' }, `[${maskContext(accountId || id)}] Batch sync failed: ${e.message}`)
                 results.push({ id, ok: false, error: 'Unable to sync Autopilot rule' })
@@ -428,7 +444,6 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         }
     })
 
-    // Deactivates the caller's rules for an account that aren't in the active set.
     fastify.post('/api/autopilot/active-rules', { bodyLimit: 1024 * 64, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }

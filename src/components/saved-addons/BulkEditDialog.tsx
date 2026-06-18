@@ -45,14 +45,12 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
 
     const [loading, setLoading] = useState(false)
 
-    // Data State
     const [tagsToAdd, setTagsToAdd] = useState<string[]>([])
     const [tagsToRemove, setTagsToRemove] = useState<string[]>([])
     const [selectedProfileId, setSelectedProfileId] = useState<string>('no-change')
     const [syncWithInstalled, setSyncWithInstalled] = useState<'no-change' | boolean>('no-change')
     const syncCardRef = useRef<HTMLDivElement>(null)
 
-    // Reset state when dialog opens
     useEffect(() => {
         if (open) {
             setTagsToAdd([])
@@ -86,7 +84,7 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
             await onSave(data)
             onOpenChange(false)
         } catch (error) {
-            import.meta.env.DEV && console.error(error)
+            if (import.meta.env.DEV) console.error(error)
         } finally {
             setLoading(false)
         }
@@ -103,7 +101,6 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                 </DialogHeader>
 
                 <div className="grid gap-6 py-6">
-                    {/* Tag Management Card */}
                     <Card className="border shadow-none">
                         <CardHeader className="pb-3">
                             <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
@@ -140,7 +137,6 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                         </CardContent>
                     </Card>
 
-                    {/* Profile Card */}
                     <Card className="border shadow-none">
                         <CardHeader className="pb-3">
                             <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
@@ -169,7 +165,6 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                         </CardContent>
                     </Card>
 
-                    {/* Sync Card */}
                     <Card ref={syncCardRef} className="border shadow-none">
                         <CardHeader className="pb-3">
                             <CardTitle className="text-xs font-medium flex items-center gap-2 uppercase text-muted-foreground">
@@ -197,7 +192,6 @@ export function BulkEditDialog({ open, onOpenChange, selectedCount, availableTag
                         </CardContent>
                     </Card>
 
-                    {/* Change Preview */}
                     <div className="bg-muted/30 border border-dashed rounded-lg p-3 space-y-2">
                         <h4 className="text-xs font-bold uppercase text-muted-foreground">Change Preview</h4>
                         <div className="text-xs space-y-1">

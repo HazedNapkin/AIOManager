@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ComponentProps } from 'react'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import { CHART_PALETTE } from '@/lib/chart-colors'
 
@@ -33,6 +33,9 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
         return <div className="flex h-[180px] items-center justify-center text-sm text-muted-foreground">No data</div>
     }
 
+    const tooltipFormatter: NonNullable<ComponentProps<typeof Tooltip>['formatter']> = (value, name) =>
+        [`${value} (${Math.round(Number(value) / total * 100)}%)`, name]
+
     return (
         <div className="grid gap-3 sm:grid-cols-[180px_1fr] sm:items-center">
             <div className="relative">
@@ -59,7 +62,7 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
                                 borderRadius: '0.75rem',
                                 fontSize: '12px',
                             }}
-                            formatter={((value: number, name: string) => [`${value} (${Math.round(value / total * 100)}%)`, name]) as any}
+                            formatter={tooltipFormatter}
                         />
                     </PieChart>
                 </ResponsiveContainer>

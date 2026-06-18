@@ -56,7 +56,6 @@ const Button = React.forwardRef<
   const resolvedType = asChild ? type : (type ?? 'button')
   const buttonRef = React.useRef<HTMLButtonElement>(null)
 
-  // Enable ripple by default for primary (default) variant
   const shouldRipple = ripple ?? (variant === 'default' || variant === undefined)
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -101,7 +100,6 @@ const Button = React.forwardRef<
     onClick?.(e)
   }
 
-  // Merge refs
   const mergedRef = React.useCallback((node: HTMLButtonElement | null) => {
     (buttonRef as React.MutableRefObject<HTMLButtonElement | null>).current = node
     if (typeof ref === 'function') ref(node)

@@ -5,6 +5,7 @@ export type VaultProvider =
     | 'alldebrid'
     | 'debrid-link'
     | 'aiostreams'
+    | 'aiometadata'
     | 'other'
 
 export interface VaultKey {

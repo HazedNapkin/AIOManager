@@ -114,7 +114,7 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                     connectionType: c.connectionType,
                     driverType: c.driverType,
                     enabled: c.enabled,
-                    credentials: c.credentials,
+                    credentials: includeCredentialsValue ? c.credentials : {},
                     profileMapping: c.profileMapping,
                     capabilities: c.capabilities,
                     pluginList: c.pluginList,
@@ -122,7 +122,7 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                     displayName: c.displayName,
                 })),
                 primaryConnectionId: acc.primaryConnectionId,
-                apiKey: acc.apiKey,
+                apiKey: includeCredentialsValue ? acc.apiKey : undefined,
                 hideLastWatched: acc.hideLastWatched,
             }))
         )
@@ -140,7 +140,7 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
 
         const apiKeys: Record<string, string> = {}
         for (const acc of store.getState().accounts) {
-            if (acc.apiKey) apiKeys[acc.id] = acc.apiKey
+            if (includeCredentialsValue && acc.apiKey) apiKeys[acc.id] = acc.apiKey
         }
 
         const data: Record<string, unknown> = {
@@ -331,15 +331,13 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     if (stremioConn?.credentials?.authKey && readEncryptionKey) {
                         try {
                             return { id: acc.id, key: await decrypt(stremioConn.credentials.authKey, readEncryptionKey), password }
-                        } catch {
-                        }
+                        } catch {}
                     }
                     const connWithCreds = (acc.connections || []).find(c => c.credentials?.authKey)
                     if (connWithCreds && readEncryptionKey) {
                         try {
                             return { id: acc.id, key: await decrypt(connWithCreds.credentials.authKey, readEncryptionKey), password }
-                        } catch {
-                        }
+                        } catch {}
                     }
                     return { id: acc.id, key: null, password }
                 }
@@ -408,13 +406,32 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     profiles: (() => {
                         const localProfiles = matchedAccount.profiles || []
                         const incomingProfiles = ra.profiles || []
-                        if (incomingProfiles.length === 0) return matchedAccount.profiles
-                        if (localProfiles.length === 0) return ra.profiles
-                        const byId = new Map(localProfiles.map(p => [p.id, p]))
-                        for (const p of incomingProfiles) {
-                            if (!byId.has(p.id)) byId.set(p.id, p)
+                        let merged
+                        if (incomingProfiles.length === 0) merged = [...(matchedAccount.profiles || [])]
+                        else if (localProfiles.length === 0) merged = [...(ra.profiles || [])]
+                        else {
+                            const byId = new Map(localProfiles.map(p => [p.id, p]))
+                            for (const p of incomingProfiles) {
+                                if (!byId.has(p.id)) byId.set(p.id, p)
+                            }
+                            merged = Array.from(byId.values())
                         }
-                        return Array.from(byId.values())
+                        const resolvedActiveId = matchedAccount.activeProfileId ?? ra.activeProfileId
+                        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+                        const hasDefault = merged.some(p => p?.id === 'default')
+                        if (!hasDefault && (resolvedActiveId === undefined || resolvedActiveId === null) && merged.length > 0) {
+                            const candidateIdx = merged.findIndex(p => p && !uuidRe.test(String(p.id)))
+                            const targetIdx = candidateIdx === -1 ? 0 : candidateIdx
+                            merged[targetIdx] = { ...merged[targetIdx], id: 'default' }
+                        }
+                        let firstDefaultKept = false
+                        return merged.map(p => {
+                            if (p?.id === 'default') {
+                                if (firstDefaultKept) return { ...p, id: safeUUID() }
+                                firstDefaultKept = true
+                            }
+                            return p
+                        })
                     })(),
                     activeProfileId: matchedAccount.activeProfileId ?? ra.activeProfileId,
                     ...(() => {
@@ -457,8 +474,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                         .map(migrateLocalAccountSecrets)
                 )
 
+        let finalAccounts: typeof currentAccounts
         if (mode === 'mirror') {
-            var finalAccounts = reconciledAccounts
+            finalAccounts = reconciledAccounts
         } else {
             const reconciledById = new Map(reconciledAccounts.map(a => [a.id, a]))
             const localById = new Map(localOnlyAccounts.map(a => [a.id, a]))
@@ -479,7 +497,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             for (const acc of localOnlyAccounts) {
                 if (!seenIds.has(acc.id)) { ordered.push(acc); seenIds.add(acc.id) }
             }
-            var finalAccounts = ordered
+            finalAccounts = ordered
         }
 
         if (currentAccounts.length > 0 && finalAccounts.length < currentAccounts.length) {

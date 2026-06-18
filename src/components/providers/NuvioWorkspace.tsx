@@ -326,7 +326,6 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
             })
             .finally(() => { if (!cancelled) setLoading(false) })
         return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [accountId, connection.id])
 
     const doSwitch = useCallback(async (p: NuvioProfile) => {

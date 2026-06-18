@@ -14,11 +14,9 @@ export function Layout({ children }: LayoutProps) {
   const checkAllHealth = useAddonStore(s => s.checkAllHealth)
   const location = useLocation()
 
-  // Use a more robust check for Replay mode
   const isReplay = location.pathname.includes('/replay')
   const isKronorium = location.pathname.startsWith('/kronorium')
 
-  // Auto-refresh health when tab becomes visible (with store-level 3m cooldown)
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {

@@ -15,7 +15,6 @@ export function useLongPress(
 
     const start = useCallback(
         (e: React.MouseEvent | React.TouchEvent) => {
-            // Only handle primary click
             if ('button' in e && e.button !== 0) return;
 
             const pos = 'touches' in e ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : { x: e.clientX, y: e.clientY };
@@ -41,8 +40,6 @@ export function useLongPress(
             }
             startPosRef.current = null;
 
-            // We keep isLongPressTriggered as true for the subsequent onClick check
-            // but we might want to clear it after a short delay to ensure next clicks work
             setTimeout(() => {
                 setIsLongPressTriggered(false);
                 isLongPressActiveRef.current = false;

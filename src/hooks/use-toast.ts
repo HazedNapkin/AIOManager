@@ -23,7 +23,6 @@ export function toast({ title, description, variant = 'default', className }: Om
   toasts = [...toasts, newToast]
   notifyListeners()
 
-  // Auto-dismiss after 5 seconds
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id)
     notifyListeners()
@@ -35,7 +34,6 @@ export function toast({ title, description, variant = 'default', className }: Om
 export function useToast() {
   const [, setLocalToasts] = useState<Toast[]>([])
 
-  // Subscribe to global toast state
   useEffect(() => {
     const listener = (newToasts: Toast[]) => setLocalToasts(newToasts)
     toastListeners.push(listener)

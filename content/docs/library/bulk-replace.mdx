@@ -16,3 +16,13 @@ The Bulk URL Replace tool is designed for situations where an addon provider cha
 </Steps>
 
 <Note>Bulk Replace only affects the install URL. It does not touch your custom names, logos, or descriptions.</Note>
+
+## Scope: Library vs. a single account
+
+There are three places to run a find-and-replace:
+
+- **Library tab (this tool):** matches your saved addons and propagates each URL change everywhere it is used. This is the right choice for a domain migration that should apply across every account.
+- **A single account (Bulk Actions menu):** open an account, then use **Bulk Actions → Find & Replace URL**. This matches the addons installed on that one account, including any that were never saved to your Library, and changes only that account. Your Library is left untouched, so a replaced addon may show as no longer saved.
+- **Several accounts at once (Accounts tab):** select the accounts, open Batch Operations, and choose **Find & Replace URL** under Manage. This rewrites matching addon URLs across just the selected accounts, again including addons that were never saved to your Library. Use this when a domain change should apply to some accounts but you do not want to touch your Library or every account.
+
+<Note>The single-account and multi-account tools re-fetch each addon at its new URL before applying the change. If a new URL is unreachable, that addon is skipped and reported, so the new domain should be live before you run them.</Note>

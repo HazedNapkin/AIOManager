@@ -1,5 +1,5 @@
 import { AlertTriangle, Info, Lightbulb, Copy, Check, ChevronDown, ArrowRight, Rocket, Book, FileCode, Code, ArrowUpCircle, GitBranch, Heart, Settings2, Users, Puzzle, Zap, MoreVertical, RefreshCw, RotateCw, Eye, EyeOff, ExternalLink, List, Pencil, Trash2, FlaskConical, ShieldCheck, Clock, WrenchIcon, Home } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type SVGProps } from 'react'
 import { cn } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -121,8 +121,6 @@ export function Table({ headers, rows }: { headers: string[]; rows: string[][] }
     )
 }
 
-// ── Tabs (Fumadocs parity) ───────────────────────────────────────────────────
-
 interface TabItem {
     label: string
     content: React.ReactNode
@@ -153,7 +151,6 @@ export function Tabs({ tabs, defaultIndex = 0 }: { tabs: TabItem[]; defaultIndex
     )
 }
 
-// ── Accordion ────────────────────────────────────────────────────────────────
 
 interface AccordionItem {
     title: string
@@ -184,7 +181,6 @@ export function Accordion({ items }: { items: AccordionItem[] }) {
     )
 }
 
-// ── MockupFlow - Visual workflow diagrams ────────────────────────────────────
 
 interface FlowStep {
     emoji: string
@@ -220,7 +216,6 @@ export function MockupFlow({ steps, vertical = false }: { steps: FlowStep[]; ver
     )
 }
 
-// ── MockupToggle - Before/After switcher ─────────────────────────────────────
 
 export function MockupToggle({ before, after, beforeLabel = 'Before', afterLabel = 'After' }: {
     before: React.ReactNode
@@ -258,7 +253,6 @@ export function MockupToggle({ before, after, beforeLabel = 'Before', afterLabel
     )
 }
 
-// ── Hero & Landing Components (Viren-style 1:1) ─────────────────────────────
 
 import { Link as RouterLink } from 'react-router-dom'
 
@@ -362,9 +356,8 @@ export function NavCard({
     )
 }
 
-// ── Shared Icons for Hero ───────────────────────────────────────────────────
 
-function Github(props: any) {
+function Github(props: SVGProps<SVGSVGElement>) {
     return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
             <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
@@ -375,10 +368,6 @@ function Github(props: any) {
 
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DemoAddonCard - 1:1 parity with real AddonCard.tsx
-// Layout: CardHeader → CardContent (desc + URL bar) → CardFooter (2×2 grid + Remove)
-// ═══════════════════════════════════════════════════════════════════════════
 export function DemoAddonCard({
     name,
     version = 'v1.0.0',
@@ -414,7 +403,6 @@ export function DemoAddonCard({
             !enabled ? 'opacity-40 grayscale-[0.5]' : 'opacity-100',
             isProtected ? 'border-fd-primary/30 shadow-fd-primary/5' : 'border-fd-border hover:border-fd-primary/40'
         )}>
-            {/* ── CardHeader ─────────────────────────────────────── */}
             <div className="flex flex-row items-center justify-between p-4 pb-2">
                 <div className="flex items-center gap-3.5 min-w-0">
                     <div className="bg-fd-muted p-1.5 rounded-xl shrink-0 border border-fd-border/50 shadow-sm group-hover/addon:border-fd-primary/30 transition-colors">
@@ -472,7 +460,6 @@ export function DemoAddonCard({
                 </div>
             </div>
 
-            {/* ── CardContent (Description + URL bar) ────────── */}
             <div className="px-4 py-2">
                 <p className="text-sm text-muted-foreground line-clamp-2 mb-3 h-10">
                     {description || `Addon from ${new URL(url).hostname}`}
@@ -499,7 +486,6 @@ export function DemoAddonCard({
                 </div>
             </div>
 
-            {/* ── CardFooter (2×2 action grid + Remove) ──────── */}
             <div className="flex flex-col gap-2 px-4 py-3 border-t bg-muted/5">
                 <div className="grid grid-cols-2 gap-1.5 w-full">
                     <Button variant="outline" size="sm" className="h-8 text-xs font-semibold gap-1.5">
@@ -534,10 +520,6 @@ export function DemoAddonCard({
     )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DemoFailoverChain - 1:1 parity with real FailoverManager.tsx
-// Layout: Rule header → Vertical chain with numbered tiers, border-l indicators → Simulate
-// ═══════════════════════════════════════════════════════════════════════════
 export function DemoFailoverChain() {
     const [activeIndex, setActiveIndex] = useState(0)
     const [paused, setPaused] = useState(false)
@@ -578,7 +560,6 @@ export function DemoFailoverChain() {
 
     return (
         <div className="my-6 rounded-xl border border-fd-border bg-fd-card/40 backdrop-blur-sm p-6 space-y-7 shadow-sm">
-            {/* ── Rule Header ─────────────────────────────────── */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <div className="font-mono text-xs font-semibold text-fd-foreground/40 uppercase bg-fd-foreground/5 px-2.5 py-1 rounded-md border border-fd-border/50">
@@ -608,7 +589,6 @@ export function DemoFailoverChain() {
                 </div>
             </div>
 
-            {/* ── Vertical Chain ──────────────────────────────── */}
             <div className="flex flex-col relative w-full px-2">
                 {addons.map((addon, idx) => {
                     const isActive = idx === activeIndex
@@ -635,7 +615,6 @@ export function DemoFailoverChain() {
                                     {isFailedOver && <span className="text-xs font-mono font-bold text-warning bg-warning/10 px-1.5 py-0.5 rounded">ACTIVE</span>}
                                 </div>
                             </div>
-                            {/* Connector line */}
                             {idx < addons.length - 1 && (
                                 <div className="w-full flex justify-center py-1">
                                     <div className="w-px h-4 bg-border relative">
@@ -648,7 +627,6 @@ export function DemoFailoverChain() {
                 })}
             </div>
 
-            {/* ── Simulation Panel ────────────────────────────── */}
             {simulating && Object.keys(simResults).length > 0 && (
                 <div className="mx-2 p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
                     <div className="flex items-center gap-2 text-primary">
@@ -680,10 +658,6 @@ export function DemoFailoverChain() {
     )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DemoVaultKey - 1:1 parity with real VaultKeyDialog.tsx
-// Layout: ShieldCheck icon + name + provider badge → key bar with reveal/copy → dropdown
-// ═══════════════════════════════════════════════════════════════════════════
 export function DemoVaultKey({
     name,
     provider,
@@ -709,7 +683,6 @@ export function DemoVaultKey({
 
     return (
         <div className="p-5 rounded-xl border border-fd-border bg-fd-card/50 hover:border-fd-primary/40 backdrop-blur-sm transition-all duration-300 group/vault relative shadow-sm hover:shadow-fd-primary/5">
-            {/* ── Header row: icon + name + menu ───────────── */}
             <div className="flex flex-col gap-1.5 w-full mb-1">
                 <div className="flex items-center justify-between w-full h-8">
                     <div className="flex items-center gap-3 min-w-0 h-full">
@@ -723,7 +696,6 @@ export function DemoVaultKey({
                     </Button>
                 </div>
 
-                {/* ── Provider badge + timestamp ────────────── */}
                 <div className="flex items-center gap-2 pl-[44px]">
                     <span className="text-xs uppercase font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                         {provider}
@@ -741,7 +713,6 @@ export function DemoVaultKey({
                 </div>
             </div>
 
-            {/* ── Key value bar ────────────────────────────── */}
             <div className="mt-4 flex items-center gap-2">
                 <div className="flex-1 bg-muted/50 rounded-lg px-3 py-1.5 flex items-center justify-between border border-border/50">
                     <span className={cn('font-mono text-xs text-muted-foreground', revealed ? 'break-all' : 'truncate max-w-[150px]')}>
@@ -775,9 +746,6 @@ export function DemoVaultKey({
     )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// DemoAccountActions - Interactive action explainer
-// ═══════════════════════════════════════════════════════════════════════════
 export function DemoAccountActions() {
     const [active, setActive] = useState<string | null>(null)
 
@@ -833,7 +801,6 @@ export function DemoAccountActions() {
     )
 }
 
-// ── DemoRuleCard - Autopilot rule card visual ──────────────────────────────
 export function DemoRuleCard({
     name = 'My Streaming Rule',
     addons = ['AIOStreams (Primary)', 'AIOStreams (Backup)'],
@@ -884,7 +851,6 @@ export function DemoRuleCard({
     )
 }
 
-// ── DemoDiscordEmbed - Webhook notification preview ────────────────────────
 export function DemoDiscordEmbed({ type = 'failover' }: { type?: 'failover' | 'recovery' }) {
     const [shown, setShown] = useState<'failover' | 'recovery'>(type)
 

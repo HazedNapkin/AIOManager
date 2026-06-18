@@ -2,7 +2,8 @@ import React from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { StatusChip } from '@/components/ui/status-chip'
-import { Bookmark, BookmarkCheck, Check, ExternalLink, Info, Loader2, Plus, Settings2, Star, Upload } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
+import { Check, ExternalLink, Heart, Info, Loader2, Plus, Settings2, Star, Upload } from 'lucide-react'
 import { getAddonResources, getConfigureUrl, lastUpdatedLabel, requiresConfiguration, RESOURCE_LABELS, type DiscoverAddon } from '@/api/discover'
 import { AddonLogo } from './AddonLogo'
 
@@ -17,9 +18,11 @@ interface DiscoverCardProps {
   onConfigure: (addon: DiscoverAddon) => void
   onOpenDetail: (addon: DiscoverAddon) => void
   onToggleFavorite?: (addon: DiscoverAddon) => void
+  deployedCount?: (addon: DiscoverAddon) => number
+  accountTotal?: number
 }
 
-function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, onDeploy, onConfigure, onOpenDetail, onToggleFavorite }: DiscoverCardProps) {
+function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, onDeploy, onConfigure, onOpenDetail, onToggleFavorite, deployedCount, accountTotal }: DiscoverCardProps) {
   const manifest = addon.manifest ?? ({} as DiscoverAddon['manifest'])
   const name = manifest.name?.trim() || addon.slug || 'Unknown Addon'
   const description = manifest.description?.trim() || ''
@@ -37,6 +40,8 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
     return Math.max(0, Math.floor((Date.now() - ts) / 86_400_000))
   })()
   const isRecentlyUpdated = recentDays !== null && recentDays <= 7
+  const deployedOn = deployedCount?.(addon) ?? 0
+  const onAllAccounts = !!accountTotal && accountTotal > 0 && deployedOn >= accountTotal
 
   if (compact) {
     return (
@@ -60,6 +65,7 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
               <Star className="h-2.5 w-2.5 fill-warning text-warning" />
               {(addon.stars ?? 0).toLocaleString()}
             </span>
+            {deployedOn > 0 && <span className="text-primary">· On {deployedOn}</span>}
             {saved && <span className="text-emerald-600 dark:text-emerald-400">· Saved</span>}
           </div>
         </div>
@@ -88,18 +94,14 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-medium text-muted-foreground">
-            <span className="flex items-center gap-1">
+          <div className="mt-0.5 flex items-center gap-x-2 overflow-hidden text-xs font-medium text-muted-foreground">
+            <span className="flex shrink-0 items-center gap-1">
               <Star className="h-3 w-3 fill-warning text-warning" />
               {(addon.stars ?? 0).toLocaleString()}
             </span>
-            {catalogCount > 0 && <span>· {catalogCount} catalog{catalogCount !== 1 ? 's' : ''}</span>}
+            {catalogCount > 0 && <span className="shrink-0">· {catalogCount} catalog{catalogCount !== 1 ? 's' : ''}</span>}
             {updated && (
-              isRecentlyUpdated ? (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  {updated}
-                </span>
-              ) : <span className="truncate">· {updated}</span>
+              <span className={`truncate ${isRecentlyUpdated ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>· {updated}</span>
             )}
           </div>
         </div>
@@ -108,6 +110,12 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
       <p className="min-h-9 shrink-0 text-xs leading-snug text-muted-foreground line-clamp-2">{description}</p>
 
       <div className="flex h-6 shrink-0 flex-nowrap items-center gap-1.5 overflow-hidden">
+        {deployedOn > 0 && (
+          <StatusChip className="shrink-0 gap-1 border-primary/30 bg-primary/10 text-primary">
+            <Upload className="h-3 w-3" />
+            On {deployedOn}
+          </StatusChip>
+        )}
         {needsConfig && (
           <StatusChip className="shrink-0 gap-1 text-warning">
             <Settings2 className="h-3 w-3" />
@@ -123,86 +131,77 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
       </div>
 
       <div className="mt-auto space-y-1.5 pt-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-        {/* Secondary actions grid */}
-        <div className="grid grid-cols-2 gap-1.5">
-          {/* Favorite */}
+        {/* Hub-native: deploying across your accounts is the primary action; library-save,
+            favorite, configure and details are uniform equal-width secondary icons. */}
+        <div className="flex gap-1.5">
           {onToggleFavorite && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70"
-              onClick={() => onToggleFavorite(addon)}
-            >
-              {favorite ? <BookmarkCheck className="h-3.5 w-3.5 text-primary" /> : <Bookmark className="h-3.5 w-3.5" />}
-              Favorite
-            </Button>
+            <Tooltip content={favorite ? 'Favorited' : 'Favorite'} side="top">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={favorite ? 'Remove favorite' : 'Favorite'}
+                className="h-8 flex-1 bg-muted/40 text-foreground/70 shadow-none hover:bg-muted/70"
+                onClick={() => onToggleFavorite(addon)}
+              >
+                {favorite ? <Heart className="h-3.5 w-3.5 fill-primary text-primary" /> : <Heart className="h-3.5 w-3.5" />}
+              </Button>
+            </Tooltip>
           )}
 
-          {/* Save (when Configure is primary) */}
-          {needsConfig && !saved && (
+          <Tooltip content={saved ? 'In Library' : 'Save to Library'} side="top">
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70"
+              aria-label={saved ? 'In Library' : 'Save to Library'}
+              className="h-8 flex-1 bg-muted/40 text-foreground/70 shadow-none hover:bg-muted/70"
               onClick={() => onSave(addon)}
-              disabled={saving}
+              disabled={saved || saving}
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-              Save
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Plus className="h-3.5 w-3.5" />}
             </Button>
+          </Tooltip>
+
+          {!needsConfig && canConfigure && (
+            <Tooltip content="Configure" side="top">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Configure"
+                className="h-8 flex-1 bg-muted/40 text-foreground/70 shadow-none hover:bg-muted/70"
+                onClick={() => onConfigure(addon)}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </Button>
+            </Tooltip>
           )}
 
-          {/* Configure (when not primary) */}
-          {!needsConfig && canConfigure && (
+          <Tooltip content="Details" side="top">
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70"
-              onClick={() => onConfigure(addon)}
+              aria-label="Details"
+              className="h-8 flex-1 bg-muted/40 text-foreground/70 shadow-none hover:bg-muted/70"
+              onClick={() => onOpenDetail(addon)}
             >
-              <Settings2 className="h-3.5 w-3.5" />
-              Configure
+              <Info className="h-3.5 w-3.5" />
             </Button>
-          )}
-
-          {/* Install */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70"
-            onClick={() => onDeploy(addon)}
-          >
-            <Upload className="h-3.5 w-3.5" />
-            Install
-          </Button>
-
-          {/* Details */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70"
-            onClick={() => onOpenDetail(addon)}
-          >
-            <Info className="h-3.5 w-3.5" />
-            Details
-          </Button>
+          </Tooltip>
         </div>
 
-        {/* Primary action - Save/Configure (full width at bottom) */}
-        {saved ? (
-          <Button size="sm" variant="outline" disabled className="h-8 w-full gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none">
-            <Check className="h-3.5 w-3.5" />
-            In Library
-          </Button>
-        ) : needsConfig ? (
+        {needsConfig && !saved ? (
           <Button size="sm" className="h-8 w-full gap-1.5 text-xs font-semibold" onClick={() => onConfigure(addon)}>
             <Settings2 className="h-3.5 w-3.5" />
-            Configure
+            Configure to install
+          </Button>
+        ) : onAllAccounts ? (
+          <Button size="sm" variant="outline" disabled className="h-8 w-full gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none">
+            <Check className="h-3.5 w-3.5 text-emerald-500" />
+            On all accounts
           </Button>
         ) : (
-          <Button size="sm" className="h-8 w-full gap-1.5 text-xs font-semibold" onClick={() => onSave(addon)} disabled={saving}>
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            {saving ? 'Saving…' : 'Save'}
+          <Button size="sm" className="h-8 w-full gap-1.5 text-xs font-semibold" onClick={() => onDeploy(addon)}>
+            <Upload className="h-3.5 w-3.5" />
+            {deployedOn > 0 ? 'Install on more' : 'Install to accounts'}
           </Button>
         )}
       </div>
@@ -226,4 +225,6 @@ export const DiscoverCard = React.memo(
     && prev.saving === next.saving
     && prev.favorite === next.favorite
     && prev.compact === next.compact
+    && prev.accountTotal === next.accountTotal
+    && (prev.deployedCount?.(prev.addon) ?? 0) === (next.deployedCount?.(next.addon) ?? 0)
 )

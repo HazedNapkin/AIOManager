@@ -3,9 +3,6 @@ import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 
-/**
- * Syncio-aligned filter: checks if item was actually watched, not just added to library.
- */
 export function isActuallyWatched(item: LibraryItem): boolean {
     const s = item.state || {}
     if ((s.timesWatched ?? 0) > 0) return true
@@ -15,9 +12,6 @@ export function isActuallyWatched(item: LibraryItem): boolean {
     return false
 }
 
-/**
- * Generates a unique ID for an activity item, accounting for series episodes.
- */
 export function getUniqueItemId(item: LibraryItem): string {
     const baseId = item._id
     if ((item.type === 'series' || item.type === 'anime' || item.type === 'episode') && item.state?.video_id) {
@@ -31,10 +25,6 @@ export function getUniqueItemId(item: LibraryItem): string {
     return baseId
 }
 
-/**
- * Gets the best timestamp for an activity item.
- * Clamps to 'now' to prevent future dates.
- */
 export function getWatchTimestamp(item: LibraryItem): Date {
     const times: number[] = []
     if (item.state?.lastWatched) {
@@ -56,9 +46,6 @@ export function getWatchTimestamp(item: LibraryItem): Date {
     return new Date(Math.min(maxTime, now))
 }
 
-/**
- * Extracts season/episode from video_id.
- */
 export function getSeasonEpisode(item: LibraryItem): { season?: number; episode?: number } {
     if ((item.type !== 'series' && item.type !== 'anime' && item.type !== 'episode') || !item.state?.video_id) {
         return {}
@@ -116,8 +103,11 @@ export function getEpisodeIdentity(
     itemId: string,
     videoId: string | undefined,
     season: number | undefined,
-    episode: number | undefined
+    episode: number | undefined,
+    type: string
 ): string {
+    const isSeries = type === 'series' || type === 'anime' || type === 'episode'
+    if (!isSeries) return itemId
     if (episode !== undefined) return `${itemId}:s${season ?? 1}:e${episode}`
     if (videoId && videoId !== itemId) {
         const parts = videoId.split(':')
@@ -134,10 +124,6 @@ export function getEpisodeIdentity(
     return videoId || itemId
 }
 
-/**
- * Parses a Stremio date string (_ctime/_mtime) into a Date.
- * Returns undefined if missing or unparseable. Clamps future dates to now.
- */
 export function parseStremioDate(dateStr: string | undefined): Date | undefined {
     if (!dateStr) return undefined
     const d = new Date(dateStr)
@@ -145,10 +131,6 @@ export function parseStremioDate(dateStr: string | undefined): Date | undefined 
     return d.getTime() > Date.now() + 5 * 60 * 1000 ? new Date() : d
 }
 
-/**
- * Transforms a raw Stremio library item into a normalized ActivityItem.
- * Including filtering out junk data and standardizing properties.
- */
 export function transformLibraryItemToActivityItem(
     item: LibraryItem,
     account: Account,

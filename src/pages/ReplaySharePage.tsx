@@ -150,10 +150,21 @@ function decodeShareToken(token: string): { data: ReplayData; userName?: string 
 
         return null
     } catch (e) {
-        import.meta.env.DEV && console.error('[ShareDecode] Error:', e)
+        if (import.meta.env.DEV) console.error('[ShareDecode] Error:', e)
         return null
     }
 }
+
+const sections = [
+    { id: 'hero', label: 'Overview' },
+    { id: 'glance', label: 'At a Glance' },
+    { id: 'stats', label: 'Stats' },
+    { id: 'titles', label: 'Top Titles' },
+    { id: 'months', label: 'Timeline' },
+    { id: 'milestones', label: 'Milestones' },
+    { id: 'insights', label: 'Insights' },
+    { id: 'share', label: 'Share Card' },
+]
 
 export function ReplaySharePage() {
     useDocumentTitle('Replay')
@@ -161,17 +172,6 @@ export function ReplaySharePage() {
     const [decoded, setDecoded] = useState<{ data: ReplayData; userName?: string } | null | 'error' | 'loading'>('loading')
     const [activeSection, setActiveSection] = useState('hero')
     const scrollContainerRef = useRef<HTMLDivElement>(null)
-
-    const sections = [
-        { id: 'hero', label: 'Overview' },
-        { id: 'glance', label: 'At a Glance' },
-        { id: 'stats', label: 'Stats' },
-        { id: 'titles', label: 'Top Titles' },
-        { id: 'months', label: 'Timeline' },
-        { id: 'milestones', label: 'Milestones' },
-        { id: 'insights', label: 'Insights' },
-        { id: 'share', label: 'Share Card' },
-    ]
 
     const scrollToSection = (id: string) => {
         document.getElementById(`section-${id}`)?.scrollIntoView({

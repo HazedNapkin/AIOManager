@@ -91,7 +91,6 @@ const SVArea = memo(function SVArea({ hue, sat, val, onChange, onInteractionStar
         window.addEventListener('touchcancel', onUp)
     }, [onInteractionEnd, onInteractionStart, pick])
 
-    // Thumb color: white or dark based on brightness
     const thumbBorder = val < 40 ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.95)'
 
     return (

@@ -24,11 +24,9 @@ interface AddonNoteEditorProps {
     note?: string
     index?: number
     className?: string
-    /** Renders as a full Button row instead of the compact icon trigger */
     asButton?: boolean
 }
 
-// ── Markdown renderer ────────────────────────────────────────────────────────
 // Builds React elements without mutating props.children (was unsafe).
 // List items are accumulated in a local array and only flushed when the list ends.
 
@@ -36,7 +34,6 @@ function renderMarkdown(text: string) {
     const lines = text.split('\n')
     const elements: React.ReactNode[] = []
 
-    // Pending list items, flushed when the list type changes or ends
     let listType: 'ul' | 'ol' | null = null
     let listItems: React.ReactNode[] = []
 
@@ -100,8 +97,6 @@ function renderMarkdown(text: string) {
     flushList()
     return elements
 }
-
-// ── Component ────────────────────────────────────────────────────────────────
 
 export function AddonNoteEditor({
     accountId,
@@ -215,7 +210,6 @@ export function AddonNoteEditor({
             savedRef.current = true
             setHasChanges(false)
         }
-        // After saving, go back to view mode if there's content
         if (value.trim()) {
             setIsEditing(false)
         } else {
@@ -225,7 +219,6 @@ export function AddonNoteEditor({
 
     const handleClose = useCallback(() => {
         if (hasChanges && !savedRef.current) {
-            // Auto-save unsaved changes on close
             useAccountStore.getState().updateAddonSettings(
                 accountId, addonTransportUrl, { note: value.trim() }, index
             )
@@ -315,7 +308,6 @@ export function AddonNoteEditor({
                                 )}
                             </div>
 
-                            {/* Textarea */}
                             <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/35 bg-background">
                                 <Textarea
                                     ref={textareaRef}
@@ -390,7 +382,6 @@ export function AddonNoteEditor({
                             </div>
                         </div>
                     ) : (
-                        /* View mode - rendered markdown */
                         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
                             <div className="min-h-[160px] overflow-auto rounded-2xl border border-border/35 bg-background p-4 text-sm leading-relaxed space-y-1 prose-sm break-words overflow-wrap-anywhere">
                                 {renderMarkdown(value)}

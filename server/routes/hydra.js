@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import db from '../db.js'
 import { hashApiKey } from '../api-keys.js'
 import { isSafeUrl, isSafeUrlResolved } from '../utils/ssrf.js'
@@ -11,6 +12,17 @@ const HYDRA_SPEC_VERSION = '1.0.0'
 const MAX_ADDON_URL_LENGTH = 2048
 const MAX_ADDONS_IN_COLLECTION = 500
 const LAST_USED_COALESCE_MS = 60_000
+
+let logger = console
+
+const normalizeAddonUrl = (url) => {
+    if (!url) return ''
+    return url.trim()
+        .replace(/^stremio:\/\//i, 'https://')
+        .replace(/\/manifest\.json$/i, '')
+        .replace(/\/+$/, '')
+        .toLowerCase()
+}
 
 const isValidAddonUrl = (url) =>
     typeof url === 'string' &&
@@ -62,6 +74,13 @@ async function getCanonicalAddons(accountId, syncUser) {
         [accountId, syncUser]
     )
     if (cred?.auth_key) {
+        const mixed = await db.get(
+            "SELECT 1 FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND credential_type IN ('nuvio', 'realstream', 'hydra') LIMIT 1",
+            [accountId, syncUser]
+        )
+        if (mixed) {
+            logger.warn({ category: 'Hydra' }, `[${accountId}] Account has both Stremio and non-Stremio credentials; inbound reads prefer Stremio and may not reflect the non-Stremio setup.`)
+        }
         const authKey = decrypt(cred.auth_key, FALLBACK_KEYS)
         if (authKey) {
             try {
@@ -104,6 +123,10 @@ async function getCanonicalAddons(accountId, syncUser) {
     return []
 }
 
+function computeAddonsVersion(hydraAddons) {
+    return createHash('sha256').update(JSON.stringify(hydraAddons)).digest('hex').slice(0, 16)
+}
+
 function toHydraAddon(raw) {
     if (!raw || typeof raw !== 'object') return null
     const manifest = raw.manifest || raw
@@ -131,6 +154,13 @@ async function writeCanonicalAddons(account, addons) {
         [accountId, syncUser]
     )
     if (cred?.auth_key) {
+        const mixed = await db.get(
+            "SELECT 1 FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND credential_type IN ('nuvio', 'realstream', 'hydra') LIMIT 1",
+            [accountId, syncUser]
+        )
+        if (mixed) {
+            logger.warn({ category: 'Hydra' }, `[${accountId}] Account has both Stremio and non-Stremio credentials; inbound writes go to Stremio and may bypass the non-Stremio setup.`)
+        }
         const authKey = decrypt(cred.auth_key, FALLBACK_KEYS)
         if (!authKey) throw new Error('Failed to decrypt credentials')
         const { createStremioDriver } = await import('../providers/stremio-driver.js')
@@ -192,6 +222,8 @@ async function validateManifest(manifestUrl) {
 }
 
 export function registerHydraRoutes(fastify) {
+    logger = fastify.log
+
     fastify.get('/hydra/status', {
         config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
     }, async () => {
@@ -225,12 +257,18 @@ export function registerHydraRoutes(fastify) {
     })
 
     fastify.get('/hydra/version', {
-        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
     }, async (request, reply) => {
         const account = await lookupAccountByApiKey(request, reply)
         if (!account) return
-        const row = await db.get('SELECT updated_at FROM account_canonical_addons WHERE account_id = $1 AND sync_user = $2', [account.account_id, account.sync_user])
-        return { version: row?.updated_at ?? null }
+        try {
+            const raw = await getCanonicalAddons(account.account_id, account.sync_user)
+            const addons = raw.map(toHydraAddon).filter(Boolean)
+            return { version: computeAddonsVersion(addons) }
+        } catch {
+            reply.code(500)
+            return { error: 'internal_error', message: 'Failed to read version' }
+        }
     })
 
     fastify.get('/hydra/addons', {
@@ -264,7 +302,8 @@ export function registerHydraRoutes(fastify) {
 
         try {
             const current = await getCanonicalAddons(account.account_id, account.sync_user)
-            if (current.some(a => (a.transportUrl || a.url) === url)) {
+            const norm = normalizeAddonUrl(url)
+            if (current.some(a => normalizeAddonUrl(a.transportUrl || a.url || '') === norm)) {
                 const addons = current.map(toHydraAddon).filter(Boolean)
                 return { addons }
             }
@@ -300,7 +339,8 @@ export function registerHydraRoutes(fastify) {
 
         try {
             const current = await getCanonicalAddons(account.account_id, account.sync_user)
-            const filtered = current.filter(a => (a.transportUrl || a.url) !== url)
+            const norm = normalizeAddonUrl(url)
+            const filtered = current.filter(a => normalizeAddonUrl(a.transportUrl || a.url || '') !== norm)
 
             if (filtered.length === current.length) {
                 reply.code(404)
@@ -387,7 +427,7 @@ export function registerHydraRoutes(fastify) {
 
         try {
             const start = Date.now()
-            const res = await enqueueProxyRequest(rawUrl, () => fetch(`${rawUrl}/manifest.json`, {
+            const res = await enqueueProxyRequest(rawUrl, () => fetch(rawUrl, {
                 signal: AbortSignal.timeout(8000)
             }))
             const latencyMs = Date.now() - start
@@ -416,23 +456,32 @@ export function registerHydraRoutes(fastify) {
 
         try {
             const current = await getCanonicalAddons(account.account_id, account.sync_user)
-            let reinstalled = false
 
-            const updated = current.map(a => {
-                const url = a.transportUrl || a.url
-                const id = a.manifest?.id || a.id
-                const matches = (addonUrl && url === addonUrl) || (addonId && id === addonId)
-                if (matches) reinstalled = true
-                return a
-            })
-
-            if (!reinstalled && addonUrl) {
-                const { valid, manifest } = await validateManifest(addonUrl)
-                if (!valid) {
-                    reply.code(400)
-                    return { error: 'bad_request', message: 'Failed to fetch valid manifest from URL' }
+            let fetchUrl = addonUrl
+            if (!fetchUrl) {
+                const existing = current.find(a => (a.manifest?.id || a.id) === addonId)
+                if (!existing) {
+                    reply.code(404)
+                    return { error: 'not_found', message: 'Addon not installed; provide addonUrl to install it' }
                 }
-                updated.push({ transportUrl: addonUrl, manifest })
+                fetchUrl = existing.transportUrl || existing.url
+            }
+
+            const { valid, manifest } = await validateManifest(fetchUrl)
+            if (!valid) {
+                reply.code(400)
+                return { error: 'bad_request', message: 'Failed to fetch valid manifest from URL' }
+            }
+
+            const target = normalizeAddonUrl(fetchUrl)
+            const matchIdx = current.findIndex(a => normalizeAddonUrl(a.transportUrl || a.url || '') === target)
+
+            let updated
+            if (matchIdx >= 0) {
+                updated = current.slice()
+                updated[matchIdx] = { ...current[matchIdx], manifest }
+            } else {
+                updated = [...current, { transportUrl: fetchUrl, manifest }]
             }
 
             await writeCanonicalAddons(account, updated)

@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAccountStore } from "@/store/accountStore"
 import { useFailoverStore } from "@/store/failoverStore"
+import type { AddonDescriptor } from "@/types/addon"
 import { SquircleOverlay } from "@/components/ui/squircle-overlay"
 import { AddonIcon } from "@/components/ui/addon-icon"
 import { useHistoryStore } from "@/store/historyStore"
@@ -1201,7 +1202,9 @@ export function FailoverManager({
     )
 }
 
-const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active' | 'failed' | 'idle'; addons: any[] }) => {
+type FailoverAddon = AddonDescriptor & { manifestUrl?: string }
+
+const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active' | 'failed' | 'idle'; addons: FailoverAddon[] }) => {
     const normUrl = normalizeAddonUrl(url).toLowerCase()
     const addon = addons.find(a => {
         const aNorm = normalizeAddonUrl(a.transportUrl || '').toLowerCase()
@@ -1229,7 +1232,7 @@ const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active'
 })
 ChainPill.displayName = 'ChainPill'
 
-function FailoverHistory({ addons, accountId }: { addons: any[]; accountId: string }) {
+function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accountId: string }) {
     const allLogs = useHistoryStore(s => s.logs)
     const initialize = useHistoryStore(s => s.initialize)
     const clearLogs = useHistoryStore(s => s.clearLogs)

@@ -54,7 +54,6 @@ export function AddonReorderDialog({
   const reorderAddons = useAccountStore((state) => state.reorderAddons)
   const activeAddon = activeId ? items.find((item) => item.uniqueId === activeId) : null
 
-  // Initialize items when dialog opens or addons change
   useEffect(() => {
     if (open) {
       // Assign unique fallback IDs to support duplicates during reorg

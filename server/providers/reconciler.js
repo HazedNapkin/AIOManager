@@ -59,9 +59,32 @@ async function resolveConnections(accountId, syncUser = null) {
 
     const connections = []
     const seenPlatforms = new Set()
+    const seenHydra = new Set()
     for (const row of rows) {
         if (!row.auth_key) continue
         const type = row.credential_type || 'stremio'
+
+        if (type === 'hydra') {
+            if (!row.connection_id || seenHydra.has(row.connection_id)) continue
+            seenHydra.add(row.connection_id)
+            let bundle = null
+            try { bundle = JSON.parse(decrypt(row.auth_key, FALLBACK_KEYS)) } catch { continue }
+            if (!bundle?.baseUrl) continue
+            connections.push({
+                id: row.connection_id,
+                platform: 'hydra',
+                accountId,
+                driverType: 'hydra-outbound',
+                enabled: bundle.enabled !== false,
+                status: 'active',
+                driverConfig: { baseUrl: bundle.baseUrl, authType: bundle.authType, authHeader: bundle.authHeader },
+                credentials: { authValue: bundle.authValue },
+                consecutiveFailures: 0,
+                capabilities: ['addons']
+            })
+            continue
+        }
+
         // one connection per platform; keep the most recent (older rows are stale per-device dupes)
         if (seenPlatforms.has(type)) continue
         seenPlatforms.add(type)
@@ -104,6 +127,11 @@ async function resolveConnections(accountId, syncUser = null) {
 
     return connections
 }
+
+const isHydraOutbound = (c) =>
+    c?.platform === 'hydra' ||
+    c?.driverType === 'hydra' || c?.driverType === 'hydra-outbound' ||
+    c?.connectionType === 'hydra-outbound'
 
 async function loadDriver(platform, credentials, connection) {
     // Stremio uses a separate driver module with different API contract
@@ -174,15 +202,23 @@ async function loadDriver(platform, credentials, connection) {
 
         return driver
     }
-    if (platform === 'hydra' || (connection && (connection.driverType === 'hydra' || connection.driverType === 'hydra-outbound'))) {
-        const config = connection?.driverConfig
+    if (connection && isHydraOutbound(connection)) {
+        let authValue = connection.credentials?.authValue
+        let config = connection.driverConfig
+        if (authValue === undefined || !config?.baseUrl) {
+            const cred = await db.get(
+                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' LIMIT 1",
+                [connection.id]
+            )
+            if (cred?.auth_key) {
+                const decrypted = decrypt(cred.auth_key, FALLBACK_KEYS)
+                let bundle
+                try { bundle = JSON.parse(decrypted) } catch { bundle = { authValue: decrypted } }
+                if (authValue === undefined) authValue = bundle.authValue
+                if (!config?.baseUrl) config = { baseUrl: bundle.baseUrl, authType: bundle.authType, authHeader: bundle.authHeader }
+            }
+        }
         if (!config?.baseUrl) return null
-
-        const cred = await db.get(
-            "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' LIMIT 1",
-            [connection.id]
-        )
-        const authValue = cred?.auth_key ? decrypt(cred.auth_key, FALLBACK_KEYS) : undefined
 
         const { createHydraClient } = await import('../hydra/client.js')
         return await createHydraClient({ ...config, authValue })
@@ -202,6 +238,9 @@ async function readPlatformAddons(driver, connection) {
     if (connection.platform === 'realstream') {
         return driver.readAddons(c.accessToken, c.userId)
     }
+    if (isHydraOutbound(connection)) {
+        return driver.readAddons()
+    }
     return []
 }
 
@@ -220,7 +259,7 @@ async function writePlatformAddons(driver, connection, addons) {
         if (!c?.accessToken) { const e = new Error('RealStream credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
         return driver.writeAddons(c.accessToken, addons, c.userId)
     }
-    if (connection.platform === 'hydra' || connection.driverType === 'hydra' || connection.driverType === 'hydra-outbound') {
+    if (isHydraOutbound(connection)) {
         return driver.writeAddons(addons)
     }
 }
@@ -316,20 +355,19 @@ export function createReconciler(fastify) {
         syncCycleCounters.set(accountId, current + 1)
     }
 
-    const reconcileAccount = async (accountId, primaryConnectionId, connections, canonicalAddons) => {
+    const reconcileAccount = async (accountId, primaryConnectionId, connections, canonicalAddons, opts = {}) => {
         tickCycleCounter(accountId)
 
-        const canonical = Array.isArray(canonicalAddons) ? canonicalAddons : []
-        const enabledCanonical = canonical.filter(a => a?.flags?.enabled !== false)
+        const canonical = (Array.isArray(canonicalAddons) ? canonicalAddons : []).filter(a => a?.flags?.enabled !== false)
 
         // Stremio uses client-side sync pipeline, not server-side reconciliation
         const targetConnections = connections.filter(c => c.enabled && c.platform !== 'stremio')
 
-        if (enabledCanonical.length === 0 || targetConnections.length === 0) {
+        if ((canonical.length === 0 && !opts.allowCollectionShrink) || targetConnections.length === 0) {
             return { changes: [], canonical }
         }
 
-        const canonicalUrlSet = new Set(enabledCanonical.map(a => normalizeUrl(a.transportUrl)))
+        const canonicalUrlSet = new Set(canonical.map(a => normalizeUrl(a.transportUrl)))
         const changes = []
 
         for (const connection of targetConnections) {
@@ -353,7 +391,7 @@ export function createReconciler(fastify) {
                 } catch { /* can't read, assume needs write */ }
 
                 if (needsWrite) {
-                    await writePlatformAddons(driver, connection, enabledCanonical)
+                    await writePlatformAddons(driver, connection, canonical)
                     changes.push({ type: 'restore', url: '', platform: connection.platform, primary: false })
                 }
                 recordSuccess(accountId, connId)
@@ -369,8 +407,7 @@ export function createReconciler(fastify) {
     const enforceAccount = async (accountId, connections, canonical, opts = {}) => {
         const { stremioWriter } = opts
         tickCycleCounter(accountId)
-        const canon = Array.isArray(canonical) ? canonical : []
-        const enabledCanonical = canon.filter(a => a?.flags?.enabled !== false)
+        const canon = (Array.isArray(canonical) ? canonical : []).filter(a => a?.flags?.enabled !== false)
         const synced = []
 
         for (const connection of (connections || []).filter(c => c.enabled)) {
@@ -385,10 +422,10 @@ export function createReconciler(fastify) {
                     if (!stremioWriter) continue
                     await stremioWriter(connection)
                 } else {
-                    if (enabledCanonical.length === 0) continue
+                    if (canon.length === 0) continue
                     const driver = await loadDriver(connection.platform, connection.credentials || {}, connection)
                     if (!driver) continue
-                    await writePlatformAddons(driver, connection, enabledCanonical)
+                    await writePlatformAddons(driver, connection, canon)
                 }
                 recordSuccess(accountId, connId)
                 synced.push(connection.platform)

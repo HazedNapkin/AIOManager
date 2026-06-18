@@ -318,7 +318,6 @@ export function SettingsPage() {
         setImporting(true)
         try {
             await importAccounts(pendingImport.text, false, 'merge', undefined)
-            // Refresh the addon store to pick up any imported saved addons
             await initializeAddonStore()
             toast({ title: "Import Successful", description: "All accounts, addons, and settings have been restored." })
             setPendingImport(null)

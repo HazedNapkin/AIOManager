@@ -139,10 +139,8 @@ export function CatalogEditorDialog({
         })
     )
 
-    // Initialize catalogs when dialog opens
     useEffect(() => {
         if (open && addon.manifest.catalogs) {
-            // Respect existing overrides on open
             const overrideCatalogs = addon.catalogOverrides?.catalogs
             const removedIds = new Set(addon.catalogOverrides?.removed || [])
             const sourceCatalogs = overrideCatalogs || addon.manifest.catalogs
@@ -190,7 +188,6 @@ export function CatalogEditorDialog({
     const handleSave = async () => {
         setSaving(true)
         try {
-            // Remove the temporary IDs before saving
             const cleanedCatalogs: Catalog[] = catalogs.map(({ _tempId, ...rest }) => rest)
 
             const updatedAddon: AddonDescriptor = {

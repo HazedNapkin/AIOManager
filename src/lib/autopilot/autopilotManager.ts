@@ -1,14 +1,10 @@
 import { useFailoverStore } from "@/store/failoverStore"
 import { normalizeAddonUrl } from "@/lib/utils"
 
-/**
- * AutopilotManager
- * Coordinates between manual user actions and automatic failover logic.
- */
 class AutopilotManager {
     /**
      * Called when a user manually toggles an addon's enabled state.
-     * If that addon is part of an active Autopilot rule, we may need to 
+     * If that addon is part of an active Autopilot rule, we may need to
      * disable automatic mode to respect the user's manual choice.
      */
     handleManualToggle(accountId: string, transportUrl: string) {
@@ -32,9 +28,6 @@ class AutopilotManager {
         }
     }
 
-    /**
-     * Check if Autopilot is allowed to make a change.
-     */
     canAutomate(ruleId: string): boolean {
         const rule = useFailoverStore.getState().rules.find(r => r.id === ruleId)
         if (!rule) return false

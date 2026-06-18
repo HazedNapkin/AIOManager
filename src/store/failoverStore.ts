@@ -26,33 +26,35 @@ export interface AutopilotStabilizationEntry {
 export interface FailoverRule {
     id: string
     accountId: string
-    name?: string // User-defined name for the rule
+    name?: string
     priorityChain: string[] // URLs in order of preference
     isActive: boolean
     lastCheck?: Date
     lastFailover?: Date
     status: 'idle' | 'monitoring' | 'failed-over'
     activeUrl?: string // Track which one is currently pushed to Stremio
-    isAutomatic?: boolean // Toggle for automatic health-based switching
+    isAutomatic?: boolean
     stabilization?: Record<string, number | AutopilotStabilizationEntry>
     cooldown_ms?: number // Custom webhook cooldown for this rule
     webhookUrl?: string      // Per-rule override URL. Empty string = use global default.
     notifyEnabled?: boolean  // Per-rule notification toggle. Undefined/true = enabled.
     messageTemplate?: string // Custom notification message. Supports {account} {addon} {status} {from} {to} {rule}
+    platform?: string
+    connectionId?: string
 }
 
 export interface WebhookConfig {
     url: string
     enabled: boolean
     updatedAt?: number
-    isEncrypted?: boolean // Flag to indicate if URL is stored encrypted
+    isEncrypted?: boolean
 }
 
 interface FailoverStore {
     rules: FailoverRule[]
     webhook: WebhookConfig
     loading: boolean
-    isMonitoring: boolean // Global automation switch
+    isMonitoring: boolean
     isChecking: boolean // Re-entrancy guard
     lastWorkerRun?: Date // In-memory heartbeat from server
     lastCycle?: AutopilotCycleStats
@@ -218,8 +220,23 @@ const syncRuleToServer = async (rule: FailoverRule) => {
         const sessionKey = await loadSessionKey()
         if (!sessionKey) throw new Error('Encryption key not found')
 
-        const authKey = await getCachedAuthKey(getStremioAuthKey(account), sessionKey)
-        if (!authKey) throw new Error('Failed to decrypt auth key')
+        let authKey = ''
+        let connectionId: string | undefined
+        let credentialType: string | undefined
+        let platform: string | undefined = rule.platform
+        const stremioKey = getStremioAuthKey(account)
+        if (stremioKey) {
+            try { authKey = await getCachedAuthKey(stremioKey, sessionKey) } catch { authKey = '' }
+        }
+        if (authKey) {
+            if (!platform) platform = 'stremio'
+        } else {
+            const fallbackConn = account.connections?.find(c => c.enabled && c.platform !== 'stremio')
+            connectionId = rule.connectionId || fallbackConn?.id
+            credentialType = fallbackConn?.connectionType
+            if (!platform || platform === 'stremio') platform = fallbackConn?.platform
+        }
+        if (!authKey && !connectionId) throw new Error('Failed to decrypt auth key')
         const baseUrl = serverUrl || ''
         const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
 
@@ -241,6 +258,9 @@ const syncRuleToServer = async (rule: FailoverRule) => {
                 accountId: rule.accountId,
                 name: rule.name,
                 authKey,
+                connectionId,
+                credentialType,
+                platform,
                 priorityChain: rule.priorityChain,
                 activeUrl: rule.activeUrl || rule.priorityChain?.[0],
                 is_active: rule.isActive ? 1 : 0,
@@ -280,14 +300,32 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
         for (const rule of rules) {
             const account = useAccountStore.getState().accounts.find(a => a.id === rule.accountId)
             if (!account) continue
-            const authKey = await getCachedAuthKey(getStremioAuthKey(account), sessionKey)
-            if (!authKey) continue
+            let authKey = ''
+            let connectionId: string | undefined
+            let credentialType: string | undefined
+            let platform: string | undefined = rule.platform
+            const stremioKey = getStremioAuthKey(account)
+            if (stremioKey) {
+                try { authKey = await getCachedAuthKey(stremioKey, sessionKey) } catch { authKey = '' }
+            }
+            if (authKey) {
+                if (!platform) platform = 'stremio'
+            } else {
+                const fallbackConn = account.connections?.find(c => c.enabled && c.platform !== 'stremio')
+                connectionId = rule.connectionId || fallbackConn?.id
+                credentialType = fallbackConn?.connectionType
+                if (!platform || platform === 'stremio') platform = fallbackConn?.platform
+            }
+            if (!authKey && !connectionId) continue
             const addonList = account.addons || []
             payload.push({
                 id: rule.id,
                 accountId: rule.accountId,
                 name: rule.name,
                 authKey,
+                connectionId,
+                credentialType,
+                platform,
                 priorityChain: rule.priorityChain,
                 activeUrl: rule.activeUrl || rule.priorityChain?.[0],
                 is_active: rule.isActive ? 1 : 0,

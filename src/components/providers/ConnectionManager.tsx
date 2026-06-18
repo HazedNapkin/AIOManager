@@ -23,7 +23,7 @@ import type { HydraSubscriber } from '@/api/hydra-providers'
 import { PlatformLogo } from './ConnectionPrimitives'
 import { ConnectionCard } from './ConnectionCard'
 import { ConnectionEditPanel } from './ConnectionEditPanel'
-import { SubscriberRow } from './SubscriberRow'
+import { SubscriberCard } from './SubscriberCard'
 
 interface ConnectionManagerProps {
     accountId: string
@@ -237,7 +237,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                     <StatusChip size="md" className="rounded-lg bg-muted/30">
                         <Zap className="h-3.5 w-3.5" />
-                        {activeCount}/{resolvedConnections.length} active
+                        {activeCount}/{resolvedConnections.length} active{subscribers.length > 0 ? ` · ${subscribers.length} app${subscribers.length === 1 ? '' : 's'}` : ''}
                     </StatusChip>
                 </div>
 
@@ -276,40 +276,30 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     }
                 />
             ) : (
-                <div className="space-y-4">
-                    {resolvedConnections.length > 0 && (
-                        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Platform connections</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {resolvedConnections.map(conn => {
-                                    const state = accountStates[conn.id]
-                                    const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
-                                    return (
-                                        <ConnectionCard
-                                            key={conn.id}
-                                            connection={conn}
-                                            status={state?.status || conn.status}
-                                            lastSync={state?.lastSync || conn.lastSync}
-                                            lastError={state?.lastError}
-                                            syncing={isSyncing === accountId}
-                                            onEdit={() => setEditingId(conn.id)}
-                                            onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
-                                            email={connEmail}
-                                        />
-                                    )
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {subscribers.length > 0 && (
-                        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Connected apps</p>
-                            {subscribers.map(sub => (
-                                <SubscriberRow key={sub.name} subscriber={sub} onRemove={handleRemoveSubscriber} />
-                            ))}
-                        </div>
-                    )}
+                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Connections</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {resolvedConnections.map(conn => {
+                            const state = accountStates[conn.id]
+                            const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
+                            return (
+                                <ConnectionCard
+                                    key={conn.id}
+                                    connection={conn}
+                                    status={state?.status || conn.status}
+                                    lastSync={state?.lastSync || conn.lastSync}
+                                    lastError={state?.lastError}
+                                    syncing={isSyncing === accountId}
+                                    onEdit={() => setEditingId(conn.id)}
+                                    onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
+                                    email={connEmail}
+                                />
+                            )
+                        })}
+                        {subscribers.map(sub => (
+                            <SubscriberCard key={sub.name} subscriber={sub} onRemove={handleRemoveSubscriber} />
+                        ))}
+                    </div>
                 </div>
             )}
         </div>
@@ -377,7 +367,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
 
                         <div className="rounded-2xl border border-border/30 bg-muted/20 p-4 text-xs text-muted-foreground">
                             <p className="font-medium text-foreground">Apps connect to you automatically</p>
-                            <p className="mt-1 leading-relaxed">Backendless apps (e.g. Fusion) pull your addons using your AIOManager URL + account API key, so there's no setup here. They appear below as subscribers once they sync. Find your API key on the API tab.</p>
+                            <p className="mt-1 leading-relaxed">Backendless apps (e.g. Fusion) pull your addons using your AIOManager URL + account API key, so there's no setup here. They appear in your <span className="font-medium text-foreground">connections list</span> once they sync. Find your API key on the API Key tab.</p>
                             <button
                                 type="button"
                                 onClick={() => setShowAdvanced(s => !s)}

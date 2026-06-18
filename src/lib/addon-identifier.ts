@@ -61,9 +61,6 @@ function shouldUseCanonicalName(currentName: string, canonicalName: string): boo
     return normalizeDisplayName(currentName) === normalizeDisplayName(canonicalName)
 }
 
-/**
- * Generates a readable name from a transport URL hostname.
- */
 export function getHostnameIdentifier(transportUrl: string): string {
     try {
         const hostname = new URL(transportUrl).hostname
@@ -78,10 +75,6 @@ export function getHostnameIdentifier(transportUrl: string): string {
     }
 }
 
-/**
- * Robustly identifies an addon even if the manifest is missing or partial.
- * Non-destructive: Preserves all existing fields (catalogs, behaviorHints, etc.) while filling gaps.
- */
 export function identifyAddon(transportUrl: string, manifest?: Partial<AddonDescriptor['manifest']>): AddonDescriptor['manifest'] {
     const url = transportUrl.toLowerCase()
     const id = (manifest?.id || '').toLowerCase()

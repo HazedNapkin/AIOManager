@@ -161,8 +161,17 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
 
         let newAddons: AddonDescriptor[]
         if (isTargetDefault) {
-            const defaultProfile = updatedProfiles.find(p => p.id === 'default')
-            newAddons = defaultProfile?.addons?.length ? defaultProfile.addons : account.addons
+            let defaultProfile = updatedProfiles.find(p => p.id === 'default')
+            if (!defaultProfile) {
+                defaultProfile = {
+                    id: 'default',
+                    name: 'Main',
+                    addons: structuredClone(account.addons),
+                    apRules: structuredClone(currentRules),
+                }
+                updatedProfiles.unshift(defaultProfile)
+            }
+            newAddons = defaultProfile.addons?.length ? defaultProfile.addons : account.addons
         } else {
             newAddons = targetProfile?.addons ?? []
         }

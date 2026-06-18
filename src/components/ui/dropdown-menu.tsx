@@ -57,6 +57,7 @@ const DropdownMenuTrigger = React.forwardRef<HTMLButtonElement, DropdownMenuTrig
     }
 
     if (asChild && React.isValidElement(children)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const child = children as React.ReactElement<any>
       return React.cloneElement(child, {
         ref,

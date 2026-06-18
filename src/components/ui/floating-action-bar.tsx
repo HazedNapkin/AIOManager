@@ -46,7 +46,6 @@ export function FloatingActionBar({
                     )}
                 >
                     <div className="pointer-events-auto overflow-hidden rounded-[1.75rem] border border-border/50 bg-card/95 shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-                        {/* Top row: count + dismiss */}
                         <div className="flex items-center justify-between gap-3 border-b border-border/35 px-3 py-2.5 sm:px-4">
                             <div className="flex items-center gap-2">
                                 <span className="min-w-[1.75rem] rounded-full bg-primary px-2 py-1 text-center text-xs font-bold tabular-nums text-primary-foreground shadow-sm">
@@ -67,7 +66,6 @@ export function FloatingActionBar({
                             </Tooltip>
                         </div>
 
-                        {/* Actions row */}
                         <div className="grid grid-cols-2 gap-1.5 p-2 sm:flex sm:flex-wrap sm:items-center sm:gap-1.5">
                             {actions.map((action, index) => (
                                 <Button

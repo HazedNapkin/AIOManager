@@ -31,7 +31,6 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
     const accounts = useAccountStore(s => s.accounts)
     const dirty = !sameList(plugins, baseline)
 
-    // Clone the saved plugin list to every other account that has an enabled Nuvio connection.
     const cloneToAccounts = async (targetIds: string[]) => {
         let ok = 0, skipped = 0, failed = 0
         for (const tid of targetIds) {
@@ -217,7 +216,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
 
             {dirty && (
                 <div className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-3.5 py-2.5 shadow-sm">
-                    <p className="text-xs text-warning">Unsaved changes — saving replaces this profile's plugins on Nuvio.</p>
+                    <p className="text-xs text-warning">Saving will replace this profile's plugins on Nuvio.</p>
                     <div className="flex gap-2 shrink-0">
                         <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPlugins(baseline)} disabled={saving}>
                             Discard

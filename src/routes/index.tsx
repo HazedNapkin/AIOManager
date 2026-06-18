@@ -9,6 +9,7 @@ const AccountsPage = lazy(() => import('@/pages/AccountsPage').then(m => ({ defa
 const AccountDetailPage = lazy(() => import('@/pages/AccountDetailPage').then(m => ({ default: m.AccountDetailPage })))
 const SavedAddonsPage = lazy(() => import('@/pages/SavedAddonsPage').then(m => ({ default: m.SavedAddonsPage })))
 const AIOStreamsPage = lazy(() => import('@/pages/AIOStreamsPage').then(m => ({ default: m.AIOStreamsPage })))
+const AIOMetadataPage = lazy(() => import('@/pages/AIOMetadataPage').then(m => ({ default: m.AIOMetadataPage })))
 
 const KronoriumPage = lazy(() => import('@/pages/kronorium/KronoriumPage').then(m => ({ default: m.KronoriumPage })))
 const KronoriumDocsLayout = lazy(() => import('@/components/kronorium/KronoriumDocsLayout').then(m => ({ default: m.KronoriumDocsLayout })))
@@ -32,6 +33,7 @@ export function AppRoutes() {
 
       <Route path="/account/:accountId" element={<ErrorBoundary><Suspense fallback={fallback}><AccountDetailPage /></Suspense></ErrorBoundary>} />
       <Route path="/account/:accountId/aiostreams/:uuid" element={<ErrorBoundary><Suspense fallback={fallback}><AIOStreamsPage /></Suspense></ErrorBoundary>} />
+      <Route path="/account/:accountId/aiometadata/:uuid" element={<ErrorBoundary><Suspense fallback={fallback}><AIOMetadataPage /></Suspense></ErrorBoundary>} />
 
 
       <Route path="/activity" element={<ErrorBoundary><Suspense fallback={fallback}><ActivityPage /></Suspense></ErrorBoundary>} />

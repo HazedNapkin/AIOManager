@@ -8,7 +8,7 @@ export type OperationType = 'remove' | 'add' | 'update'
 
 export interface PendingOperation {
     accountId: string
-    targetId: string // Usually transportUrl or manifestId
+    targetId: string
     type: OperationType
     timestamp: number
 }

@@ -26,7 +26,6 @@ import { SectionPreview } from './SectionPreview'
 import { cn } from '@/lib/utils'
 import { mapConcurrent } from '@/lib/concurrency'
 import { useAccountStore } from '@/store/accountStore'
-import { useVaultStore } from '@/store/vaultStore'
 import { EmptyState } from '@/components/common/EmptyState'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { useNavigate } from 'react-router-dom'
@@ -447,8 +446,6 @@ export function AIOStreamsSyncTab({
     const { toast } = useToast()
     const navigate = useNavigate()
     const installAddonToAccount = useAccountStore(s => s.installAddonToAccount)
-    const vaultKeys = useVaultStore(s => s.keys)
-    const vaultLocked = useVaultStore(s => s.isLocked)
     const [syncMode, setSyncMode] = useState<SyncMode>('full')
     const [selectedSections, setSelectedSections] = useState<Set<string>>(new Set())
     const [selectedTargets, setSelectedTargets] = useState<Map<string, string>>(new Map())
@@ -500,7 +497,7 @@ export function AIOStreamsSyncTab({
             sameInstanceCount,
             crossInstanceCount: targetOptions.length - sameInstanceCount,
         }
-    }, [targetOptions, sourceBaseUrl, vaultKeys, vaultLocked])
+    }, [targetOptions, sourceBaseUrl])
 
     const filteredTargets = useMemo(() => {
         const query = targetQuery.trim().toLowerCase()

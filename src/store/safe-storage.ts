@@ -4,11 +4,9 @@ const safeLocalStorage: StateStorage = {
     getItem: (name: string): string | null => {
         try {
             const value = localStorage.getItem(name)
-            // Trap the specific corruption
             if (value && (value.includes('[object Object]') || value === '[object Object]')) {
                 console.warn(`[SafeStorage] Corrupted key detected: ${name}. Attempting recovery.`)
 
-                // Try to recover from a previous good state stored alongside the key
                 const backupKey = `${name}:last-good`
                 const backup = localStorage.getItem(backupKey)
                 if (backup && !backup.includes('[object Object]') && backup !== '[object Object]') {
@@ -17,13 +15,11 @@ const safeLocalStorage: StateStorage = {
                     return backup
                 }
 
-                // No backup available - wipe as last resort
-                import.meta.env.DEV && console.error(`[SafeStorage] No backup for ${name}. Wiping corrupted key.`)
+                if (import.meta.env.DEV) console.error(`[SafeStorage] No backup for ${name}. Wiping corrupted key.`)
                 localStorage.removeItem(name)
                 return null
             }
 
-            // Store a known-good copy for future recovery attempts
             if (value && name === 'stremio-manager-sync') {
                 try {
                     const parsed = JSON.parse(value)
@@ -50,7 +46,7 @@ const safeLocalStorage: StateStorage = {
 
             return value
         } catch (e) {
-            import.meta.env.DEV && console.error(`[SafeStorage] Failed to read ${name}`, e)
+            if (import.meta.env.DEV) console.error(`[SafeStorage] Failed to read ${name}`, e)
             return null
         }
     },
@@ -68,8 +64,7 @@ const safeLocalStorage: StateStorage = {
     removeItem: (name: string): void => {
         try {
             localStorage.removeItem(name)
-        } catch {
-        }
+        } catch {}
     }
 }
 

@@ -44,7 +44,6 @@ export const AddonReorderRow = memo(function AddonReorderRow({
             : 'border-border/40 shadow-sm hover:border-border hover:shadow-md',
       ].join(' ')}
     >
-      {/* Drag Handle */}
       <div
         {...dragHandleProps}
         className={[
@@ -64,7 +63,6 @@ export const AddonReorderRow = memo(function AddonReorderRow({
         textClassName="text-xs"
       />
 
-      {/* Addon Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold text-sm truncate">

@@ -5,7 +5,6 @@ interface ReplayInsightsProps {
     data: ReplayData
 }
 
-// Format hour number to human-readable
 const formatHour = (hour: number): string => {
     if (hour === 0) return '12 AM'
     if (hour === 12) return '12 PM'

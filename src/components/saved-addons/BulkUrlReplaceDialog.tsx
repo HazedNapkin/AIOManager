@@ -15,6 +15,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn, normalizeAddonUrl } from '@/lib/utils'
 import { SavedAddonIcon } from './SavedAddonIcon'
+import type { AddonDescriptor } from '@/types/addon'
 
 function escapeRegExp(s: string) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -27,10 +28,25 @@ function replaceAllCaseInsensitive(str: string, find: string, replace: string) {
 interface BulkUrlReplaceDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
+    // When provided, the tool operates on a single account's installed addons and scopes
+    // the replacement to that account only (the shared Library is left untouched).
+    accountId?: string
+    accountAddons?: AddonDescriptor[]
+    accountName?: string
+}
+
+interface ReplaceSourceEntry {
+    key: string
+    savedAddonId: string | null
+    name: string
+    logo?: string
+    manifestId: string
+    url: string
 }
 
 interface ReplaceResult {
     id: string
+    savedAddonId: string | null
     name: string
     logo?: string
     manifestId: string
@@ -48,50 +64,73 @@ function getBlockReasonLabel(reason?: ReplaceResult['blockReason']) {
     return null
 }
 
-export function BulkUrlReplaceDialog({ open, onOpenChange }: BulkUrlReplaceDialogProps) {
+export function BulkUrlReplaceDialog({ open, onOpenChange, accountId, accountAddons, accountName }: BulkUrlReplaceDialogProps) {
     const library = useAddonStore(s => s.library)
+    const isAccountScope = !!accountId
     const [findText, setFindText] = useState('')
     const [replaceText, setReplaceText] = useState('')
     const [results, setResults] = useState<ReplaceResult[]>([])
     const [isExecuting, setIsExecuting] = useState(false)
 
-    // Calculate dry-run output from full library. This is local-only and does not
-    // fetch manifests or mutate accounts until the user runs the replacement.
+    // Normalize the two sources (full library vs. a single account's installed addons)
+    // into one shape so the preview and run logic stay identical for both modes.
+    const sources = useMemo<ReplaceSourceEntry[]>(() => {
+        if (isAccountScope) {
+            return (accountAddons ?? []).map((addon, index) => ({
+                key: `${addon.transportUrl}::${index}`,
+                savedAddonId: null,
+                name: addon.metadata?.customName || addon.manifest?.name || 'Unknown Addon',
+                logo: addon.metadata?.customLogo || addon.manifest?.logo,
+                manifestId: addon.manifest?.id || 'unknown',
+                url: addon.transportUrl,
+            }))
+        }
+        return Object.values(library).map(addon => ({
+            key: addon.id,
+            savedAddonId: addon.id,
+            name: addon.name,
+            logo: addon.metadata?.customLogo || addon.manifest?.logo,
+            manifestId: addon.manifest?.id || 'unknown',
+            url: addon.installUrl,
+        }))
+    }, [isAccountScope, accountAddons, library])
+
+    // Calculate dry-run output. This is local-only and does not fetch manifests
+    // or mutate accounts until the user runs the replacement.
     const previewItems = useMemo<ReplaceResult[]>(() => {
         if (!findText.trim()) return []
-        const addons = Object.values(library)
-        const rawMatches = addons.filter(addon =>
-            addon.installUrl.toLowerCase().includes(findText.toLowerCase())
+        const rawMatches = sources.filter(source =>
+            source.url.toLowerCase().includes(findText.toLowerCase())
         )
 
-        const existingIdsByUrl = new Map<string, string[]>()
-        for (const addon of addons) {
-            const key = normalizeAddonUrl(addon.installUrl)
-            const ids = existingIdsByUrl.get(key)
-            if (ids) ids.push(addon.id)
-            else existingIdsByUrl.set(key, [addon.id])
+        const existingKeysByUrl = new Map<string, string[]>()
+        for (const source of sources) {
+            const urlKey = normalizeAddonUrl(source.url)
+            const keys = existingKeysByUrl.get(urlKey)
+            if (keys) keys.push(source.key)
+            else existingKeysByUrl.set(urlKey, [source.key])
         }
 
-        const movingIds = new Set<string>()
-        for (const addon of rawMatches) {
-            const newUrl = replaceAllCaseInsensitive(addon.installUrl, findText, replaceText)
-            const oldKey = normalizeAddonUrl(addon.installUrl)
+        const movingKeys = new Set<string>()
+        for (const source of rawMatches) {
+            const newUrl = replaceAllCaseInsensitive(source.url, findText, replaceText)
+            const oldKey = normalizeAddonUrl(source.url)
             const newKey = normalizeAddonUrl(newUrl)
             if (oldKey === newKey) continue
-            movingIds.add(addon.id)
+            movingKeys.add(source.key)
         }
 
         const claimedTargetKeys = new Set<string>()
-        return rawMatches.map(addon => {
-            const newUrl = replaceAllCaseInsensitive(addon.installUrl, findText, replaceText)
-            const oldKey = normalizeAddonUrl(addon.installUrl)
+        return rawMatches.map(source => {
+            const newUrl = replaceAllCaseInsensitive(source.url, findText, replaceText)
+            const oldKey = normalizeAddonUrl(source.url)
             const newKey = normalizeAddonUrl(newUrl)
-            const existingTargetIds = existingIdsByUrl.get(newKey)?.filter(id => id !== addon.id && !movingIds.has(id)) ?? []
+            const existingTargetKeys = existingKeysByUrl.get(newKey)?.filter(key => key !== source.key && !movingKeys.has(key)) ?? []
 
             let blockReason: ReplaceResult['blockReason'] | undefined
             if (oldKey === newKey) {
                 blockReason = 'no-change'
-            } else if (existingTargetIds.length > 0) {
+            } else if (existingTargetKeys.length > 0) {
                 blockReason = 'target-exists'
             } else if (claimedTargetKeys.has(newKey)) {
                 blockReason = 'duplicate-target'
@@ -102,17 +141,18 @@ export function BulkUrlReplaceDialog({ open, onOpenChange }: BulkUrlReplaceDialo
             }
 
             return {
-                id: addon.id,
-                name: addon.name,
-                logo: addon.metadata?.customLogo || addon.manifest?.logo,
-                manifestId: addon.manifest?.id || 'unknown',
-                oldUrl: addon.installUrl,
+                id: source.key,
+                savedAddonId: source.savedAddonId,
+                name: source.name,
+                logo: source.logo,
+                manifestId: source.manifestId,
+                oldUrl: source.url,
                 newUrl,
                 status: blockReason ? 'skipped' : 'idle',
                 blockReason,
             }
         })
-    }, [library, findText, replaceText])
+    }, [sources, findText, replaceText])
 
     const runnableItems = useMemo(
         () => previewItems.filter(item => !item.blockReason),
@@ -124,7 +164,6 @@ export function BulkUrlReplaceDialog({ open, onOpenChange }: BulkUrlReplaceDialo
         [results]
     )
 
-    // Reset when opening
     useEffect(() => {
         if (open) {
             setFindText('')
@@ -146,8 +185,10 @@ export function BulkUrlReplaceDialog({ open, onOpenChange }: BulkUrlReplaceDialo
             setResults(prev => prev.map(r => r.id === item.id ? { ...r, status: 'running' } : r))
 
             try {
-                // Use the universal replacement logic which handles library, accounts, and rules
-                const result = await addonStore.replaceTransportUrlUniversally(item.id, item.oldUrl, item.newUrl)
+                // Use the universal replacement logic which handles library, accounts, and rules.
+                // In account scope, savedAddonId is null and accountId is set so the change
+                // stays scoped to that account and the shared Library is left untouched.
+                const result = await addonStore.replaceTransportUrlUniversally(item.savedAddonId, item.oldUrl, item.newUrl, accountId)
                 const warning = result.failedAccounts.length
                     ? `Updated locally, but failed to sync ${result.failedAccounts.length} account(s): ${result.failedAccounts.join(', ')}`
                     : undefined
@@ -189,7 +230,9 @@ export function BulkUrlReplaceDialog({ open, onOpenChange }: BulkUrlReplaceDialo
                         Bulk URL Fragment Replace
                     </DialogTitle>
                     <DialogDescription>
-                        Search and replace strings across your entire library. Useful for domain migrations or proxy updates.
+                        {isAccountScope
+                            ? `Search and replace strings across the addons installed on ${accountName || 'this account'}. Changes apply to this account only; your Library is not changed. Useful for domain migrations or proxy updates.`
+                            : 'Search and replace strings across your entire library. Useful for domain migrations or proxy updates.'}
                     </DialogDescription>
                 </DialogHeader>
 

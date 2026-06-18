@@ -17,7 +17,7 @@ import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRi
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
-import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
@@ -165,7 +165,7 @@ export const AccountListRow = memo(function AccountListRow({
 
 
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    {(getStremioAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                    {(hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
                         <div className="flex items-center gap-0.5">
                             {getStremioAuthKey(account) && (
                                 <PlatformLogo platform="stremio" className="h-4 w-4" />
@@ -335,6 +335,7 @@ export const AccountListRow = memo(function AccountListRow({
                         </DropdownMenuItem>
                         <DropdownMenuItem className="gap-2" onClick={async (e) => {
                             e.stopPropagation()
+                            if (!hasPlatformConnection(account)) return
                             try {
                                 toast({ title: 'Refreshing...', description: `Reinstalling all addons on ${displayName}` })
                                 const { useAddonStore } = await import('@/store/addonStore')

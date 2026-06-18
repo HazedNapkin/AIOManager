@@ -1,6 +1,6 @@
 import path from 'path'
 import db from '../db.js'
-import { DATA_DIR } from '../config.js'
+import { DATA_DIR, isReadOnlyReplica } from '../config.js'
 import { domainLastRequestTime, globalHealthCache, proxyQueue, serverState } from '../state.js'
 
 export async function initializeDatabase(fastify) {
@@ -32,10 +32,15 @@ export async function initializeDatabase(fastify) {
                 } catch (e) {
                     fastify.log.warn({ category: 'Database' }, `VACUUM failed: ${e.message}`)
                 }
-                scheduleVacuum() // reschedule
+                scheduleVacuum()
             }, VACUUM_INTERVAL_MS)
         }
         scheduleVacuum()
+    }
+
+    if (isReadOnlyReplica()) {
+        fastify.log.info({ category: 'Database' }, 'READ_ONLY_REPLICA mode: skipping schema and migrations (follower DB is read-only).')
+        return dbPath
     }
 
     const schema = `
@@ -64,7 +69,9 @@ export async function initializeDatabase(fastify) {
         name TEXT,
         cooldown_ms INTEGER,
         message_template TEXT,
-        owner_sync_user TEXT
+        owner_sync_user TEXT,
+        platform TEXT DEFAULT 'stremio',
+        connection_id TEXT
       );
 
 
@@ -367,10 +374,8 @@ export async function initializeDatabase(fastify) {
         last_seen_at: 'ALTER TABLE hydra_subscribers ADD COLUMN last_seen_at BIGINT',
     }, ['id'])
 
-    // Migration: Add addon_list column if it doesn't exist (for existing databases)
     try {
         if (db.type === 'postgres') {
-            // Migration: Add missing columns if they don't exist
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration is_active: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS addon_list TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration addon_list: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS active_url TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration active_url: ${e?.message}`) }
@@ -382,23 +387,34 @@ export async function initializeDatabase(fastify) {
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS cooldown_ms INTEGER`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration cooldown_ms: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS message_template TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration message_template: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS owner_sync_user TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration owner_sync_user: ${e?.message}`) }
+            try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'stremio'`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration platform: ${e?.message}`) }
+            try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS connection_id TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration connection_id: ${e?.message}`) }
+
+            try {
+                const platformBackfill = await db.run(`UPDATE autopilot_rules SET platform = 'stremio' WHERE platform IS NULL`)
+                if (platformBackfill?.changes > 0) {
+                    fastify.log.info({ category: 'Database' }, `Autopilot Rules: backfilled platform='stremio' for ${platformBackfill.changes} rows.`)
+                }
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `PG migration platform backfill: ${e.message}`) }
 
             // Migration: Ensure columns are TEXT/VARCHAR for encrypted strings, not JSONB
             // We use try/catch to avoid aborting if the types are already correct
             // Using explicit casting (USING column::TEXT) ensures stability if columns were manually tweaked
-            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN priority_chain TYPE TEXT USING priority_chain::TEXT`) } catch (e) { }
-            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN addon_list TYPE TEXT USING addon_list::TEXT`) } catch (e) { }
-            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN stabilization TYPE TEXT USING stabilization::TEXT`) } catch (e) { }
+            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN priority_chain TYPE TEXT USING priority_chain::TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN addon_list TYPE TEXT USING addon_list::TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN stabilization TYPE TEXT USING stabilization::TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
-            try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hash TEXT`) } catch (e) { }
+            try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hash TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
-            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`) } catch (e) { }
-            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id)`) } catch (e) { }
-            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_worker_scan ON autopilot_rules (is_active, is_automatic, id)`) } catch (e) { }
+            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_worker_scan ON autopilot_rules (is_active, is_automatic, id)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_platform ON autopilot_rules (platform)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_connection ON autopilot_rules (connection_id)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
-            try { await db.run(`ALTER TABLE failover_history ADD COLUMN IF NOT EXISTS latency_ms INTEGER`) } catch (e) { }
+            try { await db.run(`ALTER TABLE failover_history ADD COLUMN IF NOT EXISTS latency_ms INTEGER`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
-            try { await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`) } catch (e) { }
+            try { await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`) } catch (e) { fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}. Duplicate rows may exist.`) }
 
             fastify.log.info({ category: 'Database' }, 'Postgres Migration: Verified columns and types for encryption support.')
         } else {
@@ -459,6 +475,24 @@ export async function initializeDatabase(fastify) {
                 await db.run(`ALTER TABLE autopilot_rules ADD COLUMN owner_sync_user TEXT`)
                 fastify.log.info({ category: 'Database' }, 'Migrated: Added owner_sync_user column to autopilot_rules')
             }
+            const hasPlatform = tableInfo.some(col => col.name === 'platform')
+            if (!hasPlatform) {
+                await db.run(`ALTER TABLE autopilot_rules ADD COLUMN platform TEXT DEFAULT 'stremio'`)
+                fastify.log.info({ category: 'Database' }, 'Migrated: Added platform column to autopilot_rules')
+            }
+            const hasConnectionId = tableInfo.some(col => col.name === 'connection_id')
+            if (!hasConnectionId) {
+                await db.run(`ALTER TABLE autopilot_rules ADD COLUMN connection_id TEXT`)
+                fastify.log.info({ category: 'Database' }, 'Migrated: Added connection_id column to autopilot_rules')
+            }
+            if (!hasPlatform) {
+                try {
+                    const platformBackfill = await db.run(`UPDATE autopilot_rules SET platform = 'stremio' WHERE platform IS NULL`)
+                    if (platformBackfill?.changes > 0) {
+                        fastify.log.info({ category: 'Database' }, `Autopilot Rules: backfilled platform='stremio' for ${platformBackfill.changes} rows.`)
+                    }
+                } catch (e) { fastify.log.warn({ category: 'Database' }, `SQLite migration platform backfill: ${e.message}`) }
+            }
             const kvTableInfo = await db.query(`PRAGMA table_info(kv_store)`)
             const hasContentHash = kvTableInfo.some(col => col.name === 'content_hash')
             if (!hasContentHash) {
@@ -473,16 +507,22 @@ export async function initializeDatabase(fastify) {
             }
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id)`)
-            } catch (e) { }
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_worker_scan ON autopilot_rules (is_active, is_automatic, id)`)
-            } catch (e) { }
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`)
-            } catch (e) { }
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try {
+                await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_platform ON autopilot_rules (platform)`)
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try {
+                await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_connection ON autopilot_rules (connection_id)`)
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try {
                 await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
-            } catch (e) { }
+            } catch (e) { fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}. Duplicate rows may exist.`) }
         }
 
         // Backfill any rules that lack a stats row. Idempotent and cheap when fully populated.
@@ -557,10 +597,31 @@ export async function initializeDatabase(fastify) {
             try {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_creds_connection ON server_credentials (connection_id)`)
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_creds_type_updated ON server_credentials (credential_type, updated_at DESC, id ASC)`)
-            } catch (e) { }
-        } catch (e) { }
+            } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+        } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
     } catch (migrationErr) {
         fastify.log.warn({ category: 'Database' }, `Migration warning: ${migrationErr.message}`)
+    }
+
+    try {
+        const MIGRATION_KEY = 'migration:activity_season_clamp_v1'
+        const done = await db.get(`SELECT key FROM kv_store WHERE key = $1`, [MIGRATION_KEY])
+        if (!done) {
+            const e1 = await db.run(`UPDATE activity_events SET season = NULL WHERE season > 100 OR season < 0`)
+            const e2 = await db.run(`UPDATE activity_snapshots SET season = NULL WHERE season > 100 OR season < 0`)
+            await db.run(
+                db.type === 'postgres'
+                    ? `INSERT INTO kv_store (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING`
+                    : `INSERT OR IGNORE INTO kv_store (key, value, updated_at) VALUES ($1, $2, $3)`,
+                [MIGRATION_KEY, '1', Date.now()]
+            )
+            const cleaned = Number(e1?.changes || 0) + Number(e2?.changes || 0)
+            if (cleaned > 0) {
+                fastify.log.info({ category: 'Database' }, `Activity cleanup: nulled ${cleaned} implausible season values (anime id pollution).`)
+            }
+        }
+    } catch (e) {
+        fastify.log.warn({ category: 'Database' }, `Activity season cleanup failed: ${e.message}`)
     }
 
     try {
@@ -568,7 +629,7 @@ export async function initializeDatabase(fastify) {
             await db.pragma('wal_checkpoint(TRUNCATE)')
             fastify.log.info({ category: 'Database' }, 'Startup: WAL checkpoint completed - cleared stale locks.')
         } else if (db.type === 'postgres') {
-            await db.run(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid() AND usename = current_user`).catch(() => { })
+            await db.run(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction' AND pid <> pg_backend_pid() AND usename = current_user`).catch((e) => { fastify.log.warn({ category: 'Database' }, `pg_terminate_backend cleanup failed: ${e.message}`) })
             fastify.log.info({ category: 'Database' }, 'Startup: Cleared stale PostgreSQL transactions.')
         }
         serverState.isWorkerRunning = false

@@ -14,7 +14,6 @@ export function usePendingRemoval(accountId: string, transportUrl: string) {
         // Initial check in case it changed between state init and effect
         checkStatus()
 
-        // SyncManager triggers all observers on any change
         const unsubscribe = syncManager.subscribe(checkStatus)
         return () => { unsubscribe() }
     }, [accountId, transportUrl])

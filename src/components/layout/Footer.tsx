@@ -9,12 +9,11 @@ import { Tooltip } from '@/components/ui/tooltip'
 export function Footer({ className }: { className?: string }) {
   const isDev = import.meta.env?.DEV
   const version = pkg.version
-  const build = (pkg as any).build as number | undefined
+  const build = (pkg as { build?: number }).build
 
   const [updateAvailable, setUpdateAvailable] = React.useState<string | null>(null)
 
   React.useEffect(() => {
-    // Simple GitHub Release check
     const checkUpdate = async () => {
       try {
         const res = await fetch('https://api.github.com/repos/sonicx161/AIOManager/releases/latest')
@@ -28,9 +27,7 @@ export function Footer({ className }: { className?: string }) {
             setUpdateAvailable(latestStr.replace('v', ''))
           }
         }
-      } catch (e) {
-        // Silent fail
-      }
+      } catch {}
     }
 
     if (!isDev) checkUpdate()

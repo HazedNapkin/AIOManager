@@ -1,4 +1,5 @@
 import { normalizeAddonUrl } from '@/lib/utils'
+import { filterResurrected } from '@/lib/addon-tombstones'
 import type { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { CinemetaManifest } from '@/types/cinemeta'
@@ -25,11 +26,10 @@ function normalizeRawEntry(platform: string, raw: Record<string, unknown>): { ur
     if (platform === 'realstream') {
         const url = String(raw.manifestUrl || raw.baseUrl || '')
         if (!url) return null
-        return { url, name: String(raw.name || ''), enabled: true }
+        return { url, name: String(raw.name || ''), enabled: raw.enabled !== false }
     }
     return null
 }
-
 
 export async function discoverFromConnections(account: Account, accountId: string): Promise<DiscoveryResult> {
     const connections = (account.connections || []).filter(
@@ -95,8 +95,9 @@ export interface AbsorbResult {
 }
 
 export async function absorbConnectionAddons(account: Account, accountId: string): Promise<AbsorbResult> {
-    const { discovered, failedReadConnIds } = await discoverFromConnections(account, accountId)
+    const { discovered: rawDiscovered, failedReadConnIds } = await discoverFromConnections(account, accountId)
     const existing = account.addons || []
+    const discovered = filterResurrected(rawDiscovered, existing, account.deletedAddons)
     if (discovered.length === 0) return { addons: existing, failedReadConnIds, changed: false }
 
     const { fetchAddonManifest } = await import('@/api/addons')
@@ -131,4 +132,12 @@ export async function absorbConnectionAddons(account: Account, accountId: string
     const surviving = newDescriptors
     if (surviving.length === 0) return { addons: existing, failedReadConnIds, changed: false }
     return { addons: mergeAddons(existing, surviving), failedReadConnIds, changed: true }
+}
+
+export function invalidateConnectionCache(connectionId?: string) {
+    if (connectionId) {
+        import('@/lib/nuvio-token-cache').then(({ invalidateNuvioToken }) => {
+            invalidateNuvioToken(connectionId)
+        }).catch(() => {})
+    }
 }

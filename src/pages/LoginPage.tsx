@@ -58,6 +58,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const [loading, setLoading] = useState(false)
     const [loginError, setLoginError] = useState<string | null>(null)
     const [regError, setRegError] = useState<string | null>(null)
+    const [registrationsClosed, setRegistrationsClosed] = useState(false)
 
     const passwordsMatch = regPass === regPassConfirm || !regPassConfirm
     const normalizedLoginError = loginError?.toLowerCase() ?? ''
@@ -70,9 +71,16 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             .then(res => res.json())
             .then(data => {
                 if (data.customHtml) setCustomHtml(data.customHtml)
+                setRegistrationsClosed(Boolean(data.registrationsClosed))
             })
             .catch(() => {})
     }, [])
+
+    useEffect(() => {
+        if (registrationsClosed && mode === 'register') {
+            setMode('login')
+        }
+    }, [registrationsClosed, mode])
 
     useEffect(() => {
         const idParam = searchParams.get('id')
@@ -108,7 +116,12 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             setShowRegSuccess(true)
             confetti.fire({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } })
         } catch (e) {
-            setRegError(e instanceof Error ? e.message : 'Registration failed. Please try again.')
+            const msg = e instanceof Error ? e.message : 'Registration failed. Please try again.'
+            if (msg.includes('Registrations are closed')) {
+                setRegError('Registrations are closed on this instance.')
+            } else {
+                setRegError(msg)
+            }
         } finally {
             setIsRegistering(false)
         }
@@ -245,10 +258,12 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 )}
 
                 <Tabs value={mode} onValueChange={(v) => { setMode(v as 'login' | 'register'); setShowPassword(false); }} className="w-full">
-                    <TabsList className="mb-4 grid w-full grid-cols-2">
-                        <TabsTrigger value="login" className="h-8">Login</TabsTrigger>
-                        <TabsTrigger value="register" className="h-8">New Account</TabsTrigger>
-                    </TabsList>
+                    {!registrationsClosed && (
+                        <TabsList className="mb-4 grid w-full grid-cols-2">
+                            <TabsTrigger value="login" className="h-8">Login</TabsTrigger>
+                            <TabsTrigger value="register" className="h-8">New Account</TabsTrigger>
+                        </TabsList>
+                    )}
 
                     <TabsContent value="register">
                         <Card className="relative overflow-hidden border border-border/60 bg-card shadow-sm">
@@ -462,6 +477,10 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                         </Card>
                     </TabsContent>
                 </Tabs>
+
+                {registrationsClosed && (
+                    <p className="mt-4 text-center text-sm text-muted-foreground">Registrations are closed on this instance.</p>
+                )}
 
                 <ConfirmationDialog
                     open={showSwitchConfirm}

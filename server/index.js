@@ -6,7 +6,7 @@ import rateLimit from '@fastify/rate-limit'
 import { hashApiKey } from './api-keys.js'
 import db from './db.js'
 import fs from 'fs'
-import { VERSION, PORT, loggerConfig, distPath, corsOrigins, ensureDataDirectory } from './config.js'
+import { VERSION, PORT, loggerConfig, distPath, corsOrigins, ensureDataDirectory, isRegistrationsClosed, isReadOnlyReplica } from './config.js'
 import { initializeEncryptionKeys } from './keys.js'
 import { proxyQueue, serverState } from './state.js'
 import { initializeDatabase } from './database/setup.js'
@@ -35,8 +35,6 @@ if (process.env.CUSTOM_HTML) {
 
 const dbPath = await initializeDatabase(fastify)
 
-// Supports CORS_ORIGINS env var: comma-separated list of allowed origins.
-// Falls back to origin: true (allow all) when unset - safe for self-hosted setups.
 await fastify.register(cors, {
     origin: corsOrigins
 })
@@ -71,7 +69,6 @@ if (fs.existsSync(distPath)) {
         prefix: '/'
     })
 
-    // SPA Routing: Fallback to index.html for all non-API 404s
     fastify.setNotFoundHandler((request, reply) => {
         if (request.url.startsWith('/api')) {
             reply.status(404);
@@ -91,6 +88,7 @@ fastify.get('/api/health', {
                     status: { type: 'string' },
                     version: { type: 'string' },
                     mode: { type: 'string' },
+                    readOnly: { type: 'boolean' },
                     optimized: { type: 'boolean' },
                     database: {
                         type: 'object',
@@ -113,13 +111,16 @@ fastify.get('/api/health', {
 }, async (request, reply) => {
     const dbHealthy = await db.healthCheck()
     const overallStatus = dbHealthy ? 'ok' : 'degraded'
+    const readOnly = isReadOnlyReplica()
+    const mode = readOnly ? 'read-only-replica' : 'multi-tenant'
 
     if (!dbHealthy) {
         reply.status(503);
         return {
             status: 'degraded',
             version: VERSION,
-            mode: 'multi-tenant',
+            mode,
+            readOnly,
             optimized: true,
             database: { type: db.type, healthy: false },
             autopilot: { lastRun: serverState.lastWorkerRun, running: serverState.isWorkerRunning }
@@ -129,16 +130,39 @@ fastify.get('/api/health', {
     return {
         status: overallStatus,
         version: VERSION,
-        mode: 'multi-tenant',
+        mode,
+        readOnly,
         optimized: true,
         database: { type: db.type, healthy: true },
         autopilot: { lastRun: serverState.lastWorkerRun, running: serverState.isWorkerRunning }
     }
 })
 
+// Write-readiness probe for status-code-only load balancers: a read-only standby (or an
+// unhealthy DB) returns 503 so it is excluded from write routing, while /api/health stays
+// 200 to keep the standby reachable for read traffic.
+fastify.get('/api/ready', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    schema: {
+        response: {
+            200: { type: 'object', properties: { ready: { type: 'boolean' }, readOnly: { type: 'boolean' } } },
+            503: { type: 'object', properties: { ready: { type: 'boolean' }, readOnly: { type: 'boolean' } } }
+        }
+    }
+}, async (request, reply) => {
+    const readOnly = isReadOnlyReplica()
+    const dbHealthy = await db.healthCheck()
+    if (readOnly || !dbHealthy) {
+        reply.status(503)
+        return { ready: false, readOnly }
+    }
+    return { ready: true, readOnly }
+})
+
 fastify.get('/api/config', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
     return {
-        customHtml: process.env.CUSTOM_HTML || null
+        customHtml: process.env.CUSTOM_HTML || null,
+        registrationsClosed: isRegistrationsClosed()
     }
 })
 
@@ -177,9 +201,12 @@ const start = async () => {
         }
         fastify.log.info({ category: 'Security' }, 'Zero-Knowledge mode active. 🛡️')
 
-        autopilotEngine.startAutopilotWorker()
-
-        activityEngine.start()
+        if (isReadOnlyReplica()) {
+            fastify.log.info({ category: 'Server' }, 'READ_ONLY_REPLICA mode: passive standby, autopilot and activity workers disabled. Serving read traffic only.')
+        } else {
+            autopilotEngine.startAutopilotWorker()
+            activityEngine.start()
+        }
     } catch (err) {
         fastify.log.error(err)
         process.exit(1)

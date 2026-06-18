@@ -40,7 +40,6 @@ export function AddonInstaller() {
         if (text && (text.startsWith('stremio://') || (text.includes('/manifest.json') && text.startsWith('http')))) {
           setAddonUrl(text)
           setIsClipboardScanActive(true)
-          // Hide hint after 3 seconds
           setTimeout(() => setIsClipboardScanActive(false), 3000)
         }
       } catch (err) {
@@ -77,7 +76,6 @@ export function AddonInstaller() {
     const normalizedUrl = addonUrl.trim().replace(/^stremio:\/\//, 'https://')
 
     try {
-      // Validate URL format
       new URL(normalizedUrl)
 
       await installAddon(selectedAccountId, normalizedUrl)
@@ -99,7 +97,7 @@ export function AddonInstaller() {
         setAddonUrl(text)
       }
     } catch (err) {
-      import.meta.env.DEV && console.error('Failed to read clipboard:', err)
+      if (import.meta.env.DEV) console.error('Failed to read clipboard:', err)
     }
   }
 

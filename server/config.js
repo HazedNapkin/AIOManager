@@ -17,6 +17,8 @@ export const DOMAIN_THROTTLE_MS = 200
 export const AIOSTREAMS_USER_API_THROTTLE_MS = Math.max(200, parseInt(process.env.AIOSTREAMS_USER_API_THROTTLE_MS || '1000') || 1000)
 export const STREMIO_API = 'https://api.strem.io/api'
 export const isUnifiedEnforcement = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.UNIFIED_ENFORCEMENT || '').toLowerCase())
+export const isRegistrationsClosed = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.REGISTRATIONS_CLOSED || '').toLowerCase())
+export const isReadOnlyReplica = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.READ_ONLY_REPLICA || '').toLowerCase())
 export const SECRET_FILE = path.join(DATA_DIR, 'server_secret.key')
 export const distPath = path.join(__dirname, '../dist')
 export const corsOrigins = process.env.CORS_ORIGINS

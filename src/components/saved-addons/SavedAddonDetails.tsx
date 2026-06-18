@@ -43,7 +43,6 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
     setFormError(null)
 
     try {
-      // Parse tags
       const tags = formData.tags
         .split(/[,\s]+/)
         .map((t) => normalizeTagName(t))
@@ -206,7 +205,6 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
             disabled={loading}
             onClick={async () => {
               try {
-                // Fetch the original manifest from the addon URL
                 const { fetchAddonManifest } = await import('@/api/addons')
                 const fetched = await fetchAddonManifest(savedAddon.installUrl)
                 const originalManifest = fetched.manifest

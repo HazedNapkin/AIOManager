@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { ActivityItem } from '@/types/activity'
-import { useAccountStore, getStremioAuthKey, getAccountEmail } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { stremioClient } from '@/api/stremio-client'
@@ -61,7 +61,6 @@ export function ActivityPage() {
     const syncPassword = useSyncStore(s => s.auth.password)
     const isRefreshingFromCloud = useSyncStore(s => s.isRefreshingFromCloud)
     const refreshFromCloud = useSyncStore(s => s.refreshFromCloud)
-    const syncToRemote = useSyncStore(s => s.syncToRemote)
     const watchEventsInitialized = useWatchEventStore(s => s.initialized)
 
     const { history: watchHistory, inProgress } = useWatchHistory()
@@ -263,7 +262,7 @@ export function ActivityPage() {
         setViewMode(mode)
         try { localStorage.setItem('activity-view-mode', mode) } catch { /* storage unavailable */ }
         triggerSync()
-    }, [syncToRemote])
+    }, [])
 
 
     const handleToggleSelect = useCallback((itemId: string | string[]) => {
@@ -291,7 +290,6 @@ export function ActivityPage() {
 
     const handleFeedToggleSelect = useCallback((id: string | string[]) => {
         handleToggleSelect(id)
-        // If we manually select something, ensure we're in bulk mode for the UI
         setIsBulkMode(true)
     }, [handleToggleSelect])
 
@@ -319,9 +317,11 @@ export function ActivityPage() {
             })
             await mapConcurrent(Object.entries(itemsByAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, items]) => {
                 const account = accountById.get(accountId)
-                if (!account) return
+                if (!account || !hasPlatformConnection(account)) return
+                const stremioKey = getStremioAuthKey(account)
+                if (!stremioKey) return
                 try {
-                    const authKey = await decrypt(getStremioAuthKey(account), encryptionKey)
+                    const authKey = await decrypt(stremioKey, encryptionKey)
                     await mapConcurrent(items, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
                         try {
                             await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
@@ -366,13 +366,14 @@ export function ActivityPage() {
                 const itemsToDelete = history.filter(item => idSet.has(item.id))
                 for (const item of itemsToDelete) {
                     const account = accountById.get(item.accountId)
-                    if (account) {
-                        try {
-                            const authKey = await decrypt(getStremioAuthKey(account), encryptionKey)
-                            await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
-                        } catch (e) {
-                            if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
-                        }
+                    if (!account || !hasPlatformConnection(account)) continue
+                    const stremioKey = getStremioAuthKey(account)
+                    if (!stremioKey) continue
+                    try {
+                        const authKey = await decrypt(stremioKey, encryptionKey)
+                        await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
+                    } catch (e) {
+                        if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
                     }
                 }
             }

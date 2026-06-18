@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { isCinemetaAddon, detectAllPatches } from '@/lib/cinemeta-utils'
 import { isAIOStreamsAddon, parseAIOStreamsUrl } from '@/lib/aiostreams-utils'
+import { isAIOMetadataAddon, parseAIOMetadataUrl } from '@/lib/aiometadata-utils'
 import { useNavigate } from 'react-router-dom'
 import { CinemetaManifest } from '@/types/cinemeta'
 import { cn, isNewerVersion } from '@/lib/utils'
@@ -213,18 +214,26 @@ export const AddonCard = React.memo(function AddonCard({
   }, [initProfiles])
 
   const handleSaveMetadata = async (metadata: { customName?: string; customLogo?: string; customDescription?: string }) => {
+    const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+    const enabledConnections = account?.connections?.filter(c => c.enabled !== false) || []
+    const platformLabel = enabledConnections.length === 0
+      ? 'saved locally'
+      : enabledConnections.length === 1
+        ? `synced to ${enabledConnections[0].platform}`
+        : 'synced to your connected platforms'
+
     try {
       await useAccountStore.getState().updateAddonSettings(accountId, addon.transportUrl, { metadata }, index)
       toast({
         title: 'Appearance Updated',
-        description: 'Addon metadata has been customized and synced to Stremio.'
+        description: `Addon metadata has been customized and ${platformLabel}.`
       })
     } catch (err) {
       if (import.meta.env.DEV) console.error('Metadata sync failed', err)
       toast({
         variant: 'destructive',
         title: 'Sync Failed',
-        description: 'Failed to push customization to Stremio.'
+        description: `Failed to push customization to your platform${enabledConnections.length !== 1 ? 's' : ''}.`
       })
     }
   }
@@ -313,7 +322,7 @@ export const AddonCard = React.memo(function AddonCard({
 
   const isCinemeta = useMemo(() => isCinemetaAddon(addon), [addon])
   const isAIOStreams = useMemo(() => isAIOStreamsAddon(addon), [addon])
-  const isAIOMetadata = addon.manifest?.id?.toLowerCase() === 'aio-metadata'
+  const isAIOMetadata = useMemo(() => isAIOMetadataAddon(addon), [addon])
   const managedCatalogs = isAIOMetadata
 
   const isPatched = useMemo(() => {
@@ -321,6 +330,12 @@ export const AddonCard = React.memo(function AddonCard({
     const status = detectAllPatches(addon.manifest as CinemetaManifest)
     return Object.values(status).some(val => val === true)
   }, [isCinemeta, addon.manifest])
+
+  const cinemetaNeedsStremio = isCinemeta && !accountAuthKey
+  const configureDisabled = configuring || removing || cinemetaNeedsStremio
+  const configureTooltip = cinemetaNeedsStremio
+    ? 'Configuring Cinemeta updates your Stremio addon collection, which requires a Stremio account. This account has no Stremio login.'
+    : 'Open addon configuration page'
 
   const isExternal = useMemo(() => {
     return !addon.flags?.protected && !addon.flags?.official
@@ -465,6 +480,14 @@ export const AddonCard = React.memo(function AddonCard({
 
   const handleConfigure = useCallback(async () => {
     if (isCinemeta) {
+      if (cinemetaNeedsStremio) {
+        toast({
+          title: 'Stremio session required',
+          description: 'Configuring Cinemeta updates your Stremio addon collection, which requires a Stremio account. This account has no Stremio login.',
+          variant: 'destructive',
+        })
+        return
+      }
       setShowConfigDialog(true)
       return
     }
@@ -474,6 +497,13 @@ export const AddonCard = React.memo(function AddonCard({
         navigate(`/account/${accountId}/aiostreams/${parsed.uuid}`)
       }
       return
+    }
+    if (isAIOMetadata) {
+      const parsed = parseAIOMetadataUrl(addon.transportUrl)
+      if (parsed?.uuid) {
+        navigate(`/account/${accountId}/aiometadata/${parsed.uuid}`)
+        return
+      }
     }
     if (candidateUrls.length === 0) {
       toast({
@@ -498,7 +528,7 @@ export const AddonCard = React.memo(function AddonCard({
       openUrl(url.endsWith('/') ? `${url}configure` : `${url}/configure`)
     }
     setConfiguring(false)
-  }, [isCinemeta, isAIOStreams, candidateUrls, addon.transportUrl, toast, navigate, accountId])
+  }, [isCinemeta, cinemetaNeedsStremio, isAIOStreams, isAIOMetadata, candidateUrls, addon.transportUrl, toast, navigate, accountId])
 
   const handleToggleProtection = useCallback(async () => {
     if (addon.flags?.protected && isCinemeta) {
@@ -750,8 +780,8 @@ export const AddonCard = React.memo(function AddonCard({
             {!isSelectionMode && (
               <>
               <div className="grid grid-cols-2 gap-1.5 sm:hidden">
-                <Tooltip content="Open addon configuration page">
-                  <Button size="sm" onClick={handleConfigure} disabled={configuring || removing} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
+                <Tooltip content={configureTooltip}>
+                  <Button size="sm" onClick={handleConfigure} disabled={configureDisabled} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
                     <AnimatedSettingsIcon className="h-3.5 w-3.5" isAnimating={configuring} />
                     Configure
                   </Button>
@@ -770,8 +800,8 @@ export const AddonCard = React.memo(function AddonCard({
               </div>
 
               <div className="hidden grid-cols-3 gap-1.5 sm:grid xl:grid-cols-6">
-                <Tooltip content="Open addon configuration page">
-                  <Button size="sm" onClick={handleConfigure} disabled={configuring || removing} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
+                <Tooltip content={configureTooltip}>
+                  <Button size="sm" onClick={handleConfigure} disabled={configureDisabled} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
                     <AnimatedSettingsIcon className="h-3.5 w-3.5" isAnimating={configuring} />
                     Configure
                   </Button>
@@ -1031,11 +1061,11 @@ export const AddonCard = React.memo(function AddonCard({
             )}
 
             <div className="grid grid-cols-2 gap-1.5 w-full">
-              <Tooltip content="Open addon configuration page">
+              <Tooltip content={configureTooltip}>
                 <Button
                   size="sm"
                   onClick={handleConfigure}
-                  disabled={configuring || removing}
+                  disabled={configureDisabled}
                   className="font-semibold text-xs gap-1.5 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
                 >
                   <AnimatedSettingsIcon className="h-3.5 w-3.5" isAnimating={configuring} />

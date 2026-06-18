@@ -62,7 +62,6 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
     const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null)
     
-    // Persistent settings
     const [linkDistance, setLinkDistance] = useState(() => Number(localStorage.getItem('notes-graph-linkDist')) || 150)
     const [repelStrength, setRepelStrength] = useState(() => Number(localStorage.getItem('notes-graph-repel')) || 5000)
     const [centerGravity, setCenterGravity] = useState(() => {
@@ -156,8 +155,7 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
         return () => document.removeEventListener('fullscreenchange', handler)
     }, [])
 
-    // Physics constants
-    const SPRING_K = 0.05 
+    const SPRING_K = 0.05
     const DAMPING = 0.85
     
     const { nodes, links } = useMemo(() => {
@@ -227,8 +225,7 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
         
         const draw = () => {
             const ctx = canvas.getContext('2d'); if (!ctx) return
-            
-            // Physics
+
             if (centerGravity > 0) {
                 nodes.forEach(n => {
                     n.vx += -n.x * centerGravity

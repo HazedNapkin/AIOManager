@@ -20,6 +20,7 @@ interface SavedAddonGridProps {
   manifestChangeHints: Record<string, SavedAddonManifestChangeSummary>
   deploymentSummaryByAddonId: Record<string, SavedAddonDeploymentSummary>
   onUpdate: (savedAddonId: string, addonName: string) => Promise<void>
+  onDeploy: (savedAddonId: string) => void
   isSelectionMode: boolean
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
@@ -40,6 +41,7 @@ export function SavedAddonGrid({
   manifestChangeHints,
   deploymentSummaryByAddonId,
   onUpdate,
+  onDeploy,
   isSelectionMode,
   selectedIds,
   onToggleSelect,
@@ -84,6 +86,7 @@ export function SavedAddonGrid({
           })}
           manifestChange={manifestChangeHints[addon.id]}
           onUpdate={onUpdate}
+          onDeploy={onDeploy}
           isSelectionMode={isSelectionMode}
           isSelected={selectedIds.has(addon.id)}
           onToggleSelect={onToggleSelect}

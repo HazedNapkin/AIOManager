@@ -44,7 +44,6 @@ export function ActivityFeed({
         setVisibleCount(INITIAL_VISIBLE_COUNT)
     }, [activeTab])
 
-    // Scroll to Top Logic
     useEffect(() => {
         let ticking = false
         const handleScroll = () => {
@@ -64,11 +63,9 @@ export function ActivityFeed({
         window.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
-    // Filter history based on active tab AND search query
     const filteredHistory = useMemo(() => {
         let filtered = history
 
-        // 1. Filter by Tab
         if (activeTab === 'movies') filtered = filtered.filter(h => h.type === 'movie')
         else if (activeTab === 'series') filtered = filtered.filter(h => h.type === 'series' || h.type === 'anime' || h.type === 'episode')
         else if (activeTab === 'now') {
@@ -83,7 +80,13 @@ export function ActivityFeed({
         const dates: string[] = []
         const groups: Record<string, ActivityItem[]> = {}
 
-        filteredHistory.forEach(item => {
+        const sortedHistory = [...filteredHistory].sort((a, b) => {
+            const ta = new Date(a.timestamp).getTime()
+            const tb = new Date(b.timestamp).getTime()
+            return (isNaN(tb) ? -Infinity : tb) - (isNaN(ta) ? -Infinity : ta)
+        })
+
+        sortedHistory.forEach(item => {
             const date = new Date(item.timestamp)
             const dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
 
@@ -101,7 +104,7 @@ export function ActivityFeed({
             if (date !== 'Unknown Date') {
                 const d = new Date(date)
                 if (!isNaN(d.getTime())) {
-                    dateId = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+                    dateId = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
                 }
             }
             const items = groups[date]
@@ -154,7 +157,6 @@ export function ActivityFeed({
         return format(date, 'MMMM d, yyyy')
     }, [])
 
-    // Pagination Logic
     const { visibleGroups, hasMore } = useMemo(() => {
         let count = 0
         const visible: typeof groupedHistory = []
@@ -178,7 +180,6 @@ export function ActivityFeed({
 
     const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-    // Proper IntersectionObserver with cleanup
     useEffect(() => {
         if (!hasMore || !sentinelRef.current) return
         const observer = new IntersectionObserver(
@@ -193,7 +194,6 @@ export function ActivityFeed({
         return () => observer.disconnect()
     }, [hasMore, visibleGroups.length])
 
-    // --- RENDER HELPERS ---
     const renderEmptyState = () => <ActivityEmptyState />
 
     const renderFeedContent = () => {
@@ -233,7 +233,6 @@ export function ActivityFeed({
                     </section>
                 ))}
 
-                {/* IntersectionObserver Sentinel */}
                 {hasMore && (
                     <div ref={sentinelRef} className="py-12 flex justify-center w-full">
                         <div className="flex items-center gap-2 text-muted-foreground animate-pulse">
@@ -297,7 +296,6 @@ export function ActivityFeed({
                 <TabsContent value="now" className="mt-0">{renderFeedContent()}</TabsContent>
             </Tabs>
 
-            {/* Scroll to Top Button */}
             <div className={`fixed bottom-24 right-5 md:bottom-8 md:right-8 z-40 transition-[transform,opacity,box-shadow] duration-300 ${showScrollTop ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}>
                 <Button
                     size="icon"

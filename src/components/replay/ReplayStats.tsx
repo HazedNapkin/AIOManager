@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
 import { motion, animate, useInView } from 'framer-motion'
-// GlassCard removed for performance
 import { ReplayData } from '@/types/ReplayTypes'
 
 interface ReplayStatsProps {

@@ -1,5 +1,4 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { setCanonicalBases } from '@/lib/canonical-base'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
     updateAddons,
@@ -39,7 +38,6 @@ async function getStore(): Promise<StoreRef> {
 
 const pluginUrlKey = (url?: string): string => (url ? url.trim().replace(/\/+$/, '').toLowerCase() : '')
 
-
 async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId: string, activeProfileId?: string) {
     const creds = (conn.credentials || {}) as Record<string, string>
     const { nuvioDriverFor } = await import('@/lib/drivers/factory')
@@ -68,7 +66,6 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
     }
 }
 
-
 async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string) {
     const { fetchConnectionToken } = await import('@/api/connection')
     const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
@@ -82,10 +79,11 @@ async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accou
 }
 
 // Hydra (CORS-fragile against arbitrary servers) + any client-side failure fall back to the server.
-async function serverReconcile(accountId: string, account: Account, connections: Connection[]) {
+async function serverReconcile(accountId: string, account: Account, connections: Connection[], options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
     try {
         const { triggerReconciliation } = await import('@/api/connection')
-        const result = await triggerReconciliation(accountId, account.primaryConnectionId, connections, account.addons)
+        const addons = options.addons ?? account.addons
+        const result = await triggerReconciliation(accountId, account.primaryConnectionId, connections, addons, { allowCollectionShrink: options.allowCollectionShrink })
         if (result.connectionStates && Object.keys(result.connectionStates).length > 0) {
             const { useConnectionStore } = await import('@/store/connectionStore')
             useConnectionStore.setState(s => ({
@@ -104,15 +102,15 @@ async function serverReconcile(accountId: string, account: Account, connections:
     }
 }
 
-
-export async function pushToConnections(accountId: string) {
+export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
     const store = await getStore()
     const account = getAccountById(store.getState().accounts, accountId)
     const eligible = (account?.connections || []).filter(c => c.enabled && c.platform !== 'stremio')
     if (!account || eligible.length === 0) return
 
-    const enabledAddons = (account.addons || []).filter(a => a?.flags?.enabled !== false)
-    if (enabledAddons.length === 0) return // wipe-guard: never push an empty set
+    const sourceAddons = options.addons ?? account.addons ?? []
+    const enabledAddons = sourceAddons.filter(a => a?.flags?.enabled !== false)
+    if (enabledAddons.length === 0 && !options.allowCollectionShrink) return // wipe-guard: never push an empty set unless an explicit clear
 
     const { useConnectionStore } = await import('@/store/connectionStore')
     const now = Date.now()
@@ -177,7 +175,7 @@ export async function pushToConnections(accountId: string) {
     }
 
     if (serverConnections.length > 0) {
-        await serverReconcile(accountId, account, serverConnections)
+        await serverReconcile(accountId, account, serverConnections, { addons: sourceAddons, allowCollectionShrink: options.allowCollectionShrink })
     }
 }
 
@@ -201,7 +199,6 @@ function backgroundSync(accountId: string, account: Account, updatedAddons: Addo
 
     Promise.all(promises).finally(() => {
         triggerSync()
-        setCanonicalBases({ [accountId]: updatedAddons })
         getStore().then(store => {
             store.getState().syncAutopilotRules(accountId)
         }).catch(() => { })

@@ -25,9 +25,6 @@ import type { CustomThemeData } from '@/contexts/ThemeContext'
 import { useTheme } from '@/contexts/ThemeContext'
 import { cn } from '@/lib/utils'
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-
 function parseHsl(hsl: string): { h: number; s: number; l: number } {
     const parts = hsl.split(' ').map(v => parseFloat(v))
     return { h: parts[0] || 0, s: parts[1] || 0, l: parts[2] || 0 }
@@ -112,9 +109,6 @@ const TOKEN_GROUPS = [
     },
 ] as const
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-
 interface EditorState {
     hue: number
     saturation: number
@@ -172,10 +166,6 @@ function makeDefaultState(t?: CustomThemeData | null): EditorState {
         destructiveHue: 0, rawPalette: null,
     }
 }
-
-// ---------------------------------------------------------------------------
-// AppMockup - full-size live preview of the AIOManager interface
-// ---------------------------------------------------------------------------
 
 const AppMockup = memo(function AppMockup({ preview }: { preview: ThemePreview }) {
     const a = preview.accent
@@ -302,9 +292,6 @@ const TokenColorRow = memo(function TokenColorRow({ label, hexValue, onChange }:
     )
 })
 
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-
 interface CustomThemeEditorProps {
     editingTheme?: CustomThemeData | null
     onClose: () => void
@@ -383,7 +370,6 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         dispatch({ type: 'BATCH', values: makeDefaultState(editingTheme) })
     }, [editingTheme])
 
-    // Base mode preset lightness values
     const prevBaseRef = useRef(base)
     useEffect(() => {
         if (prevBaseRef.current === base) return
@@ -582,9 +568,6 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         deleteCustomTheme(editingTheme.id)
         onClose()
     }
-
-    // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 
     return (
         <div className="flex flex-col gap-4 md:flex-row md:gap-6 md:h-[calc(100vh-16rem)] md:min-h-[600px]">

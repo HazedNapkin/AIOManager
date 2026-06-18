@@ -30,10 +30,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   isLocked: true,
   encryptionKey: null,
 
-  /**
-   * Initialize auth state on app startup
-   * Tries to load session key, otherwise determines if password is set
-   */
   initialize: async () => {
     const salt = loadSalt()
     const storedHash = loadPasswordHash()
@@ -60,18 +56,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       })
     } else {
       set({ isLocked: true })
-
-      // Critical: If we have an existing session key in storage but it failed to load,
-      // or if we are just starting up, we must ensure we don't accidentally leave it unlocked.
-      // But here we set isLocked: true, so we are safe.
     }
   },
 
-  /**
-   * Set up master password for the first time
-   * Generates or accepts a salt, hashes password, stores both, and derives encryption key
-   * Wipes any existing data to prevent decryption issues
-   */
   setupMasterPassword: async (password: string, saltOverride?: Uint8Array, options?: { resetSyncStore?: boolean }) => {
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters')
@@ -108,10 +95,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     })
   },
 
-  /**
-   * Unlock the app with master password
-   * Verifies password by comparing hashes, then derives encryption key
-   */
   unlock: async (password: string) => {
     const salt = loadSalt()
     const storedHash = loadPasswordHash()
@@ -139,10 +122,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     return true
   },
 
-  /**
-   * Lock the app
-   * Clears encryption key from memory and session storage
-   */
   lock: () => {
     clearSessionKey()
     import('@/store/accountStore').then(({ clearAuthKeyCache }) => {
@@ -177,10 +156,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     await get().setupMasterPassword(password)
   },
 
-  /**
-   * Unlock or initialize encryption from a sync login
-   * Useful for fresh installs or cross-device restoration
-   */
   unlockFromSync: async (password: string, saltBase64?: string, options?: { allowGenerate?: boolean }) => {
     let salt: Uint8Array | null = null
 
@@ -191,7 +166,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           console.warn('Your session may not persist across page reloads.')
         }
       } catch (e) {
-        import.meta.env.DEV && console.error('Failed to decode sync salt:', e)
+        if (import.meta.env.DEV) console.error('Failed to decode sync salt:', e)
       }
     }
 

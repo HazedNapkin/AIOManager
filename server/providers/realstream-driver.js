@@ -47,7 +47,6 @@ function deriveAddonName(url) {
     }
 }
 
-// RealStream addon object (one element of the record's `data` array) → AIOManager descriptor.
 function toDescriptor(a) {
     const manifestUrl = a.manifestUrl || (a.baseUrl ? `${a.baseUrl.replace(/\/+$/, '')}/manifest.json` : '')
     return {
@@ -69,7 +68,6 @@ function toDescriptor(a) {
     }
 }
 
-// AIOManager descriptor → RealStream addon object.
 function toRecordAddon(addon) {
     const transportUrl = addon.transportUrl || addon.url || ''
     const baseUrl = transportUrl.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '')

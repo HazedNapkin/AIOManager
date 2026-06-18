@@ -116,7 +116,6 @@ export function BulkSaveDialog({
         requestAnimationFrame(() => saveModeRefs.current[nextIndex]?.focus())
     }
 
-    // Smart Defaulting when dialog opens
     useEffect(() => {
         if (open) {
             const currentAccount = accounts.find((a) => a.id === accountId)
@@ -159,7 +158,6 @@ export function BulkSaveDialog({
         try {
             let finalProfileId = saveProfileId === 'unassigned' ? undefined : saveProfileId
 
-            // 1. Create Profile if needed
             if (isCreatingProfile && newProfileName.trim()) {
                 try {
                     const newProfile = await createProfile(newProfileName.trim())
@@ -176,19 +174,15 @@ export function BulkSaveDialog({
                 }
             }
 
-            // 2. Tags are already in array format
             const tags = saveTags
 
             let successCount = 0
             let skippedCount = 0
             let failCount = 0
 
-            // 3. Iterate and Save
             const { updateSavedAddon, updateSavedAddonMetadata } = useAddonStore.getState()
 
             for (const addon of filteredAddons) {
-                // Check for existing saved addon
-
                 const existingAddons = Object.values(library).filter(
                     (saved) =>
                         saved.manifest.id === addon.manifest.id &&
@@ -206,16 +200,14 @@ export function BulkSaveDialog({
 
                     if (saveMode === 'update') {
                         try {
-                            // Merge tags
                             const mergedTags = Array.from(new Set([...existing.tags, ...tags]))
 
                             await updateSavedAddon(existing.id, {
                                 name: addon.manifest.name,
                                 tags: mergedTags,
-                                profileId: finalProfileId || existing.profileId, // Update profile if target is specified
+                                profileId: finalProfileId || existing.profileId,
                             })
 
-                            // Update metadata if present
                             if (addon.metadata) {
                                 await updateSavedAddonMetadata(existing.id, {
                                     customName: addon.metadata.customName,

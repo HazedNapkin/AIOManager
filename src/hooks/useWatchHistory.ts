@@ -11,52 +11,45 @@ import { getLocalDayKey, getEpisodeIdentity } from '@/lib/activity-utils'
  * (current progress, poster, account metadata).
  */
 export interface HistoryEntry {
-    // Identity
-    id: string            // WatchEvent.id or ActivityItem.id
-    itemId: string        // base content ID (tt1234)
-    video_id: string      // episode-aware ID
+    id: string
+    itemId: string
+    video_id: string      // episode-aware ID (distinct from the base itemId)
     accountId: string
     accountName: string
     accountColorIndex: number
 
-    // Content
     name: string
     type: string
     poster: string
     season?: number
     episode?: number
 
-    // Timestamps - from event log when available, live item as fallback
-    timestamp: Date        // when this watch event occurred
-    firstWatched?: Date    // _ctime: when they first started this content
-    detectedAt?: Date      // when AIOManager detected it
+    timestamp: Date
+    firstWatched?: Date    // maps to Stremio's _ctime
+    detectedAt?: Date
 
-    // Watch data
     duration: number
-    watched: number        // ms watched this session (time_watched)
-    progress: number       // 0-100
+    watched: number        // ms watched this session
+    progress: number
     overallTimeWatched?: number
     timesWatched?: number
 
-    // State flags
-    isInProgress: boolean  // currently mid-watch
-    isFromEventLog: boolean // true = from accumulated events, false = live snapshot only
-    source?: string        // platform the watch came from (absent = unknown)
+    isInProgress: boolean
+    isFromEventLog: boolean
+    source?: string
     backfill?: boolean     // recovered from the watched-bitfield (synthetic timestamp)
     genres?: string[]
 
     // Live overlay (only set when this item is also in current library)
     liveProgress?: number
     liveWatched?: number
-    liveEpisode?: string   // current video_id from live state
+    liveEpisode?: string
 }
 
 export interface WatchHistoryResult {
-    // Full chronological history - event log entries + live-only items
     history: HistoryEntry[]
     // Items currently in progress (timeOffset > 0, progress < 90) from live state
     inProgress: ActivityItem[]
-    // Whether we have any event log data yet
     hasEventLog: boolean
     loading: boolean
 }
@@ -70,13 +63,14 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     const eventsKey = `${events.length}:${events.length > 0 ? events[0].id : ''}`
 
     const { history, inProgress, hasEventLog } = useMemo(() => {
-        // Build a lookup of live items for overlay data
+        const normalizeName = (s: string) => s.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '')
+
         const liveByAccountItem = new Map<string, ActivityItem>()
         for (const item of liveItems) {
             liveByAccountItem.set(`${item.accountId}:${item.uniqueItemId || item.itemId}`, item)
             if (item.episode !== undefined) {
                 liveByAccountItem.set(
-                    `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode)}`,
+                    `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`,
                     item
                 )
             }
@@ -93,7 +87,6 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             }
         }
 
-        // Build account metadata lookup
         const accountMeta = new Map(accounts.map((a, i) => [
             a.id,
             {
@@ -126,7 +119,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
 
         const sessionEvents = Array.from(
             dedupedEvents.reduce((map, event) => {
-                const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)
+                const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
                 const key = `${event.accountId}:${episodeKey}:${getLocalDayKey(event.event_ts)}`
                 const existing = map.get(key)
                 if (
@@ -151,7 +144,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 nonSeriesEvents.push(event)
                 continue
             }
-            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)
+            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
             const key = `${event.accountId}:${episodeKey}`
             const arr = seriesGroups.get(key)
             if (arr) arr.push(event)
@@ -182,10 +175,9 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
 
         const seriesDedupedEvents = [...nonSeriesEvents, ...seriesDeduped]
 
-        // Convert WatchEvents to HistoryEntries
         const eventEntries: HistoryEntry[] = seriesDedupedEvents.map(event => {
             const live = liveByAccountItem.get(
-                `${event.accountId}:${getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode)}`
+                `${event.accountId}:${getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)}`
             )
             const meta = accountMeta.get(event.accountId)
             const duration = event.duration || live?.duration || 0
@@ -228,11 +220,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         // Find live items not represented in the event log yet
         // (new items added since last diff, or first-run before any events)
         const eventItemIds = new Set(seriesDedupedEvents.map(e =>
-            `${e.accountId}:${getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode)}`
+            `${e.accountId}:${getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)}`
         ))
         const eventIdentityKeys = new Set<string>()
         for (const entry of seriesDedupedEvents) {
-            const name = entry.name?.toLowerCase().trim()
+            const name = normalizeName(entry.name || '')
             const episode = entry.episode
             if (name && episode != null) {
                 eventIdentityKeys.add(`${entry.accountId}:${name}:${episode}`)
@@ -244,9 +236,9 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         ).filter(item => {
             if (item.source && item.source !== 'stremio') return true
             if (eventItemIds.has(
-                `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode)}`
+                `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`
             )) return false
-            const name = item.name?.toLowerCase().trim()
+            const name = normalizeName(item.name || '')
             if (name && item.episode != null && eventIdentityKeys.has(`${item.accountId}:${name}:${item.episode}`)) return false
             return true
         })
@@ -284,10 +276,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
 
         const finalDedup = new Map<string, HistoryEntry>()
         for (const entry of allEntries) {
-            const name = entry.name?.toLowerCase().trim() || ''
-            const episodeKey = entry.episode != null
-                ? `${entry.accountId}:${name}:${entry.season || 1}:${entry.episode}`
-                : `${entry.accountId}:${name}`
+            const normalizedName = normalizeName(entry.name || '')
+            const isSeries = entry.type === 'series' || entry.type === 'anime' || entry.type === 'episode'
+            const episodeKey = isSeries && entry.episode != null
+                ? `${entry.accountId}:${normalizedName}:${entry.season || 1}:${entry.episode}`
+                : `${entry.accountId}:${normalizedName}`
 
             const existing = finalDedup.get(episodeKey)
             if (!existing) {
@@ -302,7 +295,6 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         }
         const dedupedList = Array.from(finalDedup.values())
 
-        // In-progress items from live state (these are always current)
         const inProgress = (accountId
             ? liveItems.filter(i => i.accountId === accountId)
             : liveItems
@@ -314,6 +306,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             inProgress,
             hasEventLog: events.length > 0,
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [eventsKey, liveItems, accounts, accountId])
 
     return { history, inProgress, hasEventLog, loading }

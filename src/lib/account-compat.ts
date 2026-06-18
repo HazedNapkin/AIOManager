@@ -1,9 +1,6 @@
 import type { Account } from '@/types/account'
+import type { AddonDescriptor } from '@/types/addon'
 
-// Back-compat bridges (B24). v1.8.5 (commit dfbbc341) stored accounts flat: a root `authKey`
-// and `email`, with no `connections[]`. These read that flat shape OR the newer connection
-// object transparently, so accounts from the last public build keep working unmigrated.
-// Pure + dependency-free so they can be unit-tested (see account-compat.test.ts).
 
 export function getStremioConnection(account: Account) {
     const conn = account.connections?.find(c => c.platform === 'stremio')
@@ -34,4 +31,20 @@ export function getStremioAuthKey(account: Account): string {
 export function getAccountEmail(account: Account): string | undefined {
     const conn = getStremioConnection(account)
     return conn?.credentials?.email || account.email
+}
+
+export async function pushAddonsToPlatform(account: Account, addons: AddonDescriptor[], accountId: string, options?: { allowCollectionShrink?: boolean; previousCollection?: AddonDescriptor[] }): Promise<void> {
+    const context = options?.allowCollectionShrink ? 'Clear All' : accountId
+    const stremioKey = getStremioAuthKey(account)
+    if (stremioKey) {
+        const { getCachedAuthKey, getEncryptionKey } = await import('@/store/accountStore')
+        const { updateAddons } = await import('@/api/addons')
+        const authKey = await getCachedAuthKey(stremioKey, getEncryptionKey())
+        await updateAddons(authKey, addons, context, options)
+    }
+    const hasNonStremio = (account.connections || []).some(c => c.enabled && c.platform !== 'stremio')
+    if (hasNonStremio) {
+        const { pushToConnections } = await import('@/store/account/accountAddonOps')
+        await pushToConnections(account.id, { addons, allowCollectionShrink: options?.allowCollectionShrink })
+    }
 }

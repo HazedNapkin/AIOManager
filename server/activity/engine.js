@@ -48,6 +48,7 @@ let scanTimer = null
 let isStarted = false
 let isScanning = false
 let credentialCursor = 0
+let nonStremioSkipWarned = false
 const accountStateHashes = new Map()
 
 function deterministicEventId(syncUser, accountId, itemId, eventType, eventTs, season, episode) {
@@ -88,20 +89,25 @@ function normalizeItem(raw) {
     }
 }
 
-function getSeasonEpisode(item) {
+const MAX_PLAUSIBLE_SEASON = 100
+function clampSeason(season) {
+    return (season != null && Number.isFinite(season) && season >= 0 && season <= MAX_PLAUSIBLE_SEASON) ? season : null
+}
+
+export function getSeasonEpisode(item) {
     if (!item) return { season: null, episode: null }
     const sm = String(item.id || '').match(/=s(\d+):?e(\d+)/i)
-    if (sm) return { season: parseInt(sm[1], 10) || null, episode: parseInt(sm[2], 10) || null }
+    if (sm) return { season: clampSeason(parseInt(sm[1], 10) || null), episode: parseInt(sm[2], 10) || null }
     const videoParts = String(item.video_id || item.unique_id || '').split(':').filter(Boolean)
     if (videoParts.length >= 3) {
         const season = Number(videoParts[videoParts.length - 2])
         const episode = Number(videoParts[videoParts.length - 1])
         if (Number.isFinite(season) && Number.isFinite(episode)) {
-            return { season, episode }
+            return { season: clampSeason(season), episode }
         }
     }
     return {
-        season: item.season != null ? Number(item.season) : null,
+        season: clampSeason(item.season != null ? Number(item.season) : null),
         episode: item.episode != null ? Number(item.episode) : null
     }
 }
@@ -361,12 +367,14 @@ function snapshotToItem(itemId, snap, fallback = {}) {
     }
 }
 
-function hasMeaningfulChange(item, snap) {
+const WATCH_STATE_COLUMNS = ['video_id', 'season', 'episode', 'duration', 'progress', 'watched', 'times_watched', 'is_in_progress', 'overall_time_watched']
+
+export function hasWatchStateChange(item, snap) {
     const current = buildSnapshot(snap.sync_user || '', snap.account_id || '', item.id || item._id || '', item, 0)
-    return snapshotNeedsWrite(snap, current)
+    return WATCH_STATE_COLUMNS.some(column => valuesDiffer(column, snap[column], current[column]))
 }
 
-function shouldPreserveSnapshotEpisode(itemId, item, snap, mtime, snapMtime) {
+export function shouldPreserveSnapshotEpisode(itemId, item, snap, mtime, snapMtime) {
     const itemType = item.type || snap.item_type || ''
     if (itemType !== 'series' && itemType !== 'anime' && itemType !== 'episode') return false
     if (!snapMtime) return false
@@ -376,13 +384,13 @@ function shouldPreserveSnapshotEpisode(itemId, item, snap, mtime, snapMtime) {
     const currentEpisode = se.episode
 
     if (snap.season != null || snap.episode != null) {
-        return snap.season !== currentSeason || snap.episode !== currentEpisode || mtime <= snapMtime
+        return snap.season !== currentSeason || snap.episode !== currentEpisode
     }
 
     const snapVideoId = String(snap.video_id || '')
     if (!snapVideoId || snapVideoId === itemId) return false
     const currentVideoId = String(item.video_id || item.unique_id || '')
-    return snapVideoId !== currentVideoId || mtime <= snapMtime
+    return snapVideoId !== currentVideoId
 }
 
 function chunked(items, size = ACTIVITY_BATCH_SIZE) {
@@ -560,7 +568,7 @@ async function scanAccount(syncUser, accountId, accountName, authKey, limits, lo
             if (!enqueueEvent(buildEvent(syncUser, accountId, accountName, snapshotToItem(itemId, snap, item), 'snapshot_watch', snapMtime))) break
         }
 
-        if (mtime > snapMtime && hasMeaningfulChange({ ...item, video_id: videoId }, snap)) {
+        if (mtime > snapMtime && hasWatchStateChange({ ...item, video_id: videoId }, snap)) {
             if (!enqueueEvent(buildEvent(syncUser, accountId, accountName, item, 'watch_progress', mtime))) break
         }
 
@@ -605,6 +613,16 @@ async function runActivityCycle(fastify) {
     try {
         const cycleCredentials = await getAccountsForCycle()
         if (cycleCredentials.length === 0) return summary
+
+        if (!nonStremioSkipWarned) {
+            const nonStremio = await db.query(
+                "SELECT 1 FROM server_credentials WHERE credential_type IS NOT NULL AND credential_type != 'stremio' LIMIT 1"
+            ).catch(() => [])
+            if (nonStremio.length > 0) {
+                nonStremioSkipWarned = true
+                fastify.log.warn({ category: 'Activity' }, 'Non-Stremio accounts (Nuvio/RealStream/Hydra) are present but not tracked by the activity scanner; only Stremio credentials are scanned.')
+            }
+        }
 
         for (const cred of cycleCredentials) {
             if (Date.now() > deadline) {

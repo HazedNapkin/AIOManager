@@ -53,7 +53,10 @@ function deriveAddonName(url?: string): string {
     }
 }
 
-function mapProgressRecord(r: Record<string, any>): RealStreamProgressItem {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type RsRecord = Record<string, any>
+
+function mapProgressRecord(r: RsRecord): RealStreamProgressItem {
     const contentId = String(r.itemId ?? r.content_id ?? r.item_id ?? '')
     return {
         content_id: contentId,
@@ -67,17 +70,18 @@ function mapProgressRecord(r: Record<string, any>): RealStreamProgressItem {
     }
 }
 
-function toRecordAddon(addon: Record<string, any>) {
+function toRecordAddon(addon: RsRecord) {
     const transportUrl = addon.transportUrl || addon.url || ''
     const baseUrl = transportUrl.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '')
     const m = addon.manifest || {}
     const resources = Array.isArray(m.resources)
-        ? m.resources.map((r: any) => (typeof r === 'string' ? r : r?.name)).filter(Boolean)
+        ? m.resources.map((r: string | { name?: string }) => (typeof r === 'string' ? r : r?.name)).filter(Boolean)
         : []
     return {
         background: m.background ?? null,
         baseUrl,
         description: m.description ?? null,
+        enabled: (addon.flags?.enabled ?? addon.enabled) !== false,
         id: m.id || addon.id || null,
         manifestId: m.id || addon.id || null,
         idPrefixes: m.idPrefixes ?? null,
@@ -109,10 +113,10 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
             ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
         })
         if (!res.ok) {
-            let data: any = null
+            let data: RsRecord | null = null
             try { data = await res.json() } catch { /* body not JSON */ }
             const fieldErrors = data?.data && typeof data.data === 'object'
-                ? Object.entries(data.data).map(([f, v]: [string, any]) => `${f} (${v?.message || v?.code || 'invalid'})`).join(', ')
+                ? Object.entries(data.data as Record<string, { message?: string; code?: string }>).map(([f, v]) => `${f} (${v?.message || v?.code || 'invalid'})`).join(', ')
                 : ''
             const detail = fieldErrors
                 ? `${data?.message || 'validation failed'}, fields: ${fieldErrors}`
@@ -168,10 +172,10 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
             const filter = encodeURIComponent(`${USER_FIELD}='${userId}'`)
             const data = await request('GET', `${PROGRESS_PATH}?filter=${filter}&perPage=200`, accessToken)
             const items = Array.isArray(data?.items) ? data.items : []
-            return items.map((r: Record<string, any>) => mapProgressRecord(r))
+            return items.map((r: RsRecord) => mapProgressRecord(r))
         },
 
-        async writeAddons(accessToken: string, addons: Array<Record<string, any>>, userId: string) {
+        async writeAddons(accessToken: string, addons: Array<RsRecord>, userId: string) {
             if (!userId) throw new Error('RealStream writeAddons requires a userId')
             const data = (addons || []).filter(a => (a.transportUrl || a.url)).map(toRecordAddon)
             if (data.length === 0) return { skipped: true, reason: 'No valid addons to push' }

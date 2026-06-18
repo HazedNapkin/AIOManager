@@ -102,7 +102,7 @@ function prepareAddonForStremio(addon: AddonDescriptor): AddonDescriptor {
   }
 
   return {
-    ...addon,
+    transportUrl: addon.transportUrl,
     manifest
   }
 }
@@ -238,10 +238,6 @@ export async function fetchAddonManifest(url: string, accountContext: string = '
   }
 }
 
-/**
- * Reinstall an addon by removing and re-installing it with Stremio.
- * This triggers Stremio to fetch the latest manifest from the addon URL.
- */
 export async function reinstallAddon(
   authKey: string,
   transportUrl: string,
@@ -291,9 +287,6 @@ export async function reinstallAddon(
   }
 }
 
-/**
- * Update info for a single addon
- */
 export interface AddonUpdateInfo {
   addonId: string
   versionKey: string
@@ -308,7 +301,6 @@ export interface AddonUpdateInfo {
   health: { isOnline: boolean; error?: string }
 }
 
-// --- Global Cache for Bursts (e.g. Sync All) ---
 const PENDING_CHECKS: Record<string, Promise<HealthStatus>> = {}
 
 // Track active manifest fetches per origin domain to avoid rate limiting
@@ -341,11 +333,6 @@ function releaseDomainSlot(origin: string): void {
   }
 }
 
-/**
- * Check which addons have updates available by comparing installed versions
- * with the latest versions from their transport URLs.
- * Fetches manifests sequentially to avoid overwhelming the server/proxy.
- */
 export async function checkAddonUpdates(addons: AddonDescriptor[], accountContext: string = 'Update-Check'): Promise<AddonUpdateInfo[]> {
   const checkableAddons = addons.filter((addon) => !addon.flags?.official)
 

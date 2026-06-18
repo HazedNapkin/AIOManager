@@ -222,7 +222,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             return { error: 'Access Denied: Unsafe URL' }
         }
 
-    // The shared manifestCache is keyed by url only, so an authenticated upstream response
+        // The shared manifestCache is keyed by url only, so an authenticated upstream response
         // (caller forwards a provider Bearer key for provider-config endpoints) must never be
         // cached or served cross-user. Bypass the cache entirely when Authorization is present;
         // public manifests still cache and stay shareable.
@@ -241,15 +241,36 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 const controller = new AbortController()
                 const timeout = setTimeout(() => controller.abort(), 6000)
 
-                const response = await fetch(url, {
-                    signal: controller.signal,
-                    redirect: 'manual',
-                    headers: {
-                        'User-Agent': `AIOManager/${VERSION} (Internal Proxy; Hardened)`,
-                        'Accept': 'application/json, text/plain, */*',
-                        ...(request.headers['authorization'] ? { 'Authorization': request.headers['authorization'] } : {})
+                const MAX_REDIRECTS = 3
+                const originOf = (u) => { try { return new URL(u).origin } catch { return '' } }
+                const startOrigin = originOf(url)
+                let currentUrl = url
+                let response
+                for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+                    response = await fetch(currentUrl, {
+                        signal: controller.signal,
+                        redirect: 'manual',
+                        headers: {
+                            'User-Agent': `AIOManager/${VERSION} (Internal Proxy; Hardened)`,
+                            'Accept': 'application/json, text/plain, */*',
+                            ...(request.headers['authorization'] && originOf(currentUrl) === startOrigin ? { 'Authorization': request.headers['authorization'] } : {})
+                        }
+                    })
+
+                    if (response.status >= 300 && response.status < 400) {
+                        const location = response.headers.get('location')
+                        if (!location) break
+                        const resolvedUrl = new URL(location, currentUrl).href
+                        if (!(await isSafeUrlResolved(resolvedUrl))) {
+                            clearTimeout(timeout)
+                            reply.status(403)
+                            return { error: 'Access Denied: Unsafe redirect target' }
+                        }
+                        currentUrl = resolvedUrl
+                        continue
                     }
-                })
+                    break
+                }
 
                 clearTimeout(timeout)
 
@@ -324,13 +345,22 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
     }, async (request, reply) => {
         const ALLOWED_IMAGE_DOMAINS = ['metahub.space', 'strem.io']
-        const { url } = request.query
-        if (!ALLOWED_IMAGE_DOMAINS.some(domain => url.includes(domain))) {
+        const { url: rawUrl } = request.query
+
+        let parsedHost
+        try {
+            parsedHost = new URL(rawUrl).hostname
+        } catch {
+            reply.status(403)
+            return { error: 'Invalid URL' }
+        }
+
+        if (!ALLOWED_IMAGE_DOMAINS.some(domain => parsedHost === domain || parsedHost.endsWith('.' + domain))) {
             reply.status(403)
             return { error: 'Domain not allowed' }
         }
 
-        if (!(await isSafeUrlResolved(url))) {
+        if (!(await isSafeUrlResolved(rawUrl))) {
             reply.status(403);
             return { error: 'Access Denied: Unsafe URL' }
         }
@@ -339,7 +369,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 10000)
 
-            let currentUrl = url
+            let currentUrl = rawUrl
             let response
             const MAX_REDIRECTS = 3
 
@@ -406,7 +436,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
 
             return buffer
         } catch (err) {
-            fastify.log.error({ category: 'Proxy' }, `Failed to fetch image proxy ${url}: ${err.message}`)
+            fastify.log.error({ category: 'Proxy' }, `Failed to fetch image proxy ${rawUrl}: ${err.message}`)
             reply.status(500);
             return { error: 'Image Proxy Error' }
         }
@@ -439,7 +469,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
 
         const friendlyAction = actionMap[type] || `Operation: ${type}`
-        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (String(accountContext) === PROFILE_SWAP_CONTEXT || String(accountContext) === 'Setup Swap')
+        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (String(accountContext) === PROFILE_SWAP_CONTEXT || String(accountContext) === 'Setup Swap' || String(accountContext) === 'Clear All')
         delete payload.allowCollectionShrink
 
         if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser') {
@@ -882,6 +912,194 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
 
 
 
+    const aiometadataConfigUrl = (baseUrl, path) => `${baseUrl.replace(/\/+$/, '')}/api/config${path}`
+
+    fastify.post('/api/aiometadata-proxy/load', {
+        bodyLimit: 1024 * 1024,
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['baseUrl', 'uuid', 'password'],
+                properties: {
+                    baseUrl: { type: 'string' },
+                    uuid: { type: 'string' },
+                    password: { type: 'string' },
+                    addonPassword: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const { baseUrl, uuid, password, addonPassword } = request.body
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const url = aiometadataConfigUrl(baseUrl, `/load/${encodeURIComponent(uuid)}`)
+        if (!(await isSafeUrlResolved(url))) {
+            reply.status(403); return { error: 'Access Denied: Unsafe URL' }
+        }
+        try {
+            const { response, json } = await fetchAIOStreamsJson(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ password, addonPassword }),
+            })
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(403); return { error: 'Access Denied: Redirect not allowed' }
+            }
+            reply.status(response.status)
+            return json
+        } catch (e) {
+            fastify.log.error({ category: 'AIOMetadataProxy' }, `LOAD failed: ${e.message}`)
+            reply.status(502); return { success: false, error: { message: 'Failed to reach AIOMetadata instance' } }
+        }
+    })
+
+    fastify.post('/api/aiometadata-proxy/save', {
+        bodyLimit: 1024 * 1024,
+        config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['baseUrl', 'password', 'config'],
+                properties: {
+                    baseUrl: { type: 'string' },
+                    password: { type: 'string' },
+                    config: { type: 'object', additionalProperties: true },
+                    addonPassword: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const { baseUrl, password, config, addonPassword } = request.body
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const url = aiometadataConfigUrl(baseUrl, '/save')
+        if (!(await isSafeUrlResolved(url))) {
+            reply.status(403); return { error: 'Access Denied: Unsafe URL' }
+        }
+        try {
+            const { response, json } = await fetchAIOStreamsJson(url, {
+                method: 'POST',
+                rateLimitRetries: 0,
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ config, password, addonPassword }),
+            })
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(403); return { error: 'Access Denied: Redirect not allowed' }
+            }
+            reply.status(response.status)
+            return json
+        } catch (e) {
+            fastify.log.error({ category: 'AIOMetadataProxy' }, `SAVE failed: ${e.message}`)
+            reply.status(502); return { success: false, error: { message: 'Failed to reach AIOMetadata instance' } }
+        }
+    })
+
+    fastify.post('/api/aiometadata-proxy/update', {
+        bodyLimit: 1024 * 1024,
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['baseUrl', 'uuid', 'password', 'config'],
+                properties: {
+                    baseUrl: { type: 'string' },
+                    uuid: { type: 'string' },
+                    password: { type: 'string' },
+                    config: { type: 'object', additionalProperties: true },
+                    addonPassword: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const { baseUrl, uuid, password, config, addonPassword } = request.body
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const url = aiometadataConfigUrl(baseUrl, `/update/${encodeURIComponent(uuid)}`)
+        if (!(await isSafeUrlResolved(url))) {
+            reply.status(403); return { error: 'Access Denied: Unsafe URL' }
+        }
+        try {
+            const { response, json } = await fetchAIOStreamsJson(url, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ config, password, addonPassword }),
+            })
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(403); return { error: 'Access Denied: Redirect not allowed' }
+            }
+            reply.status(response.status)
+            return json
+        } catch (e) {
+            fastify.log.error({ category: 'AIOMetadataProxy' }, `UPDATE failed: ${e.message}`)
+            reply.status(502); return { success: false, error: { message: 'Failed to reach AIOMetadata instance' } }
+        }
+    })
+
+    fastify.get('/api/aiometadata-status', {
+        config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+        schema: {
+            querystring: {
+                type: 'object',
+                required: ['baseUrl'],
+                properties: { baseUrl: { type: 'string' } }
+            }
+        }
+    }, async (request, reply) => {
+        const { baseUrl } = request.query
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: { message: 'Authentication required' } } }
+
+        const url = aiometadataConfigUrl(baseUrl, '/addon-info')
+        if (!(await isSafeUrlResolved(url))) {
+            reply.status(403); return { success: false, error: { message: 'Unsafe URL' } }
+        }
+        try {
+            const { response, json } = await fetchAIOStreamsJson(url, { headers: { 'Accept': 'application/json' } })
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(403); return { success: false, error: { message: 'Unsafe redirect' } }
+            }
+            if (!response.ok) { reply.status(response.status); return { success: false, error: { message: 'Instance returned an error' } } }
+            return { success: true, data: json }
+        } catch (e) {
+            fastify.log.error({ category: 'AIOMetadataProxy' }, `Status failed: ${e.message}`)
+            reply.status(502); return { success: false, error: { message: 'Failed to reach AIOMetadata instance' } }
+        }
+    })
+
+    fastify.get('/api/aiometadata-check', {
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+        schema: {
+            querystring: {
+                type: 'object',
+                required: ['baseUrl', 'uuid'],
+                properties: { baseUrl: { type: 'string' }, uuid: { type: 'string' } }
+            }
+        }
+    }, async (request, reply) => {
+        const { baseUrl, uuid } = request.query
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { success: false, error: { message: 'Authentication required' } } }
+
+        const url = aiometadataConfigUrl(baseUrl, `/trusted/${encodeURIComponent(uuid)}`)
+        if (!(await isSafeUrlResolved(url))) {
+            reply.status(403); return { success: false, error: { message: 'Unsafe URL' } }
+        }
+        try {
+            const { response, json } = await fetchAIOStreamsJson(url, { headers: { 'Accept': 'application/json' } })
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(403); return { success: false, error: { message: 'Unsafe redirect' } }
+            }
+            reply.status(response.status)
+            return { success: response.ok, data: json }
+        } catch (e) {
+            fastify.log.error({ category: 'AIOMetadataProxy' }, `Check failed: ${e.message}`)
+            reply.status(502); return { success: false, error: { message: 'Failed to reach AIOMetadata instance' } }
+        }
+    })
 
     fastify.all('/api/proxy/:token/*', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { token } = request.params

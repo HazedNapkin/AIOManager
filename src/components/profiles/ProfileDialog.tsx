@@ -30,7 +30,6 @@ export function ProfileDialog({ profile, trigger, onDelete }: ProfileDialogProps
     const updateProfile = useProfileStore(s => s.updateProfile)
     const { toast } = useToast()
 
-    // Reset form when dialog opens/closes or profile changes
     useEffect(() => {
         if (open) {
             setName(profile?.name || '')

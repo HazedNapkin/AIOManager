@@ -243,8 +243,9 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     throw err
                 }
             });
-            if (response && response.manifest) {
-                return response.manifest;
+            const manifest = response?.manifest || response;
+            if (manifest && manifest.id && manifest.name) {
+                return manifest;
             }
         } catch (err) {
             fastify.log.warn({ category: 'Autopilot' }, `Manifest fetch failed for ${truncateUrl(url)}: ${err.message}`)
@@ -354,7 +355,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
                 if (meta.customName || meta.customDescription || meta.customLogo) {
                     return {
-                        ...addon,
+                        transportUrl: addon.transportUrl,
                         manifest: {
                             ...baseManifest,
                             name: meta.customName || baseManifest.name || '',
@@ -363,7 +364,10 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         }
                     }
                 }
-                return { ...addon, manifest: baseManifest }
+                return {
+                    transportUrl: addon.transportUrl,
+                    manifest: baseManifest
+                }
             })
     }
 
@@ -495,7 +499,31 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         return finalAddons
     }
 
-    const syncStremioLive = async (authKey, chain, activeUrl, accountId, ruleId, storedAddonList = [], forceReinstall = false) => {
+    const enforceConnectionOnly = async (rule, reconciledAddons) => {
+        if (!reconciler?.enforceAccount) return { synced: [] }
+        const connections = await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)
+        const targets = (connections || []).filter(c =>
+            c.enabled && c.platform !== 'stremio' && (!rule.connection_id || c.id === rule.connection_id)
+        )
+        if (targets.length === 0) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only rule has no matching enabled connection. Skipping enforcement.`)
+            return { synced: [] }
+        }
+        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, {})
+        if (result.synced.length > 0) {
+            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only enforcement pushed to ${result.synced.join(', ')}.`)
+        }
+        return { synced: result.synced }
+    }
+
+    const syncStremioLive = async (authKeyOrDescriptor, chain, activeUrl, accountId, ruleId, storedAddonList = [], forceReinstall = false) => {
+        const descriptor = typeof authKeyOrDescriptor === 'string' ? { authKey: authKeyOrDescriptor } : (authKeyOrDescriptor || {})
+        const authKey = descriptor.authKey
+        if (!authKey) {
+            const rule = { account_id: accountId, id: ruleId, owner_sync_user: descriptor.ownerSyncUser, connection_id: descriptor.connectionId, platform: descriptor.platform }
+            await enforceConnectionOnly(rule, storedAddonList)
+            return storedAddonList
+        }
         try {
             const built = await buildReconciledList(authKey, chain, activeUrl, accountId, ruleId, storedAddonList, forceReinstall)
             await writeStremioCollection(authKey, built.canonical, { remoteAddons: built.remoteAddons, normalizedActive: built.normalizedActive, accountId })
@@ -634,7 +662,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
         const decryptedAuthKey = decrypt(rule.auth_key, FALLBACK_KEYS)
         const decryptedChainStr = decrypt(rule.priority_chain, FALLBACK_KEYS)
-        if (!decryptedAuthKey || !decryptedChainStr) {
+        const hasConnectionTarget = !!rule.connection_id && !!rule.platform && rule.platform !== 'stremio'
+        if (!decryptedChainStr || (!decryptedAuthKey && !hasConnectionTarget)) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Failed to decrypt rule data. Skipping.`)
             await recordRuleDecryptFailure(rule)
             return
@@ -808,7 +837,13 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] [Enforcement] ${statusMsg} (Swap: ${hasChanged}, Multi-Enabled: ${violationDetected})`)
 
             try {
-                if (isUnifiedEnforcement() && reconciler?.enforceAccount) {
+                if (!decryptedAuthKey) {
+                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList)
+                    if (synced.length === 0) throw new Error('Connection enforcement failed')
+                    reconciledList = updatedAddonList
+                    syncSucceeded = true
+                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${synced.join(', ')}.`)
+                } else if (isUnifiedEnforcement() && reconciler?.enforceAccount) {
                     const built = await buildReconciledList(decryptedAuthKey, chain, targetActiveUrl, rule.account_id, rule.id, updatedAddonList, hasChanged)
                     reconciledList = built.canonical
 
@@ -963,6 +998,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                      FROM autopilot_rules r
                      LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                      WHERE r.is_active = 1
+                     AND (r.auth_key IS NOT NULL OR r.connection_id IS NOT NULL)
                      AND r.is_automatic = 1
                      AND r.id > $1
                      AND (COALESCE(s.last_check, r.last_check) IS NULL OR COALESCE(s.last_check, r.last_check) < $2)
@@ -1004,7 +1040,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                             r.is_active, r.is_automatic,
                             COALESCE(s.last_check, r.last_check) AS last_check,
                             COALESCE(s.last_notification, r.last_notification) AS last_notification,
-                            r.name, r.cooldown_ms, r.message_template, r.owner_sync_user
+                            r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
+                            r.platform, r.connection_id
                      FROM autopilot_rules r
                      LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                      WHERE r.id IN (${placeholders})
@@ -1127,6 +1164,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         checkAddonHealthInternal,
         getHealthLatency,
         syncStremioLive,
+        enforceConnectionOnly,
         buildReconciledList,
         writeStremioCollection,
         sendNotification,

@@ -15,7 +15,6 @@ function Skeleton({
     )
 }
 
-/** Skeleton shaped like an account card (matches AccountCard layout) */
 function AccountCardSkeleton() {
     return (
         <div className="rounded-lg border bg-card p-4 space-y-3">
@@ -36,7 +35,6 @@ function AccountCardSkeleton() {
     )
 }
 
-/** Skeleton for a stat card (matches MetricsPage stat blocks) */
 function StatCardSkeleton() {
     return (
         <div className="rounded-lg border bg-card p-4 space-y-3">
@@ -47,7 +45,6 @@ function StatCardSkeleton() {
     )
 }
 
-/** Skeleton for an activity list item (matches ActivityItemCard layout) */
 function ActivityItemSkeleton() {
     return (
         <div className="flex items-center gap-4 rounded-lg border bg-card p-3">
@@ -62,11 +59,9 @@ function ActivityItemSkeleton() {
     )
 }
 
-/** Full Metrics page skeleton (header + stat grid + charts) */
 function MetricsPageSkeleton() {
     return (
         <div className="space-y-8 pb-32 animate-in fade-in duration-500">
-            {/* Header */}
             <div className="px-4 flex items-center justify-between">
                 <div className="space-y-2">
                     <Skeleton className="h-8 w-32" />
@@ -75,20 +70,17 @@ function MetricsPageSkeleton() {
                 <Skeleton className="h-8 w-28 rounded-full" />
             </div>
 
-            {/* Stat cards grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {Array.from({ length: 4 }).map((_, i) => (
                     <StatCardSkeleton key={i} />
                 ))}
             </div>
 
-            {/* Chart area */}
             <div className="space-y-4">
                 <Skeleton className="h-6 w-40" />
                 <Skeleton className="h-64 w-full rounded-lg" />
             </div>
 
-            {/* Awards area */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {Array.from({ length: 3 }).map((_, i) => (
                     <div key={i} className="rounded-lg border bg-card p-4 space-y-3">
@@ -102,11 +94,9 @@ function MetricsPageSkeleton() {
     )
 }
 
-/** Full Activity page skeleton (header + filter bar + item list) */
 function ActivityPageSkeleton() {
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start gap-4">
                 <div className="space-y-2">
                     <Skeleton className="h-8 w-28" />
@@ -118,14 +108,12 @@ function ActivityPageSkeleton() {
                 </div>
             </div>
 
-            {/* Filter bar */}
             <div className="flex gap-2">
                 <Skeleton className="h-9 w-64 rounded-md" />
                 <Skeleton className="h-9 w-20 rounded-md" />
                 <Skeleton className="h-9 w-20 rounded-md" />
             </div>
 
-            {/* Activity items list */}
             <div className="space-y-3">
                 {Array.from({ length: 6 }).map((_, i) => (
                     <ActivityItemSkeleton key={i} />

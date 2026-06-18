@@ -67,7 +67,6 @@ export const ActivityItemCard = memo(({
         if (isBulkMode || isSelected) { // If bulk mode OR passing selection, toggle
             onToggleSelect?.(item.id)
         } else {
-            // Open in Stremio Desktop App
             openStremioDetail(item.type, item.itemId)
         }
     }
@@ -179,7 +178,7 @@ export const ActivityItemCard = memo(({
                         <span className="text-xs text-muted-foreground truncate font-medium">{userName}</span>
                         {!isLive && (
                             <span className="text-xs text-muted-foreground/60 font-mono ml-auto shrink-0">
-                                {formatDistanceToNow(itemDate, { addSuffix: false })}
+                                {formatDistanceToNow(itemDate, { addSuffix: true })}
                             </span>
                         )}
                     </div>
@@ -188,7 +187,6 @@ export const ActivityItemCard = memo(({
         )
     }
 
-    // LIST VIEW
     return (
         <div
             role="button"

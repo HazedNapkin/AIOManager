@@ -91,7 +91,6 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         }
     })
 
-    // Monthly aggregation (time-based: excludes backfill).
     timeHistory.forEach(item => {
         const rawTimeMs = item.overallTimeWatched && item.overallTimeWatched > 0
             ? item.overallTimeWatched
@@ -144,7 +143,7 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
             const d = new Date(targetYear as number, m, 1)
 
             // Find top titles for THIS month using the precomputed Map instead of O(n^2) loop
-            let monthlyTitles: any[] = []
+            let monthlyTitles: RankedTitle[] = []
             if (mData) {
                 monthlyTitles = Array.from(mData.titleCounts.entries())
                     .map(([_, tData]) => ({

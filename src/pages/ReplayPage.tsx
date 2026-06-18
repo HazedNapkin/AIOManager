@@ -6,6 +6,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useAccountStore } from '@/store/accountStore'
 import { computeReplayData } from '@/lib/compute-replay-data'
+import type { ReplayData } from '@/types/ReplayTypes'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import { ReplayHero } from '@/components/replay/ReplayHero'
 import { ReplayStats } from '@/components/replay/ReplayStats'
@@ -55,7 +56,7 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
 
     const filtered = accounts.filter(a =>
         a.name.toLowerCase().includes(query.toLowerCase()) ||
-        ((a as any).email ?? '').toLowerCase().includes(query.toLowerCase())
+        ((a as { email?: string }).email ?? '').toLowerCase().includes(query.toLowerCase())
     )
 
     const triggerLabel = selectedAccountId === 'all'
@@ -307,13 +308,13 @@ function AccountSwitcher({ accounts, selectedAccountId, onSelect }: AccountSwitc
                                                 {acc.emoji && <span style={{ flexShrink: 0 }}>{acc.emoji}</span>}
                                                 <span>{acc.name}</span>
                                             </div>
-                                            {(acc as any).email && (
+                                            {(acc as { email?: string }).email && (
                                                 <div style={{
                                                     fontFamily: '"DM Mono", monospace', fontSize: 9, fontWeight: 500,
                                                     color: 'rgba(255,255,255,0.25)', letterSpacing: '0.05em',
                                                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                                                     marginTop: 1,
-                                                }}>{(acc as any).email}</div>
+                                                }}>{(acc as { email?: string }).email}</div>
                                             )}
                                         </div>
 
@@ -396,8 +397,8 @@ export function ReplayPage() {
         return items.filter(item => item.accountId === selectedAccountId)
     }, [items, selectedAccountId])
 
-    const [allTimeData, setAllTimeData] = useState<any>(null)
-    const [replayData, setReplayData] = useState<any>(null)
+    const [allTimeData, setAllTimeData] = useState<ReplayData | null>(null)
+    const [replayData, setReplayData] = useState<ReplayData | null>(null)
 
     useEffect(() => {
         if (!filteredItems.length) return

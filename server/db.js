@@ -12,13 +12,9 @@ class DB {
         this.isHealthy = false
     }
 
-    /**
-     * Initialize database connection with retry logic for HA deployments.
-     * Retries up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s).
-     */
     async init() {
         if (this.type === 'postgres') {
-            if (this.pool) return // Already initialized
+            if (this.pool) return
 
             console.log('[Database] Connecting to PostgreSQL...')
             const connectionString = process.env.DATABASE_URL
@@ -26,7 +22,6 @@ class DB {
                 throw new Error('[Database] DATABASE_URL is missing in .env but DB_TYPE is set to postgres')
             }
 
-            // Detect if connecting to a local/Docker PostgreSQL (no SSL needed)
             const isLocalDb = connectionString.includes('localhost') ||
                 connectionString.includes('127.0.0.1') ||
                 connectionString.includes('@db:') ||
@@ -44,13 +39,11 @@ class DB {
                 connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT, 10) || 10000,
             })
 
-            // Handle pool errors to prevent crashes (important for HA)
             this.pool.on('error', (err) => {
                 console.error('[Database] Unexpected pool error:', err.message)
                 this.isHealthy = false
             })
 
-            // Retry connection with exponential backoff
             const maxRetries = parseInt(process.env.DB_MAX_RETRIES, 10) || 5
             let lastError = null
 
@@ -63,7 +56,7 @@ class DB {
                     return
                 } catch (err) {
                     lastError = err
-                    const delay = Math.pow(2, attempt - 1) * 1000 // 1s, 2s, 4s, 8s, 16s
+                    const delay = Math.pow(2, attempt - 1) * 1000
                     console.warn(`[Database] Connection attempt ${attempt}/${maxRetries} failed: ${err.message}`)
                     if (attempt < maxRetries) {
                         console.log(`[Database] Retrying in ${delay / 1000}s...`)
@@ -81,10 +74,6 @@ class DB {
         }
     }
 
-    /**
-     * Health check for load balancers and orchestrators.
-     * Returns true if DB is connected and responsive.
-     */
     async healthCheck() {
         try {
             if (this.type === 'postgres') {

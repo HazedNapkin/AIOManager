@@ -37,12 +37,6 @@ interface CommandItem {
     searchText?: string
 }
 
-/**
- * Global Command Palette (Ctrl+K / Cmd+K).
- * - Navigate to any page
- * - Jump to a specific account
- * - Quick actions (refresh, settings, autopilot)
- */
 export function CommandPalette() {
     const [open, setOpen] = useState(false)
     const [query, setQuery] = useState('')
@@ -57,7 +51,6 @@ export function CommandPalette() {
     const vaultKeys = useVaultStore((s) => s.keys)
     const savedAddonLibrary = useAddonStore((s) => s.library)
 
-    // Global keyboard shortcut + custom event from search pill
     useEffect(() => {
         const keyHandler = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -82,11 +75,9 @@ export function CommandPalette() {
         [navigate]
     )
 
-    // Build command items
     const allItems = useMemo<CommandItem[]>(() => {
         const items: CommandItem[] = []
 
-        // Navigation
         items.push(
             {
                 id: 'nav-accounts',
@@ -162,7 +153,6 @@ export function CommandPalette() {
             }
         )
 
-        // Accounts
         for (const acc of accounts) {
             items.push({
                 id: `acc-${acc.id}`,
@@ -175,7 +165,6 @@ export function CommandPalette() {
             })
         }
 
-        // Notes
         for (const n of notes) {
             const sublabel = n.tags.length > 0 ? n.tags.slice(0, 3).map(t => `#${t}`).join(' ') : 'Note'
             items.push({
@@ -188,7 +177,6 @@ export function CommandPalette() {
             })
         }
 
-        // Vault Keys
         for (const k of vaultKeys) {
             items.push({
                 id: `vault-${k.id}`,
@@ -200,7 +188,6 @@ export function CommandPalette() {
             })
         }
 
-        // Saved Addons
         const savedAddonList = Object.values(savedAddonLibrary)
         for (const a of savedAddonList) {
             const tagStr = (a.tags ?? []).join(' ')
@@ -221,7 +208,6 @@ export function CommandPalette() {
             })
         }
 
-        // Quick Actions
         items.push(
             {
                 id: 'action-refresh',
@@ -251,7 +237,6 @@ export function CommandPalette() {
         return items
     }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules])
 
-    // Filter
     const filtered = useMemo(() => {
         if (!query.trim()) return allItems
         const q = query.toLowerCase()
@@ -264,7 +249,6 @@ export function CommandPalette() {
         )
     }, [allItems, query])
 
-    // Group by category
     const grouped = useMemo(() => {
         const groups: Record<string, CommandItem[]> = {}
         for (const item of filtered) {
@@ -274,22 +258,18 @@ export function CommandPalette() {
         return groups
     }, [filtered])
 
-    // Reset selection on filter change
     useEffect(() => {
         setSelectedIndex(0)
     }, [query])
 
-    // Reset query on open
     useEffect(() => {
         if (open) {
             setQuery('')
             setSelectedIndex(0)
-            // Focus input after dialog animation
             setTimeout(() => inputRef.current?.focus(), 50)
         }
     }, [open])
 
-    // Keyboard navigation
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowDown') {
             e.preventDefault()
@@ -305,7 +285,6 @@ export function CommandPalette() {
         }
     }
 
-    // Scroll selected item into view
     useEffect(() => {
         const el = scrollRef.current?.querySelector(`[data-index="${selectedIndex}"]`)
         if (el) {

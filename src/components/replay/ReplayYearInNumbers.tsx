@@ -52,7 +52,6 @@ export function ReplayYearInNumbers({ data }: ReplayYearInNumbersProps) {
                 transition={{ duration: 0.8, ease: [0.23, 1, 0.32, 1] }}
                 className="container max-w-5xl"
             >
-                {/* Header */}
                 <div className="text-center mb-8">
                     <span
                         style={{
@@ -67,7 +66,6 @@ export function ReplayYearInNumbers({ data }: ReplayYearInNumbersProps) {
                     </span>
                 </div>
 
-                {/* Horizontal strip */}
                 <div
                     className="flex justify-center gap-1 md:gap-2 flex-wrap"
                     style={{ contain: 'layout' }}

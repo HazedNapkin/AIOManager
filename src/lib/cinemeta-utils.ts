@@ -1,10 +1,6 @@
 import { CinemetaManifest, CinemetaConfigState, CinemetaPatchStatus } from '@/types/cinemeta'
 import { AddonDescriptor } from '@/types/addon'
 
-/**
- * Detects if search artifacts have been removed from the manifest
- * Returns true if the search catalogs and extras are missing (patch applied)
- */
 export function detectSearchArtifactsPatched(manifest: CinemetaManifest): boolean {
   if (!manifest || !Array.isArray(manifest.catalogs)) return false
   const catalogs = manifest.catalogs || []
@@ -23,13 +19,6 @@ export function detectSearchArtifactsPatched(manifest: CinemetaManifest): boolea
   return !hasSearchMovie && !hasSearchSeries && !topMovieHasSearchExtra && !topSeriesHasSearchExtra
 }
 
-/**
- * Detects if standard catalogs have been removed or modified
- * Returns true if:
- * - All standard catalogs are missing (both toggles ON), OR
- * - Popular catalogs are modified (search extra has isRequired: true) and New/Featured are removed
- *   (only 'Remove Cinemeta Catalogs' ON but 'Remove Cinemeta Search' OFF)
- */
 export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boolean {
   if (!manifest || !Array.isArray(manifest.catalogs)) return false
   const catalogs = manifest.catalogs || []
@@ -76,21 +65,14 @@ export function detectStandardCatalogsPatched(manifest: CinemetaManifest): boole
   return allCatalogsRemoved || popularModifiedAndOthersRemoved
 }
 
-/**
- * Detects if meta resource has been removed
- * Returns true if 'meta' is missing from resources (patch applied)
- */
 export function detectMetaResourcePatched(manifest: CinemetaManifest): boolean {
   const resources = Array.isArray(manifest.resources) ? manifest.resources : []
   return !resources.some(r =>
     r === 'meta' ||
-    (typeof r === 'object' && r !== null && ((r as any).name === 'meta' || (r as any).value === 'meta'))
+    (typeof r === 'object' && r !== null && ((r as { name?: string; value?: string }).name === 'meta' || (r as { name?: string; value?: string }).value === 'meta'))
   )
 }
 
-/**
- * Removes search artifacts from Cinemeta manifest
- */
 export function removeCinemetaSearchArtifacts(manifest: CinemetaManifest): CinemetaManifest {
   const modifiedCatalogs = (manifest.catalogs || [])
     .filter((catalog) => catalog.id !== 'cinemeta.search')
@@ -105,10 +87,6 @@ export function removeCinemetaSearchArtifacts(manifest: CinemetaManifest): Cinem
   }
 }
 
-/**
- * Removes or modifies standard catalogs (Popular, New, Featured)
- * @param keepSearchExtras - If true, modifies Popular catalogs to keep search working
- */
 export function removeCinemetaStandardCatalogs(
   manifest: CinemetaManifest,
   keepSearchExtras: boolean
@@ -144,22 +122,16 @@ export function removeCinemetaStandardCatalogs(
   }
 }
 
-/**
- * Removes meta resource from manifest
- */
 export function removeMeta(manifest: CinemetaManifest): CinemetaManifest {
   return {
     ...manifest,
     resources: (manifest.resources || []).filter(r =>
       r !== 'meta' &&
-      !(typeof r === 'object' && r !== null && ((r as any).name === 'meta' || (r as any).value === 'meta'))
+      !(typeof r === 'object' && r !== null && ((r as { name?: string; value?: string }).name === 'meta' || (r as { name?: string; value?: string }).value === 'meta'))
     ),
   }
 }
 
-/**
- * Applies all Cinemeta configuration transformations
- */
 export function applyCinemetaConfiguration(
   manifest: CinemetaManifest,
   config: CinemetaConfigState
@@ -183,9 +155,6 @@ export function applyCinemetaConfiguration(
   return modifiedManifest
 }
 
-/**
- * Fetches the original Cinemeta manifest from the transport URL
- */
 export async function fetchOriginalCinemetaManifest(
   transportUrl: string,
   accountId: string = 'Unknown'
@@ -195,9 +164,6 @@ export async function fetchOriginalCinemetaManifest(
   return descriptor.manifest as CinemetaManifest
 }
 
-/**
- * Detects if an addon is Cinemeta
- */
 export function isCinemetaAddon(addon: AddonDescriptor): boolean {
   if (!addon) return false
   const CINEMETA_IDS = ['com.linvo.cinemeta', 'org.stremio.cinemeta', 'cinemeta']
@@ -211,9 +177,6 @@ export function isCinemetaAddon(addon: AddonDescriptor): boolean {
   )
 }
 
-/**
- * Detects if an addon is an internal/built-in Stremio addon that should often be filtered.
- */
 export function isInternalAddon(addon: AddonDescriptor): boolean {
   if (!addon) return false
 
@@ -252,9 +215,6 @@ export function isInternalAddon(addon: AddonDescriptor): boolean {
   return false
 }
 
-/**
- * Detects all patches applied to a Cinemeta manifest
- */
 export function detectAllPatches(manifest: CinemetaManifest): CinemetaPatchStatus {
   return {
     searchArtifactsPatched: detectSearchArtifactsPatched(manifest),
@@ -263,10 +223,6 @@ export function detectAllPatches(manifest: CinemetaManifest): CinemetaPatchStatu
   }
 }
 
-/**
- * Returns the proxyable poster URL for a given item type and IMDB ID.
- * Falls back to cinemeta's official images.
- */
 export function getCinemetaPosterUrl(itemId: string): string {
   if (!itemId) return ''
   return `https://live.metahub.space/poster/small/${itemId}/img`

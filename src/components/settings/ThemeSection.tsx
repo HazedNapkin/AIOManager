@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Theme, ThemeOption, THEME_OPTIONS, useTheme, CustomThemeData } from '@/contexts/ThemeContext'
+import { Theme, ThemeOption, THEME_OPTIONS, useTheme, CustomThemeData, ThemePalette } from '@/contexts/ThemeContext'
 import { Check, Plus, Pencil, Copy, Upload, Download, Import, Layers } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -43,21 +43,23 @@ function payloadToThemeData(payload: ThemeExportPayload): CustomThemeData {
         base: payload.theme.base,
         hue: payload.theme.hue,
         saturation: payload.theme.saturation,
-        palette: payload.theme.palette as any,
+        palette: payload.theme.palette as unknown as ThemePalette,
     }
 }
 
-function validatePayload(data: any): data is ThemeExportPayload {
-    if (!data || data.aioThemeVersion !== 1) return false
-    const t = data.theme
+function validatePayload(data: unknown): data is ThemeExportPayload {
+    const d = data as Record<string, unknown> | null
+    if (!d || d.aioThemeVersion !== 1) return false
+    const t = d.theme as Record<string, unknown> | undefined
     if (!t || typeof t !== 'object') return false
     if (typeof t.name !== 'string' || t.name.trim().length === 0) return false
     if (t.base !== 'dark' && t.base !== 'light' && t.base !== 'oled') return false
     if (typeof t.emoji !== 'string') return false
     if (typeof t.hue !== 'number' || typeof t.saturation !== 'number') return false
-    if (typeof t.palette !== 'object' || t.palette === null) return false
-    if (typeof t.palette.background !== 'string' || typeof t.palette.card !== 'string' || typeof t.palette.primary !== 'string') return false
-    const overrides = Object.keys(t.palette).filter(k => typeof t.palette[k] === 'string')
+    const palette = t.palette as Record<string, unknown> | null
+    if (typeof palette !== 'object' || palette === null) return false
+    if (typeof palette.background !== 'string' || typeof palette.card !== 'string' || typeof palette.primary !== 'string') return false
+    const overrides = Object.keys(palette).filter(k => typeof palette[k] === 'string')
     if (overrides.length < 3) return false
     return true
 }
@@ -277,7 +279,7 @@ export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
             base: bgL < 50 ? 'dark' : 'light',
             hue: Math.round(bgHue),
             saturation: Math.round(primary[1] || 70),
-            palette: option.palette as any,
+            palette: option.palette as unknown as ThemePalette,
         }
         navigate('/settings/theme/editor', { state: { editingTheme: seed } })
     }

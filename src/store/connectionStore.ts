@@ -36,8 +36,6 @@ const safeUUID = () => {
     }
 }
 
-// Holds the per-account mutex so a connection-CRUD write can't be clobbered by an in-flight addon
-// op that snapshotted the account before its await. Re-reads accounts inside the lock.
 async function updateAccount(accountId: string, updater: (account: Account) => Account) {
     const release = await acquireSyncMutex(accountId)
     try {
@@ -71,9 +69,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             driverConfig: partial.driverConfig,
         }
 
-        if (connection.connectionType === 'hydra-outbound' && connection.credentials?.apiKey) {
+        if (connection.connectionType === 'hydra-outbound' && connection.driverConfig?.baseUrl) {
             const { storeConnectionCredential } = await import('@/api/hydra-providers')
-            storeConnectionCredential(accountId, connection.id, connection.credentials.apiKey, 'hydra').catch(() => {})
+            const bundle = {
+                authValue: connection.credentials?.apiKey || '',
+                baseUrl: connection.driverConfig.baseUrl,
+                authType: connection.driverConfig.authType,
+                authHeader: connection.driverConfig.authHeader,
+                enabled: connection.enabled,
+            }
+            storeConnectionCredential(accountId, connection.id, bundle, 'hydra').catch(() => {})
         }
 
         if (connection.platform === 'nuvio' && connection.credentials?.accessToken) {
@@ -94,8 +99,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 userId: connection.credentials.userId || null,
                 expiresAt: connection.credentials.expiresAt,
                 baseUrl: connection.credentials.baseUrl || null,
-                // email+password stored server-encrypted at rest so the server can re-authenticate silently
-                // if the token expires while the app is closed (full server-side custody).
                 email: connection.credentials.email || null,
                 password: connection.credentials.password || null,
             }
@@ -118,6 +121,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             }
         })
         if (duplicateFound) {
+            const { invalidateConnectionCache } = await import('@/lib/connection-discovery')
+            invalidateConnectionCache(duplicateId)
             const { updateConnection } = get()
             updateConnection(accountId, duplicateId, { ...partial, status: 'active' })
             return
@@ -141,6 +146,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 deleteConnectionCredential(accountId, connectionId).catch(() => {})
             })
         }
+        const { invalidateConnectionCache } = await import('@/lib/connection-discovery')
+        invalidateConnectionCache(connectionId)
         await updateAccount(accountId, account => {
             const connections = (account.connections || []).filter(c => c.id !== connectionId)
             const primaryConnectionId = account.primaryConnectionId === connectionId
@@ -177,8 +184,18 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 ),
             }
         })
+        const toggled = useAccountStore.getState().accounts.find(a => a.id === accountId)?.connections?.find(c => c.id === connectionId)
+        if (toggled?.connectionType === 'hydra-outbound' && toggled.driverConfig?.baseUrl) {
+            const { storeConnectionCredential } = await import('@/api/hydra-providers')
+            storeConnectionCredential(accountId, connectionId, {
+                authValue: toggled.credentials?.apiKey || '',
+                baseUrl: toggled.driverConfig.baseUrl,
+                authType: toggled.driverConfig.authType,
+                authHeader: toggled.driverConfig.authHeader,
+                enabled: toggled.enabled,
+            }, 'hydra').catch(() => {})
+        }
         if (wasEnabled === false) {
-            // Debounced: rapid connection toggles coalesce into a single sync round.
             import('./account/accountSync').then(({ scheduleSyncAccount }) => {
                 scheduleSyncAccount(accountId)
             })

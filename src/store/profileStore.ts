@@ -10,7 +10,6 @@ interface ProfileState {
     loading: boolean
     error: string | null
 
-    // Actions
     initialize: () => Promise<void>
     createProfile: (name: string, description?: string, color?: string) => Promise<Profile>
     updateProfile: (id: string, updates: Partial<Omit<Profile, 'id' | 'createdAt'>>) => Promise<void>
@@ -39,7 +38,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
                 set({ profiles: parsed })
             }
         } catch (err) {
-            import.meta.env.DEV && console.error('Failed to load profiles:', err)
+            if (import.meta.env.DEV) console.error('Failed to load profiles:', err)
             set({ error: 'Failed to load profiles' })
         } finally {
             set({ loading: false })
@@ -60,7 +59,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             await localforage.setItem(STORAGE_KEY, updated)
         } catch (err) {
-            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist createProfile:', err)
+            if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist createProfile:', err)
             throw new Error('Failed to save profile. Please try again.')
         }
         set({ profiles: updated, error: null })
@@ -78,7 +77,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             await localforage.setItem(STORAGE_KEY, updated)
         } catch (err) {
-            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist updateProfile:', err)
+            if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist updateProfile:', err)
             throw new Error('Failed to save profile. Please try again.')
         }
         set({ profiles: updated, error: null })
@@ -90,7 +89,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             await localforage.setItem(STORAGE_KEY, updated)
         } catch (err) {
-            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist deleteProfile:', err)
+            if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist deleteProfile:', err)
             throw new Error('Failed to delete profile. Please try again.')
         }
         set({ profiles: updated, error: null })
@@ -101,7 +100,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             await localforage.setItem(STORAGE_KEY, newOrder)
         } catch (err) {
-            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist reorderProfiles:', err)
+            if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist reorderProfiles:', err)
             throw new Error('Failed to save profile order. Please try again.')
         }
         set({ profiles: newOrder, error: null })
@@ -122,7 +121,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         try {
             await localforage.setItem(STORAGE_KEY, updated)
         } catch (err) {
-            import.meta.env.DEV && console.error('[ProfileStore] Failed to persist importProfiles:', err)
+            if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist importProfiles:', err)
             throw new Error('Failed to import profiles. Please try again.')
         }
         set({ profiles: updated, error: null })

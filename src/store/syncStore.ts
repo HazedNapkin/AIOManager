@@ -162,7 +162,6 @@ export const useSyncStore = create<SyncState>()(
                 get().syncToRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
             },
 
-            // Helper to manually trigger a pull (useful for re-hydration)
             syncFromRemote: async (isSilent: boolean = true) => {
                 const { auth } = get()
                 if (!auth.isAuthenticated) return
@@ -213,17 +212,8 @@ export const useSyncStore = create<SyncState>()(
                     throw new Error('Password must be at least 8 characters.')
                 }
 
-                // Generate new Identity
                 const newId = crypto.randomUUID()
                 const { serverUrl } = get()
-
-                // We perform an initial specific sync to "Claim" the ID
-                // In this model, we just save the empty state (or default state) to the server
-                // to establish the password.
-
-                // For v1, we assume success if we can generate it locally. 
-                // The first 'syncToRemote' will actually write it to DB.
-
 
                 try {
                     const apiPath = getSyncApiPath(serverUrl)
@@ -352,8 +342,6 @@ export const useSyncStore = create<SyncState>()(
                                 }
                             } catch (parseErr) {
                                 if (import.meta.env.DEV) console.error('[Sync] Parsing failed for decrypted string. Length:', decryptedStr.length)
-                                // Only logic to rescue if it WAS a double-serialized object? 
-                                // No, standard parse error handling is safer.
                                 throw parseErr // Let the outer catch handle it (which prompts wrong password)
                             }
                         } else {
@@ -421,7 +409,6 @@ export const useSyncStore = create<SyncState>()(
                         }
                     }
 
-                    // This creates the encryptionKey needed for AccountStore imports
                     const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
                     let localSaltBase64: string | undefined
                     {
@@ -653,7 +640,7 @@ export const useSyncStore = create<SyncState>()(
                             get().syncToRemote(true, false),
                             new Promise(resolve => setTimeout(resolve, 5000))
                         ])
-                    } catch { }
+                    } catch {}
                 }
 
                 _lastPushedHash = null
@@ -902,10 +889,6 @@ export const useSyncStore = create<SyncState>()(
                         bc.postMessage({ type: 'sync-complete', timestamp: Date.now() })
                         bc.close()
                     } catch (e) { if (import.meta.env.DEV) console.error(e) }
-
-                    if (!isAuto && !isDebounced && _appReady) {
-                        // The top-right Cloud Sync header icon already provides this feedback natively.
-                    }
                 } catch (e) {
                     const message = (e as Error).message
                     if (import.meta.env.DEV) console.error("Sync error:", apiPath, e)

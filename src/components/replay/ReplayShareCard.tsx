@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ReplayData } from '@/types/ReplayTypes'
+import { ReplayData, RankedTitle } from '@/types/ReplayTypes'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useReplayDisplayMeta } from '@/hooks/useReplayDisplayMeta'
 import { Poster } from '@/components/common/Poster'
@@ -20,10 +20,10 @@ function ShareButtons({ data, userName }: { data: ReplayData; userName?: string 
 
     const handleCopyLink = async () => {
         try {
-            const titlePool: any[] = []
+            const titlePool: (string | number)[][] = []
             const titleIdxMap = new Map<string, number>()
 
-            const getTitleIdx = (t: any) => {
+            const getTitleIdx = (t: RankedTitle) => {
                 if (!t || !t.itemId) return -1
                 if (titleIdxMap.has(t.itemId)) return titleIdxMap.get(t.itemId)
                 const idx = titlePool.length
@@ -97,7 +97,7 @@ function ShareButtons({ data, userName }: { data: ReplayData; userName?: string 
             toast({ title: 'Link copied', description: 'Share your Replay with anyone' })
             setTimeout(() => setCopied(false), 2500)
         } catch (e) {
-            import.meta.env.DEV && console.error('[Share] Compression error:', e)
+            if (import.meta.env.DEV) console.error('[Share] Compression error:', e)
             toast({ variant: 'destructive', title: 'Copy failed', description: 'Could not copy to clipboard' })
         }
     }

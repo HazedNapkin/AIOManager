@@ -1,8 +1,3 @@
-/**
- * Cryptographic utilities using Web Crypto API
- * Provides AES-256-GCM encryption with PBKDF2-SHA256 key derivation
- */
-
 const PBKDF2_ITERATIONS = 600000
 const SALT_LENGTH = 16
 const IV_LENGTH = 12
@@ -21,8 +16,6 @@ const STORAGE_KEYS = {
 export async function deriveSyncToken(password: string, salt?: string): Promise<string> {
   const encoder = new TextEncoder()
   const strPassword = String(password)
-  // We use a fixed "pepper" to ensure sync tokens are different from other hashes.
-  // Optional salt (accountId) allows per-account sync passwords for autopilot.
   const pepper = salt ? `:sync-auth-token:${salt}` : ':sync-auth-token'
   const data = encoder.encode(strPassword + pepper)
   const hashBuffer = await crypto.subtle.digest('SHA-256', data)
@@ -30,9 +23,6 @@ export async function deriveSyncToken(password: string, salt?: string): Promise<
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-/**
- * Derive a CryptoKey from password and salt using PBKDF2-SHA256
- */
 export async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
   const encoder = new TextEncoder()
   const strPassword = String(password)
@@ -43,7 +33,6 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
     'deriveKey',
   ])
 
-  // Derive AES-GCM key (extractable so we can save to sessionStorage)
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
@@ -53,15 +42,11 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
     },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
-    true, // extractable
+    true,
     ['encrypt', 'decrypt']
   )
 }
 
-/**
- * Encrypt data using AES-256-GCM
- * Returns base64-encoded string: IV + ciphertext
- */
 export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   const encoder = new TextEncoder()
   const dataBuffer = encoder.encode(String(data))
@@ -81,10 +66,6 @@ export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   return btoa(binary)
 }
 
-/**
- * Decrypt data using AES-256-GCM
- * Expects base64-encoded string: IV + ciphertext
- */
 export async function decrypt(encrypted: string, key: CryptoKey): Promise<string> {
   if (!encrypted) return ''
   const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0))
@@ -98,10 +79,6 @@ export async function decrypt(encrypted: string, key: CryptoKey): Promise<string
   return decoder.decode(decrypted)
 }
 
-/**
- * Hash password for verification using PBKDF2-SHA256
- * Returns base64-encoded hash
- */
 export async function hashPassword(password: string, salt: Uint8Array): Promise<string> {
   const encoder = new TextEncoder()
   const strPassword = String(password)
@@ -126,16 +103,10 @@ export async function hashPassword(password: string, salt: Uint8Array): Promise<
   return btoa(String.fromCharCode(...hashArray))
 }
 
-/**
- * Generate a random salt
- */
 export function generateSalt(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(SALT_LENGTH))
 }
 
-/**
- * Load salt from localStorage
- */
 export function loadSalt(): Uint8Array | null {
   try {
     const saltBase64 = localStorage.getItem(STORAGE_KEYS.USER_SALT)
@@ -146,9 +117,6 @@ export function loadSalt(): Uint8Array | null {
   }
 }
 
-/**
- * Save salt to localStorage
- */
 export function saveSalt(salt: Uint8Array): boolean {
   try {
     const saltBase64 = btoa(String.fromCharCode(...salt))
@@ -160,9 +128,6 @@ export function saveSalt(salt: Uint8Array): boolean {
   }
 }
 
-/**
- * Load password hash from localStorage
- */
 export function loadPasswordHash(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEYS.PASSWORD_HASH)
@@ -171,9 +136,6 @@ export function loadPasswordHash(): string | null {
   }
 }
 
-/**
- * Save password hash to localStorage
- */
 export function savePasswordHash(hash: string): boolean {
   try {
     localStorage.setItem(STORAGE_KEYS.PASSWORD_HASH, hash)
@@ -184,17 +146,10 @@ export function savePasswordHash(hash: string): boolean {
   }
 }
 
-/**
- * Check if master password is set up
- */
 export function isPasswordSetup(): boolean {
   return !!(loadSalt() && loadPasswordHash())
 }
 
-/**
- * Export encryption key to sessionStorage
- * Allows key to persist across page refreshes but clears when tab closes
- */
 export async function saveSessionKey(key: CryptoKey): Promise<void> {
   try {
     const keyBuffer = await crypto.subtle.exportKey('raw', key)
@@ -208,10 +163,6 @@ export async function saveSessionKey(key: CryptoKey): Promise<void> {
   }
 }
 
-/**
- * Load encryption key from sessionStorage
- * Returns null if no session key exists
- */
 export async function loadSessionKey(): Promise<CryptoKey | null> {
   try {
     const keyBase64 = sessionStorage.getItem(STORAGE_KEYS.SESSION_KEY)
@@ -223,7 +174,7 @@ export async function loadSessionKey(): Promise<CryptoKey | null> {
       'raw',
       keyArray,
       { name: 'AES-GCM', length: 256 },
-      true, // extractable
+      true,
       ['encrypt', 'decrypt']
     )
 
@@ -234,9 +185,6 @@ export async function loadSessionKey(): Promise<CryptoKey | null> {
   }
 }
 
-/**
- * Clear session key from sessionStorage
- */
 export function clearSessionKey(): void {
   sessionStorage.removeItem(STORAGE_KEYS.SESSION_KEY)
 }

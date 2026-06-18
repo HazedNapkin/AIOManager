@@ -8,10 +8,6 @@
 import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
 
-/**
- * Reset all application stores to their initial state
- * Called during master password reset to ensure clean slate
- */
 export async function resetAllStores(options: { includeSync?: boolean } = {}): Promise<void> {
   const { includeSync = true } = options
 
@@ -30,10 +26,6 @@ export async function resetAllStores(options: { includeSync?: boolean } = {}): P
   await Promise.allSettled(resets)
 }
 
-/**
- * Update latest addon versions across relevant stores
- * Called when account sync detects new addon versions
- */
 export function updateLatestVersions(versions: Record<string, string>): void {
   useAddonStore.getState().updateLatestVersions(versions)
 }

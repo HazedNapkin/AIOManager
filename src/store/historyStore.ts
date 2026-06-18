@@ -83,7 +83,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
                         }
                     })
                 } catch (serverErr) {
-                    import.meta.env.DEV && console.error('Failed to fetch server history logs:', serverErr)
+                    if (import.meta.env.DEV) console.error('Failed to fetch server history logs:', serverErr)
                 }
             }
 
@@ -97,7 +97,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
             set({ logs: sortedLogs })
             await localforage.setItem(STORAGE_KEY, sortedLogs)
         } catch (error) {
-            import.meta.env.DEV && console.error('Failed to initialize history logs:', error)
+            if (import.meta.env.DEV) console.error('Failed to initialize history logs:', error)
         }
     },
 
@@ -137,7 +137,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
                 )
             }
         } catch (err) {
-            import.meta.env.DEV && console.warn('Server log clear failed, clearing locally anyway:', err)
+            if (import.meta.env.DEV) console.warn('Server log clear failed, clearing locally anyway:', err)
         }
 
         set({ logs: [] })

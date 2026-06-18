@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { generateRandomKey } from './crypto.js'
-import { SECRET_FILE } from './config.js'
+import { SECRET_FILE, isReadOnlyReplica } from './config.js'
 
 export let PRIMARY_KEY = process.env.ENCRYPTION_KEY
 export let FALLBACK_KEYS = []
@@ -16,7 +16,11 @@ export function initializeEncryptionKeys(fastify) {
             PRIMARY_KEY = generateRandomKey()
             fs.writeFileSync(SECRET_FILE, PRIMARY_KEY, { encoding: 'utf8', mode: 0o600 })
             FALLBACK_KEYS = [PRIMARY_KEY]
-            fastify.log.info({ category: 'Security' }, 'No ENCRYPTION_KEY found. Generated a new random key and saved it to data directory.')
+            if (isReadOnlyReplica()) {
+                fastify.log.warn({ category: 'Security' }, 'READ_ONLY_REPLICA generated a NEW encryption key because none was found. Replicated data was encrypted with the PRIMARY key and will NOT decrypt with this one, so configs and addons will be empty. Set ENCRYPTION_KEY to the primary value (or copy the primary server_secret.key into this data dir) and restart.')
+            } else {
+                fastify.log.info({ category: 'Security' }, 'No ENCRYPTION_KEY found. Generated a new random key and saved it to data directory.')
+            }
         }
     } else {
         fastify.log.info({ category: 'Security' }, 'Using ENCRYPTION_KEY from environment.')

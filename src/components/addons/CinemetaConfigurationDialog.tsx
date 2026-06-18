@@ -57,7 +57,6 @@ export function CinemetaConfigurationDialog({
   const syncAccount = useAccountStore((state) => state.syncAccount)
   const encryptionKey = useAuthStore((state) => state.encryptionKey)
 
-  // Detect patches on open
   useEffect(() => {
     if (open && addon) {
       const savedConfig = addon.metadata?.cinemetaConfig
@@ -74,14 +73,12 @@ export function CinemetaConfigurationDialog({
     }
   }, [open, addon])
 
-  // Check if configuration has changed from current state
   const hasChanges =
     patchStatus &&
     (config.removeSearchArtifacts !== patchStatus.searchArtifactsPatched ||
       config.removeStandardCatalogs !== patchStatus.standardCatalogsPatched ||
       config.removeMetaResource !== patchStatus.metaResourcePatched)
 
-  // Check if any patches are currently applied
   const hasPatches =
     patchStatus &&
     (patchStatus.searchArtifactsPatched ||
@@ -102,16 +99,12 @@ export function CinemetaConfigurationDialog({
 
     setApplying(true)
     try {
-      // 1. Decrypt auth key
       const authKey = await decrypt(accountAuthKey, encryptionKey)
 
-      // 2. Click "Apply", so we fetch the CLEAN manifest first
       const cleanManifest = await fetchOriginalCinemetaManifest(OFFICIAL_CINEMETA_URL)
 
-      // 3. Get current addon collection
       const currentAddons = await stremioClient.getAddonCollection(authKey, accountId)
 
-      // 4. Find Cinemeta index (match by ID or transportUrl as fallback)
       const cinemetaIndex = currentAddons.findIndex((a) =>
         a.manifest.id === addon.manifest.id ||
         isCinemetaAddon(a) ||
@@ -122,13 +115,11 @@ export function CinemetaConfigurationDialog({
         throw new Error('Cinemeta addon not found in collection')
       }
 
-      // 5. Apply configuration transformations to the CLEAN manifest
       const modifiedManifest = applyCinemetaConfiguration(
         cleanManifest,
         config
       )
 
-      // 6. Update addon in collection (maintain original transport URL if needed, but manifest is updated)
       const updatedAddons = [...currentAddons]
       updatedAddons[cinemetaIndex] = {
         ...currentAddons[cinemetaIndex],
@@ -140,7 +131,6 @@ export function CinemetaConfigurationDialog({
         },
       }
 
-      // 7. Sync to Stremio API (using wrapper to preserve metadata)
       await updateAddons(authKey, updatedAddons, accountId)
 
       // Optimistically sync local store before syncAccount runs mergeAddons,
@@ -160,7 +150,6 @@ export function CinemetaConfigurationDialog({
         )
       })
 
-      // 8. Sync account state (refresh local data)
       await syncAccount(accountId)
 
       toast({
@@ -171,7 +160,7 @@ export function CinemetaConfigurationDialog({
       onSuccess?.()
       onOpenChange(false)
     } catch (error) {
-      import.meta.env.DEV && console.error('Failed to apply configuration:', error)
+      if (import.meta.env.DEV) console.error('Failed to apply configuration:', error)
       toast({
         title: 'Configuration Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -194,10 +183,8 @@ export function CinemetaConfigurationDialog({
 
     setResetting(true)
     try {
-      // 1. Fetch original manifest from OFFICIAL source
       const originalManifest = await fetchOriginalCinemetaManifest(OFFICIAL_CINEMETA_URL)
 
-      // 2. Update addon collection with original manifest
       const authKey = await decrypt(accountAuthKey, encryptionKey)
       const currentAddons = await stremioClient.getAddonCollection(authKey, accountId)
 
@@ -249,7 +236,6 @@ export function CinemetaConfigurationDialog({
       const status = detectAllPatches(originalManifest)
       setPatchStatus(status)
 
-      // 4. Reset toggles
       setConfig({
         removeSearchArtifacts: false,
         removeStandardCatalogs: false,
@@ -263,7 +249,7 @@ export function CinemetaConfigurationDialog({
 
       onOpenChange(false)
     } catch (error) {
-      import.meta.env.DEV && console.error('Failed to reset configuration:', error)
+      if (import.meta.env.DEV) console.error('Failed to reset configuration:', error)
       toast({
         title: 'Reset Failed',
         description: error instanceof Error ? error.message : 'Unknown error',
@@ -285,7 +271,6 @@ export function CinemetaConfigurationDialog({
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Configuration Toggles */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex-1">
@@ -365,7 +350,6 @@ export function CinemetaConfigurationDialog({
             </div>
           </div>
 
-          {/* Warning Banner */}
           {config.removeMetaResource && (
             <div className="flex items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
               <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0" />

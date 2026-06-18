@@ -328,13 +328,15 @@ export async function bulkApplySavedAddons(
 
     await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
+        const { useAccountStore } = await import('../accountStore')
+        const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && c.platform !== 'stremio')
         const isLocalAccount = !accountAuthKey
+        const isConnectedNonStremio = isLocalAccount && hasNonStremioConnections
         let currentAddons: AddonDescriptor[]
         let authKey = ''
 
         if (isLocalAccount) {
-          const { useAccountStore } = await import('../accountStore')
-          const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
           currentAddons = account?.addons || []
         } else {
           authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
@@ -357,15 +359,18 @@ export async function bulkApplySavedAddons(
         }))
 
         if (isLocalAccount) {
-          const { useAccountStore } = await import('../accountStore')
           const state = useAccountStore.getState()
-          const account = state.accounts.find(a => a.id === accountId)
-          if (account) {
-            const updatedAccount = { ...account, addons: updatedAddons, lastSync: new Date() }
+          const localAccount = state.accounts.find(a => a.id === accountId)
+          if (localAccount) {
+            const updatedAccount = { ...localAccount, addons: updatedAddons, lastSync: new Date() }
             useAccountStore.setState({
               accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
             })
             persistAccounts(useAccountStore.getState().accounts)
+          }
+          if (isConnectedNonStremio) {
+            const { pushToConnections } = await import('../account/accountAddonOps')
+            pushToConnections(accountId).catch(err => { if (import.meta.env.DEV) console.error('Failed to push to connections:', err) })
           }
         } else {
           await updateAddons(authKey, updatedAddons, accountId)
@@ -607,6 +612,100 @@ export async function bulkRemoveByTag(
   return bulkRemoveAddons(transportUrls, accountIds, allowProtected)
 }
 
+function escapeReplaceRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceUrlFragment(url: string, find: string, replace: string) {
+  return url.replace(new RegExp(escapeReplaceRegExp(find), 'gi'), replace)
+}
+
+// Find-and-replace a URL fragment across the installed addons of each selected account.
+// Runs on the unified replace path (per account), so library/rules/manifest handling
+// stay identical to the single-account and library tools. Scoped per account: the
+// shared Library is not touched (savedAddonId is null).
+export async function bulkReplaceUrl(
+  find: string,
+  replace: string,
+  accountIds: Array<{ id: string; authKey: string }>,
+): Promise<BulkResult> {
+  const result: BulkResult = { success: 0, failed: 0, errors: [], details: [] }
+  if (!find) return result
+
+  const m = await import('../addonStore') as typeof import('../addonStore')
+  const useAddonStore: StoreRef = m.useAddonStore
+  const { useAccountStore } = await import('../accountStore')
+
+  const workerResults = await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId }) => {
+    try {
+      const addons = useAccountStore.getState().accounts.find(a => a.id === accountId)?.addons ?? []
+
+      // Mirror the per-account dialog's collision guards: skip no-op changes, targets
+      // that already exist on the account, and two matches colliding on one new URL.
+      const sources = addons.map((addon, index) => ({
+        key: `${addon.transportUrl}::${index}`,
+        addonId: addon.manifest.id,
+        url: addon.transportUrl,
+      }))
+      const rawMatches = sources.filter(s => s.url.toLowerCase().includes(find.toLowerCase()))
+
+      const keysByUrl = new Map<string, string[]>()
+      for (const s of sources) {
+        const urlKey = normalizeAddonUrl(s.url)
+        const keys = keysByUrl.get(urlKey)
+        if (keys) keys.push(s.key)
+        else keysByUrl.set(urlKey, [s.key])
+      }
+
+      const movingKeys = new Set<string>()
+      for (const s of rawMatches) {
+        const newUrl = replaceUrlFragment(s.url, find, replace)
+        if (normalizeAddonUrl(s.url) !== normalizeAddonUrl(newUrl)) movingKeys.add(s.key)
+      }
+
+      const mergeResult: MergeResult = { added: [], updated: [], skipped: [], protected: [] }
+      const claimedTargetKeys = new Set<string>()
+      const pairs: Array<{ addonId: string; oldUrl: string; newUrl: string }> = []
+
+      for (const s of rawMatches) {
+        const newUrl = replaceUrlFragment(s.url, find, replace)
+        const oldKey = normalizeAddonUrl(s.url)
+        const newKey = normalizeAddonUrl(newUrl)
+        if (oldKey === newKey) continue
+        const existingTarget = keysByUrl.get(newKey)?.filter(k => k !== s.key && !movingKeys.has(k)) ?? []
+        if (existingTarget.length > 0 || claimedTargetKeys.has(newKey)) {
+          mergeResult.skipped.push({ addonId: s.addonId, reason: 'already-exists' })
+          continue
+        }
+        claimedTargetKeys.add(newKey)
+        pairs.push({ addonId: s.addonId, oldUrl: s.url, newUrl })
+      }
+
+      for (const pair of pairs) {
+        try {
+          await useAddonStore.getState().replaceTransportUrlUniversally(null, pair.oldUrl, pair.newUrl, accountId)
+          mergeResult.updated.push({ addonId: pair.addonId, oldUrl: pair.oldUrl, newUrl: pair.newUrl })
+        } catch {
+          mergeResult.skipped.push({ addonId: pair.addonId, reason: 'fetch-failed' })
+        }
+      }
+
+      return { success: 1, failed: 0, detail: { accountId, result: mergeResult } }
+    } catch (error) {
+      return { success: 0, failed: 1, error: { accountId, error: error instanceof Error ? error.message : 'Unknown error' } }
+    }
+  })
+
+  for (const wr of workerResults) {
+    result.success += wr.success
+    result.failed += wr.failed
+    if (wr.detail) result.details.push(wr.detail)
+    if (wr.error) result.errors.push(wr.error)
+  }
+
+  return result
+}
+
 export async function bulkReinstallAddons(
   addonIds: string[],
   accountIds: Array<{ id: string; authKey: string }>,
@@ -641,6 +740,9 @@ export async function bulkReinstallAddons(
 
     const workerResults = await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
+        if (!accountAuthKey) {
+          return { success: 0, failed: 0 }
+        }
         const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
         const currentAddons = await getAddons(authKey, accountId)
 
@@ -1233,8 +1335,17 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
   const useAddonStore: StoreRef = m.useAddonStore
   const _outboundSyncInProgress: Set<string> = m._outboundSyncInProgress
   try {
-    const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
-    const currentAddons = addons || await getAddons(authKey, accountId)
+    let currentAddons: AddonDescriptor[]
+    if (addons) {
+      currentAddons = addons
+    } else if (accountAuthKey) {
+      const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+      currentAddons = await getAddons(authKey, accountId)
+    } else {
+      const { useAccountStore } = await import('../accountStore')
+      const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+      currentAddons = account?.addons || []
+    }
 
     const get = useAddonStore.getState
     const existingState = get().accountStates[accountId]
@@ -1369,7 +1480,12 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
 export async function syncAllAccountStates(accounts: Account[]) {
   await mapConcurrent(accounts, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (account) => {
     try {
-      await syncAccountState(account.id, getStremioAuthKey(account))
+      const stremioKey = getStremioAuthKey(account)
+      if (stremioKey) {
+        await syncAccountState(account.id, stremioKey)
+      } else {
+        await syncAccountState(account.id, '', account.addons || [])
+      }
     } catch (error) {
       if (import.meta.env.DEV) console.error(`Failed to sync account ${account.id}: `, error)
     }

@@ -27,7 +27,7 @@ import { create } from 'zustand'
 import localforage from 'localforage'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 
-import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally } from './addon/addonDeployment'
+import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkReplaceUrl, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally } from './addon/addonDeployment'
 import { updateSavedAddonManifest } from './addon/addonManifest'
 
 export const _outboundSyncInProgress = new Set<string>()
@@ -178,6 +178,11 @@ export interface AddonStore {
     urls: string[],
     accountIds: Array<{ id: string; authKey: string }>,
     allowProtected?: boolean
+  ) => Promise<BulkResult>
+  bulkReplaceUrl: (
+    find: string,
+    replace: string,
+    accountIds: Array<{ id: string; authKey: string }>
   ) => Promise<BulkResult>
   bulkCloneAccount: (
     sourceAccount: { id: string; authKey: string },
@@ -814,6 +819,10 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
 
   bulkInstallFromUrls: async (urls, accountIds, allowProtected?) => {
     return bulkInstallFromUrls(urls, accountIds, allowProtected)
+  },
+
+  bulkReplaceUrl: async (find, replace, accountIds) => {
+    return bulkReplaceUrl(find, replace, accountIds)
   },
 
   bulkCloneAccount: async (sourceAccount, targetAccountIds, overwrite?) => {

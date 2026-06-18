@@ -27,7 +27,7 @@ import { checkAddonUpdates } from '@/api/addons'
 import { useAddonStore } from '@/store/addonStore'
 import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
 import { getPlatformEntry } from '@/lib/platform-registry'
-import { useAccountStore, getStremioAuthKey, getAccountEmail } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 
 import { Tooltip } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -167,7 +167,7 @@ export function AccountList() {
     for (const account of expiredAccounts) {
       const failing = (account.connections || []).filter(c => c.status === 'expired' || c.status === 'error')
       if (failing.length === 0) {
-        names.add(getStremioAuthKey(account) ? 'Stremio' : 'Account')
+        names.add(hasPlatformConnection(account) ? 'Stremio' : 'Account')
       } else {
         for (const c of failing) names.add(getPlatformEntry(c.platform)?.name || c.platform)
       }
@@ -242,7 +242,6 @@ export function AccountList() {
 
   const handleRefreshAll = async () => {
     await syncAllAccounts()
-    // Trigger immediate failover check/self-healing after sync
     await checkRules()
   }
 

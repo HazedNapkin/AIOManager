@@ -25,11 +25,6 @@ export function isLocalOrPrivateUrl(url: string): boolean {
   }
 }
 
-/**
- * Check if an addon URL is accessible
- * @param addonUrl The addon install URL
- * @returns HealthStatus object
- */
 export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> {
   const startTime = Date.now()
 
@@ -86,12 +81,6 @@ export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> 
   }
 }
 
-/**
- * Check health for multiple addons with concurrency control
- * @param addons Array of saved addons to check
- * @param onProgress Optional callback for progress updates
- * @returns Array of addons with updated health status
- */
 export async function checkAllAddonsHealth(
   addons: SavedAddon[],
   onProgress?: (completed: number, total: number) => void
@@ -167,9 +156,6 @@ export async function checkAllAddonsHealth(
   return results
 }
 
-/**
- * Get health summary statistics
- */
 export function getHealthSummary(addons: SavedAddon[]): {
   online: number
   offline: number
@@ -192,11 +178,6 @@ export function getHealthSummary(addons: SavedAddon[]): {
   return { online, offline, unchecked }
 }
 
-/**
- * Perform a deep functional check on an addon
- * 1. Fetches manifest
- * 2. Fetches a catalog (if available) or a meta item (Big Buck Bunny) to verify response data
- */
 export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHealthy: boolean; message?: string; latency?: number }> {
   const start = Date.now()
   const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
@@ -205,8 +186,7 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
     const controller = new AbortController()
     const id = setTimeout(() => controller.abort(), 10000)
 
-    // Check direct first, then proxy (simplified for this snippet, reusing logic would be better)
-    let manifest: any = null
+    let manifest: { catalogs?: Array<{ type: string; id: string }>; resources?: Array<string | { name?: string }> } | null = null
     try {
       const res = await fetch(manifestUrl, { signal: controller.signal })
       if (res.ok) manifest = await res.json()
@@ -234,7 +214,7 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
     if (manifest.catalogs && manifest.catalogs.length > 0) {
       const cat = manifest.catalogs[0]
       verifyUrl = `${addonUrl.replace('/manifest.json', '')}/catalog/${cat.type}/${cat.id}.json`
-    } else if (manifest.resources && (manifest.resources.includes('stream') || manifest.resources.some((r: any) => r.name === 'stream'))) {
+    } else if (manifest.resources && (manifest.resources.includes('stream') || manifest.resources.some(r => typeof r === 'object' && r?.name === 'stream'))) {
       // Try Big Buck Bunny (tt0054215)
       verifyUrl = `${addonUrl.replace('/manifest.json', '')}/stream/movie/tt0054215.json`
     }
@@ -253,8 +233,7 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
         const data = await res.json()
         if (data.metas || data.streams) verifySuccess = true
       }
-    } catch {
-    }
+    } catch {}
     clearTimeout(vId)
 
     if (verifySuccess) {

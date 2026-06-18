@@ -18,7 +18,6 @@ const teardownTickerIfIdle = () => {
     }
 }
 
-/** Short relative-time label: "just now", "3m ago", "2h ago", "4d ago". Returns null for invalid input. */
 export const formatRelative = (input: number | Date | null | undefined): string | null => {
     if (input === null || input === undefined) return null
     const ts = typeof input === 'number' ? input : input.getTime()
@@ -39,7 +38,6 @@ export const formatRelative = (input: number | Date | null | undefined): string 
     return `${yr}y ago`
 }
 
-/** Returns formatRelative and re-renders the caller every 60s so labels stay fresh. */
 export function useRelativeTime(): (input: number | Date | null | undefined) => string | null {
     const [, setTick] = useState(0)
 

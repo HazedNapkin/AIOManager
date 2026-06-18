@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertCircle, ArrowLeft, Bookmark, Flame, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Clock, Flame, Heart, LayoutGrid, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore } from '@/store/accountStore'
@@ -19,10 +20,12 @@ import {
   type DiscoverSortBy,
 } from '@/api/discover'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
+import { motion } from 'framer-motion'
 import { DiscoverToolbar } from './DiscoverToolbar'
 import { DiscoverCard } from './DiscoverCard'
 import { DiscoverHero } from './DiscoverHero'
 import { DiscoverRow } from './DiscoverRow'
+import { DiscoverDeck } from './DiscoverDeck'
 import { DiscoverDetailModal } from './DiscoverDetailModal'
 import { DiscoverSaveDialog, type DiscoverSavePayload } from './DiscoverSaveDialog'
 import { AccountPickerDialog } from '@/components/accounts/AccountPickerDialog'
@@ -36,12 +39,25 @@ const TRENDING_SIZE = 30
 // DiscoverAddon is persisted (not just the id) so the shelf renders offline without refetching.
 const FAVORITES_KEY = 'aio-discover-favorites'
 const PREFS_KEY = 'aio-discover-prefs'
+const LAST_VISIT_KEY = 'aio-discover-last-visit'
+
+type DiscoverViewMode = 'store' | 'deck'
 
 interface DiscoverPrefs {
   sortBy?: DiscoverSortBy
   showAdult?: boolean
   selectedCategories?: string[]
   compact?: boolean
+  viewMode?: DiscoverViewMode
+}
+
+function shuffle<T>(input: T[]): T[] {
+  const arr = [...input]
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
 }
 
 function loadFavorites(): DiscoverAddon[] {
@@ -74,6 +90,7 @@ function savePrefs(prefs: DiscoverPrefs) {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
   } catch {
+    // best-effort; ignore quota errors
   }
 }
 
@@ -86,6 +103,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const library = useAddonStore((state) => state.library)
   const createSavedAddon = useAddonStore((state) => state.createSavedAddon)
   const createProfile = useProfileStore((state) => state.createProfile)
+  const accounts = useAccountStore((state) => state.accounts)
 
   const initialPrefs = useMemo(() => loadPrefs(), [])
 
@@ -102,7 +120,16 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [compact, setCompact] = useState<boolean>(!!initialPrefs.compact)
   const [favorites, setFavorites] = useState<DiscoverAddon[]>(() => loadFavorites())
 
-  // Storefront shelves
+  const [viewMode, setViewMode] = useState<DiscoverViewMode>(initialPrefs.viewMode === 'deck' ? 'deck' : 'store')
+  const [deckPool, setDeckPool] = useState<DiscoverAddon[]>([])
+  const [deckLoading, setDeckLoading] = useState(false)
+  const [deckKey, setDeckKey] = useState(0)
+
+  const initialLastVisit = useMemo(() => {
+    const raw = Number(localStorage.getItem(LAST_VISIT_KEY))
+    return Number.isFinite(raw) && raw > 0 ? raw : null
+  }, [])
+
   const [trending, setTrending] = useState<DiscoverAddon[]>([])
   const [newest, setNewest] = useState<DiscoverAddon[]>([])
   const [storeLoading, setStoreLoading] = useState(true)
@@ -112,7 +139,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [categoryShelves, setCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
   const [userCategoryShelves, setUserCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
 
-  // Filtered grid
   const [addons, setAddons] = useState<DiscoverAddon[]>([])
   const [page, setPage] = useState(1)
   const [hasNextPage, setHasNextPage] = useState(false)
@@ -131,6 +157,15 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const requestRef = useRef(0)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
+
+  const [reducedMotion, setReducedMotion] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReducedMotion(mq.matches)
+    const handler = () => setReducedMotion(mq.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   const isFiltering = debouncedSearch.trim() !== '' || selectedCategories.length > 0 || selectedResources.length > 0 || selectedTypes.length > 0
   const gridMode = isFiltering || forceGrid
@@ -176,8 +211,12 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const userCategoryKey = userCategories.map((c) => c.slug).join(',')
 
   useEffect(() => {
-    savePrefs({ sortBy, showAdult, selectedCategories, compact })
-  }, [sortBy, showAdult, selectedCategories, compact])
+    savePrefs({ sortBy, showAdult, selectedCategories, compact, viewMode })
+  }, [sortBy, showAdult, selectedCategories, compact, viewMode])
+
+  useEffect(() => {
+    return () => { try { localStorage.setItem(LAST_VISIT_KEY, String(Date.now())) } catch { /* quota */ } }
+  }, [])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -220,7 +259,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userCategoryKey, showAdult])
 
-  // Storefront shelves: trending + newest.
   useEffect(() => {
     const ac = new AbortController()
     setStoreLoading(true)
@@ -313,6 +351,79 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     [savedIndex]
   )
 
+  const deploymentIndex = useMemo(
+    () =>
+      accounts.map((acc) => {
+        const ids = new Set<string>()
+        const urls = new Set<string>()
+        for (const a of acc.addons || []) {
+          if (a?.flags?.enabled === false) continue
+          if (a.manifest?.id) ids.add(a.manifest.id)
+          if (a.transportUrl) urls.add(normalizeAddonUrl(a.transportUrl))
+        }
+        return { ids, urls }
+      }),
+    [accounts]
+  )
+
+  const deployedCount = useCallback(
+    (addon: DiscoverAddon) => {
+      const id = addon.manifest?.id
+      const url = normalizeAddonUrl(addon.manifestUrl)
+      let n = 0
+      for (const acc of deploymentIndex) {
+        if ((id && acc.ids.has(id)) || acc.urls.has(url)) n++
+      }
+      return n
+    },
+    [deploymentIndex]
+  )
+  const accountTotal = accounts.length
+
+  const isSavedRef = useRef(isSaved)
+  isSavedRef.current = isSaved
+  const isFavoriteRef = useRef(isFavorite)
+  isFavoriteRef.current = isFavorite
+
+  useEffect(() => {
+    if (viewMode !== 'deck') return
+    const ac = new AbortController()
+    setDeckLoading(true)
+    const nsfw = showAdult ? undefined : 'exclude'
+    const catPicks = categories.length ? shuffle(categories).slice(0, 3) : []
+    Promise.all([
+      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 40 }, ac.signal).catch(() => null),
+      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: 30 }, ac.signal).catch(() => null),
+      ...catPicks.map((c) =>
+        fetchDiscoverAddons({ category: [c.slug], sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 20 }, ac.signal).catch(() => null)
+      ),
+    ])
+      .then((results) => {
+        if (ac.signal.aborted) return
+        const seen = new Set<string>()
+        const merged: DiscoverAddon[] = []
+        for (const res of results) {
+          for (const addon of res?.addons ?? []) {
+            if (seen.has(addon.uuid)) continue
+            if (isSavedRef.current(addon) || isFavoriteRef.current(addon)) continue
+            seen.add(addon.uuid)
+            merged.push(addon)
+          }
+        }
+        setDeckPool(shuffle(merged))
+      })
+      .finally(() => { if (!ac.signal.aborted) setDeckLoading(false) })
+    return () => ac.abort()
+  }, [viewMode, deckKey, categories, showAdult])
+
+  const newSinceVisit = useMemo(() => {
+    if (!initialLastVisit) return []
+    return newest.filter((a) => {
+      const t = new Date(a.createdAt).getTime()
+      return Number.isFinite(t) && t > initialLastVisit
+    })
+  }, [newest, initialLastVisit])
+
   const featuredList = useMemo(() => {
     const isTorrentio = (a: DiscoverAddon) => a.slug === 'torrentio' || a.manifest?.id === 'com.stremio.torrentio.addon'
     const eligible = trending.filter((a) => !isTorrentio(a))
@@ -335,9 +446,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     [trending]
   )
 
-  // Resource/type facets refine the already-loaded grid client-side: the public directory API
-  // ignores resource/type query params, so we narrow what's been fetched (infinite scroll keeps
-  // growing the pool). Within a facet group it's match-any; across groups it's match-all.
   const visibleAddons = useMemo(() => {
     if (selectedResources.length === 0 && selectedTypes.length === 0) return addons
     return addons.filter((a) => {
@@ -420,38 +528,93 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     onConfigure: handleConfigure,
     onOpenDetail: openDetail,
     onToggleFavorite: toggleFavorite,
+    deployedCount,
+    accountTotal,
   }
 
   return (
     <div className="flex flex-col gap-5">
-      <DiscoverToolbar
-        search={search}
-        onSearchChange={handleSearchChange}
-        sortBy={sortBy}
-        onSortByChange={(s) => { setSortBy(s); setForceGrid(true) }}
-        categories={categories}
-        selectedCategories={selectedCategories}
-        onToggleCategory={toggleCategory}
-        selectedResources={selectedResources}
-        onToggleResource={toggleResource}
-        selectedTypes={selectedTypes}
-        onToggleType={toggleType}
-        showAdult={showAdult}
-        onToggleAdult={() => setShowAdult((v) => !v)}
-        showSort={gridMode}
-        compact={compact}
-        onToggleCompact={() => setCompact((v) => !v)}
-      />
+      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)}>
+        <TabsList>
+          <TabsTrigger value="store" className="h-8 px-4 text-xs">
+            <LayoutGrid className="h-3.5 w-3.5" />
+            Browse
+          </TabsTrigger>
+          <TabsTrigger value="deck" className="h-8 px-4 text-xs data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-500/10 data-[state=active]:to-purple-500/10 data-[state=active]:text-amber-600 dark:data-[state=active]:text-amber-400">
+            {reducedMotion ? (
+              <Sparkles className="h-3.5 w-3.5" />
+            ) : (
+              <motion.span
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+                className="inline-flex"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+              </motion.span>
+            )}
+            Discover Deck
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {viewMode === 'deck' && (
+          <DiscoverDeck
+            pool={deckPool}
+            loading={deckLoading}
+            onReshuffle={() => setDeckKey((k) => k + 1)}
+            isSaved={isSaved}
+            savingKey={savingKey}
+            onSave={openSave}
+            onOpenDetail={openDetail}
+            onDeploy={openDeploy}
+            deployedCount={deployedCount}
+            accountTotal={accountTotal}
+          />
+      )}
+
+      {viewMode === 'store' && (
+        <DiscoverToolbar
+          search={search}
+          onSearchChange={handleSearchChange}
+          sortBy={sortBy}
+          onSortByChange={(s) => { setSortBy(s); setForceGrid(true) }}
+          categories={categories}
+          selectedCategories={selectedCategories}
+          onToggleCategory={toggleCategory}
+          selectedResources={selectedResources}
+          onToggleResource={toggleResource}
+          selectedTypes={selectedTypes}
+          onToggleType={toggleType}
+          showAdult={showAdult}
+          onToggleAdult={() => setShowAdult((v) => !v)}
+          showSort={gridMode}
+          compact={compact}
+          onToggleCompact={() => setCompact((v) => !v)}
+        />
+      )}
 
       {/* Keyed so the entrance animation replays each time Discover is opened, without refetching. */}
+      {viewMode === 'store' && (
       <div key={replayKey} className="flex flex-col gap-5">
 
       {!gridMode && (
         <>
+          {newSinceVisit.length > 0 && (
+            <DiscoverRow
+              title="New Since Your Last Visit"
+              icon={<Clock className="h-4 w-4 text-primary" />}
+              addons={newSinceVisit}
+              isSaved={isSaved}
+              savingKey={savingKey}
+              onSeeAll={() => seeAll('createdAt')}
+              isFavorite={isFavorite}
+              {...cardCallbacks}
+            />
+          )}
           {favorites.length > 0 && (
             <DiscoverRow
               title="Favorites"
-              icon={<Bookmark className="h-4 w-4 fill-primary text-primary" />}
+              icon={<Heart className="h-4 w-4 fill-primary text-primary" />}
               addons={favorites}
               isSaved={isSaved}
               savingKey={savingKey}
@@ -486,6 +649,9 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
               onSave={openSave}
               onConfigure={handleConfigure}
               onOpenDetail={openDetail}
+              onDeploy={openDeploy}
+              deployedCount={deployedCount}
+              accountTotal={accountTotal}
             />
           )}
 
@@ -538,6 +704,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
                 <DiscoverRow
                   key={category.slug}
                   title={category.name}
+                  icon={<Sparkles className="h-4 w-4 text-primary" />}
                   addons={shelf}
                   isSaved={isSaved}
                   savingKey={savingKey}
@@ -635,6 +802,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         </>
       )}
       </div>
+      )}
 
       <DiscoverDetailModal
         addon={detailAddon}

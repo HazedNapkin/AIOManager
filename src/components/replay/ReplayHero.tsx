@@ -51,7 +51,6 @@ export function ReplayHero({ data, userName }: ReplayHeroProps) {
             </>
         );
 
-    // Mount states for pure CSS transitions per design spec
     const [statsVisible, setStatsVisible] = useState(false);
     const [readyMosaic, setReadyMosaic] = useState(false);
     const [readyPills, setReadyPills] = useState(false);

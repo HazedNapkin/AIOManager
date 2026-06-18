@@ -19,7 +19,7 @@ async function getStore(): Promise<StoreRef> {
 /**
  * Fold inbound canonical-store writes (e.g. AIOStreams) into all accounts via the
  * tested three-way merge, BEFORE the client's blob push so the push reflects the merge.
- * The client is the single merger (D2).
+ * The client is the single merger.
  *
  * Loop-safety: this is invoked from inside syncToRemote. It mutates account.addons under
  * the per-account sync mutex and propagates a changed Hub to native connections via
@@ -31,7 +31,6 @@ async function getStore(): Promise<StoreRef> {
  */
 export async function reconcileInboundCanonical(): Promise<boolean> {
     const store = await getStore()
-    // All accounts use the canonical store for three-way merge.
     const targets = store.getState().accounts
     if (targets.length === 0) return false
 
@@ -47,10 +46,6 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
     for (const account of targets) {
         const remoteAddons = (remote[account.id]?.addons || []) as unknown as CanonicalAddon[]
 
-        // Compute AND apply under the per-account mutex. `local` MUST be read fresh inside
-        // the lock: a concurrent addon op (install/remove) can land during the
-        // fetchCanonical() await above, and merging against the pre-await snapshot would
-        // clobber it: a TOCTOU drop in the exact feature meant to never drop addons.
         while (syncMutexes.has(account.id)) { await syncMutexes.get(account.id) }
         let release!: () => void
         syncMutexes.set(account.id, new Promise<void>(r => { release = r }))
@@ -73,12 +68,10 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
             syncMutexes.delete(account.id)
         }
 
-        // Propagate the merged Hub to native connections (Nuvio etc.). Fire-and-forget,
-        // loop-safe: pushToConnections does not trigger another blob sync.
         if (didChange) {
             import('./accountAddonOps')
                 .then(({ pushToConnections }) => pushToConnections(account.id))
-                .catch(() => {})
+                .catch(() => { })
         }
     }
 

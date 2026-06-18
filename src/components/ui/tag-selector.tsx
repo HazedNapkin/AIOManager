@@ -22,7 +22,6 @@ export function TagSelector({ value, onChange, options, placeholder }: TagSelect
 
     return (
         <div className="space-y-3">
-            {/* Chips Container */}
             <div className="flex flex-wrap gap-2 min-h-[32px]">
                 {value.length === 0 && (
                     <span className="text-sm text-muted-foreground py-1 italic">No tags selected</span>
@@ -42,7 +41,6 @@ export function TagSelector({ value, onChange, options, placeholder }: TagSelect
                 ))}
             </div>
 
-            {/* Select Dropdown */}
             <Select value="" onValueChange={handleSelect} disabled={availableOptions.length === 0}>
                 <SelectTrigger>
                     <SelectValue placeholder={

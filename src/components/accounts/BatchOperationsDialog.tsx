@@ -18,7 +18,7 @@ import { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { BulkResult, MergeResult, SavedAddon } from '@/types/saved-addon'
 import { AccountAvatar } from './AccountAvatar'
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Globe, GripVertical, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldAlert, ShieldCheck, Trash2, Zap, UserMinus, FileDown, Search, Tags, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Globe, GripVertical, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldAlert, ShieldCheck, Trash2, Zap, UserMinus, FileDown, Search, Tags, Wand2, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
@@ -30,6 +30,15 @@ interface BatchOperationsDialogProps {
   allAccounts?: Account[]
   onClose: () => void
 }
+
+function escapeReplaceRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceUrlFragment(url: string, find: string, replace: string) {
+  return url.replace(new RegExp(escapeReplaceRegExp(find), 'gi'), replace)
+}
+
 type BulkAction =
   | 'install-from-library'
   | 'add-saved-addons'
@@ -41,6 +50,7 @@ type BulkAction =
   | 'unprotect-all'
   | 'remove-addons'
   | 'remove-by-tag'
+  | 'replace-url'
   | 'sync-order'
 
 type BulkAccountTarget = {
@@ -65,6 +75,7 @@ const ACTION_TITLES: Record<BulkAction, string> = {
   'remove-by-tag': 'Remove by Tags',
   'reinstall-all': 'Update All',
   'remove-addons': 'Remove Add-ons',
+  'replace-url': 'Find & Replace URL',
   'protect-all': 'Protect All',
   'unprotect-all': 'Unprotect All'
 }
@@ -79,6 +90,7 @@ const ACTION_DESCRIPTIONS: Record<BulkAction, string> = {
   'remove-by-tag': 'Remove add-ons that use a saved-library tag.',
   'reinstall-all': 'Check every add-on and use the newest copy available.',
   'remove-addons': 'Choose installed add-ons to remove from selected accounts.',
+  'replace-url': 'Swap a URL fragment (like a domain) across the selected accounts.',
   'protect-all': 'Lock every add-on so tag cleanup leaves them alone.',
   'unprotect-all': 'Unlock every add-on so tag cleanup can remove them again.'
 }
@@ -86,13 +98,13 @@ const ACTION_DESCRIPTIONS: Record<BulkAction, string> = {
 const ACTION_GROUPS: Array<{ label: string; actions: BulkAction[] }> = [
   { label: 'Install', actions: ['install-from-library', 'add-saved-addons', 'install-from-url'] },
   { label: 'Sync', actions: ['clone-account', 'sync-order'] },
-  { label: 'Manage', actions: ['update-addons', 'remove-by-tag', 'reinstall-all', 'remove-addons'] },
+  { label: 'Manage', actions: ['update-addons', 'replace-url', 'remove-by-tag', 'reinstall-all', 'remove-addons'] },
   { label: 'Protection', actions: ['protect-all', 'unprotect-all'] }
 ]
 const ACTION_OPTIONS = ACTION_GROUPS.flatMap(group => group.actions)
 
 const DANGER_ACTIONS = new Set<BulkAction>(['remove-addons', 'remove-by-tag'])
-const WARNING_ACTIONS = new Set<BulkAction>(['clone-account', 'reinstall-all', 'unprotect-all'])
+const WARNING_ACTIONS = new Set<BulkAction>(['clone-account', 'reinstall-all', 'unprotect-all', 'replace-url'])
 
 type PreviewTone = 'muted' | 'success' | 'warning' | 'destructive'
 
@@ -567,6 +579,8 @@ function getActionIcon(action: BulkAction, className = 'h-4 w-4') {
       return <Zap className={className} />
     case 'remove-addons':
       return <Trash2 className={className} />
+    case 'replace-url':
+      return <Wand2 className={className} />
     case 'protect-all':
       return <ShieldCheck className={className} />
     case 'unprotect-all':
@@ -587,6 +601,7 @@ export function BatchOperationsDialog({
   const bulkRemoveAddons = useAddonStore(s => s.bulkRemoveAddons)
   const bulkReinstallAddons = useAddonStore(s => s.bulkReinstallAddons)
   const bulkInstallFromUrls = useAddonStore(s => s.bulkInstallFromUrls)
+  const bulkReplaceUrl = useAddonStore(s => s.bulkReplaceUrl)
   const bulkCloneAccount = useAddonStore(s => s.bulkCloneAccount)
   const bulkRemoveByTag = useAddonStore(s => s.bulkRemoveByTag)
   const bulkSyncOrder = useAddonStore(s => s.bulkSyncOrder)
@@ -616,6 +631,8 @@ export function BatchOperationsDialog({
     }, 150)
   }
   const [urlList, setUrlList] = useState<string>('')
+  const [replaceFindText, setReplaceFindText] = useState<string>('')
+  const [replaceWithText, setReplaceWithText] = useState<string>('')
   const [sourceAccountId, setSourceAccountId] = useState<string>('')
   const [overwriteClone, setOverwriteClone] = useState(false)
   const [showProtected, setShowProtected] = useState(true)
@@ -716,6 +733,8 @@ export function BatchOperationsDialog({
     setSelectedAddonIds(new Set())
     setSelectedUpdateAddonIds(new Set())
     setSelectedBulkTag('')
+    setReplaceFindText('')
+    setReplaceWithText('')
     if (filterTimeoutRef.current) clearTimeout(filterTimeoutRef.current)
     setFilterQuery('') // Reset filter on action switch
     setDebouncedFilterQuery('')
@@ -740,12 +759,12 @@ export function BatchOperationsDialog({
   const allTags = getAllTags()
 
   const currentTagAddonsCount = selectedInstallTagName
-    // filtering logic for tags doesn't need search, but maybe? 
-    ? libraryArray.filter((addon: any) => addon.tags.includes(selectedInstallTagName)).length
+    ? libraryArray.filter((addon) => addon.tags.includes(selectedInstallTagName)).length
     : 0
 
   const isTagAction = action === 'install-from-library' && installMode === 'tag'
   const isInvalidTag = isTagAction && selectedInstallTagName !== '' && currentTagAddonsCount === 0
+  const isInvalidReplace = action === 'replace-url' && !replaceFindText.trim()
 
   const allAddonsRaw = useMemo(() => {
     const allAddonsMap = new Map<string, { addon: AddonDescriptor, accounts: Account[] }>()
@@ -1055,6 +1074,48 @@ export function BatchOperationsDialog({
         }
       }
 
+      case 'replace-url': {
+        if (!replaceFindText.trim()) {
+          return createPickFirstPreview('Enter text to find', 'Type the part of the URL you want to replace (like an old domain). Nothing changes until you run it.', targetCount)
+        }
+
+        const find = replaceFindText
+        const previewAddons: PreviewAddon[] = []
+        let totalChanges = 0
+        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
+          let changes = 0
+          for (const addon of account.addons) {
+            if (!addon.transportUrl.toLowerCase().includes(find.toLowerCase())) continue
+            const newUrl = replaceUrlFragment(addon.transportUrl, find, replaceWithText)
+            if (normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(newUrl)) continue
+            changes++
+            previewAddons.push(descriptorToPreview(addon, `New: ...${newUrl.slice(-30)}`, 'success'))
+          }
+          totalChanges += changes
+          return {
+            id: account.id,
+            name: getAccountName(account),
+            detail: changes > 0 ? `${changes} to change` : 'No matches',
+            tone: changes > 0 ? 'success' : 'muted',
+          }
+        })
+
+        return {
+          title: `Replace "${find}" in add-on URLs`,
+          description: 'Matching add-on URLs are rewritten on the selected accounts only. Your Library is not changed.',
+          targetCount,
+          tone: 'warning',
+          stats: [
+            { label: 'Find', value: find.length > 14 ? `${find.slice(0, 14)}...` : find },
+            { label: 'Will change', value: totalChanges, tone: totalChanges > 0 ? 'success' : 'muted' },
+            { label: 'Accounts', value: targetCount },
+          ],
+          addons: uniquePreviewAddons(previewAddons),
+          rows,
+          notes: [...notes, 'Each matching add-on is re-fetched at its new URL. If the new URL is unreachable, that add-on is skipped.'],
+        }
+      }
+
       case 'remove-by-tag': {
         if (!selectedBulkTag) {
           return createPickFirstPreview('Pick a tag first', 'Choose a tag, then AIOManager will show what would be removed.', targetCount, 'destructive')
@@ -1251,10 +1312,11 @@ export function BatchOperationsDialog({
     selectedInstallTagName,
     selectedSavedAddonsForPreview,
     selectedUpdateAddonIds,
-    selectedAccounts.length,
     allAddonsRaw,
     sourceAccount,
     urlEntries,
+    replaceFindText,
+    replaceWithText,
   ])
 
   const toggleSavedAddon = (savedAddonId: string) => {
@@ -1367,6 +1429,15 @@ export function BatchOperationsDialog({
           break
         }
 
+        case 'replace-url': {
+          if (!replaceFindText.trim()) {
+            setError('Enter the text to find')
+            return
+          }
+          runForAccount = (target) => bulkReplaceUrl(replaceFindText, replaceWithText, [target])
+          break
+        }
+
         case 'clone-account': {
           if (!sourceAccountId) {
             setError('Select a source account')
@@ -1434,7 +1505,7 @@ export function BatchOperationsDialog({
 
         case 'install-from-library': {
           const libraryArray = Object.values(library)
-          let addonsToInstall: any[] = []
+          let addonsToInstall: typeof libraryArray = []
           if (installMode === 'profile' && selectedInstallProfileId) {
             addonsToInstall = selectedInstallProfileId === 'unassigned'
               ? libraryArray.filter(a => !a.profileId)
@@ -1922,6 +1993,36 @@ export function BatchOperationsDialog({
               </div>
             )}
 
+            {action === 'replace-url' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="replace-find" className="text-xs font-medium uppercase text-muted-foreground">Find Fragment</Label>
+                    <Input
+                      id="replace-find"
+                      placeholder="e.g. old-domain.com"
+                      value={replaceFindText}
+                      onChange={(e) => setReplaceFindText(e.target.value)}
+                      className="h-10 font-mono text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="replace-with" className="text-xs font-medium uppercase text-muted-foreground">Replace With</Label>
+                    <Input
+                      id="replace-with"
+                      placeholder="e.g. new-domain.com"
+                      value={replaceWithText}
+                      onChange={(e) => setReplaceWithText(e.target.value)}
+                      className="h-10 font-mono text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Every add-on URL on the selected accounts that contains the find text is rewritten. This changes the accounts only; your Library is left untouched.
+                </p>
+              </div>
+            )}
+
             {(action === 'clone-account' || action === 'sync-order') && (
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -2283,7 +2384,7 @@ export function BatchOperationsDialog({
         </Button>
         <Button
           onClick={handleExecute}
-          disabled={loading || isExecuting || success || isInvalidTag}
+          disabled={loading || isExecuting || success || isInvalidTag || isInvalidReplace}
           className="h-11 w-full gap-2 rounded-full font-semibold"
           type="button"
         >

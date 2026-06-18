@@ -39,7 +39,6 @@ export function AddonMetadataDialog({
     const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
 
 
-    // Initialize form with existing metadata
     useEffect(() => {
         if (open) {
             setCustomName(addon.metadata?.customName || '')
@@ -96,8 +95,8 @@ export function AddonMetadataDialog({
             const result = await onReplaceUrl(descriptor.transportUrl || requestedUrl, descriptor)
             if (!result?.failedAccounts?.length) onOpenChange(false)
             return result
-        } catch (err: any) {
-            const message = err.message || 'Failed to replace URL.'
+        } catch (err) {
+            const message = (err instanceof Error && err.message) || 'Failed to replace URL.'
             setError(message)
             throw new Error(message)
         }

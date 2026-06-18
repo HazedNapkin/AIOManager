@@ -31,7 +31,7 @@ export function registerProviderRoutes(fastify, reconciler) {
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
         const { accountId } = request.params
-        const { primaryConnectionId, connections, addons } = request.body || {}
+        const { primaryConnectionId, connections, addons, allowCollectionShrink } = request.body || {}
 
         if (!(await accountBelongsTo(accountId, authUser))) {
             return { synced: true, changes: [], connectionStates: {} }
@@ -48,7 +48,8 @@ export function registerProviderRoutes(fastify, reconciler) {
                 accountId,
                 primaryConnectionId,
                 resolvedConnections,
-                addons
+                addons,
+                { allowCollectionShrink: allowCollectionShrink === true }
             )
 
             if (result.changes.length > 0) {

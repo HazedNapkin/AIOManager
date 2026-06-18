@@ -42,15 +42,13 @@ export function useSavedAddonSelectionActions({
   filteredAddons,
   library,
 }: UseSavedAddonSelectionActionsOptions) {
-  const updateSavedAddonManifest = useAddonStore(state => state.updateSavedAddonManifest)
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false)
   const [showBulkDeleteConfirmation, setShowBulkDeleteConfirmation] = useState(false)
   const [showAccountPicker, setShowAccountPicker] = useState(false)
   const [showRemoveAccountPicker, setShowRemoveAccountPicker] = useState(false)
-  const [showUpdateManifestConfirmation, setShowUpdateManifestConfirmation] = useState(false)
-  const [updatingManifests, setUpdatingManifests] = useState(false)
+
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set())
@@ -98,41 +96,7 @@ export function useSavedAddonSelectionActions({
     setSelectedIds(prev => prev.size === allIds.length ? new Set() : new Set(allIds))
   }, [filteredAddons])
 
-  const handleUpdateSelectedManifests = useCallback(async () => {
-    if (selectedIds.size === 0) return
 
-    setUpdatingManifests(true)
-    let successCount = 0
-    let failCount = 0
-    let shapeChangeCount = 0
-    const total = selectedIds.size
-
-    toast({
-      title: 'Updating Manifests...',
-      description: `Starting update for ${total} addon${total !== 1 ? 's' : ''}.`,
-    })
-
-    for (const id of selectedIds) {
-      try {
-        const result = await updateSavedAddonManifest(id)
-        if (result.hasManifestShapeChange) shapeChangeCount++
-        successCount++
-      } catch (err) {
-        if (import.meta.env.DEV) console.error(`Failed to update manifest for ${id}:`, err)
-        failCount++
-      }
-    }
-
-    toast({
-      title: 'Manifest Update Complete',
-      description: `Updated ${successCount} addon${successCount !== 1 ? 's' : ''}${shapeChangeCount > 0 ? `, including ${shapeChangeCount} manifest shape change${shapeChangeCount !== 1 ? 's' : ''}` : ''}. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
-    })
-
-    setIsSelectionMode(false)
-    setSelectedIds(new Set())
-    setShowUpdateManifestConfirmation(false)
-    setUpdatingManifests(false)
-  }, [selectedIds, updateSavedAddonManifest])
 
   const handleRemoveFromAccounts = useCallback(async (accountIds: string[]) => {
     if (selectedIds.size === 0 || accountIds.length === 0) {
@@ -286,6 +250,7 @@ export function useSavedAddonSelectionActions({
   return {
     isSelectionMode,
     selectedIds,
+    setSelectedIds,
     showBulkEditDialog,
     setShowBulkEditDialog,
     showBulkDeleteConfirmation,
@@ -294,15 +259,11 @@ export function useSavedAddonSelectionActions({
     setShowAccountPicker,
     showRemoveAccountPicker,
     setShowRemoveAccountPicker,
-    showUpdateManifestConfirmation,
-    setShowUpdateManifestConfirmation,
-    updatingManifests,
     clearSelection,
     enterSelectionMode,
     toggleSelectionMode,
     handleToggleSelect,
     handleSelectAll,
-    handleUpdateSelectedManifests,
     handleRemoveFromAccounts,
     handleBulkDelete,
     handleBulkEdit,

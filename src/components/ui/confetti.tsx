@@ -31,7 +31,6 @@ export function useConfetti() {
       origin = { x: 0.5, y: 0.5 },
     } = options
 
-    // Create temporary canvas overlay
     let canvas = canvasRef.current
     if (!canvas) {
       canvas = document.createElement('canvas')

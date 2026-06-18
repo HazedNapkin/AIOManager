@@ -115,7 +115,6 @@ export async function fetchDiscoverAddon(slugOrUuid: string, signal?: AbortSigna
   return result
 }
 
-// Human-readable labels for the manifest resource keys an addon advertises.
 export const RESOURCE_LABELS: Record<string, string> = {
   stream: 'Streams',
   catalog: 'Catalog',
@@ -137,8 +136,6 @@ export function requiresConfiguration(addon: DiscoverAddon): boolean {
   return addon.manifest?.behaviorHints?.configurationRequired === true
 }
 
-// Human "Updated x ago" label from the addon's updatedAt ISO timestamp. Returns null when absent
-// or unparseable so callers can omit it.
 export function lastUpdatedLabel(addon: { updatedAt?: string }): string | null {
   if (!addon.updatedAt) return null
   const ts = new Date(addon.updatedAt).getTime()

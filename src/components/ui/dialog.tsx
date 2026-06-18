@@ -118,6 +118,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
         />
         {React.Children.map(children, child => {
           if (React.isValidElement(child)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return React.cloneElement(child as React.ReactElement<any>, { 'data-state': visible ? 'open' : 'closed' })
           }
           return child

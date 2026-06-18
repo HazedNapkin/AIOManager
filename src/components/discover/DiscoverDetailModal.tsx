@@ -1,11 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Check, ChevronDown, ExternalLink, FileText, Plus, Settings2, Star, Upload } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Plus, Settings2, Star, Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   fetchDiscoverAddon,
@@ -44,6 +43,13 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
   const [docsExpanded, setDocsExpanded] = useState(false)
   const [similar, setSimilar] = useState<DiscoverAddon[]>([])
   const [loadingSimilar, setLoadingSimilar] = useState(false)
+  const similarRef = useRef<HTMLDivElement>(null)
+
+  const scrollSimilar = (dir: 1 | -1) => {
+    const el = similarRef.current
+    if (!el) return
+    el.scrollBy({ left: dir * Math.max(el.clientWidth * 0.9, 220), behavior: 'smooth' })
+  }
 
   useEffect(() => {
     if (!open || !addon) return
@@ -107,7 +113,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, addon?.slug, addon?.uuid])
 
-  const instances = detail?.instances ?? []
+  const instances = useMemo(() => detail?.instances ?? [], [detail])
 
   const visibleSimilar = useMemo(() => {
     if (!addon || similar.length === 0) return []
@@ -144,8 +150,8 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           </DialogTitle>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh] pr-3">
-          <div className="space-y-4">
+        <div className="-mr-2 max-h-[60vh] min-w-0 overflow-y-auto overflow-x-hidden pr-2">
+          <div className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-center gap-1.5">
               <StatusChip className="gap-1">
                 <Star className="h-3 w-3 fill-warning text-warning" />
@@ -285,7 +291,28 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                     ))}
                   </div>
                 ) : (
-                  <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]">
+                  <div className="group/similar relative">
+                    {visibleSimilar.length > 2 && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Scroll left"
+                          onClick={() => scrollSimilar(-1)}
+                          className="absolute left-0 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/85 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Scroll right"
+                          onClick={() => scrollSimilar(1)}
+                          className="absolute right-0 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/85 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </>
+                    )}
+                  <div ref={similarRef} className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:thin]">
                     {visibleSimilar.map((s) => {
                       const sName = s.manifest?.name?.trim() || s.slug || 'Unknown addon'
                       const sDesc = s.manifest?.description?.trim() || ''
@@ -335,6 +362,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                       )
                     })}
                   </div>
+                  </div>
                 )}
               </div>
             )}
@@ -349,7 +377,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
               View on stremio-addons.net
             </a>
           </div>
-        </ScrollArea>
+        </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
           {saved ? (

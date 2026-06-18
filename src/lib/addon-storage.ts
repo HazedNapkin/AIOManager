@@ -1,15 +1,6 @@
 import localforage from 'localforage'
 import { SavedAddon, AccountAddonState, STORAGE_KEYS } from '@/types/saved-addon'
 
-/**
- * Addon Storage Layer
- *
- * Provides persistence for saved addons and account addon states using LocalForage.
- */
-
-/**
- * Load all saved addons from storage
- */
 export async function loadAddonLibrary(): Promise<Record<string, SavedAddon>> {
   try {
     const stored = await localforage.getItem<Record<string, SavedAddon>>(
@@ -32,28 +23,22 @@ export async function loadAddonLibrary(): Promise<Record<string, SavedAddon>> {
 
     return library
   } catch (error) {
-    import.meta.env.DEV && console.error('Failed to load addon library from storage:', error)
+    if (import.meta.env.DEV) console.error('Failed to load addon library from storage:', error)
     return {}
   }
 }
 
-/**
- * Save addon library to storage
- */
 export async function saveAddonLibrary(
   library: Record<string, SavedAddon>
 ): Promise<void> {
   try {
     await localforage.setItem(STORAGE_KEYS.ADDON_LIBRARY, library)
   } catch (error) {
-    import.meta.env.DEV && console.error('Failed to save addon library to storage:', error)
+    if (import.meta.env.DEV) console.error('Failed to save addon library to storage:', error)
     throw new Error('Failed to save addon library')
   }
 }
 
-/**
- * Load all account addon states from storage
- */
 export async function loadAccountAddonStates(): Promise<
   Record<string, AccountAddonState>
 > {
@@ -80,29 +65,22 @@ export async function loadAccountAddonStates(): Promise<
 
     return states
   } catch (error) {
-    import.meta.env.DEV && console.error('Failed to load account addon states from storage:', error)
+    if (import.meta.env.DEV) console.error('Failed to load account addon states from storage:', error)
     return {}
   }
 }
 
-/**
- * Save account addon states to storage
- */
 export async function saveAccountAddonStates(
   states: Record<string, AccountAddonState>
 ): Promise<void> {
   try {
     await localforage.setItem(STORAGE_KEYS.ACCOUNT_ADDONS, states)
   } catch (error) {
-    import.meta.env.DEV && console.error('Failed to save account addon states to storage:', error)
+    if (import.meta.env.DEV) console.error('Failed to save account addon states to storage:', error)
     throw new Error('Failed to save account addon states')
   }
 }
 
-/**
- * Normalize URL for comparison
- * Removes trailing slashes, converts to lowercase, sorts query params
- */
 export function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url)
@@ -121,7 +99,6 @@ export function normalizeUrl(url: string): string {
 
     return normalized.toLowerCase()
   } catch {
-    // If URL parsing fails, just normalize the string
     return url.toLowerCase().replace(/\/$/, '')
   }
 }

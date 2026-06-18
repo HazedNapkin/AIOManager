@@ -1,6 +1,5 @@
 import type { Connection, ConnectionStatus } from '@/types/connection'
 
-// Compact "x ago" for connection last-sync timestamps (ms epoch).
 export function timeAgo(ts?: number | null): string {
     if (!ts) return 'never'
     const diff = Date.now() - ts
@@ -22,16 +21,11 @@ export interface TokenExpiry {
     label: string | null
 }
 
-// Platforms that silently auto-refresh their session tokens. The system handles renewal
-// transparently — users should never see expiry warnings for these connections.
 const AUTO_REFRESH_PLATFORMS = new Set(['nuvio', 'realstream'])
 
 const EXPIRING_THRESHOLD_DAYS = 7
 
-// Derive a token-expiry view from a connection's stored credentials. expiresAt is persisted as a
-// millisecond epoch string for nuvio/realstream sessions; absent for stremio/hydra (-> 'none').
 export function tokenExpiry(connection: Connection): TokenExpiry {
-    // Auto-refresh platforms: the system handles token renewal silently — surface nothing.
     if (AUTO_REFRESH_PLATFORMS.has(connection.platform)) return { state: 'none', daysLeft: null, label: null }
     const raw = connection.credentials?.expiresAt
     if (!raw) return { state: 'none', daysLeft: null, label: null }
@@ -53,7 +47,6 @@ export function canTestConnection(connection: Connection): boolean {
     return connection.platform === 'nuvio' || connection.platform === 'realstream'
 }
 
-// Map the runtime status + token expiry into a single display status for the status pill.
 export type DisplayStatus = ConnectionStatus | 'expiring'
 
 export function displayStatus(status: ConnectionStatus, expiry: TokenExpiry): DisplayStatus {

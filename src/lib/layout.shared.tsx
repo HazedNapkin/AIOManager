@@ -1,5 +1,5 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared'
-import { Github, Box, Laptop, Globe, ArrowLeft } from 'lucide-react'
+import { Github, Box, ArrowLeft } from 'lucide-react'
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -36,18 +36,6 @@ export function baseOptions(): BaseLayoutProps {
         icon: <Github className="h-4 w-4" />,
         text: 'GitHub',
         url: 'https://github.com/sonicx161/AIOManager',
-        type: 'icon',
-      },
-      {
-        icon: <Laptop className="h-4 w-4" />,
-        text: 'Portfolio',
-        url: 'https://chrise.vercel.app/',
-        type: 'icon',
-      },
-      {
-        icon: <Globe className="h-4 w-4" />,
-        text: 'Brand',
-        url: 'https://sonicx161.vercel.app/',
         type: 'icon',
       },
       {

@@ -46,7 +46,6 @@ export function ProfileReorderDialog({
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    // Initialize items when dialog opens or profiles change
     useEffect(() => {
         if (open) {
             setItems(profiles)

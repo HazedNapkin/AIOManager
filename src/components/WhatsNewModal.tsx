@@ -66,12 +66,6 @@ const FALLBACK_RELEASE: Release = {
 `
 }
 
-/**
- * "What's New" changelog modal.
- * - Auto-shows once per version upgrade (checks localStorage).
- * - Fetches the latest 5 releases from GitHub and renders the body as formatted text.
- * - Can also be manually triggered via `triggerOpen`.
- */
 export function WhatsNewModal({ triggerOpen, onOpenChange }: {
     triggerOpen?: boolean
     onOpenChange?: (open: boolean) => void
@@ -90,7 +84,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
             const res = await fetch(`${GITHUB_RELEASES_URL}?per_page=5`)
             if (res.ok) {
                 const data: Release[] = await res.json()
-                // Merge with internal release if not already fetched from GitHub
                 const hasCurrent = data.some(r => r.tag_name.startsWith(`v${pkg.version}`) || r.tag_name.startsWith(pkg.version))
                 setReleases(hasCurrent ? data : [FALLBACK_RELEASE, ...data])
             } else {
@@ -104,14 +97,12 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
         }
     }, [])
 
-    // Trigger fetch when modal opens
     useEffect(() => {
         if (open && releases.length === 0) {
             fetchReleases()
         }
     }, [open, releases.length, fetchReleases])
 
-    // Auto-show on version upgrade
     useEffect(() => {
         if (lastSeenVersion !== currentVersion) {
             // Small delay so the app finishes mounting first
@@ -122,7 +113,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
         }
     }, [currentVersion, setOpen, lastSeenVersion])
 
-    // Manual trigger support (if passed as prop)
     useEffect(() => {
         if (triggerOpen) {
             setOpen(true)
@@ -133,12 +123,10 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
         setOpen(value)
         onOpenChange?.(value)
         if (!value) {
-            // Mark as seen when closing
             setLastSeenVersion(currentVersion)
         }
     }
 
-    /** Simple markdown-ish to JSX: handles headers, bold, bullets, and links */
     function renderBody(body: string) {
         const lines = body.split('\n')
         const elements: React.ReactNode[] = []
@@ -157,13 +145,11 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i]
 
-            // Skip empty lines
             if (!line.trim()) {
                 elements.push(<div key={i} className="h-2" />)
                 continue
             }
 
-            // ## Header
             if (line.startsWith('## ')) {
                 elements.push(
                     <h3 key={i} className="mt-4 text-sm font-bold text-foreground break-words leading-tight">
@@ -173,7 +159,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                 continue
             }
 
-            // ### Subheader
             if (line.startsWith('### ')) {
                 elements.push(
                     <h4 key={i} className="mt-4 mb-2 text-xs font-bold text-muted-foreground uppercase tracking-[0.14em] break-words leading-tight">
@@ -183,7 +168,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                 continue
             }
 
-            // Blockquotes (> )
             if (line.startsWith('> ')) {
                 const text = line.replace('> ', '').replace('[!NOTE]', '<strong>NOTE</strong>')
                 elements.push(
@@ -196,7 +180,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                 continue
             }
 
-            // Bullet points (- or *)
             if (line.match(/^\s*[-*] /)) {
                 const text = line.replace(/^\s*[-*] /, '')
                 elements.push(
@@ -210,7 +193,6 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                 continue
             }
 
-            // Regular text
             elements.push(
                 <p key={i} className="text-sm leading-6 text-muted-foreground break-words" dangerouslySetInnerHTML={{
                     __html: applyInlineFormatting(line)
@@ -256,7 +238,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                         )}
 
                         {!loading && releases.map((release) => {
-                            const build = (pkg as any).build as number | undefined
+                            const build = (pkg as { build?: number }).build
                             const currentVersionStr = `${pkg.version}${build ? `+build.${build}` : ''}`
                             const isCurrentVersion = release.tag_name.replace('v', '') === currentVersionStr
                             const date = new Date(release.published_at).toLocaleDateString('en-US', {

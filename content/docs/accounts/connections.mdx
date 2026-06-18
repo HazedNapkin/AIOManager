@@ -7,21 +7,19 @@ Connections let you mirror your AIOManager addon configuration to external platf
 
 ## Supported Platforms
 
-| Platform | Type | Description |
-|----------|------|-------------|
-| Stremio | Native | Direct Stremio API integration. Your primary account is the source of truth. |
-| Nuvio | Email/Password | Connect via email/password through Supabase. Supports multiple profiles per connection. Server-side token custody with automatic refresh. |
-| Hydra (Inbound) | API Key | Receive addon configurations from Hydra-compatible platforms. |
-| Hydra (Outbound) | API Key | Push addon configurations to Hydra-compatible platforms. |
-| RealStream | Email/Password | Native RealStream integration with server-side token custody. |
+| Platform | Auth | Notes |
+|----------|------|-------|
+| Stremio | Stremio login | Direct Stremio API integration. Your primary account is the source of truth. |
+| Nuvio | Email/Password | Connect through Supabase. Supports multiple profiles per connection. Server-side token custody with automatic refresh. |
+| RealStream | Email/Password | Native integration with server-side token custody. |
 
 ## Setup
 
 ### Connecting a Platform
 
 1. Open an account and navigate to the **Connections** tab.
-2. Click the connection card for the platform you want to connect.
-3. Enter the required credentials (API key, email/password, etc.).
+2. Click **Add Connection** and choose the platform.
+3. Enter the required credentials (email/password, Stremio login, etc.).
 4. Click **Test** to verify connectivity before saving.
 
 Each account can have multiple connections to different platforms.
@@ -31,6 +29,23 @@ Each account can have multiple connections to different platforms.
 Credentials are encrypted at rest on the server using AES-256-GCM. After initial setup, credentials are never exposed to the client. The server handles token refresh and session management automatically.
 
 <Warning>Connection credentials are per-account. Sharing credentials between accounts is not supported.</Warning>
+
+## Connecting other apps (Hydra)
+
+Some apps don't run their own backend. AIOManager exposes the **Hydra** protocol so they can use your managed addon collection instead of reinventing addon management. There is nothing to add for this; it works through your account **API key** (found on the **API Key** tab of the account).
+
+### Apps that pull from you
+
+This is the common case. A backendless app, for example Fusion (which syncs across your devices over iCloud), **pulls** your addon list directly from AIOManager. You do not add a connection in AIOManager for it:
+
+1. In the app, enter your **AIOManager instance URL** and your **account API key**.
+2. Once the app syncs, it appears in your **Connections** list as a card alongside your other platforms, marked **Pull**, with a Synced/Stale indicator and its last-sync time.
+
+The app reads, and if it supports it updates, your addons through the [Hydra API](/kronorium/api/hydra). Your key stays in the app; AIOManager never holds the app's credentials. A pull app can't be toggled or pushed to from AIOManager (there's no server to reach); to stop one, remove its card from **Connections** or rotate your API key.
+
+### Pushing to another server (advanced)
+
+If you run a second AIOManager instance or a Hydra-compatible server, you can **push** your collection to it. This lives behind **Add Connection → Advanced → push to another server**, where you enter the destination URL and its auth. It then mirrors and runs Autopilot like any other connection.
 
 ## Reconciler
 
@@ -66,4 +81,6 @@ The bidirectional reconciler is the sync engine that keeps all connected platfor
 
 **Nuvio profile not syncing**: Verify the correct profile is selected in the connection settings. Nuvio supports multiple profiles per account, and each connection targets a specific profile.
 
-**Hydra connection fails with `Provider unreachable`**: Check that the Hydra server is running and accessible from your AIOManager instance. Verify the base URL and API key are correct.
+**An app that should pull isn't showing in Connections**: It only appears after its first successful sync. Confirm the app has your correct AIOManager URL and account API key. If you rotated the key, update it in the app.
+
+**Outbound (push) connection fails with `Provider unreachable`**: Check that the destination server is running and reachable from your AIOManager instance. Verify the base URL and auth are correct.

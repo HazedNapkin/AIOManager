@@ -6,6 +6,7 @@ import { getCachedAuth, setCachedAuth, invalidateCachedAuth, hashAuthPassword } 
 import { timingSafeEqual } from '../auth.js'
 import { hashApiKey } from '../api-keys.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
+import { isRegistrationsClosed } from '../config.js'
 
 export function registerSyncRoutes(fastify) {
     fastify.get('/api/sync/:id', {
@@ -20,7 +21,7 @@ export function registerSyncRoutes(fastify) {
             response: {
                 200: {
                     type: 'object',
-                    additionalProperties: true // Sync data is dynamic
+                    additionalProperties: true
                 }
             }
         }
@@ -141,7 +142,7 @@ export function registerSyncRoutes(fastify) {
 
                 const serverUpdated = row.updated_at || 0
                 if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
-                    fastify.log.info({ category: 'Server' }, `Overlap: client data from ${new Date(clientSyncedAt).toISOString()} overlaps server updated_at ${new Date(serverUpdated).toISOString()} for ID ${id} — content-hash will gate the write`)
+                    fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
                 }
 
                 const encryptedVal = encrypt(JSON.stringify(data), PRIMARY_KEY)
@@ -152,6 +153,10 @@ export function registerSyncRoutes(fastify) {
                     WHERE key = $5
                 `, [encryptedVal, encryptedPass, Date.now(), contentHash, id])
             } else {
+                if (isRegistrationsClosed()) {
+                    reply.status(403);
+                    return { error: 'Registrations are closed on this instance.' }
+                }
                 const encryptedVal = encrypt(JSON.stringify(data), PRIMARY_KEY)
                 const encryptedPass = encrypt(password, PRIMARY_KEY)
                 await tx.run(`

@@ -474,7 +474,14 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
                 status: 'active',
             })
             const { storeConnectionCredential } = await import('@/api/hydra-providers')
-            storeConnectionCredential(accountId, connection.id, trimmed, 'hydra').catch(err => {
+            const bundle = {
+                authValue: trimmed,
+                baseUrl: connection.driverConfig?.baseUrl,
+                authType: connection.driverConfig?.authType,
+                authHeader: connection.driverConfig?.authHeader,
+                enabled: connection.enabled,
+            }
+            storeConnectionCredential(accountId, connection.id, bundle, 'hydra').catch(err => {
                 toast({ title: 'Saved locally, but the server did not store the key', description: errMsg(err), variant: 'destructive' })
             })
             toast({ title: 'API key updated' })

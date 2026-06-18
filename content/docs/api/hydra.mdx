@@ -11,7 +11,7 @@ Hydra has two roles, and AIOManager implements both sides of the same endpoint c
 
 | Role | Who hosts the endpoints | Fits | How it appears in AIOManager |
 |------|-------------------------|------|------------------------------|
-| **Pull** (primary) | **AIOManager** hosts `/hydra/*`. Your app reads/syncs the user's collection on its own schedule. | **Backendless / client-only apps** (e.g. Fusion, which syncs via iCloud and has no server). This is the gap Hydra fills. | A connection card. Your app registers on connect (see `POST /hydra/register`) and reports last-sync. |
+| **Pull** (primary) | **AIOManager** hosts `/hydra/*`. Your app reads/syncs the user's collection on its own schedule. | **Backendless / client-only apps** (e.g. Fusion, which syncs via iCloud and has no server). This is the gap Hydra fills. | A first-class card in the user's Connections list, marked **Pull**. Your app registers on connect (see `POST /hydra/register`) and reports last-sync. |
 | **Push** | The **platform** hosts `/hydra/*`; AIOManager calls them and pushes on every change. | Platforms that run their own backend and want real-time, AIOManager-initiated updates. | A connection card AIOManager actively pushes to and runs Autopilot against. |
 
 **Pull is the primary path**: most apps that need Hydra are backendless, which is the whole point. The user enters their AIOManager **instance URL** + **account API key** *into your app*, and your app reads from AIOManager. The endpoints below are the ones **AIOManager serves** (the pull surface). The Push role uses the identical contract in the opposite direction.
@@ -68,16 +68,16 @@ Server identity and health. **No authentication required.**
 
 ### GET /hydra/version
 
-Cheap change detection. Returns the canonical store's `updated_at` timestamp. Poll this to avoid pulling the full addon list when nothing changed.
+Change detection. Returns an opaque token derived from the exact collection `GET /hydra/addons` would serve. Poll it and re-pull only when the token differs from the one you last saw.
 
 **Response:**
 ```json
 {
-  "version": 1717000000000
+  "version": "9f2a1c7b4e0d6a83"
 }
 ```
 
-Returns `{ "version": null }` if the account has no canonical store yet.
+Treat `version` as opaque: compare it for equality, do not parse or order it. The same collection always yields the same token (it is content-derived, not a timestamp, so it is stable across devices). The token is defined for every account type, including Stremio-backed accounts. An account with no addons returns the stable token for an empty collection, not `null`.
 
 ### GET /hydra/addons
 
@@ -198,10 +198,13 @@ Alternatively, match by addon ID:
 }
 ```
 
-**Order preservation:** reinstalling an addon keeps it in its current position in the collection. New installs are appended to the end.
+**Addon identity:** the server matches the addon by its **normalized manifest URL** (trailing slashes and a trailing `/manifest.json` ignored, case-insensitive), the same key AIOManager's in-app reinstall uses. This is built for addons that expose user config: keep your manifest **URL stable** and hold the config server-side, so changing config produces a fresh manifest at the *same* URL. Reinstall then re-fetches that URL and refreshes the addon in place. If a config change instead produces a **different** URL, the server treats it as a new addon and appends it; remove the old one with `DELETE /hydra/addons`.
+
+**Order preservation:** reinstalling an addon refreshes it in its current position in the collection. New installs are appended to the end.
 
 **Errors:**
 - `400`: must provide `addonUrl` or `addonId`; invalid URL; manifest failed validation
+- `404`: `addonId` given for an addon that isn't installed (pass `addonUrl` to install it)
 
 ### POST /hydra/validate
 
@@ -236,11 +239,13 @@ Validate a manifest URL without installing it.
 }
 ```
 
+When the manifest was fetched but failed validation, the response also echoes the fetched `manifest`. When the fetch itself failed (unreachable URL, non-JSON, private address), only `valid` and `errors` are present. Always branch on `valid`.
+
 A valid manifest requires: string `id`, string `name`, string `version`, non-empty array `resources`, non-empty array `types`.
 
 ### POST /hydra/register
 
-Register your app as a pull subscriber. Makes your app appear as a connection card in AIOManager alongside Stremio, Nuvio, and RealStream.
+Register your app as a pull subscriber. Makes your app appear in the account's **Connections** list as a first-class card alongside Stremio, Nuvio, and RealStream, marked with a **Pull** badge and showing its name, logo, a Synced/Stale indicator, and last-sync time.
 
 **Request:**
 ```json
@@ -332,7 +337,7 @@ All errors use this envelope:
 | Endpoint | Limit |
 |----------|-------|
 | `GET /hydra/status` | 120/min |
-| `GET /hydra/version` | 120/min |
+| `GET /hydra/version` | 60/min |
 | `GET /hydra/addons` | 60/min |
 | `GET /hydra/addons/&#123;url&#125;/health` | 60/min |
 | `POST /hydra/addons` | 30/min |

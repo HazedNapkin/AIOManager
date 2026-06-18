@@ -133,7 +133,7 @@ export class ErrorBoundary extends Component<Props, State> {
                         </div>
 
                         <span className="mt-6 block text-xs text-muted-foreground">
-                            AIOManager v{pkg.version}{(pkg as any).build ? ` · Build ${(pkg as any).build}` : ''}
+                            AIOManager v{pkg.version}{(pkg as { build?: number }).build ? ` · Build ${(pkg as { build?: number }).build}` : ''}
                         </span>
                     </section>
                 </div>

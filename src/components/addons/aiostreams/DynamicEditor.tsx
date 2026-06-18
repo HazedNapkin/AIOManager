@@ -118,7 +118,6 @@ function RecursiveEditor({
         )
     }
 
-    // If it's a primitive boolean
     if (typeof value === 'boolean') {
         return (
             <div className="flex items-center justify-between p-2 rounded-lg bg-muted/5 border border-border/20">
@@ -131,7 +130,6 @@ function RecursiveEditor({
         )
     }
 
-    // If it's a primitive string or number
     if (typeof value === 'string' || typeof value === 'number') {
         const strVal = String(value)
         if (isSecretKey(dataKey)) {
@@ -153,7 +151,6 @@ function RecursiveEditor({
         )
     }
 
-    // If it's null or undefined
     if (value === null || value === undefined) {
         return (
             <div className="space-y-1.5">
@@ -163,7 +160,6 @@ function RecursiveEditor({
         )
     }
 
-    // If it's an Array
     if (Array.isArray(value)) {
         if (level >= 6) {
             // Fallback for deeply nested arrays
@@ -173,7 +169,7 @@ function RecursiveEditor({
                     <Textarea
                         value={JSON.stringify(value, null, 2)}
                         onChange={(e) => {
-                            try { onChange(JSON.parse(e.target.value)) } catch { /* ignore */ }
+                            try { onChange(JSON.parse(e.target.value)) } catch { /* invalid JSON input, ignore */ }
                         }}
                         className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />
@@ -207,7 +203,6 @@ function RecursiveEditor({
                     <div className="space-y-2">
                         {value.map((item, idx) => {
                             if (typeof item === 'object' && item !== null) {
-                                // Render object items as cards
                                 const canDelete = !('id' in item) && !('type' in item)
                                 return (
                                     <div key={idx} className="border border-border/20 rounded-lg p-3 bg-background relative pt-6">
@@ -243,7 +238,6 @@ function RecursiveEditor({
                                     </div>
                                 )
                             }
-                            // Primitive array item
                             return (
                                 <div key={idx} className="flex gap-2 items-center">
                                     <div className="flex-1">
@@ -285,7 +279,6 @@ function RecursiveEditor({
                         size="sm"
                         className="w-full text-xs h-7 gap-1 mt-2"
                         onClick={() => {
-                            // Add a new empty object or duplicate the last one's shape
                             const shape = value.length > 0 ? Object.fromEntries(Object.keys(value[0]).map(k => [k, typeof value[0][k] === 'boolean' ? false : typeof value[0][k] === 'number' ? 0 : ''])) : {}
                             onChange([...value, shape])
                         }}
@@ -297,7 +290,6 @@ function RecursiveEditor({
         )
     }
 
-    // If it's an Object
     if (typeof value === 'object') {
         if (level >= 6) {
             return (
@@ -306,7 +298,7 @@ function RecursiveEditor({
                     <Textarea
                         value={JSON.stringify(value, null, 2)}
                         onChange={(e) => {
-                            try { onChange(JSON.parse(e.target.value)) } catch { /* ignore */ }
+                            try { onChange(JSON.parse(e.target.value)) } catch { /* invalid JSON input, ignore */ }
                         }}
                         className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />

@@ -14,7 +14,7 @@ import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
-import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil } from 'lucide-react'
+import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil, Upload } from 'lucide-react'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 
@@ -34,6 +34,7 @@ interface SavedAddonCardProps {
   savedAddon: SavedAddon
   latestVersion?: string
   onUpdate?: (savedAddonId: string, addonName: string) => Promise<void>
+  onDeploy?: (savedAddonId: string) => void
   isSelectionMode?: boolean
   isSelected?: boolean
   onToggleSelect?: (id: string) => void
@@ -48,6 +49,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
   savedAddon,
   latestVersion,
   onUpdate,
+  onDeploy,
   isSelectionMode,
   isSelected,
   onToggleSelect,
@@ -177,7 +179,6 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   className="h-full w-full"
                   textClassName="text-lg text-foreground"
                 />
-                {/* Health dot, bottom-right ring overlay */}
                 <Tooltip content={getHealthTooltip()} side="top">
                   <span
                     className={cn(
@@ -288,6 +289,10 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     Configure
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem onClick={() => onDeploy?.(savedAddon.id)} className="gap-2">
+                  <Upload className="h-4 w-4" />
+                  Deploy
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setShowDetails(true)} className="gap-2">
                   <Pencil className="h-4 w-4" />
                   Edit

@@ -3,7 +3,7 @@ import { ScrollToTop } from '@/components/ScrollToTop'
 import { Toaster } from '@/components/ui/toaster'
 import { WhatsNewModal } from '@/components/WhatsNewModal'
 import { AppRoutes } from '@/routes'
-import { useAccountStore, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
@@ -165,7 +165,7 @@ function App() {
 
                             const updatableUrls = new Set(withUpdates.map(u => u.transportUrl))
                             const accountsWithUpdates = useAccountStore.getState().accounts
-                                .filter(a => getStremioAuthKey(a) && a.addons.some(ad => updatableUrls.has(ad.transportUrl)))
+                                .filter(a => hasPlatformConnection(a) && a.addons.some(ad => updatableUrls.has(ad.transportUrl)))
                                 .map(a => ({ id: a.id, authKey: getStremioAuthKey(a) }))
 
                             if (accountsWithUpdates.length > 0 && !aborted) {

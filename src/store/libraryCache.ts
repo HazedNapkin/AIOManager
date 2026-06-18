@@ -13,7 +13,7 @@ import { mapConcurrent } from '@/lib/concurrency'
 const CACHE_KEY = 'aio_library_cache_v3'
 const OLD_CACHE_KEY = 'aio_library_cache'
 const DELETED_ITEMS_KEY = 'aio_library_deleted'
-const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000
 const LIBRARY_FETCH_CONCURRENCY = 5
 const CACHE_VERSION = 3
 
@@ -247,7 +247,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                     const mockItems: ActivityItem[] = []
                     const accountCount = 30
-                    const itemsPerAccount = 500 // Increased for stress test (15k items total)
+                    const itemsPerAccount = 500
 
                     for (let a = 0; a < accountCount; a++) {
                         const accountId = `mock-acc-${a}`
@@ -413,10 +413,10 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     const driver = nuvioDriverFor(conn)
                                     const profileId = token.profileId ?? conn.credentials?.profileId
                                     const [watched, progress] = await Promise.all([
-                                        driver.readWatchHistory(token.accessToken, profileId).catch(err => { console.warn('[LibraryCache] Nuvio readWatchHistory failed:', err); return [] }),
-                                        driver.readWatchProgress(token.accessToken, profileId).catch(err => { console.warn('[LibraryCache] Nuvio readWatchProgress failed:', err); return [] }),
+                                        driver.readWatchHistory(token.accessToken, profileId).catch(err => { if (import.meta.env.DEV) console.warn('[LibraryCache] Nuvio readWatchHistory failed:', err); return [] }),
+                                        driver.readWatchProgress(token.accessToken, profileId).catch(err => { if (import.meta.env.DEV) console.warn('[LibraryCache] Nuvio readWatchProgress failed:', err); return [] }),
                                     ])
-                                    console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
+                                    if (import.meta.env.DEV) console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
                                     const nuvioTitles = new Map<string, string>()
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))
@@ -477,7 +477,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     }
                                 } catch (err) {
                                     invalidateNuvioToken(conn.id)
-                                    console.warn(`[LibraryCache] Nuvio history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
+                                    if (import.meta.env.DEV) console.warn(`[LibraryCache] Nuvio history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
                                     if (!toastedNuvioFailures.has(conn.id)) {
                                         toastedNuvioFailures.add(conn.id)
                                         toast({ title: 'Nuvio history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
@@ -505,7 +505,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         const refreshed = await driver.refreshAccessToken(token.accessToken)
                                         return driver.readWatchProgress(refreshed.accessToken, userId)
                                     })
-                                    console.info(`[LibraryCache] RealStream fetched ${progress.length} progress for ${account.name || account.id}`)
+                                    if (import.meta.env.DEV) console.info(`[LibraryCache] RealStream fetched ${progress.length} progress for ${account.name || account.id}`)
                                     const progressActivities = await Promise.all(
                                         progress.map(async (row) => {
                                             try {
@@ -547,7 +547,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         })))
                                     }
                                 } catch (err) {
-                                    console.warn(`[LibraryCache] RealStream history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
+                                    if (import.meta.env.DEV) console.warn(`[LibraryCache] RealStream history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
                                     if (!toastedRealStreamFailures.has(conn.id)) {
                                         toastedRealStreamFailures.add(conn.id)
                                         toast({ title: 'RealStream history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
@@ -590,7 +590,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                 const filteredFinal = finalItems.filter(item => {
                     const entry = deletedEntries[item.id]
-                    if (!entry) return true // Not blacklisted
+                    if (!entry) return true
 
                     // If Stremio shows a newer _mtime than when we deleted it,
                     // the user watched it again - remove from blacklist and show it

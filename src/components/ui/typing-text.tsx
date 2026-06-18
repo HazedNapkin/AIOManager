@@ -29,7 +29,6 @@ export function TypingText({
 
     const [index, setIndex] = useState(0)
     const [isComplete, setIsComplete] = useState(false)
-    // Blinker state - single interval, lives for the component lifetime
     const [cursorOn, setCursorOn] = useState(true)
 
     // Use a ref for direction so the interval always reads the latest value
@@ -44,7 +43,6 @@ export function TypingText({
             setIndex(prev => {
                 const next = prev + dirRef.current
                 if (dirRef.current === 1 && next >= total) {
-                    // Reached end
                     if (repeat) {
                         waitingRef.current = true
                         setTimeout(() => {
@@ -58,7 +56,6 @@ export function TypingText({
                     return total
                 }
                 if (dirRef.current === -1 && next <= 0) {
-                    // Reached start
                     waitingRef.current = true
                     setTimeout(() => {
                         dirRef.current = 1
@@ -72,7 +69,6 @@ export function TypingText({
         return () => clearInterval(id)
     }, [delay, total, repeat, waitTime, onComplete])
 
-    // Cursor blink - independent 530ms interval, no deps
     useEffect(() => {
         const id = setInterval(() => setCursorOn(v => !v), 530)
         return () => clearInterval(id)

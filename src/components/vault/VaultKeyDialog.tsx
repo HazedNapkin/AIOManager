@@ -32,7 +32,6 @@ interface VaultKeyDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     editingKey?: VaultKey | null
-    /** When adding from a group filter, pre-scopes the picker search to that group. */
     defaultGroup?: string
 }
 
@@ -86,6 +85,8 @@ function ProviderButton({ p, onSelect }: { p: RegistryProvider; onSelect: (p: Re
         </button>
     )
 }
+
+const GROUP_ORDER = ['AIOStreams', ...VAULT_GROUPS]
 
 export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }: VaultKeyDialogProps) {
     const addKey = useVaultStore(s => s.addKey)
@@ -141,8 +142,6 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
         setCustomProviderName(entry.vaultProvider === 'other' && entry.id !== 'custom' ? entry.name : '')
     }
 
-    const GROUP_ORDER = ['AIOStreams', ...VAULT_GROUPS]
-
     // Search results, flattened across every category so a known name skips the drill-in.
     const searchResults = useMemo(() => {
         const q = providerSearch.trim().toLowerCase()
@@ -156,7 +155,6 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
         return [...byGroup.entries()].sort((a, b) => GROUP_ORDER.indexOf(a[0]) - GROUP_ORDER.indexOf(b[0]))
     }, [providerSearch])
 
-    // Category landing: one tile per non-empty group, in canonical order.
     const categories = useMemo(() => {
         const counts = new Map<string, number>()
         for (const p of PROVIDER_REGISTRY) counts.set(p.group, (counts.get(p.group) || 0) + 1)

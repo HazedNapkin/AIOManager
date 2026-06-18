@@ -12,7 +12,6 @@ export function SyncSummarySection() {
     const [isExpanded, setIsExpanded] = useState(false)
     const navigate = useNavigate()
 
-    // Find all addons in the library that have syncWithInstalled enabled
     const syncedAddons = Object.values(library).filter(a => a.syncWithInstalled)
 
     if (syncedAddons.length === 0) return null

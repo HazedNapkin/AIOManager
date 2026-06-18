@@ -1,6 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { checkAddonUpdates, updateAddons } from '@/api/addons'
-import { loadSessionKey, decrypt } from '@/lib/crypto'
+import { checkAddonUpdates } from '@/api/addons'
 import { HealthStatus } from '@/lib/addon-health'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
@@ -8,13 +7,14 @@ import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
 import { getLatestAddonVersion, maskEmail, isNewerVersion, cn } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
-import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
+import { pushAddonsToPlatform } from '@/lib/account-compat'
 import type { AddonDescriptor } from '@/types/addon'
 import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, Copy, Download, User, Edit2, LayoutGrid, List } from 'lucide-react'
+import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, Copy, Download, User, Edit2, LayoutGrid, List, Wand2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { AnimatedRefreshIcon, AnimatedUpdateIcon, AnimatedShieldIcon } from '../ui/AnimatedIcons'
 import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from "react"
@@ -26,6 +26,7 @@ import { AccountPickerDialog } from '../accounts/AccountPickerDialog'
 import { AddonReorderDialog } from './AddonReorderDialog'
 import { InstallSavedAddonDialog } from './InstallSavedAddonDialog'
 import { BulkSaveDialog } from './BulkSaveDialog'
+import { BulkUrlReplaceDialog } from '@/components/saved-addons/BulkUrlReplaceDialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 const FailoverManager = React.lazy(() =>
   import('@/components/accounts/FailoverManager').then((m) => ({ default: m.FailoverManager }))
@@ -103,6 +104,7 @@ export function AddonList({ accountId }: AddonListProps) {
   const pullServerState = useFailoverStore((state) => state.pullServerState)
   const encryptionKey = useAuthStore((state) => state.encryptionKey)
   const syncAccount = useAccountStore(state => state.syncAccount)
+  const { toast } = useToast()
 
   const failoverRules = useFailoverStore(
     useShallow((state) => state.rules.filter(r => r.accountId === accountId))
@@ -141,6 +143,7 @@ export function AddonList({ accountId }: AddonListProps) {
   const [installFromLibraryOpen, setInstallFromLibraryOpen] = useState(false)
 
   const [bulkSaveOpen, setBulkSaveOpen] = useState(false)
+  const [bulkUrlReplaceOpen, setBulkUrlReplaceOpen] = useState(false)
 
   const extractTransportUrl = (id: string) => {
     const idx = id.lastIndexOf('::')
@@ -309,18 +312,14 @@ export function AddonList({ accountId }: AddonListProps) {
   const handleClearAllAddons = useCallback(async () => {
     if (!account) return
     if (account?.addons?.length === 0) return
-    const stremioKey = getStremioAuthKey(account)
-    if (!stremioKey) {
-      toast({ variant: 'destructive', title: 'Not available', description: 'Clear All Addons requires a Stremio connection.' })
+    if (!hasPlatformConnection(account)) {
+      toast({ variant: 'destructive', title: 'Not available', description: 'Clear All Addons requires a platform connection.' })
       setShowClearAllConfirm(false)
       return
     }
     try {
       setUpdatingAll(true)
-      const sessionKey = await loadSessionKey()
-      if (!sessionKey) throw new Error('Session expired')
-      const authKey = await decrypt(getStremioAuthKey(account), sessionKey)
-      await updateAddons(authKey, [], 'Clear All Addons', {
+      await pushAddonsToPlatform(account, [], account.id, {
         allowCollectionShrink: true,
         previousCollection: account.addons,
       })
@@ -334,7 +333,7 @@ export function AddonList({ accountId }: AddonListProps) {
     } finally {
       setUpdatingAll(false)
     }
-  }, [account])
+  }, [account, syncAccount, toast])
 
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [healthStatus, setHealthStatus] = useState<Record<string, HealthStatus>>({})
@@ -351,7 +350,6 @@ export function AddonList({ accountId }: AddonListProps) {
   const [updatingAll, setUpdatingAll] = useState(false)
   const [showBulkAccountPicker, setShowBulkAccountPicker] = useState(false)
   const [isBulkActionLoading, setIsBulkActionLoading] = useState(false)
-  const { toast } = useToast()
   const confetti = useConfetti()
 
   const [profileToDelete, setProfileToDelete] = useState<{ id: string, name: string } | null>(null)
@@ -439,7 +437,6 @@ export function AddonList({ accountId }: AddonListProps) {
     setSelectedAddonUrls(newSelected)
   }, [filteredAddons, addonIndexMap])
 
-  // Keyboard shortcut: Esc exits selection mode, S to save selected, Ctrl+A to select all
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement
@@ -469,7 +466,7 @@ export function AddonList({ accountId }: AddonListProps) {
 
   const handleCheckUpdates = useCallback(async () => {
     if (checkingUpdates) return
-    if (!account || !encryptionKey) return
+    if (!account) return
 
     setCheckingUpdates(true)
     try {
@@ -516,7 +513,7 @@ export function AddonList({ accountId }: AddonListProps) {
     } finally {
       setCheckingUpdates(false)
     }
-  }, [account, encryptionKey, addons, toast, updateLatestVersions, syncAccount, accountId, checkRules, pullServerState, checkingUpdates])
+  }, [account, addons, toast, updateLatestVersions, syncAccount, accountId, checkRules, pullServerState, checkingUpdates])
 
   const handleUpdateAddon = useCallback(
     async (_accountId: string, transportUrl: string) => {
@@ -527,7 +524,7 @@ export function AddonList({ accountId }: AddonListProps) {
   )
 
   const handleProtectAll = useCallback(async () => {
-    if (!account || !encryptionKey) return
+    if (!account) return
 
     try {
       const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, true)
@@ -545,10 +542,10 @@ export function AddonList({ accountId }: AddonListProps) {
         description: error instanceof Error ? error.message : 'Unknown error'
       })
     }
-  }, [account, encryptionKey, accountId, toast])
+  }, [account, accountId, toast])
 
   const handleUnprotectAll = useCallback(async () => {
-    if (!account || !encryptionKey) return
+    if (!account) return
 
     try {
       const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, false)
@@ -566,7 +563,7 @@ export function AddonList({ accountId }: AddonListProps) {
         description: error instanceof Error ? error.message : 'Unknown error'
       })
     }
-  }, [account, encryptionKey, accountId, toast])
+  }, [account, accountId, toast])
 
   const handleEnableAll = useCallback(async () => {
     if (!account || addons.length === 0) return
@@ -704,10 +701,13 @@ export function AddonList({ accountId }: AddonListProps) {
   }, [account, accountId, selectedAddonUrls, toast, setSearchParams])
 
   const handleUpdateAll = useCallback(async () => {
-    if (!account || !encryptionKey) return
+    if (!account) return
 
     const addonsToUpdate = updatesAvailable.map((addon) => ({ id: addon.manifest.id, url: addon.transportUrl }))
-    if (addonsToUpdate.length === 0) return
+    if (addonsToUpdate.length === 0) {
+      toast({ title: 'No Updates', description: 'All addons are already up to date.' })
+      return
+    }
 
     setUpdatingAll(true)
     try {
@@ -732,7 +732,7 @@ export function AddonList({ accountId }: AddonListProps) {
     } finally {
       setUpdatingAll(false)
     }
-  }, [account, encryptionKey, updatesAvailable, accountId, toast])
+  }, [account, updatesAvailable, accountId, toast])
 
   const handleReinstallSelected = useCallback(async () => {
     if (!account || selectedAddonUrls.size === 0) return
@@ -1141,6 +1141,10 @@ export function AddonList({ accountId }: AddonListProps) {
                         <Save className="h-4 w-4" />
                       Save All to Library
                     </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2" onClick={() => setBulkUrlReplaceOpen(true)} disabled={addons.length === 0}>
+                        <Wand2 className="h-4 w-4 text-primary" />
+                      Find &amp; Replace URL
+                    </DropdownMenuItem>
                     {addons.some(a => !a.flags?.protected) ? (
                       <DropdownMenuItem className="gap-2" onClick={handleProtectAll}>
                         <AnimatedShieldIcon className="h-4 w-4 text-primary" />
@@ -1161,7 +1165,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       Disable All
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!getStremioAuthKey(account) || addons.length === 0}>
+                    <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!hasPlatformConnection(account) || addons.length === 0}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                         Clear All Addons
                     </DropdownMenuItem>
@@ -1342,6 +1346,14 @@ export function AddonList({ accountId }: AddonListProps) {
           : addons}
         accountId={accountId}
         title={isSelectionMode && selectedAddonUrls.size > 0 ? `Save ${selectedAddonUrls.size} Selected` : 'Save Addons to Library'}
+      />
+
+      <BulkUrlReplaceDialog
+        open={bulkUrlReplaceOpen}
+        onOpenChange={setBulkUrlReplaceOpen}
+        accountId={accountId}
+        accountAddons={addons}
+        accountName={displayName}
       />
 
       <AccountPickerDialog

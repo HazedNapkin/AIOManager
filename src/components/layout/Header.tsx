@@ -226,7 +226,7 @@ export function Header() {
 
   const syncTimeAgo = useMemo(() => {
     if (!lastSyncedAt) return ''
-    return formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: false })
+    return formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: true })
   }, [lastSyncedAt])
 
   const syncDotColor = useMemo(() => {
@@ -278,7 +278,6 @@ export function Header() {
     <>
     <header className="flex-shrink-0 relative z-50 md:sticky md:top-0">
 
-      {/* Tier 1 - Brand strip (attached) */}
       <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header'}`}>
         <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
@@ -433,7 +432,7 @@ export function Header() {
                 </div>
               </Tooltip>
 
-              <Tooltip content={syncLabel === 'Offline' ? 'Offline mode' : `Synced ${syncTimeAgo} ago`} side="bottom">
+              <Tooltip content={syncLabel === 'Offline' ? 'Offline mode' : `Synced ${syncTimeAgo}`} side="bottom">
                 <button
                   onClick={() => auth.isAuthenticated && syncToRemote(false)}
                   className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full rounded-r-lg hover:bg-muted/20 transition-colors"
@@ -493,7 +492,6 @@ export function Header() {
         </span>
       </div>
 
-      {/* Tier 2 - Floating glass capsule */}
       <div className="hidden md:block">
         <div className="max-w-[1800px] mx-auto w-full px-4">
           <nav className="flex justify-center mt-1.5">

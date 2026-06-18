@@ -72,7 +72,6 @@ const AIOSTREAMS_ENTRY: RegistryProvider = {
     composite: false,
 }
 
-// Always-available escape hatch for providers not in the catalog.
 export const CUSTOM_ENTRY: RegistryProvider = {
     id: 'custom',
     name: 'Other / Custom',
@@ -89,7 +88,6 @@ export const PROVIDER_REGISTRY_BY_ID: Record<string, RegistryProvider> = Object.
     PROVIDER_REGISTRY.map((p) => [p.id, p])
 )
 
-/** Resolve the registry entry that best matches an existing vault key (for the edit flow). */
 export function registryForKey(key: {
     catalogId?: string
     provider: VaultProvider

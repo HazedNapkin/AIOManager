@@ -27,7 +27,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useLongPress } from '@/hooks/useLongPress'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
-import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 
 interface AccountCardProps {
   account: Account
@@ -319,7 +319,7 @@ export const AccountCard = memo(function AccountCard({
                     {isPrivacyMode ? maskEmail(accountEmail) : accountEmail}
                   </p>
                 )}
-                {(getStremioAuthKey(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                {(hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
                   <div className="flex items-center gap-1 mt-1">
                     {getStremioAuthKey(account) && (
                       <Tooltip content="Stremio" side="bottom">
@@ -398,6 +398,7 @@ export const AccountCard = memo(function AccountCard({
                     <DropdownMenuItem
                       onClick={async (e) => {
                         e.stopPropagation();
+                        if (!hasPlatformConnection(account)) return;
                         try {
                           toast({ title: 'Refreshing...', description: `Reinstalling all addons on ${displayName}` });
                           const { useAddonStore } = await import('@/store/addonStore');

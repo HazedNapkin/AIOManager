@@ -8,6 +8,7 @@ import { mergeAddons, normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
 import { useAuthStore } from '@/store/authStore'
 import { AddonDescriptor } from '@/types/addon'
+import type { Account } from '@/types/account'
 import { CinemetaManifest } from '@/types/cinemeta'
 import { isCinemetaAddon, detectAllPatches, applyCinemetaConfiguration } from '@/lib/cinemeta-utils'
 import { syncManager } from '@/lib/sync/syncManager'
@@ -60,9 +61,283 @@ export function scheduleSyncAccount(id: string, forceRefresh = false): void {
     }, SYNC_DEBOUNCE_MS))
 }
 
+function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescriptor[]): AddonDescriptor[] {
+    const normalizedAddons = remoteAddons
+        .filter(a => !syncManager.isPendingRemoval(account.id, a.transportUrl))
+        .map((addon) => ({
+            ...addon,
+            manifest: sanitizeAddonManifest(addon.manifest, addon.transportUrl),
+        }))
+
+    const survivingRemote = filterResurrected(normalizedAddons, account.addons, account.deletedAddons)
+    return mergeAddons(account.addons, survivingRemote)
+}
+
+async function repairAndFlag(
+    account: Account,
+    addons: AddonDescriptor[],
+    forceRefresh: boolean,
+): Promise<AddonDescriptor[]> {
+    const localManifestByUrl = new Map<string, AddonDescriptor['manifest']>()
+    for (const a of account.addons) {
+        if (a.manifest?.name && a.manifest.name !== 'Unknown Addon') {
+            localManifestByUrl.set(normalizeAddonUrl(a.transportUrl), a.manifest)
+        }
+    }
+
+    const repairedAddons = await Promise.all(
+        addons.map(async (addon) => {
+            try {
+                const v = (addon.manifest?.version || '').replace(/^v/, '')
+                const isBroken = !addon.manifest?.name ||
+                    addon.manifest.name === 'Unknown Addon' ||
+                    v === '0.0.0' ||
+                    v === '' ||
+                    !addon.manifest.resources ||
+                    addon.manifest.resources.length === 0 ||
+                    needsDisabledAddonIdentityRepair(addon)
+
+                if (!forceRefresh && addon.manifest && addon.manifest.id && !isBroken) {
+                    if (isCinemetaAddon(addon) && !addon.metadata?.cinemetaConfig) {
+                        const detected = detectAllPatches(addon.manifest as CinemetaManifest)
+                        if (detected.searchArtifactsPatched || detected.standardCatalogsPatched || detected.metaResourcePatched) {
+                            return {
+                                ...addon,
+                                metadata: {
+                                    ...(addon.metadata || {}),
+                                    cinemetaConfig: {
+                                        removeSearchArtifacts: detected.searchArtifactsPatched,
+                                        removeStandardCatalogs: detected.standardCatalogsPatched,
+                                        removeMetaResource: detected.metaResourcePatched,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return addon
+                }
+
+                let cinemetaPatches = null
+                if (isCinemetaAddon(addon)) {
+                    cinemetaPatches = detectAllPatches(addon.manifest as CinemetaManifest)
+                }
+
+                let manifestRaw = null
+                const cached = getCachedManifest(addon.transportUrl)
+                if (cached) {
+                    manifestRaw = cached
+                } else if (isBroken && !forceRefresh) {
+                    const localManifest = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl))
+                    if (localManifest) {
+                        manifestRaw = localManifest
+                    }
+                }
+
+                if (!manifestRaw) {
+                    const { manifest } = await apiFetchAddonManifest(
+                        addon.transportUrl,
+                        account.id
+                    )
+                    manifestRaw = manifest
+                    setCachedManifest(addon.transportUrl, manifestRaw)
+                }
+
+                const metadata = { ...(addon.metadata || {}) }
+
+                let repairedManifest = sanitizeAddonManifest(manifestRaw, addon.transportUrl)
+
+                if (metadata.cinemetaConfig) {
+                    repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, metadata.cinemetaConfig) as AddonDescriptor['manifest']
+                } else if (cinemetaPatches && (
+                    cinemetaPatches.searchArtifactsPatched ||
+                    cinemetaPatches.standardCatalogsPatched ||
+                    cinemetaPatches.metaResourcePatched
+                )) {
+                    const config = {
+                        removeSearchArtifacts: cinemetaPatches.searchArtifactsPatched,
+                        removeStandardCatalogs: cinemetaPatches.standardCatalogsPatched,
+                        removeMetaResource: cinemetaPatches.metaResourcePatched,
+                    }
+                    repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, config) as AddonDescriptor['manifest']
+                    metadata.cinemetaConfig = config
+                }
+                const remoteManifest = addon.manifest
+                if (remoteManifest && repairedManifest) {
+                    const { getHostnameIdentifier } = await import('@/lib/addon-identifier')
+                    const hostFallback = getHostnameIdentifier(addon.transportUrl)
+
+                    if (remoteManifest.name &&
+                        remoteManifest.name !== repairedManifest.name &&
+                        remoteManifest.name !== hostFallback) {
+                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom name for "${repairedManifest.name}": "${remoteManifest.name}"`)
+                        metadata.customName = remoteManifest.name
+                    }
+                    if (remoteManifest.logo && remoteManifest.logo !== repairedManifest.logo) {
+                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom logo for "${repairedManifest.name}"`)
+                        metadata.customLogo = remoteManifest.logo
+                    }
+                    const isFallbackDesc = (s: string) => s.startsWith('Addon from ') && (s.includes(hostFallback) || addon.transportUrl.includes(s.split('Addon from ')[1] || '____'))
+                    if (remoteManifest.description &&
+                        remoteManifest.description !== repairedManifest.description &&
+                        !isFallbackDesc(remoteManifest.description)) {
+                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom description for "${repairedManifest.name}"`)
+                        metadata.customDescription = remoteManifest.description
+                    }
+                }
+
+                const finalManifest = getEffectiveManifest({ ...addon, manifest: repairedManifest, metadata })
+                return { ...addon, manifest: finalManifest, metadata }
+            } catch (e) {
+                if (import.meta.env.DEV) console.warn(`[Sync] Failed to baseline ${addon.manifest?.name || 'addon'}:`, e)
+                const sanitized = sanitizeAddonManifest(addon.manifest, addon.transportUrl)
+                const finalManifest = getEffectiveManifest({ ...addon, manifest: sanitized })
+                return { ...addon, manifest: finalManifest }
+            }
+        })
+    )
+
+    const autopilotResult = await applyAutopilotAddonFlags(account.id, repairedAddons)
+    return autopilotResult.addons
+}
+
+interface SyncCoreResult {
+    changed: boolean
+    authKeyRefreshed: boolean
+}
+
+async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncCoreResult> {
+    const store = await getStore()
+    const account = getAccountById(store.getState().accounts, id)
+    if (!account) throw new Error('Account not found')
+
+    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    const stremioEnabled = !account.connections?.length || stremioConn?.enabled !== false
+    const accountAuthKey = getStremioAuthKey(account)
+    const useStremio = !!accountAuthKey && stremioEnabled
+
+    let currentAccount = account
+    let authKeyRefreshed = false
+    let stremioAuthKey: string | undefined
+    let finalAddons: AddonDescriptor[]
+
+    if (useStremio) {
+        const encryptionKey = getEncryptionKey()
+        let authKey = await getCachedAuthKey(accountAuthKey, encryptionKey)
+        let remoteAddons: AddonDescriptor[]
+        try {
+            remoteAddons = await getAddons(authKey, currentAccount.id)
+        } catch (error) {
+            if (!isAuthError(error)) throw error
+            const refreshed = await refreshAuthKeyFromStoredPassword(currentAccount, encryptionKey).catch((refreshError) => {
+                if (import.meta.env.DEV) console.warn('[Account] Stored credential refresh failed:', refreshError)
+                return null
+            })
+            if (!refreshed) throw error
+            currentAccount = refreshed.account
+            authKey = refreshed.authKey
+            authKeyRefreshed = true
+            remoteAddons = await getAddons(authKey, currentAccount.id)
+        }
+        stremioAuthKey = authKey
+        if (!useAuthStore.getState().encryptionKey) return { changed: false, authKeyRefreshed }
+        const merged = mergeRemoteIntoHub(currentAccount, remoteAddons)
+        finalAddons = await repairAndFlag(currentAccount, merged, forceRefresh)
+    } else {
+        finalAddons = await repairAndFlag(currentAccount, currentAccount.addons, forceRefresh)
+    }
+    if (!useAuthStore.getState().encryptionKey) return { changed: false, authKeyRefreshed }
+
+    let failedReadConnIds = new Set<string>()
+    let discoveryChanged = false
+    if (currentAccount.connections?.some(c => c.enabled)) {
+        const { absorbConnectionAddons } = await import('@/lib/connection-discovery')
+        const absorb = await absorbConnectionAddons({ ...currentAccount, addons: finalAddons }, id)
+        if (!useAuthStore.getState().encryptionKey) return { changed: false, authKeyRefreshed }
+        failedReadConnIds = absorb.failedReadConnIds
+        if (absorb.changed) {
+            finalAddons = absorb.addons
+            discoveryChanged = true
+        }
+    }
+
+    const addonsChanged = JSON.stringify(currentAccount.addons) !== JSON.stringify(finalAddons)
+    let updatedProfiles = currentAccount.profiles
+    if (currentAccount.activeProfileId && updatedProfiles) {
+        updatedProfiles = updatedProfiles.map(p =>
+            p.id === currentAccount.activeProfileId
+                ? { ...p, addons: structuredClone(finalAddons) }
+                : p
+        )
+    }
+    let updatedAccount: Account = {
+        ...currentAccount,
+        addons: finalAddons,
+        profiles: updatedProfiles,
+        deletedAddons: reconcileTombstones(currentAccount.deletedAddons, finalAddons),
+        lastSync: new Date(),
+        status: 'active' as const,
+    }
+    const syncNow = Date.now()
+    if (updatedAccount.connections?.length) {
+        updatedAccount = {
+            ...updatedAccount,
+            connections: updatedAccount.connections.map(c =>
+                c.enabled ? { ...c, lastSync: syncNow, status: 'active' as const } : c
+            ),
+        }
+    }
+
+    const accounts = store.getState().accounts.map((acc) => (acc.id === id ? updatedAccount : acc))
+    store.setState({ accounts })
+    if (addonsChanged || authKeyRefreshed || discoveryChanged) {
+        persistAccounts(accounts)
+    }
+
+    const { useAddonStore } = await import('@/store/addonStore')
+    await useAddonStore.getState().syncAccountState(id, getStremioAuthKey(currentAccount), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
+    if (!useAuthStore.getState().encryptionKey) return { changed: addonsChanged || discoveryChanged || authKeyRefreshed, authKeyRefreshed }
+
+    const pushPromises: Promise<void>[] = []
+    if (useStremio && stremioAuthKey && (forceRefresh || addonsChanged || discoveryChanged)) {
+        pushPromises.push(
+            updateAddons(stremioAuthKey, finalAddons, currentAccount.id, { previousCollection: currentAccount.addons })
+                .catch(err => { if (!isTransientSyncError(err)) throw err })
+        )
+    }
+
+    if (updatedAccount.connections?.some(c => c.enabled)) {
+        pushPromises.push(
+            (async () => {
+                try {
+                    const { triggerReconciliation } = await import('@/api/connection')
+                    const pushConnections = (updatedAccount.connections || []).filter(c => !failedReadConnIds.has(c.id))
+                    const reconcileResult = await triggerReconciliation(id, updatedAccount.primaryConnectionId, pushConnections, finalAddons)
+                    if (reconcileResult.connectionStates && Object.keys(reconcileResult.connectionStates).length > 0) {
+                        import('@/store/connectionStore').then(({ useConnectionStore }) => {
+                            useConnectionStore.setState(s => ({
+                                connectionStates: {
+                                    ...s.connectionStates,
+                                    [id]: { ...(s.connectionStates[id] || {}), ...reconcileResult.connectionStates },
+                                },
+                            }))
+                        }).catch(() => {})
+                    }
+                } catch (e) {
+                    if (import.meta.env.DEV) console.warn('[Account] Multi-connection reconciler push failed:', e)
+                }
+            })()
+        )
+    }
+
+    await Promise.all(pushPromises)
+
+    return { changed: addonsChanged || discoveryChanged || authKeyRefreshed, authKeyRefreshed }
+}
+
 export async function syncAccount(id: string, forceRefresh = false) {
     const store = await getStore()
     if (!useAuthStore.getState().encryptionKey) return
+
     while (syncMutexes.has(id)) {
         await syncMutexes.get(id)
     }
@@ -71,277 +346,8 @@ export async function syncAccount(id: string, forceRefresh = false) {
     store.setState({ error: null })
     setAccountLoading(id)
     try {
-        const account = getAccountById(store.getState().accounts, id)
-        if (!account) throw new Error('Account not found')
-        let finalAddons = account.addons
-        let updatedAccount = account
-        let failedReadConnIds = new Set<string>()
-        const stremioConn = account.connections?.find(c => c.platform === 'stremio')
-        const stremioEnabled = !account.connections?.length || stremioConn?.enabled !== false
-        const accountAuthKey = getStremioAuthKey(account)
-        let needsStremioPush = false
-        let stremioAuthKey: string | undefined
-        let currentAccount = account
-        let authKeyRefreshed = false
-
-        // === FETCH PHASE: Stremio ===
-        if (accountAuthKey && stremioEnabled) {
-            const encryptionKey = getEncryptionKey()
-            let authKey = await getCachedAuthKey(accountAuthKey, encryptionKey)
-            let addons: AddonDescriptor[]
-            try {
-                addons = await getAddons(authKey, currentAccount.id)
-            } catch (error) {
-                if (!isAuthError(error)) throw error
-                const refreshed = await refreshAuthKeyFromStoredPassword(currentAccount, encryptionKey).catch((refreshError) => {
-                    if (import.meta.env.DEV) console.warn('[Account] Stored credential refresh failed:', refreshError)
-                    return null
-                })
-                if (!refreshed) throw error
-                currentAccount = refreshed.account
-                authKey = refreshed.authKey
-                authKeyRefreshed = true
-                addons = await getAddons(authKey, currentAccount.id)
-            }
-            stremioAuthKey = authKey
-            if (!useAuthStore.getState().encryptionKey) return
-
-            const normalizedAddons = addons
-                .filter(a => !syncManager.isPendingRemoval(currentAccount.id, a.transportUrl))
-                .map((addon) => ({
-                    ...addon,
-                    manifest: sanitizeAddonManifest(addon.manifest, addon.transportUrl),
-                }))
-
-            // Drop addons the user deleted (and hasn't re-added) so the Stremio collection can't
-            // resurrect them. Local-present addons are never filtered, so re-adds are safe.
-            const survivingRemote = filterResurrected(normalizedAddons, currentAccount.addons, currentAccount.deletedAddons)
-            const mergedAddons = mergeAddons(currentAccount.addons, survivingRemote)
-
-            setAccountLoading(id)
-
-            const localManifestByUrl = new Map<string, AddonDescriptor['manifest']>()
-            for (const a of currentAccount.addons) {
-                if (a.manifest?.name && a.manifest.name !== 'Unknown Addon') {
-                    localManifestByUrl.set(normalizeAddonUrl(a.transportUrl), a.manifest)
-                }
-            }
-
-            const repairedAddons = await Promise.all(
-                mergedAddons.map(async (addon) => {
-                    try {
-                        const v = (addon.manifest?.version || '').replace(/^v/, '')
-                        const isBroken = !addon.manifest?.name ||
-                            addon.manifest.name === 'Unknown Addon' ||
-                            v === '0.0.0' ||
-                            v === '' ||
-                            !addon.manifest.resources ||
-                            addon.manifest.resources.length === 0 ||
-                            needsDisabledAddonIdentityRepair(addon)
-
-                        if (!forceRefresh && addon.manifest && addon.manifest.id && !isBroken) {
-                            if (isCinemetaAddon(addon) && !addon.metadata?.cinemetaConfig) {
-                                const detected = detectAllPatches(addon.manifest as CinemetaManifest)
-                                if (detected.searchArtifactsPatched || detected.standardCatalogsPatched || detected.metaResourcePatched) {
-                                    return {
-                                        ...addon,
-                                        metadata: {
-                                            ...(addon.metadata || {}),
-                                            cinemetaConfig: {
-                                                removeSearchArtifacts: detected.searchArtifactsPatched,
-                                                removeStandardCatalogs: detected.standardCatalogsPatched,
-                                                removeMetaResource: detected.metaResourcePatched,
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return addon
-                        }
-
-                        let cinemetaPatches = null
-                        if (isCinemetaAddon(addon)) {
-                            cinemetaPatches = detectAllPatches(addon.manifest as CinemetaManifest)
-                        }
-
-                        let manifestRaw = null
-                        const cached = getCachedManifest(addon.transportUrl)
-                        if (cached) {
-                            manifestRaw = cached
-                        } else if (isBroken && !forceRefresh) {
-                            const localManifest = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl))
-                            if (localManifest) {
-                                manifestRaw = localManifest
-                            }
-                        }
-
-                        if (!manifestRaw) {
-                            const { manifest } = await apiFetchAddonManifest(
-                                addon.transportUrl,
-                                currentAccount.id
-                            )
-                            manifestRaw = manifest
-                            setCachedManifest(addon.transportUrl, manifestRaw)
-                        }
-
-                        const metadata = { ...(addon.metadata || {}) }
-
-                        let repairedManifest = sanitizeAddonManifest(manifestRaw, addon.transportUrl)
-
-                        if (metadata.cinemetaConfig) {
-                            repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, metadata.cinemetaConfig) as AddonDescriptor['manifest']
-                        } else if (cinemetaPatches && (
-                            cinemetaPatches.searchArtifactsPatched ||
-                            cinemetaPatches.standardCatalogsPatched ||
-                            cinemetaPatches.metaResourcePatched
-                        )) {
-                            const config = {
-                                removeSearchArtifacts: cinemetaPatches.searchArtifactsPatched,
-                                removeStandardCatalogs: cinemetaPatches.standardCatalogsPatched,
-                                removeMetaResource: cinemetaPatches.metaResourcePatched,
-                            }
-                            repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, config) as AddonDescriptor['manifest']
-                            metadata.cinemetaConfig = config
-                        }
-                        const remoteManifest = addon.manifest
-                        if (remoteManifest && repairedManifest) {
-                            const { getHostnameIdentifier } = await import('@/lib/addon-identifier')
-                            const hostFallback = getHostnameIdentifier(addon.transportUrl)
-
-                            if (remoteManifest.name &&
-                                remoteManifest.name !== repairedManifest.name &&
-                                remoteManifest.name !== hostFallback) {
-                                if (import.meta.env.DEV) console.log(`[Sync] Detected custom name for "${repairedManifest.name}": "${remoteManifest.name}"`)
-                                metadata.customName = remoteManifest.name
-                            }
-                            if (remoteManifest.logo && remoteManifest.logo !== repairedManifest.logo) {
-                                if (import.meta.env.DEV) console.log(`[Sync] Detected custom logo for "${repairedManifest.name}"`)
-                                metadata.customLogo = remoteManifest.logo
-                            }
-                            const isFallbackDesc = (s: string) => s.startsWith('Addon from ') && (s.includes(hostFallback) || addon.transportUrl.includes(s.split('Addon from ')[1] || '____'))
-                            if (remoteManifest.description &&
-                                remoteManifest.description !== repairedManifest.description &&
-                                !isFallbackDesc(remoteManifest.description)) {
-                                if (import.meta.env.DEV) console.log(`[Sync] Detected custom description for "${repairedManifest.name}"`)
-                                metadata.customDescription = remoteManifest.description
-                            }
-                        }
-
-                        const finalManifest = getEffectiveManifest({ ...addon, manifest: repairedManifest, metadata })
-                        return { ...addon, manifest: finalManifest, metadata }
-                    } catch (e) {
-                        if (import.meta.env.DEV) console.warn(`[Sync] Failed to baseline ${addon.manifest?.name || 'addon'}:`, e)
-                        const sanitized = sanitizeAddonManifest(addon.manifest, addon.transportUrl)
-                        const finalManifest = getEffectiveManifest({ ...addon, manifest: sanitized })
-                        return { ...addon, manifest: finalManifest }
-                    }
-                })
-            )
-
-            const autopilotResult = await applyAutopilotAddonFlags(currentAccount.id, repairedAddons)
-            if (!useAuthStore.getState().encryptionKey) return
-            finalAddons = autopilotResult.addons
-            needsStremioPush = true
-        } else {
-            const autopilotResult = await applyAutopilotAddonFlags(id, finalAddons)
-            if (autopilotResult.changed) {
-                finalAddons = autopilotResult.addons
-            }
-        }
-
-        // === FETCH PHASE: non-Stremio absorption ===
-        let discoveryChanged = false
-        if (account.connections?.some(c => c.enabled)) {
-            const { absorbConnectionAddons } = await import('@/lib/connection-discovery')
-            const absorb = await absorbConnectionAddons({ ...currentAccount, addons: finalAddons }, id)
-            if (!useAuthStore.getState().encryptionKey) return
-            failedReadConnIds = absorb.failedReadConnIds
-            if (absorb.changed) {
-                finalAddons = absorb.addons
-                discoveryChanged = true
-            }
-        }
-
-        // === UPDATE LOCAL STATE ===
-        const addonsChanged = JSON.stringify(currentAccount.addons) !== JSON.stringify(finalAddons)
-        let updatedProfiles = currentAccount.profiles
-        if (currentAccount.activeProfileId && updatedProfiles) {
-            updatedProfiles = updatedProfiles.map(p =>
-                p.id === currentAccount.activeProfileId
-                    ? { ...p, addons: structuredClone(finalAddons) }
-                    : p
-            )
-        }
-        updatedAccount = {
-            ...currentAccount,
-            addons: finalAddons,
-            profiles: updatedProfiles,
-            deletedAddons: reconcileTombstones(currentAccount.deletedAddons, finalAddons),
-            lastSync: new Date(),
-            status: 'active' as const,
-        }
-
-        const syncNow = Date.now()
-        if (updatedAccount.connections?.length) {
-            updatedAccount = {
-                ...updatedAccount,
-                connections: updatedAccount.connections.map(c =>
-                    c.enabled ? { ...c, lastSync: syncNow, status: 'active' as const } : c
-                ),
-            }
-        }
-
-        const accounts = store.getState().accounts.map((acc) => (acc.id === id ? updatedAccount : acc))
-        store.setState({ accounts })
-
-        if (addonsChanged || authKeyRefreshed || discoveryChanged) {
-            persistAccounts(accounts)
-        }
-
+        await syncAccountCore(id, forceRefresh)
         triggerSync()
-
-        const { useAddonStore } = await import('@/store/addonStore')
-        await useAddonStore.getState().syncAccountState(id, getStremioAuthKey(currentAccount), finalAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
-
-        if (!useAuthStore.getState().encryptionKey) return
-
-        // === PUSH PHASE: all connections ===
-        const pushPromises: Promise<void>[] = []
-
-        if (needsStremioPush && stremioAuthKey) {
-            if (forceRefresh || addonsChanged || discoveryChanged) {
-                pushPromises.push(
-                    updateAddons(stremioAuthKey, finalAddons, currentAccount.id, { previousCollection: currentAccount.addons })
-                        .catch(err => { if (!isTransientSyncError(err)) throw err })
-                )
-            }
-        }
-
-        if (updatedAccount.connections?.some(c => c.enabled)) {
-            pushPromises.push(
-                (async () => {
-                    try {
-                        const { triggerReconciliation } = await import('@/api/connection')
-                        const pushConnections = (updatedAccount.connections || []).filter(c => !failedReadConnIds.has(c.id))
-                        const reconcileResult = await triggerReconciliation(id, updatedAccount.primaryConnectionId, pushConnections, finalAddons)
-                        if (reconcileResult.connectionStates && Object.keys(reconcileResult.connectionStates).length > 0) {
-                            import('@/store/connectionStore').then(({ useConnectionStore }) => {
-                                useConnectionStore.setState(s => ({
-                                    connectionStates: {
-                                        ...s.connectionStates,
-                                        [id]: { ...(s.connectionStates[id] || {}), ...reconcileResult.connectionStates },
-                                    },
-                                }))
-                            }).catch(() => {})
-                        }
-                    } catch (e) {
-                        if (import.meta.env.DEV) console.warn('[Account] Multi-connection reconciler push failed:', e)
-                    }
-                })()
-            )
-        }
-
-        await Promise.all(pushPromises)
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to sync account'
         const isExpired = isAuthError(error)
@@ -350,7 +356,6 @@ export async function syncAccount(id: string, forceRefresh = false) {
         )
         store.setState({ accounts, error: message })
         persistAccounts(accounts)
-
         throw error
     } finally {
         clearAccountLoading(id)
@@ -391,146 +396,8 @@ export async function syncAllAccounts(silent = false) {
         let resolveMutex!: () => void
         syncMutexes.set(account.id, new Promise<void>((r) => { resolveMutex = r }))
         try {
-            const encryptionKey = getEncryptionKey()
-            let accountForSync = account
-            const accountAuthKey = getStremioAuthKey(accountForSync)
-            let needsStremioPush = false
-            let stremioAuthKey: string | undefined
-            let pushAddons = accountForSync.addons
-            let failedReadConnIds = new Set<string>()
-            let absorbChanged = false
-
-            // === FETCH PHASE: Stremio ===
-            if (accountAuthKey) {
-                let authKey = await getCachedAuthKey(accountAuthKey, encryptionKey)
-                let addons: AddonDescriptor[]
-                try {
-                    addons = await getAddons(authKey, accountForSync.id)
-                } catch (error) {
-                    if (!isAuthError(error)) throw error
-                    const refreshed = await refreshAuthKeyFromStoredPassword(accountForSync, encryptionKey).catch((refreshError) => {
-                        if (import.meta.env.DEV) console.warn('[Account] Stored credential refresh failed:', refreshError)
-                        return null
-                    })
-                    if (!refreshed) throw error
-                    accountForSync = refreshed.account
-                    authKey = refreshed.authKey
-                    hasAnyChange = true
-                    addons = await getAddons(authKey, accountForSync.id)
-                }
-                stremioAuthKey = authKey
-
-                const normalizedAddons = addons.map((addon) => ({
-                    ...addon,
-                    manifest: sanitizeAddonManifest(addon.manifest, addon.transportUrl),
-                }))
-
-                const survivingRemote = filterResurrected(normalizedAddons, accountForSync.addons, accountForSync.deletedAddons)
-                const mergedAddons = mergeAddons(accountForSync.addons, survivingRemote)
-
-                const effectiveAddons = await Promise.all(mergedAddons.map(async (addon) => {
-                    if (isCinemetaAddon(addon)) return addon
-
-                    if (needsDisabledAddonIdentityRepair(addon)) {
-                        try {
-                            const fetched = await apiFetchAddonManifest(addon.transportUrl, accountForSync.id, true)
-                            const repairedManifest = sanitizeAddonManifest(fetched.manifest, addon.transportUrl)
-                            return {
-                                ...addon,
-                                manifest: getEffectiveManifest({ ...addon, manifest: repairedManifest }),
-                            }
-                        } catch (error) {
-                            if (import.meta.env.DEV) console.warn(`[Sync] Failed to repair disabled addon identity for ${addon.transportUrl}:`, error)
-                        }
-                    }
-
-                    return {
-                        ...addon,
-                        manifest: getEffectiveManifest(addon)
-                    }
-                }))
-
-                const autopilotResult = await applyAutopilotAddonFlags(account.id, effectiveAddons)
-                pushAddons = autopilotResult.addons
-                needsStremioPush = true
-            } else {
-                const autopilotPush = await applyAutopilotAddonFlags(account.id, pushAddons)
-                if (autopilotPush.changed) {
-                    pushAddons = autopilotPush.addons
-                }
-            }
-
-            // === FETCH PHASE: non-Stremio absorption ===
-            if (accountForSync.connections?.some(c => c.enabled)) {
-                const { absorbConnectionAddons } = await import('@/lib/connection-discovery')
-                const absorb = await absorbConnectionAddons({ ...accountForSync, addons: pushAddons }, accountForSync.id)
-                failedReadConnIds = absorb.failedReadConnIds
-                if (absorb.changed) {
-                    pushAddons = absorb.addons
-                    absorbChanged = true
-                    hasAnyChange = true
-                }
-            }
-
-            const addonsChanged = JSON.stringify(accountForSync.addons) !== JSON.stringify(pushAddons)
-            if (addonsChanged) hasAnyChange = true
-
-            // === UPDATE LOCAL STATE ===
-            let updatedProfiles = accountForSync.profiles
-            if (accountForSync.activeProfileId && updatedProfiles) {
-                updatedProfiles = updatedProfiles.map(p =>
-                    p.id === accountForSync.activeProfileId
-                        ? { ...p, addons: structuredClone(pushAddons) }
-                        : p
-                )
-            }
-
-            store.setState(state => ({
-                accounts: state.accounts.map(acc => acc.id === accountForSync.id ? {
-                    ...accountForSync, addons: pushAddons, profiles: updatedProfiles, deletedAddons: reconcileTombstones(accountForSync.deletedAddons, pushAddons), lastSync: new Date(), status: 'active' as const,
-                } : acc)
-            }))
-
-            const { useAddonStore } = await import('@/store/addonStore')
-            await useAddonStore.getState().syncAccountState(accountForSync.id, getStremioAuthKey(accountForSync), pushAddons).catch(e => { if (import.meta.env.DEV) console.error(e) })
-
-            // === PUSH PHASE: all connections ===
-            const pushPromises: Promise<void>[] = []
-
-            if (needsStremioPush && stremioAuthKey) {
-                if (addonsChanged || absorbChanged) {
-                    pushPromises.push(
-                        updateAddons(stremioAuthKey, pushAddons, accountForSync.id, { previousCollection: accountForSync.addons })
-                            .catch(err => { if (!isTransientSyncError(err)) throw err })
-                    )
-                }
-            }
-
-            if (accountForSync.connections?.some(c => c.enabled)) {
-                pushPromises.push(
-                    (async () => {
-                        try {
-                            const { triggerReconciliation } = await import('@/api/connection')
-                            const pushConnections = (accountForSync.connections || []).filter(c => !failedReadConnIds.has(c.id))
-                            const reconcileResult = await triggerReconciliation(accountForSync.id, accountForSync.primaryConnectionId, pushConnections, pushAddons)
-                            if (reconcileResult.connectionStates && Object.keys(reconcileResult.connectionStates).length > 0) {
-                                import('@/store/connectionStore').then(({ useConnectionStore }) => {
-                                    useConnectionStore.setState(s => ({
-                                        connectionStates: {
-                                            ...s.connectionStates,
-                                            [account.id]: { ...(s.connectionStates[account.id] || {}), ...reconcileResult.connectionStates },
-                                        },
-                                    }))
-                                }).catch(() => {})
-                            }
-                        } catch (e) {
-                            if (import.meta.env.DEV) console.warn('[Account] Multi-connection reconciler push failed:', e)
-                        }
-                    })()
-                )
-            }
-
-            await Promise.all(pushPromises)
+            const result = await syncAccountCore(account.id, false)
+            if (result.changed) hasAnyChange = true
         } catch (error: unknown) {
             if (isTransientSyncError(error)) return
             const isExpired = isAuthError(error)

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Calendar, Clock, PlayCircle, ArrowRight } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
-// GlassCard removed for performance
 import { ReplayData, MonthStat } from '@/types/ReplayTypes'
 import { openStremioDetail } from '@/lib/utils'
 import {

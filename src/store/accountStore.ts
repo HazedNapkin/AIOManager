@@ -71,6 +71,10 @@ export const getAccountById = (accounts: Account[], id: string): Account | undef
 import { getStremioConnection, getStremioAuthKey, getAccountEmail } from '@/lib/account-compat'
 export { getStremioConnection, getStremioAuthKey, getAccountEmail }
 
+export function hasPlatformConnection(account: Account): boolean {
+    return !!getStremioAuthKey(account) || !!(account.connections || []).some(c => c.enabled)
+}
+
 const AUTH_KEY_CACHE_MAX = 250
 const authKeyCache = new Map<string, string>()
 
@@ -158,7 +162,7 @@ export const isAuthError = (error: unknown) => {
       const message = error instanceof Error ? error.message : String((error as Record<string, unknown>)?.message || '')
       const lowerMsg = message.toLowerCase()
       return (
-            (error as any)?.isAuthError === true ||
+            (error as { isAuthError?: boolean })?.isAuthError === true ||
             (error as Record<string, unknown>)?.status === 401 ||
             lowerMsg.includes('invalid or expired auth key') ||
             lowerMsg.includes('invalid auth key') ||
@@ -737,7 +741,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                               }
                         }
                   }
-            } catch (_) { }
+            } catch {}
 
             const { useLibraryCache } = await import('@/store/libraryCache')
             useLibraryCache.getState().removeItemsForAccount(id)

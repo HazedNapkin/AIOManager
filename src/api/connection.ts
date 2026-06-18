@@ -43,13 +43,14 @@ export async function triggerReconciliation(
     primaryConnectionId?: string,
     connections?: Connection[],
     addons?: AddonDescriptor[],
+    options?: { allowCollectionShrink?: boolean },
 ): Promise<ReconcileResult> {
     const base = getServerUrl().replace(/\/+$/, '')
     const sanitizedConnections = connections?.map(({ credentials: _creds, ...rest }) => rest)
     const res = await resilientFetch(`${base}/providers/sync/${accountId}`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ primaryConnectionId, connections: sanitizedConnections, addons }),
+        body: JSON.stringify({ primaryConnectionId, connections: sanitizedConnections, addons, allowCollectionShrink: options?.allowCollectionShrink === true }),
         timeout: 30000,
     })
     if (!res.ok) {
