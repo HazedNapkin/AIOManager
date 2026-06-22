@@ -242,5 +242,19 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
             const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
             return rpc('sync_delete_profile_data', { p_profile_id: idx }, accessToken, { retries: 0 })
         },
+
+        async deleteWatchHistory(accessToken: string, keys: Array<{ content_id: string; season?: number; episode?: number }>, profileId?: string | number) {
+            const cleaned = (keys || []).filter(k => k && k.content_id)
+            if (cleaned.length === 0) return null
+            const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
+            return rpc('sync_delete_watched_items', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+        },
+
+        async deleteWatchProgress(accessToken: string, progressKeys: string[], profileId?: string | number) {
+            const cleaned = (progressKeys || []).filter(Boolean)
+            if (cleaned.length === 0) return null
+            const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
+            return rpc('sync_delete_watch_progress', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+        },
     }
 }

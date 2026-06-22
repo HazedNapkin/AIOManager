@@ -243,24 +243,39 @@ async function readPlatformAddons(driver, connection) {
     }
     return []
 }
+export function applyCustomMetadata(addon) {
+    const meta = addon?.metadata
+    if (!meta || (!meta.customName && !meta.customLogo && !meta.customDescription)) return addon
+    const manifest = addon.manifest || {}
+    return {
+        ...addon,
+        manifest: {
+            ...manifest,
+            name: meta.customName || manifest.name,
+            logo: meta.customLogo || manifest.logo,
+            description: meta.customDescription || manifest.description,
+        },
+    }
+}
 
 async function writePlatformAddons(driver, connection, addons) {
     const c = connection.credentials
+    const prepared = (addons || []).map(applyCustomMetadata)
     // Stremio API takes (authKey, addons) — no profile/user context
     if (connection.platform === 'stremio') {
         if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.authKey, addons)
+        return driver.writeAddons(c.authKey, prepared)
     }
     if (connection.platform === 'nuvio') {
         if (!c?.accessToken) { const e = new Error('Nuvio credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.accessToken, addons, c.profileId)
+        return driver.writeAddons(c.accessToken, prepared, c.profileId)
     }
     if (connection.platform === 'realstream') {
         if (!c?.accessToken) { const e = new Error('RealStream credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.accessToken, addons, c.userId)
+        return driver.writeAddons(c.accessToken, prepared, c.userId)
     }
     if (isHydraOutbound(connection)) {
-        return driver.writeAddons(addons)
+        return driver.writeAddons(prepared)
     }
 }
 
@@ -368,6 +383,11 @@ export function createReconciler(fastify) {
         }
 
         const canonicalUrlSet = new Set(canonical.map(a => normalizeUrl(a.transportUrl)))
+        const customNameByUrl = new Map(
+            canonical
+                .filter(a => a?.metadata?.customName)
+                .map(a => [normalizeUrl(a.transportUrl), a.metadata.customName])
+        )
         const changes = []
 
         for (const connection of targetConnections) {
@@ -385,8 +405,15 @@ export function createReconciler(fastify) {
                 try {
                     const platformAddons = await readPlatformAddons(driver, connection)
                     const platformUrlSet = new Set(platformAddons.map(a => normalizeUrl(a.transportUrl || a.url)))
-                    if (platformUrlSet.size === canonicalUrlSet.size && [...canonicalUrlSet].every(u => platformUrlSet.has(u))) {
-                        needsWrite = false
+                    const sameUrls = platformUrlSet.size === canonicalUrlSet.size && [...canonicalUrlSet].every(u => platformUrlSet.has(u))
+                    if (sameUrls) {
+                        needsWrite = customNameByUrl.size > 0 && platformAddons.some(p => {
+                            const url = normalizeUrl(p.transportUrl || p.url)
+                            const expected = customNameByUrl.get(url)
+                            if (expected === undefined) return false
+                            const platformName = p.manifest?.name ?? p.name
+                            return platformName != null && platformName !== '' && platformName !== expected
+                        })
                     }
                 } catch { /* can't read, assume needs write */ }
 

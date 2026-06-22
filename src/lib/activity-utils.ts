@@ -232,6 +232,11 @@ function nuvioUniqueId(contentId: string, season?: number | null, episode?: numb
     return contentId
 }
 
+export function nuvioProgressKey(contentId: string, season?: number | null, episode?: number | null): string {
+    if (episode != null) return `${contentId}_s${season ?? 1}e${episode}`
+    return contentId
+}
+
 function accountActivityMeta(account: Account, accounts: Account[]) {
     return {
         name: account.name || getAccountEmail(account)?.split('@')[0] || account.id || 'Unknown',

@@ -779,7 +779,7 @@ export async function bulkReinstallAddons(
         }> = []
 
         const idsToReinstall = (addonIds.length === 1 && addonIds[0] === '*')
-          ? currentAddonsWithLocalMeta.map(a => a.transportUrl)
+          ? targetCollection.map(a => a.transportUrl)
           : addonIds
 
         for (const addonId of idsToReinstall) {

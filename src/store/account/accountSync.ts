@@ -13,6 +13,7 @@ import { CinemetaManifest } from '@/types/cinemeta'
 import { isCinemetaAddon, detectAllPatches, applyCinemetaConfiguration } from '@/lib/cinemeta-utils'
 import { syncManager } from '@/lib/sync/syncManager'
 import { getEffectiveManifest } from '@/lib/addon-utils'
+import { inferCustomMetadata } from '@/lib/addon-custom-metadata'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import {
     getCachedAuthKey,
@@ -57,7 +58,7 @@ export function scheduleSyncAccount(id: string, forceRefresh = false): void {
     if (existing) clearTimeout(existing)
     _pendingSyncs.set(id, setTimeout(() => {
         _pendingSyncs.delete(id)
-        syncAccount(id, forceRefresh).catch(() => {})
+        syncAccount(id, forceRefresh).catch(() => { })
     }, SYNC_DEBOUNCE_MS))
 }
 
@@ -161,32 +162,10 @@ async function repairAndFlag(
                     repairedManifest = applyCinemetaConfiguration(repairedManifest as CinemetaManifest, config) as AddonDescriptor['manifest']
                     metadata.cinemetaConfig = config
                 }
-                const remoteManifest = addon.manifest
-                if (remoteManifest && repairedManifest) {
-                    const { getHostnameIdentifier } = await import('@/lib/addon-identifier')
-                    const hostFallback = getHostnameIdentifier(addon.transportUrl)
+                const finalMetadata = inferCustomMetadata(metadata, addon.manifest, repairedManifest, addon.transportUrl)
 
-                    if (remoteManifest.name &&
-                        remoteManifest.name !== repairedManifest.name &&
-                        remoteManifest.name !== hostFallback) {
-                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom name for "${repairedManifest.name}": "${remoteManifest.name}"`)
-                        metadata.customName = remoteManifest.name
-                    }
-                    if (remoteManifest.logo && remoteManifest.logo !== repairedManifest.logo) {
-                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom logo for "${repairedManifest.name}"`)
-                        metadata.customLogo = remoteManifest.logo
-                    }
-                    const isFallbackDesc = (s: string) => s.startsWith('Addon from ') && (s.includes(hostFallback) || addon.transportUrl.includes(s.split('Addon from ')[1] || '____'))
-                    if (remoteManifest.description &&
-                        remoteManifest.description !== repairedManifest.description &&
-                        !isFallbackDesc(remoteManifest.description)) {
-                        if (import.meta.env.DEV) console.log(`[Sync] Detected custom description for "${repairedManifest.name}"`)
-                        metadata.customDescription = remoteManifest.description
-                    }
-                }
-
-                const finalManifest = getEffectiveManifest({ ...addon, manifest: repairedManifest, metadata })
-                return { ...addon, manifest: finalManifest, metadata }
+                const finalManifest = getEffectiveManifest({ ...addon, manifest: repairedManifest, metadata: finalMetadata })
+                return { ...addon, manifest: finalManifest, metadata: finalMetadata }
             } catch (e) {
                 if (import.meta.env.DEV) console.warn(`[Sync] Failed to baseline ${addon.manifest?.name || 'addon'}:`, e)
                 const sanitized = sanitizeAddonManifest(addon.manifest, addon.transportUrl)
@@ -320,7 +299,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
                                     [id]: { ...(s.connectionStates[id] || {}), ...reconcileResult.connectionStates },
                                 },
                             }))
-                        }).catch(() => {})
+                        }).catch(() => { })
                     }
                 } catch (e) {
                     if (import.meta.env.DEV) console.warn('[Account] Multi-connection reconciler push failed:', e)

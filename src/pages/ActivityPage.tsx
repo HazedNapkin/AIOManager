@@ -14,7 +14,8 @@ import { useAuthStore } from '@/store/authStore'
 import { useSyncStore } from '@/store/syncStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
-import { historyEntryToActivityItem } from '@/lib/activity-utils'
+import { historyEntryToActivityItem, nuvioProgressKey } from '@/lib/activity-utils'
+import type { Account } from '@/types/account'
 
 import { FloatingActionBar, type FloatingActionItem } from '@/components/ui/floating-action-bar'
 import { Grid, List, Search, Check, X, PlayCircle, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -46,6 +47,42 @@ import { mapConcurrent } from '@/lib/concurrency'
 
 const ACTIVITY_ACCOUNT_DELETE_CONCURRENCY = 4
 const ACTIVITY_ITEM_DELETE_CONCURRENCY = 5
+
+async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): Promise<boolean> {
+    const nuvioConns = (account.connections || []).filter(c => c.enabled && c.platform === 'nuvio')
+    if (nuvioConns.length === 0) return false
+    const [{ fetchConnectionToken }, { nuvioDriverFor }, { getCachedNuvioToken, setCachedNuvioToken, invalidateNuvioToken }] = await Promise.all([
+        import('@/api/connection'),
+        import('@/lib/drivers/factory'),
+        import('@/lib/nuvio-token-cache'),
+    ])
+    const historyKeys = items.map(i => {
+        const k: { content_id: string; season?: number; episode?: number } = { content_id: i.itemId }
+        if (i.episode != null) { k.season = i.season ?? 1; k.episode = i.episode }
+        return k
+    })
+    const progressKeys = items.map(i => nuvioProgressKey(i.itemId, i.season, i.episode))
+
+    let failed = false
+    for (const conn of nuvioConns) {
+        try {
+            let token = getCachedNuvioToken(conn.id)
+            if (!token) {
+                token = await fetchConnectionToken(account.id, conn.id, 'nuvio')
+                setCachedNuvioToken(conn.id, token)
+            }
+            const driver = nuvioDriverFor(conn)
+            const profileId = token.profileId ?? conn.credentials?.profileId
+            await driver.deleteWatchHistory(token.accessToken, historyKeys, profileId)
+            await driver.deleteWatchProgress(token.accessToken, progressKeys, profileId)
+        } catch (e) {
+            if (import.meta.env.DEV) console.error('[Activity] Nuvio delete failed:', e)
+            invalidateNuvioToken(conn.id)
+            failed = true
+        }
+    }
+    return !failed
+}
 
 export function ActivityPage() {
     useDocumentTitle('Activity')
@@ -298,6 +335,52 @@ export function ActivityPage() {
         setPendingDeleteIds(ids)
     }, [])
 
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<boolean> => {
+        if (items.length === 0) return false
+        const byAccount: Record<string, ActivityItem[]> = {}
+        for (const item of items) {
+            (byAccount[item.accountId] ||= []).push(item)
+        }
+        let failed = false
+        await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
+            const account = accountById.get(accountId)
+            if (!account || !hasPlatformConnection(account)) return
+
+            const nuvioItems = accItems.filter(i => i.source === 'nuvio')
+            const realstreamItems = accItems.filter(i => i.source === 'realstream')
+            const stremioItems = accItems.filter(i => i.source !== 'nuvio' && i.source !== 'realstream')
+
+            if (stremioItems.length > 0) {
+                const { encryptionKey } = useAuthStore.getState()
+                const stremioKey = getStremioAuthKey(account)
+                if (encryptionKey && stremioKey) {
+                    try {
+                        const authKey = await decrypt(stremioKey, encryptionKey)
+                        await mapConcurrent(stremioItems, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
+                            try {
+                                await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
+                            } catch (e) {
+                                if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
+                                failed = true
+                            }
+                        })
+                    } catch (e) {
+                        if (import.meta.env.DEV) console.error(`Failed to process deletions for account ${accountId}:`, e)
+                        failed = true
+                    }
+                }
+            }
+
+            if (nuvioItems.length > 0) {
+                const ok = await deleteNuvioWatchItems(account, nuvioItems)
+                if (!ok) failed = true
+            }
+
+            if (realstreamItems.length > 0) failed = true
+        })
+        return failed
+    }, [accountById])
+
     const handleDeleteSelected = async () => {
         if (selectedItems.size === 0) return
         const count = selectedItems.size
@@ -305,46 +388,18 @@ export function ActivityPage() {
         setShowDeleteDialog(false)
         setSelectedItems(new Set())
 
-        const { encryptionKey } = useAuthStore.getState()
-        let failed = false
-        if (encryptionKey) {
-            const itemIdSet = new Set(itemIds)
-            const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-            const itemsByAccount: Record<string, typeof itemsToDelete> = {}
-            itemsToDelete.forEach(item => {
-                if (!itemsByAccount[item.accountId]) itemsByAccount[item.accountId] = []
-                itemsByAccount[item.accountId].push(item)
-            })
-            await mapConcurrent(Object.entries(itemsByAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, items]) => {
-                const account = accountById.get(accountId)
-                if (!account || !hasPlatformConnection(account)) return
-                const stremioKey = getStremioAuthKey(account)
-                if (!stremioKey) return
-                try {
-                    const authKey = await decrypt(stremioKey, encryptionKey)
-                    await mapConcurrent(items, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
-                        try {
-                            await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
-                        } catch (e) {
-                            if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
-                            failed = true
-                        }
-                    })
-                } catch (e) {
-                    if (import.meta.env.DEV) console.error(`Failed to process deletions for account ${accountId}:`, e)
-                    failed = true
-                }
-            })
-        }
+        const itemIdSet = new Set(itemIds)
+        const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
+        const failed = await deletePlatformItems(itemsToDelete)
 
         removeItems(itemIds)
 
         if (failed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from Stremio.' })
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
         } else {
             toast({
                 title: 'Items Deleted',
-                description: `${count} item(s) removed from Stremio history.`
+                description: `${count} item(s) removed from history.`
             })
         }
     }
@@ -358,30 +413,20 @@ export function ActivityPage() {
 
         setIsDeletingPending(true)
         try {
+            const idSet = new Set(ids)
+            const itemsToDelete = history.filter(item => idSet.has(item.id))
+
             removeItems(ids)
+            const failed = await deletePlatformItems(itemsToDelete)
 
-            const { encryptionKey } = useAuthStore.getState()
-            if (encryptionKey) {
-                const idSet = new Set(ids)
-                const itemsToDelete = history.filter(item => idSet.has(item.id))
-                for (const item of itemsToDelete) {
-                    const account = accountById.get(item.accountId)
-                    if (!account || !hasPlatformConnection(account)) continue
-                    const stremioKey = getStremioAuthKey(account)
-                    if (!stremioKey) continue
-                    try {
-                        const authKey = await decrypt(stremioKey, encryptionKey)
-                        await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
-                    } catch (e) {
-                        if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
-                    }
-                }
+            if (failed) {
+                toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
+            } else {
+                toast({
+                    title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
+                    description: 'Removed from activity history.'
+                })
             }
-
-            toast({
-                title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
-                description: 'Removed from activity history.'
-            })
             setPendingDeleteIds(null)
         } finally {
             setIsDeletingPending(false)
