@@ -234,6 +234,7 @@ export const useSyncStore = create<SyncState>()(
                         notesTrash: [],
                         watchEvents: [],
                         watchSnapshot: {},
+                        deletedWatchEvents: {},
                         salt: saltBase64,
                         syncedAt: new Date().toISOString()
                     }
@@ -375,6 +376,7 @@ export const useSyncStore = create<SyncState>()(
                             customThemes: Array.isArray(d.customThemes) ? d.customThemes : [],
                             watchEvents: Array.isArray(d.watchEvents) ? d.watchEvents : [],
                             watchSnapshot: d.watchSnapshot || {},
+                            deletedWatchEvents: (d.deletedWatchEvents && typeof d.deletedWatchEvents === 'object') ? d.deletedWatchEvents : {},
                             apiKeys: d.apiKeys,
                             discoverFavorites: d.discoverFavorites,
                             discoverPrefs: d.discoverPrefs,
@@ -542,12 +544,17 @@ export const useSyncStore = create<SyncState>()(
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
                         const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
+                        const remoteDeleted = (syncData.deletedWatchEvents && typeof syncData.deletedWatchEvents === 'object') ? syncData.deletedWatchEvents as Record<string, number> : {}
+                        const mergedDeleted: Record<string, number> = { ...local.deletedEventKeys }
+                        for (const [k, ts] of Object.entries(remoteDeleted)) {
+                            if (!(k in mergedDeleted) || ts > mergedDeleted[k]) mergedDeleted[k] = ts
+                        }
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values())
                             .sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
                         const mergedSnapshot = { ...(syncData.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
-                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted)
                     }
 
                     if (Array.isArray(syncData.customThemes) && syncData.customThemes.length > 0) {
@@ -768,6 +775,7 @@ export const useSyncStore = create<SyncState>()(
                         changelog: exportedAccounts.changelog,
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
+                        deletedWatchEvents: watchExport.deletedEvents,
                         salt: saltBase64,
                         name: auth.name,
                         syncedAt: new Date().toISOString(),
@@ -988,11 +996,16 @@ export const useSyncStore = create<SyncState>()(
                     if (Array.isArray(data.watchEvents)) {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
+                        const remoteDeleted = (data.deletedWatchEvents && typeof data.deletedWatchEvents === 'object') ? data.deletedWatchEvents as Record<string, number> : {}
+                        const mergedDeleted: Record<string, number> = { ...local.deletedEventKeys }
+                        for (const [k, ts] of Object.entries(remoteDeleted)) {
+                            if (!(k in mergedDeleted) || ts > mergedDeleted[k]) mergedDeleted[k] = ts
+                        }
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...(data.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values()).sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
                         const mergedSnapshot = { ...((data.watchSnapshot || {}) as Record<string, unknown>), ...local.snapshot }
-                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted)
                     }
                     if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
                         applySyncedSettings({ customThemes: data.customThemes }, true)

@@ -209,7 +209,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 timesWatched: live?.timesWatched,
                 isInProgress: live?.isInProgress ?? false,
                 isFromEventLog: true,
-                source: event.source || live?.source || 'unknown',
+                source: event.source || live?.source || 'stremio',
                 backfill: event.backfill,
                 liveProgress: live?.progress,
                 liveWatched: live?.watched,

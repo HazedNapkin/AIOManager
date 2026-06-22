@@ -178,7 +178,7 @@ export function transformLibraryItemToActivityItem(
         season,
         episode,
         overallTimeWatched,
-        source: 'unknown',
+        source: 'stremio',
     }
 }
 

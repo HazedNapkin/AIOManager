@@ -381,6 +381,18 @@ export function ActivityPage() {
         return failed
     }, [accountById])
 
+    const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
+        const liveIds = new Set<string>(feedIds)
+        for (const i of items) {
+            const cacheId = i.source === 'nuvio' ? `${i.accountId}:nuvio:${i.uniqueItemId}`
+                : i.source === 'realstream' ? `${i.accountId}:realstream:${i.uniqueItemId}`
+                : `${i.accountId}:${i.uniqueItemId}`
+            liveIds.add(cacheId)
+        }
+        removeItems(Array.from(liveIds))
+        useWatchEventStore.getState().removeEvents(items)
+    }, [removeItems])
+
     const handleDeleteSelected = async () => {
         if (selectedItems.size === 0) return
         const count = selectedItems.size
@@ -392,7 +404,7 @@ export function ActivityPage() {
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
         const failed = await deletePlatformItems(itemsToDelete)
 
-        removeItems(itemIds)
+        purgeLocalActivity(itemsToDelete, itemIds)
 
         if (failed) {
             toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
@@ -416,7 +428,7 @@ export function ActivityPage() {
             const idSet = new Set(ids)
             const itemsToDelete = history.filter(item => idSet.has(item.id))
 
-            removeItems(ids)
+            purgeLocalActivity(itemsToDelete, ids)
             const failed = await deletePlatformItems(itemsToDelete)
 
             if (failed) {
