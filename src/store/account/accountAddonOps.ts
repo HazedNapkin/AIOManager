@@ -2,6 +2,7 @@ import { triggerSync } from '@/lib/sync-trigger'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
     updateAddons,
+    getAddons,
 } from '@/api/addons'
 import { getAddonVersionKey, normalizeAddonUrl, mergeAddons } from '@/lib/utils'
 import { addTombstones, reconcileTombstones } from '@/lib/addon-tombstones'
@@ -34,6 +35,21 @@ type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<Acco
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
+}
+
+async function reconcileInstallBase(account: Account): Promise<AddonDescriptor[]> {
+    const accountAuthKey = getStremioAuthKey(account)
+    if (!accountAuthKey) return account.addons
+    try {
+        const { mergeRemoteIntoHub } = await import('./accountSync')
+        const decryptedKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+        const remoteAddons = await getAddons(decryptedKey, account.id)
+        return mergeRemoteIntoHub(account, remoteAddons)
+    } catch (err) {
+        if (isAuthError(err)) throw err
+        if (import.meta.env.DEV) console.warn('[Install] Live reconcile failed; falling back to hub state:', err)
+        return account.addons
+    }
 }
 
 const pluginUrlKey = (url?: string): string => (url ? url.trim().replace(/\/+$/, '').toLowerCase() : '')
@@ -237,7 +253,8 @@ export async function installAddonToAccount(accountId: string, addonUrl: string)
             },
         }
 
-        const mergedAddons = mergeAddons(account.addons, [normalizedAddon])
+        const baseAddons = await reconcileInstallBase(account)
+        const mergedAddons = mergeAddons(baseAddons, [normalizedAddon])
         const finalAddons = dedupeAddonsByTransportUrl(mergedAddons).map(addon => ({
             ...addon,
             manifest: getEffectiveManifest(addon)
@@ -305,7 +322,7 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
 
         const now = Date.now()
 
-        const updatedAddons = [...account.addons]
+        const updatedAddons = [...await reconcileInstallBase(account)]
         fetchedAddons.forEach((newAddon) => {
             const normalized: AddonDescriptor = {
                 ...newAddon,

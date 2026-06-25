@@ -3,8 +3,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { normalizeTagName } from '@/lib/addon-validator'
 import { useAddonStore } from '@/store/addonStore'
+import { useProfileStore } from '@/store/profileStore'
 import { useUIStore } from '@/store/uiStore'
 import { Switch } from '@/components/ui/switch'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { SavedAddon } from '@/types/saved-addon'
 import { useState } from 'react'
@@ -18,8 +20,11 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
   const replaceTransportUrlUniversally = useAddonStore(s => s.replaceTransportUrlUniversally)
   const loading = useAddonStore(s => s.loading)
   const error = useAddonStore(s => s.error)
+  const profiles = useProfileStore(s => s.profiles)
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
   const { toast } = useToast()
+
+  const currentProfileId = savedAddon.profileId ?? 'unassigned'
 
   const [formData, setFormData] = useState({
     name: savedAddon.name,
@@ -27,6 +32,7 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
     customLogo: savedAddon.metadata?.customLogo || '',
     customDescription: savedAddon.metadata?.customDescription || '',
     syncWithInstalled: savedAddon.syncWithInstalled ?? false,
+    profileId: currentProfileId,
   })
 
   const [formError, setFormError] = useState<string | null>(null)
@@ -36,7 +42,8 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
     formData.tags !== savedAddon.tags.join(', ') ||
     formData.customLogo !== (savedAddon.metadata?.customLogo || '') ||
     formData.customDescription !== (savedAddon.metadata?.customDescription || '') ||
-    formData.syncWithInstalled !== (savedAddon.syncWithInstalled ?? false)
+    formData.syncWithInstalled !== (savedAddon.syncWithInstalled ?? false) ||
+    formData.profileId !== currentProfileId
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -54,6 +61,7 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
         name,
         tags,
         syncWithInstalled: formData.syncWithInstalled,
+        profileId: formData.profileId === 'unassigned' ? null : formData.profileId,
         metadata: {
           customName: name,
           customLogo: formData.customLogo.trim() || undefined,
@@ -114,6 +122,26 @@ export function SavedAddonDetails({ savedAddon, onClose }: { savedAddon: SavedAd
             onChange={(e) => setFormData((prev) => ({ ...prev, tags: e.target.value }))}
             placeholder="e.g., essential, torrent, debrid"
           />
+        </div>
+
+
+        <div className="space-y-2">
+          <Label htmlFor="edit-profile">Profile</Label>
+          <Select
+            value={formData.profileId}
+            onValueChange={(value) => setFormData((prev) => ({ ...prev, profileId: value }))}
+          >
+            <SelectTrigger id="edit-profile">
+              <SelectValue placeholder="Unassigned" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unassigned">Unassigned</SelectItem>
+              {profiles.map((profile) => (
+                <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Move this addon into a profile without re-adding it.</p>
         </div>
 
 

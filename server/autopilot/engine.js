@@ -540,14 +540,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
     const resolveMessageTemplate = (template, payload) => {
         if (!template) return payload.message
-        return template
-            .replace(/\{account\}/gi, payload.accountName || payload.accountId || 'Unknown')
-            .replace(/\{addon\}/gi, payload.activeName || 'Unknown')
-            .replace(/\{from\}/gi, payload.fromName || payload.fromUrl || 'Unknown')
-            .replace(/\{to\}/gi, payload.activeName || payload.activeUrl || 'Unknown')
-            .replace(/\{status\}/gi, payload.type === 'failover' ? 'Failed Over' : payload.type === 'recovery' ? 'Recovered' : payload.type)
-            .replace(/\{rule\}/gi, payload.ruleName || 'Unnamed Rule')
-            .replace(/\{provider\}/gi, payload.provider || 'Unknown')
+        const values = {
+            account: payload.accountName || payload.accountId || 'Unknown',
+            rule: payload.ruleName || 'Unnamed Rule',
+            primary: payload.fromName || payload.fromUrl || 'Unknown',
+            backup: payload.activeName || payload.activeUrl || 'Unknown',
+            addon: payload.activeName || 'Unknown',
+            from: payload.fromName || payload.fromUrl || 'Unknown',
+            to: payload.activeName || payload.activeUrl || 'Unknown',
+            status: payload.type === 'failover' ? 'Failed Over' : payload.type === 'recovery' ? 'Recovered' : payload.type,
+            provider: payload.provider || 'Unknown',
+        }
+        return template.replace(/\{{1,2}\s*(account|rule|primary|backup|addon|from|to|status|provider)\s*\}{1,2}/gi, (match, key) => {
+            const value = values[key.toLowerCase()]
+            return value !== undefined ? value : match
+        })
     }
 
     const sendNotification = async (webhookUrl, payload) => {
@@ -913,6 +920,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 message: msg,
                                 messageTemplate: rule.message_template || null,
                                 accountId: rule.account_id,
+                                accountName: rule.account_name || null,
                                 ruleName: rule.name || null,
                                 activeName: targetActiveUrl,
                                 fromName: chain[0],
@@ -1041,7 +1049,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                             COALESCE(s.last_check, r.last_check) AS last_check,
                             COALESCE(s.last_notification, r.last_notification) AS last_notification,
                             r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
-                            r.platform, r.connection_id
+                            r.platform, r.connection_id,
+                            (SELECT c.account_name FROM server_credentials c
+                             WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
+                               AND c.account_name <> ''
+                             LIMIT 1) AS account_name
                      FROM autopilot_rules r
                      LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                      WHERE r.id IN (${placeholders})

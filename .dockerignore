@@ -21,6 +21,9 @@ server/tests
 # Environment files
 .env*
 
+# Runtime state / database (never bake into the image)
+data
+
 # OS files
 .DS_Store
 Thumbs.db

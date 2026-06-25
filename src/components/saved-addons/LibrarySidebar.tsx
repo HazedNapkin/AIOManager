@@ -198,9 +198,8 @@ export function LibrarySidebar({
           </div>
 
           {profiles.length > 0 && (
-            <div className="mt-2 min-h-0 flex-1 border-t border-border/35 pt-2">
-              <div className="h-full space-y-0.5 overflow-y-auto pr-0.5 custom-scrollbar">
-                {profiles.map(profile => (
+            <div className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto border-t border-border/35 pt-2 pr-0.5 custom-scrollbar">
+              {profiles.map(profile => (
                   <div key={profile.id} className="group flex items-center gap-1">
                     <FilterButton
                       active={selectedProfileId === profile.id}
@@ -224,7 +223,6 @@ export function LibrarySidebar({
                     </div>
                   </div>
                 ))}
-              </div>
             </div>
           )}
 

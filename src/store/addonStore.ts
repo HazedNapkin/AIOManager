@@ -108,7 +108,7 @@ export interface AddonStore {
   ) => Promise<string>
   updateSavedAddon: (
     id: string,
-    updates: Partial<Pick<SavedAddon, 'name' | 'tags' | 'installUrl' | 'profileId' | 'syncWithInstalled' | 'manifest'>> & { metadata?: SavedAddon['metadata'] }
+    updates: Partial<Pick<SavedAddon, 'name' | 'tags' | 'installUrl' | 'syncWithInstalled' | 'manifest'>> & { profileId?: string | null; metadata?: SavedAddon['metadata'] }
   ) => Promise<void>
   updateSavedAddonMetadata: (
     id: string,
@@ -500,7 +500,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         updatedSavedAddon.tags = updates.tags.map(normalizeTagName).filter(Boolean)
       }
       if (updates.profileId !== undefined) {
-        updatedSavedAddon.profileId = updates.profileId
+        updatedSavedAddon.profileId = updates.profileId || undefined
       }
       if (updates.syncWithInstalled !== undefined) {
         updatedSavedAddon.syncWithInstalled = updates.syncWithInstalled

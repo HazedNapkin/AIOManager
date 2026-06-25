@@ -56,6 +56,10 @@ export async function fetchAIOStreamsUser(
     return json.data
 }
 
+function withAccessKey(config: Record<string, unknown>, accessKey: string): Record<string, unknown> {
+    return { ...config, accessKey }
+}
+
 export async function updateAIOStreamsUser(
     baseUrl: string,
     uuid: string,
@@ -71,7 +75,7 @@ export async function updateAIOStreamsUser(
     const res = await fetch('/api/aiostreams-proxy', {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ baseUrl, uuid, password, config }),
+        body: JSON.stringify({ baseUrl, uuid, password, config: withAccessKey(config, password) }),
     })
     const json = await res.json()
     if (!json.success) throw new Error(json.error?.message || 'Failed to update user')
@@ -92,7 +96,7 @@ export async function createAIOStreamsUser(
     const res = await fetch('/api/aiostreams-proxy', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ baseUrl, password: createPassword, config }),
+        body: JSON.stringify({ baseUrl, password: createPassword, config: withAccessKey(config, createPassword) }),
     })
     const json = await res.json()
     if (!json.success) throw new Error(json.error?.message || 'Failed to create user')
@@ -156,11 +160,12 @@ export function getVaultProviderForService(serviceId: string): string | null {
 }
 
 export const AIOSTREAMS_RUNTIME_CONFIG_KEYS = [
-    'uuid', 'encryptedPassword', 'trusted', 'ip', 'accessToken', 'addonPassword',
+    'uuid', 'encryptedPassword', 'trusted', 'ip', 'accessToken',
 ]
 
 export const AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS = [
     'appliedTemplates',
+    'accessKey',
 ]
 
 export const AIOSTREAMS_PARENT_CONFIG_KEYS = [
@@ -188,7 +193,7 @@ export function sanitizeAIOStreamsConfigForUpdate(config: Record<string, unknown
 
 const SYSTEM_KEYS = new Set([
     ...AIOSTREAMS_RUNTIME_CONFIG_KEYS,
-    'addonPassword',
+    'accessKey',
     'showChanges',
 ])
 

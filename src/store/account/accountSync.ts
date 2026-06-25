@@ -14,7 +14,7 @@ import { isCinemetaAddon, detectAllPatches, applyCinemetaConfiguration } from '@
 import { syncManager } from '@/lib/sync/syncManager'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import { inferCustomMetadata } from '@/lib/addon-custom-metadata'
-import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
+import { getCachedManifest, setCachedManifest, recordManifestFetchFailure, shouldSkipManifestFetch, hydrateManifestCache } from '@/lib/manifest-cache'
 import {
     getCachedAuthKey,
     getEncryptionKey,
@@ -62,7 +62,7 @@ export function scheduleSyncAccount(id: string, forceRefresh = false): void {
     }, SYNC_DEBOUNCE_MS))
 }
 
-function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescriptor[]): AddonDescriptor[] {
+export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescriptor[]): AddonDescriptor[] {
     const normalizedAddons = remoteAddons
         .filter(a => !syncManager.isPendingRemoval(account.id, a.transportUrl))
         .map((addon) => ({
@@ -134,13 +134,22 @@ async function repairAndFlag(
                     }
                 }
 
+                if (!manifestRaw && !forceRefresh && shouldSkipManifestFetch(addon.transportUrl)) {
+                    manifestRaw = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl)) || addon.manifest
+                }
+
                 if (!manifestRaw) {
-                    const { manifest } = await apiFetchAddonManifest(
-                        addon.transportUrl,
-                        account.id
-                    )
-                    manifestRaw = manifest
-                    setCachedManifest(addon.transportUrl, manifestRaw)
+                    try {
+                        const { manifest } = await apiFetchAddonManifest(
+                            addon.transportUrl,
+                            account.id
+                        )
+                        manifestRaw = manifest
+                        setCachedManifest(addon.transportUrl, manifestRaw)
+                    } catch (err) {
+                        recordManifestFetchFailure(addon.transportUrl)
+                        throw err
+                    }
                 }
 
                 const metadata = { ...(addon.metadata || {}) }
@@ -352,6 +361,8 @@ export async function syncAllAccounts(silent = false) {
     _syncAllRunning = true
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { _syncAllRunning = false; return }
     if (!useAuthStore.getState().encryptionKey) { _syncAllRunning = false; return }
+
+    await hydrateManifestCache()
 
     store.setState({ error: null })
     const accounts = store.getState().accounts

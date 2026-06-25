@@ -635,6 +635,7 @@ export function BatchOperationsDialog({
   const [replaceWithText, setReplaceWithText] = useState<string>('')
   const [sourceAccountId, setSourceAccountId] = useState<string>('')
   const [overwriteClone, setOverwriteClone] = useState(false)
+  const [mirrorAutopilot, setMirrorAutopilot] = useState(false)
   const [showProtected, setShowProtected] = useState(true)
 
   const [installMode, setInstallMode] = useState<'profile' | 'tag'>('profile')
@@ -1582,6 +1583,33 @@ export function BatchOperationsDialog({
         }
       }
 
+      if (action === 'clone-account' && mirrorAutopilot && sourceAccountId) {
+        const clonedTargetIds = workerResults
+          .filter(wr => !wr.cancelled && wr.result && !wr.error)
+          .map(wr => wr.targetId)
+          .filter((id): id is string => !!id)
+        if (clonedTargetIds.length > 0) {
+          try {
+            const { useFailoverStore } = await import('@/store/failoverStore')
+            const { toast } = await import('@/hooks/use-toast')
+            const { mirrored, skipped } = await useFailoverStore.getState().mirrorRulesToAccounts(sourceAccountId, clonedTargetIds)
+            if (mirrored > 0) {
+              toast({
+                title: 'Autopilot rules mirrored',
+                description: `${mirrored} rule${mirrored !== 1 ? 's' : ''} copied${skipped > 0 ? `, ${skipped} skipped` : ''}.`,
+              })
+            } else if (skipped > 0) {
+              toast({
+                title: 'No Autopilot rules mirrored',
+                description: `${skipped} rule${skipped !== 1 ? 's' : ''} skipped (already present, or target has no Stremio login).`,
+              })
+            }
+          } catch (e) {
+            if (import.meta.env.DEV) console.error('[Batch] Autopilot mirror failed:', e)
+          }
+        }
+      }
+
       const processed = aggregate.success + aggregate.failed
       const wasCancelled = cancelRequestedRef.current && processed < targets.length
 
@@ -2070,6 +2098,21 @@ export function BatchOperationsDialog({
                         checked={overwriteClone}
                         onCheckedChange={setOverwriteClone}
                         className="data-[state=checked]:bg-destructive"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="mirror-autopilot" className="text-sm font-semibold">Also mirror Autopilot rules</Label>
+                        <p className="text-xs text-muted-foreground leading-relaxed pr-8">
+                          Recreates the source account's Stremio Autopilot rules on each target, bound to its own login; active rules begin monitoring immediately. Connection-bound rules are skipped, and targets that already have a matching rule are left untouched.
+                        </p>
+                      </div>
+                      <Switch
+                        id="mirror-autopilot"
+                        aria-label="Also mirror Autopilot rules"
+                        checked={mirrorAutopilot}
+                        onCheckedChange={setMirrorAutopilot}
                       />
                     </div>
                   </>

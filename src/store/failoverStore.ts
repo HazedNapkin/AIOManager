@@ -79,6 +79,7 @@ interface FailoverStore {
     replaceUrlInRules: (oldUrl: string, newUrl: string, accountId?: string) => Promise<void>
     toggleAllRulesForAccount: (accountId: string, isActive: boolean) => Promise<void>
     toggleAllRulesForAccounts: (isActive: boolean) => Promise<void>
+    mirrorRulesToAccounts: (sourceAccountId: string, targetAccountIds: string[]) => Promise<{ mirrored: number; skipped: number }>
     deleteProfileRules: (accountId: string, profileId: string) => Promise<void>
     awakenProfileRules: (accountId: string, rules: FailoverRule[]) => Promise<void>
     pruneServerRulesToActive: (accountId: string, activeRuleIds: string[]) => Promise<void>
@@ -1251,6 +1252,60 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         }
 
         triggerSync()
+    },
+
+    mirrorRulesToAccounts: async (sourceAccountId, targetAccountIds) => {
+        const accounts = useAccountStore.getState().accounts
+        const sourceRules = get().rules.filter(r =>
+            r.accountId === sourceAccountId &&
+            !r.connectionId &&
+            (!r.platform || r.platform === 'stremio') &&
+            r.priorityChain.length > 0
+        )
+        if (sourceRules.length === 0) return { mirrored: 0, skipped: 0 }
+
+        const chainKey = (chain: string[]) => JSON.stringify(chain.map(normalizeAddonUrl))
+        const created: FailoverRule[] = []
+        let skipped = 0
+
+        for (const targetId of targetAccountIds) {
+            if (targetId === sourceAccountId) continue
+            const targetAccount = accounts.find(a => a.id === targetId)
+            if (!targetAccount || !getStremioAuthKey(targetAccount)) { skipped += sourceRules.length; continue }
+
+            const existingKeys = new Set(
+                get().rules.filter(r => r.accountId === targetId).map(r => chainKey(r.priorityChain))
+            )
+            for (const rule of sourceRules) {
+                const key = chainKey(rule.priorityChain)
+                if (existingKeys.has(key)) { skipped++; continue }
+                existingKeys.add(key)
+                created.push({
+                    id: crypto.randomUUID(),
+                    accountId: targetId,
+                    name: rule.name,
+                    priorityChain: [...rule.priorityChain],
+                    isActive: rule.isActive,
+                    isAutomatic: rule.isAutomatic,
+                    status: 'idle',
+                    activeUrl: rule.priorityChain[0],
+                    cooldown_ms: rule.cooldown_ms,
+                    webhookUrl: rule.webhookUrl,
+                    notifyEnabled: rule.notifyEnabled,
+                    messageTemplate: rule.messageTemplate,
+                    platform: 'stremio',
+                })
+            }
+        }
+
+        if (created.length === 0) return { mirrored: 0, skipped }
+
+        const next = [...get().rules, ...created]
+        set({ rules: next })
+        await localforage.setItem(STORAGE_KEY, next)
+        await syncRulesToServerBatch(created)
+        triggerSync()
+        return { mirrored: created.length, skipped }
     },
 
     deleteProfileRules: async (accountId: string, _profileId: string) => {

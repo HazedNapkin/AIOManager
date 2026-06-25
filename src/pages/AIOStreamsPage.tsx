@@ -98,6 +98,7 @@ export function AIOStreamsPage() {
                     accountId: acc.id,
                     accountName: acc.name || getAccountEmail(acc) || acc.id,
                     addonName: a.metadata?.customName || a.manifest.name || 'AIOStreams',
+                    transportUrl: a.transportUrl,
                     baseUrl: p.baseUrl,
                     uuid: p.uuid,
                     logo: a.metadata?.customLogo || a.manifest.logo,
