@@ -320,11 +320,11 @@ export function ReplaySharePage() {
                 <div style={{ padding: '80px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <div style={{ fontFamily: '"Inter", monospace', fontSize: '9px', fontWeight: 700, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'rgba(99,102,241,0.8)' }}>✦ Want your own Replay?</div>
                     <div style={{ fontFamily: '"Inter", sans-serif', fontSize: 'clamp(28px, 5vw, 48px)', fontWeight: 700, letterSpacing: '-0.03em', color: 'white', lineHeight: 1.1 }}>
-                        Manage your Stremio.<br />
+                        Manage your streaming.<br />
                         <span style={{ background: 'linear-gradient(135deg, #818cf8, #f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Your way.</span>
                     </div>
                     <p style={{ fontFamily: '"Inter", sans-serif', fontSize: '16px', color: 'rgba(255,255,255,0.5)', maxWidth: '400px', lineHeight: 1.6 }}>
-                        AIOManager is a free, open-source tool for managing your Stremio accounts, addons, and watch history.
+                        AIOManager is a free, open-source tool for managing your streaming accounts, addons, and watch history.
                     </p>
                     <a href="https://github.com/Sonicx161/AIOManager" target="_blank" rel="noopener noreferrer" style={{ marginTop: '8px', fontFamily: '"Inter", sans-serif', fontSize: '15px', fontWeight: 700, color: 'white', textDecoration: 'none', background: 'linear-gradient(135deg, rgba(99,102,241,0.8), rgba(244,114,182,0.8))', borderRadius: '999px', padding: '14px 32px', boxShadow: '0 8px 32px rgba(99,102,241,0.3)' }}>
                         Get AIOManager →

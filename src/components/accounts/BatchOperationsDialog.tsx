@@ -2105,7 +2105,7 @@ export function BatchOperationsDialog({
                       <div className="space-y-0.5">
                         <Label htmlFor="mirror-autopilot" className="text-sm font-semibold">Also mirror Autopilot rules</Label>
                         <p className="text-xs text-muted-foreground leading-relaxed pr-8">
-                          Recreates the source account's Stremio Autopilot rules on each target, bound to its own login; active rules begin monitoring immediately. Connection-bound rules are skipped, and targets that already have a matching rule are left untouched.
+                          Recreates the source account's Autopilot rules on each target, bound to its own login; active rules begin monitoring immediately. Connection-bound rules are skipped, and targets that already have a matching rule are left untouched.
                         </p>
                       </div>
                       <Switch

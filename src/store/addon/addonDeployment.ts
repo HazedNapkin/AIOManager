@@ -22,6 +22,7 @@ import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
 import { getStremioAuthKey } from '@/lib/account-compat'
+import { reconcileTombstones } from '@/lib/addon-tombstones'
 
 type StoreRef = { getState: () => AddonStore; setState: (partial: Partial<AddonStore> | ((state: AddonStore) => Partial<AddonStore>)) => void }
 
@@ -34,6 +35,16 @@ const getEncryptionKey = () => {
   const key = useAuthStore.getState().encryptionKey
   if (!key) throw new Error('App is locked')
   return key
+}
+
+function updateActiveProfile(account: Account, updatedAddons: AddonDescriptor[]): Account {
+  if (!account.activeProfileId || !account.profiles) return account
+  return {
+    ...account,
+    profiles: account.profiles.map((p) =>
+      p.id === account.activeProfileId ? { ...p, addons: updatedAddons } : p
+    ),
+  }
 }
 
 const SAVED_ADDON_ACCOUNT_CONCURRENCY = 5
@@ -221,6 +232,8 @@ export async function applySavedAddonToAccount(
     )
 
     await updateAddons(authKey, updatedAddons, accountId)
+    const { pushToConnections } = await import('../account/accountAddonOps')
+    pushToConnections(accountId).catch(() => {})
 
     const library = { ...useAddonStore.getState().library }
     library[savedAddonId] = { ...savedAddon, lastUsed: new Date() }
@@ -276,6 +289,8 @@ export async function applyTagToAccount(
     )
 
     await updateAddons(authKey, updatedAddons, accountId)
+    const { pushToConnections } = await import('../account/accountAddonOps')
+    pushToConnections(accountId).catch(() => {})
 
     const library = { ...useAddonStore.getState().library }
     savedAddons.forEach((savedAddon) => {
@@ -362,7 +377,8 @@ export async function bulkApplySavedAddons(
           const state = useAccountStore.getState()
           const localAccount = state.accounts.find(a => a.id === accountId)
           if (localAccount) {
-            const updatedAccount = { ...localAccount, addons: updatedAddons, lastSync: new Date() }
+            let updatedAccount: Account = { ...localAccount, addons: updatedAddons, deletedAddons: reconcileTombstones(localAccount.deletedAddons, updatedAddons), lastSync: new Date() }
+            updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
             useAccountStore.setState({
               accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
             })
@@ -374,6 +390,8 @@ export async function bulkApplySavedAddons(
           }
         } else {
           await updateAddons(authKey, updatedAddons, accountId)
+          const { pushToConnections } = await import('../account/accountAddonOps')
+          pushToConnections(accountId).catch(() => {})
         }
 
         result.success++
@@ -740,14 +758,11 @@ export async function bulkReinstallAddons(
 
     const workerResults = await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
-        if (!accountAuthKey) {
-          return { success: 0, failed: 0 }
-        }
-        const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
-        const currentAddons = await getAddons(authKey, accountId)
-
         const { useAccountStore } = await import('@/store/accountStore')
-        const localAddons = useAccountStore.getState().accounts.find(a => a.id === accountId)?.addons || []
+        const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+        const localAddons = account?.addons || []
+        const authKey = accountAuthKey ? await getCachedAuthKey(accountAuthKey, getEncryptionKey()) : ''
+        const currentAddons = accountAuthKey ? await getAddons(authKey, accountId) : localAddons
         const localByUrl = new Map(localAddons.map(a => [normalizeAddonUrl(a.transportUrl), a]))
         const remoteUrls = new Set(currentAddons.map(a => normalizeAddonUrl(a.transportUrl)))
         const currentAddonsWithLocalMeta = currentAddons.map(remote => {
@@ -870,10 +885,13 @@ export async function bulkReinstallAddons(
           }
         }
 
-        if (needsRemotePush) {
+        if (needsRemotePush && accountAuthKey) {
           if (import.meta.env.DEV) console.log(`[Bulk] Pushing batched updates for account ${accountId} (${updateResults.length} addons)`)
           await updateAddons(authKey, targetCollection, accountId)
         }
+
+        const { pushToConnections } = await import('../account/accountAddonOps')
+        pushToConnections(accountId).catch(() => {})
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, targetCollection)
 
@@ -1020,8 +1038,20 @@ export async function bulkInstallFromUrls(
 
     const workerResults = await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
-        const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
-        const currentAddons = await getAddons(authKey, accountId)
+        const { useAccountStore } = await import('../accountStore')
+        const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && c.platform !== 'stremio')
+        const isLocalAccount = !accountAuthKey
+        const isConnectedNonStremio = isLocalAccount && hasNonStremioConnections
+        let currentAddons: AddonDescriptor[]
+        let authKey = ''
+
+        if (isLocalAccount) {
+          currentAddons = account?.addons || []
+        } else {
+          authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+          currentAddons = await getAddons(authKey, accountId)
+        }
 
         const updatedAddons = [...currentAddons]
         const mergeResultDetails: MergeResult = {
@@ -1074,7 +1104,27 @@ export async function bulkInstallFromUrls(
         }
 
         const dedupedAddons = dedupeAddonsByTransportUrl(updatedAddons)
-        await updateAddons(authKey, dedupedAddons, accountId)
+
+        if (isLocalAccount) {
+          const state = useAccountStore.getState()
+          const localAccount = state.accounts.find(a => a.id === accountId)
+          if (localAccount) {
+            let updatedAccount: Account = { ...localAccount, addons: dedupedAddons, deletedAddons: reconcileTombstones(localAccount.deletedAddons, dedupedAddons), lastSync: new Date() }
+            updatedAccount = updateActiveProfile(updatedAccount, dedupedAddons)
+            useAccountStore.setState({
+              accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
+            })
+            persistAccounts(useAccountStore.getState().accounts)
+          }
+          if (isConnectedNonStremio) {
+            const { pushToConnections } = await import('../account/accountAddonOps')
+            pushToConnections(accountId).catch(err => { if (import.meta.env.DEV) console.error('Failed to push to connections:', err) })
+          }
+        } else {
+          await updateAddons(authKey, dedupedAddons, accountId)
+          const { pushToConnections } = await import('../account/accountAddonOps')
+          pushToConnections(accountId).catch(() => {})
+        }
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, dedupedAddons)
         return { success: 1, failed: 0, detail: { accountId, result: mergeResultDetails } }
@@ -1133,10 +1183,12 @@ export async function bulkCloneAccount(
       if (accountId === sourceAccount.id) return { success: 0, failed: 0 }
 
       try {
-        const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+        const isLocalAccount = !accountAuthKey
 
         const localTargetAccount = useAccountStore.getState().accounts.find(a => a.id === accountId)
-        const targetAddons = localTargetAccount ? localTargetAccount.addons : await getAddons(authKey, accountId)
+        const targetAddons = isLocalAccount
+          ? (localTargetAccount?.addons || [])
+          : (localTargetAccount ? localTargetAccount.addons : await getAddons(await getCachedAuthKey(accountAuthKey, getEncryptionKey()), accountId))
 
         let newAddons: AddonDescriptor[] = []
 
@@ -1240,10 +1292,12 @@ export async function bulkSyncOrder(
       if (accountId === sourceAccountId) return { success: 0, failed: 0, changed: false }
 
       try {
-        const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
+        const isLocalAccount = !accountAuthKey
 
         const localTarget = useAccountStore.getState().accounts.find(a => a.id === accountId)
-        const targetAddons = localTarget ? localTarget.addons : await getAddons(authKey, accountId)
+        const targetAddons = isLocalAccount
+          ? (localTarget?.addons || [])
+          : (localTarget ? localTarget.addons : await getAddons(await getCachedAuthKey(accountAuthKey, getEncryptionKey()), accountId))
 
         const reorderedTargetAddons: AddonDescriptor[] = []
         let remainingTargetAddons = [...targetAddons]

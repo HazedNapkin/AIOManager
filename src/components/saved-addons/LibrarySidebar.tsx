@@ -253,13 +253,57 @@ export function LibrarySidebar({
           <div className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
             <div className="mb-1 flex items-center justify-between px-2 py-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Profiles</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowProfileReorderDialog(true)}
+                  disabled={profiles.length === 0}
+                  aria-label="Reorder profiles"
+                >
+                  <GripVertical className="h-3.5 w-3.5" />
+                </Button>
+                <ProfileDialog trigger={
+                  <Button variant="ghost" size="icon" className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground" aria-label="Create profile">
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                } />
+              </div>
             </div>
             {renderProfileFilters(true)}
+            {profiles.length > 0 && (
+              <div className="mt-1 space-y-0.5 border-t border-border/30 pt-1">
+                {profiles.map(profile => (
+                  <div key={profile.id} className="flex items-center gap-1">
+                    <span className="flex-1 truncate px-2 py-1 text-xs text-muted-foreground">{profile.name}</span>
+                    <ProfileDialog
+                      profile={profile}
+                      onDelete={onDeleteProfile}
+                      trigger={
+                        <Button variant="ghost" size="icon" className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground" aria-label="Edit profile">
+                          <AnimatedSettingsIcon className="h-3 w-3" />
+                        </Button>
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           {allTags.length > 0 && (
             <div className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
-              <div className="mb-1 px-2 py-1.5">
+              <div className="mb-1 flex items-center justify-between px-2 py-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground"
+                  onClick={onManageTags}
+                  aria-label="Manage tags"
+                >
+                  <AnimatedSettingsIcon className="h-3.5 w-3.5" />
+                </Button>
               </div>
               {renderTagFilters(true)}
             </div>

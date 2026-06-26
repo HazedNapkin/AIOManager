@@ -94,10 +94,6 @@ function savePrefs(prefs: DiscoverPrefs) {
   }
 }
 
-function normalizeCategoryKey(s: string): string {
-  return s.toLowerCase().replace(/s$/, '')
-}
-
 export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const { toast } = useToast()
   const library = useAddonStore((state) => state.library)
@@ -137,7 +133,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [storeReloadKey, setStoreReloadKey] = useState(0)
   const [categories, setCategories] = useState<DiscoverCategory[]>([])
   const [categoryShelves, setCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
-  const [userCategoryShelves, setUserCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
 
   const [addons, setAddons] = useState<DiscoverAddon[]>([])
   const [page, setPage] = useState(1)
@@ -188,28 +183,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   const categoryKey = selectedCategories.join(',')
 
-  const userCategories = useMemo<DiscoverCategory[]>(() => {
-    if (categories.length === 0) return []
-    const counts = new Map<string, number>()
-    const libraryList = Object.values(library)
-    for (const category of categories) {
-      const key = normalizeCategoryKey(category.slug)
-      let n = 0
-      for (const addon of libraryList) {
-        const types = Array.isArray(addon.manifest?.types) ? addon.manifest.types : []
-        if (types.some((t) => typeof t === 'string' && normalizeCategoryKey(t) === key)) n++
-      }
-      if (n > 0) counts.set(category.slug, n)
-    }
-    return categories
-      .filter((c) => counts.has(c.slug))
-      .sort((a, b) => (counts.get(b.slug) ?? 0) - (counts.get(a.slug) ?? 0))
-      .slice(0, 3)
-  }, [library, categories])
-
-  const userCategorySlugs = useMemo(() => new Set(userCategories.map((c) => c.slug)), [userCategories])
-  const userCategoryKey = userCategories.map((c) => c.slug).join(',')
-
   useEffect(() => {
     savePrefs({ sortBy, showAdult, selectedCategories, compact, viewMode })
   }, [sortBy, showAdult, selectedCategories, compact, viewMode])
@@ -228,7 +201,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     if (categories.length === 0) return
     const ac = new AbortController()
     const nsfw = showAdult ? undefined : 'exclude'
-    const picks = categories.filter((c) => !userCategorySlugs.has(c.slug)).slice(0, 6)
+    const picks = categories.slice(0, 6)
     Promise.all(
       picks.map((category) =>
         fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal)
@@ -239,25 +212,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
       if (!ac.signal.aborted) setCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
     })
     return () => ac.abort()
-  }, [categories, showAdult, userCategorySlugs])
-
-  useEffect(() => {
-    if (userCategories.length === 0) { setUserCategoryShelves([]); return }
-    const ac = new AbortController()
-    const nsfw = showAdult ? undefined : 'exclude'
-    const picks = userCategories
-    Promise.all(
-      picks.map((category) =>
-        fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal)
-          .then((res) => ({ category, addons: res.addons }))
-          .catch(() => ({ category, addons: [] as DiscoverAddon[] }))
-      )
-    ).then((shelves) => {
-      if (!ac.signal.aborted) setUserCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
-    })
-    return () => ac.abort()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userCategoryKey, showAdult])
+  }, [categories, showAdult])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -599,30 +554,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
       {!gridMode && (
         <>
-          {newSinceVisit.length > 0 && (
-            <DiscoverRow
-              title="New Since Your Last Visit"
-              icon={<Clock className="h-4 w-4 text-primary" />}
-              addons={newSinceVisit}
-              isSaved={isSaved}
-              savingKey={savingKey}
-              onSeeAll={() => seeAll('createdAt')}
-              isFavorite={isFavorite}
-              {...cardCallbacks}
-            />
-          )}
-          {favorites.length > 0 && (
-            <DiscoverRow
-              title="Favorites"
-              icon={<Heart className="h-4 w-4 fill-primary text-primary" />}
-              addons={favorites}
-              isSaved={isSaved}
-              savingKey={savingKey}
-              isFavorite={isFavorite}
-              {...cardCallbacks}
-            />
-          )}
-
           {storeLoading && (
             <>
               <Skeleton className="h-56 w-full rounded-xl" />
@@ -655,21 +586,32 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
             />
           )}
 
+          {newSinceVisit.length > 0 && (
+            <DiscoverRow
+              title="New Since Your Last Visit"
+              icon={<Clock className="h-4 w-4 text-primary" />}
+              addons={newSinceVisit}
+              isSaved={isSaved}
+              savingKey={savingKey}
+              onSeeAll={() => seeAll('createdAt')}
+              isFavorite={isFavorite}
+              {...cardCallbacks}
+            />
+          )}
+          {favorites.length > 0 && (
+            <DiscoverRow
+              title="Favorites"
+              icon={<Heart className="h-4 w-4 fill-primary text-primary" />}
+              addons={favorites}
+              isSaved={isSaved}
+              savingKey={savingKey}
+              isFavorite={isFavorite}
+              {...cardCallbacks}
+            />
+          )}
+
           {!storeLoading && !storeError && (
             <>
-              {userCategoryShelves.map(({ category, addons: shelf }) => (
-                <DiscoverRow
-                  key={`user-${category.slug}`}
-                  title={`Your ${category.name}`}
-                  icon={<Sparkles className="h-4 w-4 text-primary" />}
-                  addons={shelf}
-                  isSaved={isSaved}
-                  savingKey={savingKey}
-                  onSeeAll={() => seeAllCategory(category.slug)}
-                  isFavorite={isFavorite}
-                  {...cardCallbacks}
-                />
-              ))}
               <DiscoverRow
                 title="Trending This Week"
                 icon={<Flame className="h-4 w-4 text-warning" />}

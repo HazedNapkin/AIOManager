@@ -124,7 +124,7 @@ export function AddonReorderDialog({
         <DialogHeader>
           <DialogTitle>Reorder Addons</DialogTitle>
           <DialogDescription>
-            Drag and drop to reorder your addons. Changes will be saved to Stremio.
+            Drag and drop to reorder your addons. Changes will be saved.
           </DialogDescription>
         </DialogHeader>
 

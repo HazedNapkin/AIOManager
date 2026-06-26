@@ -1,7 +1,7 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { create } from 'zustand'
 import localforage from 'localforage'
-import { useAccountStore, getCachedAuthKey, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, getCachedAuthKey, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { decrypt, encrypt, loadSessionKey } from '@/lib/crypto'
 import { normalizeAddonUrl } from '@/lib/utils'
 import { resilientFetch } from '@/lib/api-resilience'
@@ -32,7 +32,7 @@ export interface FailoverRule {
     lastCheck?: Date
     lastFailover?: Date
     status: 'idle' | 'monitoring' | 'failed-over'
-    activeUrl?: string // Track which one is currently pushed to Stremio
+    activeUrl?: string // Track which one is currently pushed to the platform
     isAutomatic?: boolean
     stabilization?: Record<string, number | AutopilotStabilizationEntry>
     cooldown_ms?: number // Custom webhook cooldown for this rule
@@ -1259,7 +1259,6 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         const sourceRules = get().rules.filter(r =>
             r.accountId === sourceAccountId &&
             !r.connectionId &&
-            (!r.platform || r.platform === 'stremio') &&
             r.priorityChain.length > 0
         )
         if (sourceRules.length === 0) return { mirrored: 0, skipped: 0 }
@@ -1271,7 +1270,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         for (const targetId of targetAccountIds) {
             if (targetId === sourceAccountId) continue
             const targetAccount = accounts.find(a => a.id === targetId)
-            if (!targetAccount || !getStremioAuthKey(targetAccount)) { skipped += sourceRules.length; continue }
+            if (!targetAccount || !hasPlatformConnection(targetAccount)) { skipped += sourceRules.length; continue }
 
             const existingKeys = new Set(
                 get().rules.filter(r => r.accountId === targetId).map(r => chainKey(r.priorityChain))
@@ -1293,7 +1292,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                     webhookUrl: rule.webhookUrl,
                     notifyEnabled: rule.notifyEnabled,
                     messageTemplate: rule.messageTemplate,
-                    platform: 'stremio',
+                    platform: rule.platform || 'stremio',
                 })
             }
         }

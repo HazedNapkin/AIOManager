@@ -769,7 +769,7 @@ export function DemoAccountActions() {
             icon: RotateCw,
             label: 'Refresh Addons',
             color: 'text-primary',
-            desc: 'Re-fetches each manifest and pushes updates to Stremio. Your custom names and logos are preserved.',
+            desc: 'Re-fetches each manifest and pushes updates to your connected platforms. Your custom names and logos are preserved.',
         },
     ]
 

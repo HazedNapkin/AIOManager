@@ -90,6 +90,7 @@
 
   html {
     scrollbar-width: none;
+    overflow-x: clip;
   }
 
   html::-webkit-scrollbar {
@@ -102,6 +103,7 @@
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
+    overflow-x: clip;
 
     /* Subtle radial gradient for depth - theme aware */
     background-image: radial-gradient(ellipse 80% 60% at 50% -20%,
@@ -145,8 +147,6 @@
   .noise-overlay {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
     pointer-events: none;
     z-index: 1;
     opacity: 0.03;
@@ -156,8 +156,6 @@
   .vignette-overlay {
     position: fixed;
     inset: 0;
-    width: 100vw;
-    height: 100vh;
     pointer-events: none;
     z-index: 1;
     background: radial-gradient(circle at center, transparent 0%, color-mix(in srgb, hsl(var(--background)) 70%, transparent) 60%, color-mix(in srgb, hsl(var(--background)) 85%, transparent) 100%);

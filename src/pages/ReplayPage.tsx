@@ -539,7 +539,7 @@ export function ReplayPage() {
                     </div>
                     <h1 className="text-3xl font-bold text-white tracking-tighter uppercase">No History Found</h1>
                     <p className="text-white/40 mt-2 font-bold max-w-sm mb-12">
-                        We couldn't find any watch history for your accounts. Start watching something on Stremio to see your Replay!
+                        We couldn't find any watch history for your accounts. Start watching something to see your Replay!
                     </p>
                     <button
                         onClick={() => navigate('/metrics')}
