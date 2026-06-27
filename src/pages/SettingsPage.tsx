@@ -43,6 +43,8 @@ import { SyncSummarySection } from '@/components/settings/SyncSummarySection'
 import { NotificationsSection } from '@/components/settings/NotificationsSection'
 import { ThemeSection } from '@/components/settings/ThemeSection'
 import { DangerZone } from '@/components/settings/DangerZone'
+import { InstallAppCard } from '@/components/settings/InstallAppCard'
+import { RepairTools } from '@/components/settings/RepairTools'
 
 type ImportPreview = {
     fileName: string
@@ -373,6 +375,8 @@ export function SettingsPage() {
                         <div className="grid gap-4 sm:gap-6">
                             <AccountSection />
 
+                            <InstallAppCard />
+
                             <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -464,6 +468,7 @@ export function SettingsPage() {
                     {/* Advanced Tab */}
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
                         <NotificationsSection />
+                        <RepairTools />
                         <SyncDiagnostics />
                         <DangerZone />
                     </TabsContent>

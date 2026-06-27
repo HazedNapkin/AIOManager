@@ -7,8 +7,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import {
     History,
-    ChevronDown,
-    ChevronRight,
     CloudUpload,
     CloudDownload,
     AlertCircle,
@@ -68,7 +66,6 @@ export function SyncDiagnostics() {
     const history = useSyncStore(s => s.history)
     const forcePushState = useSyncStore(s => s.forcePushState)
     const forceMirrorState = useSyncStore(s => s.forceMirrorState)
-    const [isExpanded, setIsExpanded] = React.useState(false)
     const [showPushConfirm, setShowPushConfirm] = React.useState(false)
     const [showMirrorConfirm, setShowMirrorConfirm] = React.useState(false)
     const [isActionLoading, setIsActionLoading] = React.useState(false)
@@ -119,25 +116,18 @@ export function SyncDiagnostics() {
 
     return (
         <div className="overflow-hidden rounded-[1.75rem] border border-border/45 bg-card/80 shadow-sm">
-            <div
-                className="flex cursor-pointer items-center justify-between gap-3 p-4 transition-colors hover:bg-muted/25"
-                onClick={() => setIsExpanded(!isExpanded)}
-            >
-                <div className="flex items-center gap-3">
-                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                        <SquircleOverlay />
-                        <History className="relative z-10 h-4 w-4 text-muted-foreground" />
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-semibold">Advanced Cloud Sync Diagnostics</h3>
-                        <p className="text-xs text-muted-foreground">History logs and manual overrides</p>
-                    </div>
+            <div className="flex items-center gap-3 p-4">
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                    <SquircleOverlay />
+                    <History className="relative z-10 h-4 w-4 text-muted-foreground" />
                 </div>
-                {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                <div>
+                    <h3 className="text-sm font-semibold">Advanced Cloud Sync Diagnostics</h3>
+                    <p className="text-xs text-muted-foreground">History logs and manual overrides</p>
+                </div>
             </div>
 
-            {isExpanded && (
-                <div className="space-y-6 border-t border-border/40 p-4 pt-4 animate-in slide-in-from-top-2 duration-200">
+            <div className="space-y-6 border-t border-border/40 p-4 pt-4">
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                         <DiagnosticStat
                             icon={<Server className="h-3.5 w-3.5" />}
@@ -247,7 +237,6 @@ export function SyncDiagnostics() {
                         </ScrollArea>
                     </div>
                 </div>
-            )}
 
 
             <ConfirmationDialog

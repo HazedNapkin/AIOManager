@@ -37,7 +37,7 @@ export const SortableProfileItem = React.memo(function SortableProfileItem({ id,
                 isDragging && `shadow-xl z-50 border-primary scale-[1.02] ring-2 ${isLight ? 'ring-primary/20' : 'ring-primary/8'}`,
                 !isDragging && 'shadow-sm'
             )}
-            style={{ ...style, touchAction: 'none' }}
+            style={style}
         >
             <Tooltip content="Drag to reorder" side="top">
             <div

@@ -232,6 +232,11 @@ function nuvioUniqueId(contentId: string, season?: number | null, episode?: numb
     return contentId
 }
 
+function stripNuvioEpisodeTag(title: string, episode?: number | null): string {
+    if (episode == null) return title
+    return title.replace(/[\s-]*s\d{1,3}\s*e\d{1,3}\s*$/i, '').trim()
+}
+
 export function nuvioProgressKey(contentId: string, season?: number | null, episode?: number | null): string {
     if (episode != null) return `${contentId}_s${season ?? 1}e${episode}`
     return contentId
@@ -248,7 +253,7 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const watchedAt = Number(row.watched_at) || Date.now()
-    let name = row.title || ''
+    let name = stripNuvioEpisodeTag(row.title || '', row.episode)
     let poster = ''
     let genres: string[] | undefined
     if (!name.trim()) {
@@ -292,7 +297,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const position = Number(row.position) || 0
     const progress = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
     const lastWatched = Number(row.last_watched) || Date.now()
-    let name = titleHint?.trim() || ''
+    let name = stripNuvioEpisodeTag(titleHint?.trim() || '', row.episode)
     let poster = ''
     let genres: string[] | undefined
     if (!name) {

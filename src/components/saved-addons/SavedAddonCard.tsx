@@ -1,5 +1,5 @@
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useLongPress } from '@/hooks/useLongPress'
 import {
   DropdownMenu,
@@ -378,11 +378,14 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
       </div>
 
       <Dialog open={showDetails} onOpenChange={setShowDetails}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Edit Saved Addon</DialogTitle>
+            <DialogDescription>
+              Customize how this saved addon appears and where it lives in your library.
+            </DialogDescription>
           </DialogHeader>
-          <SavedAddonDetails savedAddon={savedAddon} onClose={() => setShowDetails(false)} />
+          <SavedAddonDetails savedAddon={savedAddon} deployedAccounts={deployedAccounts} onClose={() => setShowDetails(false)} />
         </DialogContent>
       </Dialog>
 
