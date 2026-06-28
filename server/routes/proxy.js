@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { AIOSTREAMS_USER_API_THROTTLE_MS, VERSION } from '../config.js'
+import { AIOSTREAMS_USER_API_THROTTLE_MS, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
 import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
@@ -8,6 +8,50 @@ import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.
 export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     const manifestCache = new Map()
     const MANIFEST_CACHE_TTL = 600000 // 10 minutes
+
+    const imageCache = new Map()
+    const imageInflight = new Map()
+    let imageCacheBytes = 0
+
+    const normalizeImageKey = (rawUrl) => {
+        try {
+            const u = new URL(rawUrl)
+            if (u.hostname === 'live.metahub.space' || u.hostname === 'images.metahub.space') {
+                u.hostname = 'images.metahub.space'
+            }
+            return u.href
+        } catch {
+            return rawUrl
+        }
+    }
+
+    const imageCacheGet = (key) => {
+        const hit = imageCache.get(key)
+        if (!hit) return null
+        if (hit.expires <= Date.now()) {
+            imageCache.delete(key)
+            imageCacheBytes -= hit.bytes
+            return null
+        }
+        imageCache.delete(key)
+        imageCache.set(key, hit)
+        return hit
+    }
+
+    const imageCacheSet = (key, buffer, contentType) => {
+        if (IMAGE_CACHE_MAX_BYTES <= 0 || buffer.length > IMAGE_CACHE_MAX_ITEM_BYTES) return
+        const existing = imageCache.get(key)
+        if (existing) { imageCache.delete(key); imageCacheBytes -= existing.bytes }
+        const entry = { buffer, contentType, expires: Date.now() + IMAGE_CACHE_TTL_MS, bytes: buffer.length }
+        imageCache.set(key, entry)
+        imageCacheBytes += entry.bytes
+        while (imageCacheBytes > IMAGE_CACHE_MAX_BYTES && imageCache.size > 0) {
+            const oldestKey = imageCache.keys().next().value
+            const oldest = imageCache.get(oldestKey)
+            imageCache.delete(oldestKey)
+            imageCacheBytes -= oldest.bytes
+        }
+    }
     const lastGoodAddonCollections = new Map()
     const MAX_TRACKED_COLLECTIONS = 2500
     const MAX_ADDON_COLLECTION_SIZE = 250
@@ -347,6 +391,8 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const ALLOWED_IMAGE_DOMAINS = ['metahub.space', 'strem.io']
         const { url: rawUrl } = request.query
 
+        const isAllowedImageHost = (host) => ALLOWED_IMAGE_DOMAINS.some(domain => host === domain || host.endsWith('.' + domain))
+
         let parsedHost
         try {
             parsedHost = new URL(rawUrl).hostname
@@ -355,91 +401,116 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             return { error: 'Invalid URL' }
         }
 
-        if (!ALLOWED_IMAGE_DOMAINS.some(domain => parsedHost === domain || parsedHost.endsWith('.' + domain))) {
+        if (!isAllowedImageHost(parsedHost)) {
             reply.status(403)
             return { error: 'Domain not allowed' }
         }
 
-        if (!(await isSafeUrlResolved(rawUrl))) {
-            reply.status(403);
-            return { error: 'Access Denied: Unsafe URL' }
+        let candidates = [rawUrl]
+        if (parsedHost === 'live.metahub.space' || parsedHost === 'images.metahub.space') {
+            const primary = new URL(rawUrl); primary.hostname = 'images.metahub.space'
+            const secondary = new URL(rawUrl); secondary.hostname = 'live.metahub.space'
+            candidates = [primary.href, secondary.href]
         }
 
-        try {
+        const fetchImage = async (startUrl) => {
             const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 10000)
+            const timeout = setTimeout(() => controller.abort(), IMAGE_PROXY_TIMEOUT_MS)
+            try {
+                let currentUrl = startUrl
+                let response
+                const MAX_REDIRECTS = 3
 
-            let currentUrl = rawUrl
-            let response
-            const MAX_REDIRECTS = 3
-
-            for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-                response = await enqueueProxyRequest(currentUrl, async () => {
-                    return fetch(currentUrl, {
-                        signal: controller.signal,
-                        redirect: 'manual',
-                        headers: {
-                            'User-Agent': `AIOManager/${VERSION} (Image Proxy)`,
-                            'Accept': 'image/*'
-                        }
-                    })
-                })
-
-                if (response.status >= 300 && response.status < 400) {
-                    const location = response.headers.get('location')
-                    if (!location) {
-                        clearTimeout(timeout)
-                        reply.status(403)
-                        return { error: 'Access Denied: Missing redirect location' }
+                for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+                    if (!(await isSafeUrlResolved(currentUrl))) {
+                        return { error: 'Access Denied: Unsafe URL', status: 403 }
                     }
-                    const resolvedUrl = new URL(location, currentUrl).href
-                    if (!(await isSafeUrlResolved(resolvedUrl))) {
-                        clearTimeout(timeout)
-                        reply.status(403)
-                        return { error: 'Access Denied: Unsafe redirect target' }
+                    response = await enqueueProxyRequest(currentUrl, async () => {
+                        return fetch(currentUrl, {
+                            signal: controller.signal,
+                            redirect: 'manual',
+                            headers: {
+                                'User-Agent': `AIOManager/${VERSION} (Image Proxy)`,
+                                'Accept': 'image/*'
+                            }
+                        })
+                    }, { queueKey: 'image-proxy', maxPerKey: IMAGE_PROXY_QUEUE_LIMIT, throttleMs: IMAGE_PROXY_THROTTLE_MS })
+
+                    if (response.status >= 300 && response.status < 400) {
+                        const location = response.headers.get('location')
+                        if (!location) return { error: 'Missing redirect location', status: 502 }
+                        currentUrl = new URL(location, currentUrl).href
+                        continue
                     }
-                    currentUrl = resolvedUrl
-                    continue
+                    break
                 }
-                break
+
+                if (!response.ok || response.status >= 300) {
+                    return { error: `Upstream returned ${response.status}`, status: 502 }
+                }
+
+                const contentType = response.headers.get('content-type') || ''
+                if (!contentType.startsWith('image/')) {
+                    return { error: 'Not an image', status: 415 }
+                }
+
+                const contentLength = parseInt(response.headers.get('content-length') || '0')
+                if (contentLength > 10 * 1024 * 1024) {
+                    return { error: 'Payload Too Large (>10MB)', status: 413 }
+                }
+
+                const buffer = Buffer.from(await response.arrayBuffer())
+                if (buffer.length > 10 * 1024 * 1024) {
+                    return { error: 'Payload Too Large (>10MB)', status: 413 }
+                }
+
+                return { buffer, contentType }
+            } finally {
+                clearTimeout(timeout)
             }
-
-            clearTimeout(timeout)
-
-            if (!response.ok || response.status >= 300) {
-                reply.status(response.status >= 300 ? 502 : response.status);
-                return { error: `Upstream returned ${response.status}` }
-            }
-
-            const contentType = response.headers.get('content-type') || ''
-            if (!contentType.startsWith('image/')) {
-                reply.status(415)
-                return { error: 'Unsupported Media Type: Not an image' }
-            }
-
-            const contentLength = parseInt(response.headers.get('content-length') || '0')
-            if (contentLength > 10 * 1024 * 1024) {
-                reply.status(413)
-                return { error: 'Payload Too Large (>10MB)' }
-            }
-
-            const arrayBuffer = await response.arrayBuffer()
-            const buffer = Buffer.from(arrayBuffer)
-
-            if (buffer.length > 10 * 1024 * 1024) {
-                reply.status(413)
-                return { error: 'Payload Too Large (>10MB)' }
-            }
-
-            reply.header('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400')
-            reply.type(contentType)
-
-            return buffer
-        } catch (err) {
-            fastify.log.error({ category: 'Proxy' }, `Failed to fetch image proxy ${rawUrl}: ${err.message}`)
-            reply.status(500);
-            return { error: 'Image Proxy Error' }
         }
+
+        const cacheKey = normalizeImageKey(rawUrl)
+        const sendImage = (contentType, buffer, cacheState) => {
+            reply.header('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400')
+            reply.header('X-Image-Cache', cacheState)
+            reply.type(contentType)
+            return buffer
+        }
+
+        const cached = imageCacheGet(cacheKey)
+        if (cached) return sendImage(cached.contentType, cached.buffer, 'HIT')
+
+        let resolution = imageInflight.get(cacheKey)
+        if (!resolution) {
+            resolution = (async () => {
+                let lastFailure = { error: 'Image Proxy Error', status: 502 }
+                for (const candidate of candidates) {
+                    let result
+                    try {
+                        result = await fetchImage(candidate)
+                    } catch (err) {
+                        fastify.log.warn({ category: 'Proxy' }, `Image proxy attempt failed for ${truncateUrl(candidate)}: ${err.message}`)
+                        lastFailure = { error: 'Image Proxy Error', status: 502 }
+                        continue
+                    }
+                    if (result.buffer) {
+                        imageCacheSet(cacheKey, result.buffer, result.contentType)
+                        return result
+                    }
+                    lastFailure = result
+                }
+                return lastFailure
+            })()
+            imageInflight.set(cacheKey, resolution)
+            resolution.finally(() => imageInflight.delete(cacheKey))
+        }
+
+        const result = await resolution
+        if (result.buffer) return sendImage(result.contentType, result.buffer, 'MISS')
+
+        reply.status(result.status)
+        return { error: result.error }
     })
 
     fastify.post('/api/stremio-proxy', {

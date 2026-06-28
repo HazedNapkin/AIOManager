@@ -14,6 +14,12 @@ export const PROXY_CONCURRENCY_LIMIT = parseInt(process.env.PROXY_CONCURRENCY_LI
 export const MAX_QUEUE_SIZE = 500
 export const MAX_QUEUE_PER_KEY = 30
 export const DOMAIN_THROTTLE_MS = 200
+export const IMAGE_PROXY_TIMEOUT_MS = Math.max(1000, parseInt(process.env.IMAGE_PROXY_TIMEOUT_MS || '4000') || 4000)
+export const IMAGE_PROXY_QUEUE_LIMIT = Math.max(MAX_QUEUE_PER_KEY, parseInt(process.env.IMAGE_PROXY_QUEUE_LIMIT || '150') || 150)
+export const IMAGE_PROXY_THROTTLE_MS = Math.max(0, parseInt(process.env.IMAGE_PROXY_THROTTLE_MS || '25', 10) || 25)
+export const IMAGE_CACHE_TTL_MS = Math.max(0, parseInt(process.env.IMAGE_CACHE_TTL_MS || String(24 * 60 * 60 * 1000)) || 0)
+export const IMAGE_CACHE_MAX_BYTES = Math.max(0, parseInt(process.env.IMAGE_CACHE_MAX_BYTES || String(128 * 1024 * 1024)) || 0)
+export const IMAGE_CACHE_MAX_ITEM_BYTES = Math.max(0, parseInt(process.env.IMAGE_CACHE_MAX_ITEM_BYTES || String(512 * 1024)) || 0)
 export const AIOSTREAMS_USER_API_THROTTLE_MS = Math.max(200, parseInt(process.env.AIOSTREAMS_USER_API_THROTTLE_MS || '1000') || 1000)
 export const STREMIO_API = 'https://api.strem.io/api'
 export const isUnifiedEnforcement = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.UNIFIED_ENFORCEMENT || '').toLowerCase())

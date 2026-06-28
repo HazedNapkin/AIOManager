@@ -61,10 +61,10 @@ export const enqueueProxyRequest = (url, task, options = null) => {
         const queueOptions = typeof options === 'string'
             ? { queueKey: options }
             : (options || {})
-        const { queueKey = null, throttleMs = DOMAIN_THROTTLE_MS } = queueOptions
+        const { queueKey = null, throttleMs = DOMAIN_THROTTLE_MS, maxPerKey = MAX_QUEUE_PER_KEY } = queueOptions
         if (queueKey) {
             const current = proxyQueueKeyCounts.get(queueKey) || 0
-            if (current >= MAX_QUEUE_PER_KEY) {
+            if (current >= maxPerKey) {
                 reject(new Error('Too many pending requests. Please try again in a moment.'))
                 return
             }

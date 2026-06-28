@@ -21,6 +21,46 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const RULE_RECHECK_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_RULE_RECHECK_MS || '30000', 10) || 30000)
     const ruleRuntimeState = new Map()
 
+    const RULE_CACHE_MAX_BYTES = Math.max(0, parseInt(process.env.AUTOPILOT_RULE_CACHE_MAX_BYTES || String(256 * 1024 * 1024), 10) || 0)
+    const RULE_CACHE_TTL_MS = Math.max(60000, parseInt(process.env.AUTOPILOT_RULE_CACHE_TTL_MS || '600000', 10) || 600000)
+    const ruleFetchCache = new Map()
+    let ruleFetchCacheBytes = 0
+    const ruleCacheStats = { hits: 0, misses: 0, bytesSaved: 0, windowStart: Date.now() }
+
+    const ruleCacheEntryBytes = (row) =>
+        Buffer.byteLength(row.addon_list || '', 'utf8') +
+        Buffer.byteLength(row.priority_chain || '', 'utf8') +
+        Buffer.byteLength(row.active_url || '', 'utf8')
+
+    const ruleCacheGet = (id, updatedAt) => {
+        if (RULE_CACHE_MAX_BYTES <= 0 || updatedAt == null) return null
+        const hit = ruleFetchCache.get(id)
+        if (!hit || hit.updatedAt !== updatedAt) return null
+        if (hit.expires <= Date.now()) {
+            ruleFetchCache.delete(id)
+            ruleFetchCacheBytes -= hit.bytes
+            return null
+        }
+        ruleFetchCache.delete(id)
+        ruleFetchCache.set(id, hit)
+        return hit
+    }
+
+    const ruleCacheSet = (id, updatedAt, row) => {
+        if (RULE_CACHE_MAX_BYTES <= 0 || updatedAt == null) return
+        const existing = ruleFetchCache.get(id)
+        if (existing) { ruleFetchCache.delete(id); ruleFetchCacheBytes -= existing.bytes }
+        const entry = { updatedAt, row, bytes: ruleCacheEntryBytes(row), expires: Date.now() + RULE_CACHE_TTL_MS }
+        ruleFetchCache.set(id, entry)
+        ruleFetchCacheBytes += entry.bytes
+        while (ruleFetchCacheBytes > RULE_CACHE_MAX_BYTES && ruleFetchCache.size > 0) {
+            const oldest = ruleFetchCache.keys().next().value
+            const o = ruleFetchCache.get(oldest)
+            ruleFetchCache.delete(oldest)
+            ruleFetchCacheBytes -= o.bytes
+        }
+    }
+
     const normalizeAddonUrl = (url) => {
         if (!url) return ''
         let normalized = url.trim()
@@ -110,79 +150,79 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
     const _performHealthCheck = async (url, normalizedUrl, context = 'Autopilot') => {
         try {
-        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        let domain = url
-        try { domain = new URL(url).origin } catch (e) { }
+            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            let domain = url
+            try { domain = new URL(url).origin } catch (e) { }
 
-        const performCheck = async (target, timeoutMs, retries = 1) => {
-            let checkQueueKey = target
-            try { checkQueueKey = new URL(target).origin } catch (e) { }
-            return enqueueProxyRequest(target, async () => {
-                for (let attempt = 0; attempt <= retries; attempt++) {
-                    try {
-                        const controller1 = new AbortController()
-                        const timeout1 = setTimeout(() => controller1.abort(), timeoutMs)
+            const performCheck = async (target, timeoutMs, retries = 1) => {
+                let checkQueueKey = target
+                try { checkQueueKey = new URL(target).origin } catch (e) { }
+                return enqueueProxyRequest(target, async () => {
+                    for (let attempt = 0; attempt <= retries; attempt++) {
+                        try {
+                            const controller1 = new AbortController()
+                            const timeout1 = setTimeout(() => controller1.abort(), timeoutMs)
 
-                        const res1 = await fetch(target, {
-                            method: 'HEAD',
-                            signal: controller1.signal,
-                            redirect: 'manual',
-                            headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
-                        })
-                        clearTimeout(timeout1)
-                        if (res1.ok || res1.status === 405 || res1.status === 401 || res1.status === 403 || (res1.status >= 300 && res1.status < 400)) return true
+                            const res1 = await fetch(target, {
+                                method: 'HEAD',
+                                signal: controller1.signal,
+                                redirect: 'manual',
+                                headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
+                            })
+                            clearTimeout(timeout1)
+                            if (res1.ok || res1.status === 405 || res1.status === 401 || res1.status === 403 || (res1.status >= 300 && res1.status < 400)) return true
 
-                        const controller2 = new AbortController()
-                        const timeout2 = setTimeout(() => controller2.abort(), timeoutMs)
+                            const controller2 = new AbortController()
+                            const timeout2 = setTimeout(() => controller2.abort(), timeoutMs)
 
-                        const res2 = await fetch(target, {
-                            method: 'GET',
-                            signal: controller2.signal,
-                            redirect: 'manual',
-                            headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
-                        })
-                        clearTimeout(timeout2)
-                        if (res2.ok || res2.status === 401 || res2.status === 403 || (res2.status >= 300 && res2.status < 400)) return true
+                            const res2 = await fetch(target, {
+                                method: 'GET',
+                                signal: controller2.signal,
+                                redirect: 'manual',
+                                headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
+                            })
+                            clearTimeout(timeout2)
+                            if (res2.ok || res2.status === 401 || res2.status === 403 || (res2.status >= 300 && res2.status < 400)) return true
 
-                        if (res2.status >= 500 && attempt < retries) continue
-                        return false
-                    } catch (err) {
-                        const isTimeout = err.name === 'AbortError'
-                        const isNetworkError = ['ECONNRESET', 'ETIMEDOUT', 'EADDRINUSE', 'ECONNREFUSED', 'EAI_AGAIN'].includes(err.code)
-                        const isTLSError = ['CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'TLS_ERROR'].some(c => err.message?.includes(c) || err.code === c)
+                            if (res2.status >= 500 && attempt < retries) continue
+                            return false
+                        } catch (err) {
+                            const isTimeout = err.name === 'AbortError'
+                            const isNetworkError = ['ECONNRESET', 'ETIMEDOUT', 'EADDRINUSE', 'ECONNREFUSED', 'EAI_AGAIN'].includes(err.code)
+                            const isTLSError = ['CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'TLS_ERROR'].some(c => err.message?.includes(c) || err.code === c)
 
-                        if (isTLSError) return true
-                        if (attempt < retries && (isTimeout || isNetworkError)) {
-                            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
-                            continue
+                            if (isTLSError) return true
+                            if (attempt < retries && (isTimeout || isNetworkError)) {
+                                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+                                continue
+                            }
+                            return false
                         }
-                        return false
                     }
+                    return false
+                }, checkQueueKey)
+            }
+
+            const startTime = Date.now()
+            const isHealthy = await performCheck(domain, 15000) || await performCheck(url, 15000)
+            const latencyMs = Date.now() - startTime
+
+            if (!isHealthy) {
+                fastify.log.warn({ category: context }, `[Health] Host ${domain} is unreachable.`)
+            }
+
+            if (globalHealthCache.size > 20000) {
+                const pruneNow = Date.now()
+                for (const [key, val] of globalHealthCache.entries()) {
+                    if (pruneNow - val.timestamp > HEALTH_CACHE_TTL_MS) globalHealthCache.delete(key)
                 }
-                return false
-            }, checkQueueKey)
-        }
-
-        const startTime = Date.now()
-        const isHealthy = await performCheck(domain, 15000) || await performCheck(url, 15000)
-        const latencyMs = Date.now() - startTime
-
-        if (!isHealthy) {
-            fastify.log.warn({ category: context }, `[Health] Host ${domain} is unreachable.`)
-        }
-
-        if (globalHealthCache.size > 20000) {
-            const pruneNow = Date.now()
-            for (const [key, val] of globalHealthCache.entries()) {
-                if (pruneNow - val.timestamp > HEALTH_CACHE_TTL_MS) globalHealthCache.delete(key)
+                if (globalHealthCache.size > 15000) {
+                    const entries = [...globalHealthCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)
+                    for (let i = 0; i < entries.length - 10000; i++) globalHealthCache.delete(entries[i][0])
+                }
             }
-            if (globalHealthCache.size > 15000) {
-                const entries = [...globalHealthCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)
-                for (let i = 0; i < entries.length - 10000; i++) globalHealthCache.delete(entries[i][0])
-            }
-        }
-        globalHealthCache.set(normalizedUrl, { isHealthy, latencyMs, timestamp: Date.now() })
-        return isHealthy
+            globalHealthCache.set(normalizedUrl, { isHealthy, latencyMs, timestamp: Date.now() })
+            return isHealthy
         } finally {
             healthCheckInFlight.delete(normalizedUrl)
         }
@@ -389,89 +429,87 @@ export function createAutopilotEngine(fastify, reconciler = null) {
      * Behaves exactly like the Manager's toggle buttons.
      */
     const buildReconciledList = async (authKey, chain, activeUrl, accountId, ruleId, storedAddonList = [], forceReinstall = false) => {
-            const remoteAddons = await stremioDriver.readAddons(authKey)
+        const remoteAddons = await stremioDriver.readAddons(authKey)
 
-            const normalizedChain = chain.map(u => normalizeAddonUrl(u).toLowerCase());
-            const normalizedActive = normalizeAddonUrl(activeUrl).toLowerCase();
+        const normalizedChain = chain.map(u => normalizeAddonUrl(u).toLowerCase());
+        const normalizedActive = normalizeAddonUrl(activeUrl).toLowerCase();
 
-            // CRITICAL FIX: Use the storedMasterList as the primary baseline for order.
-            // This ensures that enabled backups don't jump to the end of the Stremio list.
-            const baseAddonList = (storedAddonList && storedAddonList.length > 0)
-                ? [...storedAddonList]
-                : [...remoteAddons];
+        const baseAddonList = (storedAddonList && storedAddonList.length > 0)
+            ? [...storedAddonList]
+            : [...remoteAddons];
 
-            for (let idx = 0; idx < normalizedChain.length; idx++) {
-                const normUrl = normalizedChain[idx];
-                const exists = baseAddonList.some(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
-                if (!exists) {
-                    const remote = remoteAddons.find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+        for (let idx = 0; idx < normalizedChain.length; idx++) {
+            const normUrl = normalizedChain[idx];
+            const exists = baseAddonList.some(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+            if (!exists) {
+                const remote = remoteAddons.find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
 
-                    const remoteById = remoteAddons.find(a =>
-                        a.manifest?.id &&
-                        storedAddonList.some(s => s.manifest?.id === a.manifest.id && normalizeAddonUrl(s.transportUrl).toLowerCase() === normUrl)
-                    );
+                const remoteById = remoteAddons.find(a =>
+                    a.manifest?.id &&
+                    storedAddonList.some(s => s.manifest?.id === a.manifest.id && normalizeAddonUrl(s.transportUrl).toLowerCase() === normUrl)
+                );
 
-                    const stored = (storedAddonList || []).find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+                const stored = (storedAddonList || []).find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
 
-                    let isHealthy = await checkAddonHealthInternal(chain[idx])
-                    if (!isHealthy) {
-                        fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Skipping restoration for DEAD addon: ${truncateUrl(chain[idx])}`)
-                        continue
-                    }
+                let isHealthy = await checkAddonHealthInternal(chain[idx])
+                if (!isHealthy) {
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Skipping restoration for DEAD addon: ${truncateUrl(chain[idx])}`)
+                    continue
+                }
 
-                    let recoveredManifest = null;
-                    if (isHealthy) {
-                        const currentBest = remote?.manifest || remoteById?.manifest || stored?.manifest;
-                        if (!isSubstantial(currentBest)) {
-                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Restoration Recovery: Attempting manifest fetch for ${truncateUrl(chain[idx])}`);
-                            recoveredManifest = await fetchManifestRaw(chain[idx], accountId);
-                            if (recoveredManifest && isSubstantial(recoveredManifest)) {
-                                fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Restoration Success! Recovered metadata for ${recoveredManifest.name}`);
-                            }
+                let recoveredManifest = null;
+                if (isHealthy) {
+                    const currentBest = remote?.manifest || remoteById?.manifest || stored?.manifest;
+                    if (!isSubstantial(currentBest)) {
+                        fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Restoration Recovery: Attempting manifest fetch for ${truncateUrl(chain[idx])}`);
+                        recoveredManifest = await fetchManifestRaw(chain[idx], accountId);
+                        if (recoveredManifest && isSubstantial(recoveredManifest)) {
+                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Restoration Success! Recovered metadata for ${recoveredManifest.name}`);
                         }
                     }
+                }
 
-                    if (remote) {
-                        baseAddonList.push(recoveredManifest ? { ...remote, manifest: recoveredManifest } : remote);
-                    } else if (remoteById) {
-                        fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Recovered manifest for swapped URL: ${truncateUrl(chain[idx])}`)
-                        baseAddonList.push({ ...remoteById, transportUrl: chain[idx], manifest: recoveredManifest || remoteById.manifest });
-                    } else if (stored && isSubstantial(stored.manifest)) {
-                        baseAddonList.push({
-                            ...stored,
-                            flags: { ...(stored.flags || {}), enabled: false }
-                        });
-                    } else {
-                        baseAddonList.push({
-                            transportUrl: chain[idx],
-                            manifest: {
-                                id: `restoring-${accountId}-${idx}`,
-                                name: 'Restoring Addon...',
-                                version: '1.0.0',
-                                types: ['other'],
-                                resources: []
-                            },
-                            flags: { enabled: false },
-                            metadata: stored?.metadata || remoteById?.metadata || {}
-                        });
-                    }
+                if (remote) {
+                    baseAddonList.push(recoveredManifest ? { ...remote, manifest: recoveredManifest } : remote);
+                } else if (remoteById) {
+                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Recovered manifest for swapped URL: ${truncateUrl(chain[idx])}`)
+                    baseAddonList.push({ ...remoteById, transportUrl: chain[idx], manifest: recoveredManifest || remoteById.manifest });
+                } else if (stored && isSubstantial(stored.manifest)) {
+                    baseAddonList.push({
+                        ...stored,
+                        flags: { ...(stored.flags || {}), enabled: false }
+                    });
+                } else {
+                    baseAddonList.push({
+                        transportUrl: chain[idx],
+                        manifest: {
+                            id: `restoring-${accountId}-${idx}`,
+                            name: 'Restoring Addon...',
+                            version: '1.0.0',
+                            types: ['other'],
+                            resources: []
+                        },
+                        flags: { enabled: false },
+                        metadata: stored?.metadata || remoteById?.metadata || {}
+                    });
                 }
             }
+        }
 
-            const updatedLocalAddons = baseAddonList.map(addon => {
-                const normalizedUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-                if (normalizedChain.includes(normalizedUrl)) {
-                    const isTarget = normalizedUrl === normalizedActive
-                    return {
-                        ...addon,
-                        flags: { ...(addon.flags || {}), enabled: isTarget }
-                    }
+        const updatedLocalAddons = baseAddonList.map(addon => {
+            const normalizedUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
+            if (normalizedChain.includes(normalizedUrl)) {
+                const isTarget = normalizedUrl === normalizedActive
+                return {
+                    ...addon,
+                    flags: { ...(addon.flags || {}), enabled: isTarget }
                 }
-                return addon
-            })
+            }
+            return addon
+        })
 
-            const mergedAddons = mergeAddons(updatedLocalAddons, remoteAddons, normalizedChain)
-            return { canonical: mergedAddons, remoteAddons, normalizedActive }
+        const mergedAddons = mergeAddons(updatedLocalAddons, remoteAddons, normalizedChain)
+        return { canonical: mergedAddons, remoteAddons, normalizedActive }
     }
 
     const writeStremioCollection = async (authKey, canonical, { remoteAddons = [], normalizedActive, accountId }) => {
@@ -531,7 +569,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         } catch (err) {
             if (err.status === 401) {
                 fastify.log.error({ category: 'Autopilot' }, `[${maskContext(accountId)}] Auth Key Expired (401). Disabling rule.`)
-                await db.run('UPDATE autopilot_rules SET is_active = 0 WHERE id = $1', [ruleId])
+                await db.run('UPDATE autopilot_rules SET is_active = 0, updated_at = $1 WHERE id = $2', [Date.now(), ruleId])
             }
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(accountId)}] Mirror sync failed: ${err.message}`)
             throw err
@@ -580,7 +618,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 : [
                                     { name: 'Account', value: payload.accountName || payload.accountId || 'Unknown', inline: true },
                                     { name: 'Active Addon', value: payload.activeName || 'Unknown', inline: true }
-                                  ],
+                                ],
                             timestamp: new Date().toISOString()
                         }]
                     }
@@ -595,7 +633,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 : [
                                     { title: 'Account', value: payload.accountName || payload.accountId || 'Unknown', short: true },
                                     { title: 'Active Addon', value: payload.activeName || 'Unknown', short: true }
-                                  ],
+                                ],
                             footer: 'AIOManager Autopilot',
                             ts: Math.floor(Date.now() / 1000)
                         }]
@@ -862,7 +900,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         } catch (err) {
                             if (err.status === 401) {
                                 fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Auth Key Expired (401). Disabling rule.`)
-                                await db.run('UPDATE autopilot_rules SET is_active = 0 WHERE id = $1', [rule.id])
+                                await db.run('UPDATE autopilot_rules SET is_active = 0, updated_at = $1 WHERE id = $2', [Date.now(), rule.id])
                             }
                             throw err
                         }
@@ -1001,7 +1039,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             while (hasMore && totalProcessed < AUTOPILOT_MAX_RULES_PER_CYCLE && Date.now() < scanDeadline) {
                 const candidateLimit = Math.min(CHUNK_SIZE, AUTOPILOT_MAX_RULES_PER_CYCLE - totalProcessed)
                 const candidateRules = await db.query(
-                    `SELECT r.id, r.account_id, r.is_automatic,
+                    `SELECT r.id, r.account_id, r.is_automatic, r.updated_at,
                             COALESCE(s.last_check, r.last_check) AS last_check
                      FROM autopilot_rules r
                      LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
@@ -1032,34 +1070,82 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 lastId = candidateRules[candidateRules.length - 1].id
                 serverState.autopilotScanCursor = lastId
 
-                const dueRuleIds = candidateRules
-                    .filter(rule => !shouldSkipRuleCheck(rule.id, staleCutoff))
-                    .map(rule => rule.id)
+                const dueRules = candidateRules.filter(rule => !shouldSkipRuleCheck(rule.id, staleCutoff))
 
-                if (dueRuleIds.length === 0) {
+                if (dueRules.length === 0) {
                     if (totalProcessed >= AUTOPILOT_MAX_RULES_PER_CYCLE || Date.now() >= scanDeadline) break
                     continue
                 }
 
-                const placeholders = dueRuleIds.map((_, index) => `$${index + 1}`).join(',')
-                const rules = await db.query(
-                    `SELECT r.id, r.account_id, r.auth_key, r.priority_chain, r.addon_list, r.active_url, r.webhook_url,
-                            COALESCE(s.stabilization, r.stabilization) AS stabilization,
-                            r.is_active, r.is_automatic,
-                            COALESCE(s.last_check, r.last_check) AS last_check,
-                            COALESCE(s.last_notification, r.last_notification) AS last_notification,
-                            r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
-                            r.platform, r.connection_id,
-                            (SELECT c.account_name FROM server_credentials c
-                             WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
-                               AND c.account_name <> ''
-                             LIMIT 1) AS account_name
-                     FROM autopilot_rules r
-                     LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
-                     WHERE r.id IN (${placeholders})
-                     ORDER BY r.id ASC`,
-                    dueRuleIds
-                )
+                const hitRows = []
+                const missIds = []
+                for (const candidate of dueRules) {
+                    const cached = ruleCacheGet(candidate.id, candidate.updated_at)
+                    if (cached) hitRows.push({ id: candidate.id, row: cached.row, bytes: cached.bytes })
+                    else missIds.push(candidate.id)
+                }
+
+                const rules = []
+
+                if (missIds.length > 0) {
+                    const placeholders = missIds.map((_, index) => `$${index + 1}`).join(',')
+                    const missRows = await db.query(
+                        `SELECT r.id, r.account_id, r.auth_key, r.priority_chain, r.addon_list, r.active_url, r.webhook_url,
+                                COALESCE(s.stabilization, r.stabilization) AS stabilization,
+                                r.is_active, r.is_automatic,
+                                COALESCE(s.last_check, r.last_check) AS last_check,
+                                COALESCE(s.last_notification, r.last_notification) AS last_notification,
+                                r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
+                                r.platform, r.connection_id, r.updated_at,
+                                (SELECT c.account_name FROM server_credentials c
+                                 WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
+                                   AND c.account_name <> ''
+                                 LIMIT 1) AS account_name
+                         FROM autopilot_rules r
+                         LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
+                         WHERE r.id IN (${placeholders})
+                         ORDER BY r.id ASC`,
+                        missIds
+                    )
+                    for (const row of missRows) {
+                        ruleCacheSet(row.id, row.updated_at, row)
+                        ruleCacheStats.misses++
+                        rules.push(row)
+                    }
+                }
+
+                if (hitRows.length > 0) {
+                    const hitIds = hitRows.map(h => h.id)
+                    const placeholders = hitIds.map((_, index) => `$${index + 1}`).join(',')
+                    const volatileRows = await db.query(
+                        `SELECT r.id,
+                                COALESCE(s.stabilization, r.stabilization) AS stabilization,
+                                COALESCE(s.last_check, r.last_check) AS last_check,
+                                COALESCE(s.last_notification, r.last_notification) AS last_notification,
+                                (SELECT c.account_name FROM server_credentials c
+                                 WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
+                                   AND c.account_name <> ''
+                                 LIMIT 1) AS account_name
+                         FROM autopilot_rules r
+                         LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
+                         WHERE r.id IN (${placeholders})
+                         ORDER BY r.id ASC`,
+                        hitIds
+                    )
+                    const volatileById = new Map(volatileRows.map(v => [v.id, v]))
+                    for (const hit of hitRows) {
+                    const volatile = volatileById.get(hit.id)
+                    if (!volatile) continue
+                        rules.push({ ...hit.row, ...volatile })
+                        ruleCacheStats.hits++
+                        ruleCacheStats.bytesSaved += hit.bytes
+                    }
+                }
+
+                if (rules.length === 0) {
+                    if (totalProcessed >= AUTOPILOT_MAX_RULES_PER_CYCLE || Date.now() >= scanDeadline) break
+                    continue
+                }
 
                 const BATCH_SIZE = 20
                 const dirtyUpdates = []
@@ -1147,6 +1233,18 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 for (const [key, val] of globalHealthCache.entries()) {
                     if (now - val.timestamp > HEALTH_CACHE_TTL_MS) globalHealthCache.delete(key)
                 }
+            }
+
+            if (Date.now() - ruleCacheStats.windowStart >= 5 * 60 * 1000) {
+                const total = ruleCacheStats.hits + ruleCacheStats.misses
+                if (total > 0) {
+                    const hitPct = Math.round((ruleCacheStats.hits / total) * 100)
+                    fastify.log.info({ category: 'Autopilot' }, `Rule cache: ${ruleCacheStats.hits} hits / ${ruleCacheStats.misses} misses (${hitPct}% hit), ~${(ruleCacheStats.bytesSaved / 1048576).toFixed(1)}MB of addon_list reads saved from the DB`)
+                }
+                ruleCacheStats.hits = 0
+                ruleCacheStats.misses = 0
+                ruleCacheStats.bytesSaved = 0
+                ruleCacheStats.windowStart = Date.now()
             }
         } finally {
             serverState.isWorkerRunning = false
