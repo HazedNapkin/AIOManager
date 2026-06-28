@@ -195,17 +195,20 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 }
 
-function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[]) {
+function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }) {
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)
     if (authKey) {
+        const context = options?.allowCollectionShrink ? 'Bulk Op' : accountId
         promises.push(
             getCachedAuthKey(authKey, getEncryptionKey())
-                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, accountId, { previousCollection: account.addons }))
+                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, context, { previousCollection: account.addons, allowCollectionShrink: options?.allowCollectionShrink }))
                 .catch(err => {
                     if (isAuthError(err)) {
                         toast({ title: 'Session expired', description: 'Session expired. Re-authenticate your connection.', variant: 'destructive' })
+                    } else {
+                        toast({ title: 'Sync failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' })
                     }
                 })
         )
@@ -609,7 +612,7 @@ export async function bulkToggleAddonEnabled(accountId: string, addonUrls: strin
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, updatedAddons)
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: !isEnabled })
 
         addonUrls.forEach(url => {
             autopilotManager.handleManualToggle(accountId, url)
@@ -1002,7 +1005,7 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
         )
         store.setState({ accounts })
         persistAccounts(accounts)
-        backgroundSync(accountId, account, updatedAddons)
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true })
     } finally {
         releaseMutex()
     }

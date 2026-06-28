@@ -143,6 +143,7 @@ export function registerSyncRoutes(fastify) {
                 const serverUpdated = row.updated_at || 0
                 if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
+                    return { success: true, conflict: true, syncedAt: serverTime }
                 }
 
                 const encryptedVal = encrypt(JSON.stringify(data), PRIMARY_KEY)

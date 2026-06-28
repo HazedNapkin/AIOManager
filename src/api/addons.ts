@@ -7,6 +7,7 @@ import { getPendingFetch, setPendingFetch } from '@/lib/manifest-cache'
 import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
 import { compareManifestShape } from '@/lib/addon-manifest-diff'
+import { shouldBlockShrink } from '@/lib/shrink-guard'
 import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 
 const KNOWN_DEAD_DOMAINS = ['opensubtitles.strem.io']
@@ -149,10 +150,11 @@ export async function updateAddons(authKey: string, addons: AddonDescriptor[], a
 
   const allowCollectionShrink = options?.allowCollectionShrink || options?.bypassEmptyGuard
   const knownCount = knownAddonCounts.get(authKey) || 0
-  if (preparedAddons.length === 0 && knownCount > 0 && !allowCollectionShrink) {
+  const shrinkDecision = shouldBlockShrink(preparedAddons.length, knownCount, !!allowCollectionShrink)
+  if (shrinkDecision.blocked && shrinkDecision.reason === 'empty') {
     throw new Error(`Anti-wipe guard: refusing to push empty addon collection (${knownCount} addon${knownCount !== 1 ? 's' : ''} previously seen)`)
   }
-  if (knownCount > 0 && preparedAddons.length < Math.ceil(knownCount * 0.25) && !allowCollectionShrink) {
+  if (shrinkDecision.blocked && shrinkDecision.reason === 'shrink') {
     throw new Error(`Anti-wipe guard: refusing to shrink addon collection from ${knownCount} to ${preparedAddons.length}.`)
   }
 

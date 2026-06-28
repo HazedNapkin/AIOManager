@@ -5,6 +5,12 @@ import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
 
+const SHRINK_GUARD_RATIO = 0.25
+const isSuspiciousShrink = (previousCount, nextCount) => (
+    previousCount > 0 && nextCount < Math.ceil(previousCount * SHRINK_GUARD_RATIO)
+)
+export { isSuspiciousShrink }
+
 export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     const manifestCache = new Map()
     const MANIFEST_CACHE_TTL = 600000 // 10 minutes
@@ -55,7 +61,6 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     const lastGoodAddonCollections = new Map()
     const MAX_TRACKED_COLLECTIONS = 2500
     const MAX_ADDON_COLLECTION_SIZE = 250
-    const SHRINK_GUARD_RATIO = 0.25
     const PROFILE_SWAP_CONTEXT = 'Profile Swap'
     const ADDON_REFRESH_ERROR_PATTERN = /AddonsPulledFromAPI|UserAddonsLocked|manifest.*missing field|upstream returned 403|forbidden|access denied|status\s*403|\b403\b/i
 
@@ -192,10 +197,6 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         if (!authKey || typeof authKey !== 'string') return null
         return createHash('sha256').update(authKey).digest('hex')
     }
-
-    const isSuspiciousShrink = (previousCount, nextCount) => (
-        previousCount > 0 && nextCount < Math.ceil(previousCount * SHRINK_GUARD_RATIO)
-    )
 
     const returnLastGoodCollection = (authKey, reason) => {
         const lastGood = getLastGoodCollection(authKey)
@@ -540,7 +541,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
 
         const friendlyAction = actionMap[type] || `Operation: ${type}`
-        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (String(accountContext) === PROFILE_SWAP_CONTEXT || String(accountContext) === 'Setup Swap' || String(accountContext) === 'Clear All')
+        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (String(accountContext) === PROFILE_SWAP_CONTEXT || String(accountContext) === 'Setup Swap' || String(accountContext) === 'Clear All' || String(accountContext) === 'Bulk Op')
         delete payload.allowCollectionShrink
 
         if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser') {

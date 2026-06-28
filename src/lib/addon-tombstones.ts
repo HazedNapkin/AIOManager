@@ -1,5 +1,8 @@
 // Persisted + synced markers for addons the user explicitly deleted, so an inbound sync (Stremio
 // collection or the cloud blob) can't resurrect them. Keyed by normalized transportUrl -> deletedAt.
+// Tombstones prevent resurrection of deleted addons from remote sources. Hub-side re-adds are safe
+// (reconcileTombstones clears the tombstone at install, filterResurrected checks local presence first).
+// Out-of-band re-adds within the 21-day TTL are intentionally suppressed.
 export type Tombstones = Record<string, number>
 
 // Kill switch: set false to disable resurrection suppression entirely (filterResurrected becomes a
