@@ -118,9 +118,7 @@ export function AIOMetadataPage() {
         if (!connected) setTimeout(() => passwordRef.current?.focus(), 100)
     }, [connected])
 
-    // Show the field unless we're sure it's not needed: hidden only when already trusted or the
-    // instance explicitly reports no addon password. Status-null keeps it visible (optional).
-    const needsAddonPassword = trusted !== true && status?.requiresAddonPassword !== false
+    const needsAddonPassword = trusted !== true && status?.requiresAddonPassword === true
 
     const handleConnect = useCallback(async () => {
         if (!password.trim() || !uuid) { setError('Password is required'); return }

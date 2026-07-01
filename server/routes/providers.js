@@ -129,16 +129,18 @@ export function registerProviderRoutes(fastify, reconciler) {
         const { accountId, credential, credentialType } = request.body || {}
         if (!accountId || !credential) { reply.code(400); return { error: 'Missing accountId or credential' } }
 
+        let credObj = null
+        if (typeof credential === 'object') credObj = credential
+        else if (typeof credential === 'string') { try { credObj = JSON.parse(credential) } catch { } }
+        if (credObj && typeof credObj === 'object' && credObj.baseUrl && !(await isSafeUrlResolved(credObj.baseUrl))) {
+            reply.code(400); return { error: 'Invalid or unsafe baseUrl' }
+        }
+
         const type = ['nuvio', 'realstream', 'hydra'].includes(credentialType) ? credentialType : 'hydra'
         const credentialValue = typeof credential === 'object' ? JSON.stringify(credential) : credential
         const encrypted = encrypt(credentialValue, PRIMARY_KEY)
         const id = `${type}:${accountId}:${connectionId}`
 
-        // id embeds the per-user accountId UUID, so a row under this id owned by a different user is
-        // never a legitimate collision -- it's a cross-tenant write attempt. Without this check the
-        // Postgres DO UPDATE would poison the victim's auth_key (sync_user stays theirs, so the
-        // scoped resolveConnections still serves it) and the SQLite INSERT OR REPLACE would flip the
-        // row to the attacker (silent DoS).
         const existing = await db.get('SELECT sync_user FROM server_credentials WHERE id = $1', [id])
         if (existing && existing.sync_user !== authUser) {
             reply.code(403); return { error: 'Forbidden' }
@@ -267,17 +269,18 @@ export function registerProviderRoutes(fastify, reconciler) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
-        const { email, password, publishableKey } = request.body || {}
+        const { email, password, publishableKey, baseUrl } = request.body || {}
         if (!email || !password) { reply.code(400); return { error: 'Missing email or password' } }
+        if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
 
         try {
             const { createNuvioDriver } = await import('../providers/nuvio-driver.js')
-            const driver = createNuvioDriver(publishableKey ? { publishableKey } : {})
+            const driver = createNuvioDriver({ ...(baseUrl ? { baseUrl } : {}), ...(publishableKey ? { publishableKey } : {}) })
             const tokens = await driver.authenticate(email, password)
             let profiles = []
             try {
                 profiles = await driver.pullProfiles(tokens.accessToken)
-            } catch {}
+            } catch { }
             return { tokens, profiles: Array.isArray(profiles) ? profiles : [] }
         } catch (err) {
             if (err.name === 'TimeoutError' || err.name === 'AbortError') {
@@ -332,15 +335,16 @@ export function registerProviderRoutes(fastify, reconciler) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
-        const { email, password, publishableKey } = request.body || {}
+        const { email, password, publishableKey, baseUrl } = request.body || {}
         if (!email || !password) { reply.code(400); return { error: 'Missing email or password' } }
+        if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
 
         try {
             const { createNuvioDriver } = await import('../providers/nuvio-driver.js')
-            const driver = createNuvioDriver(publishableKey ? { publishableKey } : {})
+            const driver = createNuvioDriver({ ...(baseUrl ? { baseUrl } : {}), ...(publishableKey ? { publishableKey } : {}) })
             const tokens = await driver.register(email, password)
             let profiles = []
-            try { profiles = await driver.pullProfiles(tokens.accessToken) } catch {}
+            try { profiles = await driver.pullProfiles(tokens.accessToken) } catch { }
             return { tokens, profiles: Array.isArray(profiles) ? profiles : [] }
         } catch (err) {
             if (err.needsConfirmation) { reply.code(202); return { error: err.message, needsConfirmation: true } }
@@ -398,10 +402,6 @@ export function registerProviderRoutes(fastify, reconciler) {
         }
     })
 
-    // Read the server-readable canonical addon lists this sync user owns, keyed by account.
-    // The client uses this to detect + merge external (e.g. AIOStreams) writes into the Hub
-    // before pushing, the D2 "client is the single merger" path. Returns `updatedAt` so the
-    // client can tell whether the canonical changed since its last push.
     fastify.get('/api/providers/canonical', {
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
     }, async (request, reply) => {
@@ -421,7 +421,7 @@ export function registerProviderRoutes(fastify, reconciler) {
                     try {
                         const parsed = JSON.parse(decrypted)
                         if (Array.isArray(parsed)) addons = parsed
-                    } catch {}
+                    } catch { }
                 }
             }
             canonical[row.account_id] = { addons, updatedAt: row.updated_at || 0 }

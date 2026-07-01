@@ -4,9 +4,6 @@ import { FALLBACK_KEYS, PRIMARY_KEY } from '../keys.js'
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 
-// Single source of refresh per connection. Supabase rotates the refresh token and revokes the
-// whole family if a rotated token is reused, so concurrent refreshers (failover + route + plugin
-// reconcile) must share one in-flight call.
 const refreshInFlight = new Map()
 function singleFlight(key, fn) {
     const existing = refreshInFlight.get(key)
@@ -16,10 +13,6 @@ function singleFlight(key, fn) {
     return p
 }
 
-// The provider rotates AND revokes the old refresh token on a successful refresh, so the rotated
-// token is the only valid one the instant the network call returns. If we then fail to persist it,
-// the connection is bricked next cycle (the DB still holds the dead token). Treat the write as
-// must-succeed: retry a few times, and if it still fails, throw loudly rather than dropping it.
 async function persistRotatedToken(connectionId, credentialType, newBundle) {
     const encrypted = encrypt(JSON.stringify(newBundle), PRIMARY_KEY)
     const now = Date.now()
@@ -36,8 +29,6 @@ async function persistRotatedToken(connectionId, credentialType, newBundle) {
             await new Promise(r => setTimeout(r, 150 * (attempt + 1)))
         }
     }
-    // Log here too: the reconciler's loadDriver catch only rethrows auth errors and would otherwise
-    // swallow this silently, leaving the connection bricked with no trace.
     console.error(`[TokenRefresh] CRITICAL: rotated ${credentialType} token for ${connectionId} could not be persisted; connection will brick. ${lastErr?.message || lastErr}`)
     const e = new Error(`Failed to persist rotated ${credentialType} token for ${connectionId}: ${lastErr?.message || lastErr}`)
     e._tokenPersistFailed = true
@@ -69,7 +60,10 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
     }
 
     const { createNuvioDriver } = await import('./nuvio-driver.js')
-    const driver = createNuvioDriver()
+    const driver = createNuvioDriver({
+        baseUrl: bundle.baseUrl || undefined,
+        publishableKey: bundle.publishableKey || undefined,
+    })
 
     try {
         const refreshed = await driver.refreshAccessToken(bundle.refreshToken)
@@ -78,6 +72,8 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
             refreshToken: refreshed.refreshToken || bundle.refreshToken,
             expiresAt: refreshed.expiresAt,
             profileId: bundle.profileId || null,
+            baseUrl: bundle.baseUrl || null,
+            publishableKey: bundle.publishableKey || null,
         }
 
         await persistRotatedToken(connectionId, 'nuvio', newBundle)
@@ -90,9 +86,6 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
     }
 }
 
-// RealStream (PocketBase) bundle: { accessToken, userId, expiresAt }. There is no separate
-// refresh token; auth-refresh extends the still-valid access token, so a 401/403 means the
-// user must re-authenticate.
 export function refreshRealStreamToken(connectionId) {
     return singleFlight(`realstream:${connectionId}`, () => refreshRealStreamTokenInner(connectionId))
 }
@@ -117,8 +110,6 @@ async function refreshRealStreamTokenInner(connectionId) {
         return bundle
     }
 
-    // Use the connection's own base (custom instances like rsaccz.com differ from the default),
-    // not the hardcoded default, or the refresh hits the wrong PocketBase server and 401s.
     const { createRealStreamDriver } = await import('./realstream-driver.js')
     const driver = createRealStreamDriver(bundle.baseUrl ? { baseUrl: bundle.baseUrl } : {})
 

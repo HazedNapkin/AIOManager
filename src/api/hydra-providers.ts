@@ -65,12 +65,13 @@ export async function nuvioAuth(
     email: string,
     password: string,
     publishableKey?: string,
+    baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; refreshToken: string; expiresAt: number }; profiles: Array<{ id: string; name: string }> }> {
     const base = getServerUrl().replace(/\/+$/, '')
     const res = await resilientFetch(`${base}/providers/nuvio/auth`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ email, password, publishableKey }),
+        body: JSON.stringify({ email, password, publishableKey, baseUrl }),
         timeout: 15000,
     })
     if (!res.ok) {
@@ -103,12 +104,13 @@ export async function nuvioSignup(
     email: string,
     password: string,
     publishableKey?: string,
+    baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; refreshToken: string; expiresAt: number }; profiles: Array<{ id: string; name: string }> }> {
     const base = getServerUrl().replace(/\/+$/, '')
     const res = await resilientFetch(`${base}/providers/nuvio/signup`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ email, password, publishableKey }),
+        body: JSON.stringify({ email, password, publishableKey, baseUrl }),
         timeout: 20000,
     })
     if (!res.ok) {

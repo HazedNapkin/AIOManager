@@ -213,7 +213,9 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         if (!emailValid || !passwordValid) return
         setSaving(true)
         try {
-            const result = await nuvioAuth(email, password)
+            const bu = connection.credentials?.baseUrl || undefined
+            const pk = connection.credentials?.publishableKey || undefined
+            const result = await nuvioAuth(email, password, pk, bu)
             const t = result.tokens
             if (!t) throw new Error('No tokens returned. Confirm your Nuvio account and try again.')
             await updateConnection(accountId, connection.id, {
@@ -232,6 +234,8 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
                 refreshToken: t.refreshToken,
                 expiresAt: t.expiresAt,
                 profileId: connection.credentials?.profileId || null,
+                baseUrl: bu || null,
+                publishableKey: pk || null,
             }, 'nuvio').catch(err => {
                 toast({ title: 'Saved locally, but the server did not store the new session', description: errMsg(err), variant: 'destructive' })
             })

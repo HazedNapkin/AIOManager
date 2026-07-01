@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ProviderSetupDialog } from '@/components/providers/ProviderSetupDialog'
-import { NuvioSetupDialog } from '@/components/providers/NuvioSetupDialog'
+import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/NuvioSetupDialog'
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
 import { ApiKeyManager } from '@/components/providers/ApiKeyManager'
 import { useConnectionStore } from '@/store/connectionStore'
@@ -63,7 +63,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
         import('@/api/hydra-providers')
             .then(({ fetchSubscribers }) => fetchSubscribers(accountId))
             .then(subs => { if (!cancelled) setSubscribers(subs) })
-            .catch(() => {})
+            .catch(() => { })
         return () => { cancelled = true }
     }, [accountId])
 
@@ -126,9 +126,15 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
         })
     }
 
-    const handleNuvioComplete = async (tokens: { accessToken: string; refreshToken: string; expiresAt: number }, profileId: string | null, _profiles: unknown[]) => {
+    const handleNuvioComplete = async (tokens: { accessToken: string; refreshToken: string; expiresAt: number }, profileId: string | null, _profiles: unknown[], _email: string, backend: NuvioBackend) => {
+        const backendCreds: Record<string, string> = {
+            ...(backend.baseUrl ? { baseUrl: backend.baseUrl } : {}),
+            ...(backend.publishableKey ? { publishableKey: backend.publishableKey } : {}),
+        }
         const existing = resolvedConnections.find(c => c.platform === 'nuvio')
         if (existing) {
+            const effBaseUrl = backend.baseUrl || existing.credentials?.baseUrl || undefined
+            const effPublishableKey = backend.publishableKey || existing.credentials?.publishableKey || undefined
             const { updateConnection } = useConnectionStore.getState()
             updateConnection(accountId, existing.id, {
                 credentials: {
@@ -136,6 +142,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     refreshToken: tokens.refreshToken,
                     expiresAt: String(tokens.expiresAt),
                     profileId: profileId || '',
+                    ...(effBaseUrl ? { baseUrl: effBaseUrl } : {}),
+                    ...(effPublishableKey ? { publishableKey: effPublishableKey } : {}),
                 },
                 status: 'active',
             })
@@ -145,6 +153,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 refreshToken: tokens.refreshToken,
                 expiresAt: tokens.expiresAt,
                 profileId: profileId || null,
+                baseUrl: effBaseUrl || null,
+                publishableKey: effPublishableKey || null,
             }, 'nuvio').catch((err) => {
                 toast({ title: 'Saved locally, but the server did not store the new session', description: err instanceof Error ? err.message : 'Background sync and failover may keep using the expired session until you reconnect again.', variant: 'destructive' })
             })
@@ -162,6 +172,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     refreshToken: tokens.refreshToken,
                     expiresAt: String(tokens.expiresAt),
                     profileId: profileId || '',
+                    ...backendCreds,
                 },
                 capabilities: ['addons', 'plugins', 'profiles'],
             })

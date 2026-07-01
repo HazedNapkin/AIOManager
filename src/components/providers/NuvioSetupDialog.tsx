@@ -32,10 +32,15 @@ interface NuvioProfile {
     usesPrimaryAddons?: boolean
 }
 
+export interface NuvioBackend {
+    baseUrl?: string
+    publishableKey?: string
+}
+
 interface NuvioSetupDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
-    onComplete: (tokens: NuvioTokens, profileId: string | null, profiles: NuvioProfile[], email: string) => void | Promise<void>
+    onComplete: (tokens: NuvioTokens, profileId: string | null, profiles: NuvioProfile[], email: string, backend: NuvioBackend) => void | Promise<void>
 }
 
 interface NuvioTokens {
@@ -56,6 +61,10 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
 
+    const [showAdvanced, setShowAdvanced] = useState(false)
+    const [customBaseUrl, setCustomBaseUrl] = useState('')
+    const [customPublishableKey, setCustomPublishableKey] = useState('')
+
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
@@ -67,12 +76,20 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
         setStep('login')
         setEmail('')
         setPassword('')
+        setShowAdvanced(false)
+        setCustomBaseUrl('')
+        setCustomPublishableKey('')
         setLoading(false)
         setError(null)
         setTokens(null)
         setProfiles([])
         setSelectedProfileId(null)
     }, [])
+
+    const backend = (): NuvioBackend => ({
+        baseUrl: customBaseUrl.trim() || undefined,
+        publishableKey: customPublishableKey.trim() || undefined,
+    })
 
     const handleClose = (nextOpen: boolean) => {
         if (!nextOpen) reset()
@@ -83,7 +100,10 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
         setLoading(true)
         setError(null)
         try {
-            const result = mode === 'signup' ? await nuvioSignup(email, password) : await nuvioAuth(email, password)
+            const b = backend()
+            const result = mode === 'signup'
+                ? await nuvioSignup(email, password, b.publishableKey, b.baseUrl)
+                : await nuvioAuth(email, password, b.publishableKey, b.baseUrl)
             const t = result.tokens
             if (!t) {
                 setMode('login')
@@ -110,7 +130,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
     const handleFinish = async () => {
         if (!tokens) return
         try {
-            await onComplete(tokens, selectedProfileId, profiles, email)
+            await onComplete(tokens, selectedProfileId, profiles, email, backend())
         } catch (e) {
             toast({ title: 'Setup failed', description: e instanceof Error ? e.message : 'Failed to configure provider', variant: 'destructive' })
         }
@@ -204,6 +224,46 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
                                     />
                                 </div>
                             </div>
+
+                            <div className="pt-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAdvanced(v => !v)}
+                                    className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                    {showAdvanced ? 'Hide' : 'Use a custom backend'}
+                                </button>
+                            </div>
+
+                            {showAdvanced && (
+                                <div className="space-y-3 rounded-xl border border-border/40 bg-muted/20 p-3">
+                                    <p className="text-xs text-muted-foreground">
+                                        Point this connection at a self-hosted or alternate Nuvio backend. Leave blank to use the default.
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="nuvio-base-url" className="text-xs">Backend URL</Label>
+                                        <Input
+                                            id="nuvio-base-url"
+                                            type="url"
+                                            placeholder="https://your-backend.example.com"
+                                            value={customBaseUrl}
+                                            onChange={e => setCustomBaseUrl(e.target.value)}
+                                            className="h-9 text-sm"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label htmlFor="nuvio-publishable-key" className="text-xs">Publishable key</Label>
+                                        <Input
+                                            id="nuvio-publishable-key"
+                                            type="text"
+                                            placeholder="sb_publishable_..."
+                                            value={customPublishableKey}
+                                            onChange={e => setCustomPublishableKey(e.target.value)}
+                                            className="h-9 text-sm"
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
                             {error && (
                                 <div className="rounded-xl bg-destructive/5 border border-destructive/20 px-3 py-2 text-xs text-destructive flex items-center gap-2">
