@@ -4,6 +4,9 @@ import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
+import { trace, keyTag } from '../utils/trace.js'
+
+const briefAddons = (addons) => (Array.isArray(addons) ? addons.map(a => ({ id: a?.manifest?.id || a?.id || '?', url: truncateUrl(a?.transportUrl || '') })) : [])
 
 const SHRINK_GUARD_RATIO = 0.25
 const isSuspiciousShrink = (previousCount, nextCount) => (
@@ -202,6 +205,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const lastGood = getLastGoodCollection(authKey)
         if (!lastGood?.length) return null
         fastify.log.warn({ category: 'Sync' }, `[Proxy] Returning last-good addon collection after ${reason}`)
+        trace('proxy.get', 'served-last-good', { key: keyTag(authKey), reason, count: lastGood.length, addons: briefAddons(lastGood) })
         return { result: { addons: lastGood, lastModified: Date.now() }, recoveredFromLastGood: true }
     }
 
@@ -565,8 +569,11 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             }
 
             const lastGood = getLastGoodCollection(payload.authKey)
-            if (!allowCollectionShrink && isSuspiciousShrink(lastGood?.length || 0, payload.addons.length)) {
+            const wouldBlock = !allowCollectionShrink && isSuspiciousShrink(lastGood?.length || 0, payload.addons.length)
+            trace('proxy.set', 'incoming', { key: keyTag(payload.authKey), context: String(accountContext), allowCollectionShrink, lastGood: lastGood?.length || 0, pushing: payload.addons.length, blocked: wouldBlock, addons: briefAddons(payload.addons) })
+            if (wouldBlock) {
                 fastify.log.warn({ category: 'Security' }, `[Proxy] Blocked suspicious AddonCollectionSet shrink: ${lastGood.length} -> ${payload.addons.length}`)
+                trace('proxy.set', 'blocked-shrink', { context: String(accountContext), lastGood: lastGood?.length || 0, pushing: payload.addons.length })
                 reply.status(409)
                 return { error: `Suspicious addon collection shrink blocked (${lastGood.length} → ${payload.addons.length})` }
             }
@@ -644,8 +651,18 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                         const sanitizedAddons = dedupeAddonCollectionByTransportUrl(addons.map(sanitizeAddonForStremio))
                         const lastGood = getLastGoodCollection(payload.authKey)
                         if (isSuspiciousShrink(lastGood?.length || 0, sanitizedAddons.length)) {
-                            fastify.log.warn({ category: 'Sync' }, `[Proxy] Returning last-good addon collection after suspicious refresh shrink: ${lastGood.length} -> ${sanitizedAddons.length}`)
-                            return { result: { addons: lastGood, lastModified: Date.now() }, recoveredFromLastGood: true }
+                            if (attempt < MAX_RETRIES) {
+                                fastify.log.warn({ category: 'Sync' }, `[Proxy] Suspicious refresh shrink (${lastGood.length} -> ${sanitizedAddons.length}); re-reading to confirm before trusting it.`)
+                                trace('proxy.get', 'shrink-retry', { lastGood: lastGood?.length || 0, got: sanitizedAddons.length, attempt })
+                                continue
+                            }
+                            if (sanitizedAddons.length === 0) {
+                                fastify.log.warn({ category: 'Sync' }, `[Proxy] Persistent empty refresh after ${MAX_RETRIES} retries; keeping last-good (likely transient/auth glitch, not a real wipe): ${lastGood.length} -> 0`)
+                                trace('proxy.get', 'served-last-good-empty', { lastGood: lastGood?.length || 0 })
+                                return { result: { addons: lastGood, lastModified: Date.now() }, recoveredFromLastGood: true }
+                            }
+                            fastify.log.warn({ category: 'Sync' }, `[Proxy] Shrink confirmed after ${MAX_RETRIES} retries (${lastGood.length} -> ${sanitizedAddons.length}); accepting real collection and refreshing last-good.`)
+                            trace('proxy.get', 'shrink-confirmed', { lastGood: lastGood?.length || 0, accepted: sanitizedAddons.length })
                         }
                         const validationError = validateAddonCollection(sanitizedAddons)
                         if (validationError && lastGood) {
@@ -653,6 +670,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                             return { result: { addons: lastGood, lastModified: Date.now() }, recoveredFromLastGood: true }
                         }
                         data.result.addons = sanitizedAddons
+                        trace('proxy.get', 'fresh', { key: keyTag(payload.authKey), context: String(accountContext), lastGood: lastGood?.length || 0, returned: sanitizedAddons.length, addons: briefAddons(sanitizedAddons) })
                         rememberGoodCollection(payload.authKey, data.result.addons, { allowEmpty: true })
                     } else if (data?.error) {
                         const errorText = typeof data.error === 'string' ? data.error : JSON.stringify(data.error)
@@ -682,6 +700,10 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                             data.result.library = sanitize(data.result.library)
                         }
                     }
+                }
+
+                if (type === 'AddonCollectionSet') {
+                    trace('proxy.set', 'response', { context: String(accountContext), httpStatus: response.status, pushed: payload.addons?.length || 0 })
                 }
 
                 return data

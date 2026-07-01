@@ -159,8 +159,9 @@ export function InstallSavedAddonDialog({
         if (onSuccess) onSuccess()
         setTimeout(() => handleClose(), 2000)
       } else {
-        setError(`Completed with ${bulkResult.failed} error(s)`)
-        setSuccess(true)
+        const firstError = bulkResult.errors[0]?.error
+        setError(firstError ? `Install failed: ${firstError}` : `Completed with ${bulkResult.failed} error(s)`)
+        setSuccess(false)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to install saved addons')

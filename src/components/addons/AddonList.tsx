@@ -289,8 +289,11 @@ export function AddonList({ accountId }: AddonListProps) {
         const compositeId = `${addons[index].transportUrl}::${index}`
         return !selectedAddonUrls.has(compositeId)
       })
+      const removedUrls = addons
+        .filter((_, index) => selectedAddonUrls.has(`${addons[index].transportUrl}::${index}`))
+        .map(a => a.transportUrl)
 
-      await useAccountStore.getState().reorderAddons(accountId, updatedAddons)
+      await useAccountStore.getState().bulkDeleteAddons(accountId, updatedAddons, removedUrls)
 
       toast({ title: 'Addons Deleted', description: `Successfully deleted selected addons.` })
       setIsSelectionMode(false)

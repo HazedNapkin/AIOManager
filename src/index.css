@@ -136,6 +136,11 @@
   }
 }
 
+.glass-header {
+  background: linear-gradient(180deg, hsl(var(--card) / 0.85), hsl(var(--card) / 0.55));
+  box-shadow: inset 0 0.5px 0 hsl(0 0% 100% / 0.06), 0 1px 0 hsl(0 0% 0% / 0.5);
+}
+
 @layer utilities {
   .mesh-gradient {
     background-color: hsl(var(--background));
@@ -188,13 +193,6 @@
       transform: scale(4);
       opacity: 0;
     }
-  }
-
-  .glass-header {
-    background: linear-gradient(180deg, hsl(var(--card) / 0.85), hsl(var(--card) / 0.55));
-    backdrop-filter: saturate(180%) blur(40px);
-    -webkit-backdrop-filter: saturate(180%) blur(40px);
-    box-shadow: inset 0 0.5px 0 hsl(0 0% 100% / 0.06), 0 1px 0 hsl(0 0% 0% / 0.5);
   }
 
   .tracking-apple-tight {

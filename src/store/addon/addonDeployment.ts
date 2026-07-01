@@ -23,6 +23,7 @@ import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
 import { getStremioAuthKey } from '@/lib/account-compat'
 import { reconcileTombstones } from '@/lib/addon-tombstones'
+import { trace, briefAddons } from '@/lib/trace'
 
 type StoreRef = { getState: () => AddonStore; setState: (partial: Partial<AddonStore> | ((state: AddonStore) => Partial<AddonStore>)) => void }
 
@@ -223,6 +224,7 @@ export async function applySavedAddonToAccount(
 
     const authKey = await getCachedAuthKey(accountAuthKey, getEncryptionKey())
     const currentAddons = await getAddons(authKey, accountId)
+    trace('deploy.apply', 'read', { savedAddonId, accountId, current: currentAddons.length })
 
     const { addons: updatedAddons, result } = await mergeAddons(
       currentAddons,
@@ -232,6 +234,7 @@ export async function applySavedAddonToAccount(
     )
 
     await updateAddons(authKey, updatedAddons, accountId)
+    trace('deploy.apply', 'pushed', { savedAddonId, accountId, count: updatedAddons.length })
     const { pushToConnections } = await import('../account/accountAddonOps')
     pushToConnections(accountId).catch(() => {})
 
@@ -245,6 +248,7 @@ export async function applySavedAddonToAccount(
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to apply saved addon'
+    trace('deploy.apply', 'failed', { savedAddonId, accountId, error: message })
     useAddonStore.setState({ error: message })
     throw error
   } finally {
@@ -358,12 +362,16 @@ export async function bulkApplySavedAddons(
           currentAddons = await getAddons(authKey, accountId)
         }
 
+        trace('deploy', 'before-merge', { accountId, isLocalAccount, hasNonStremioConnections, current: currentAddons.length, saving: savedAddons.length, savingUrls: savedAddons.map(s => s.installUrl.slice(-48)), currentAddons: briefAddons(currentAddons) })
+
         const { addons: mergedAddons, result: mergeResult } = await mergeAddons(
           currentAddons,
           savedAddons,
           accountId,
           allowProtected
         )
+
+        trace('deploy', 'after-merge', { accountId, added: mergeResult.added.map(a => a.installUrl?.slice(-48) || a.addonId), updated: mergeResult.updated.map(u => u.addonId), skipped: mergeResult.skipped.map(s => s.addonId), protected: mergeResult.protected.map(p => p.addonId), merged: mergedAddons.length })
 
         const updatedAddons = dedupeAddonsByTransportUrl(mergedAddons).map(addon => ({
           ...addon,
@@ -389,9 +397,21 @@ export async function bulkApplySavedAddons(
             pushToConnections(accountId).catch(err => { if (import.meta.env.DEV) console.error('Failed to push to connections:', err) })
           }
         } else {
+          trace('deploy', 'stremio-push', { accountId, pushing: updatedAddons.length, addons: briefAddons(updatedAddons) })
           await updateAddons(authKey, updatedAddons, accountId)
+          const state = useAccountStore.getState()
+          const stremioAccount = state.accounts.find(a => a.id === accountId)
+          if (stremioAccount) {
+            const clearedTombstones = reconcileTombstones(stremioAccount.deletedAddons, updatedAddons)
+            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, deletedAddons: clearedTombstones } : a) })
+            persistAccounts(useAccountStore.getState().accounts)
+          }
           const { pushToConnections } = await import('../account/accountAddonOps')
-          pushToConnections(accountId).catch(() => {})
+          pushToConnections(accountId, { addons: updatedAddons }).catch(() => {})
+          // Refresh account.addons through the metadata-preserving passive merge so the deploy
+          // surfaces promptly without the deploy path overwriting local flags.
+          const { scheduleSyncAccount } = await import('../account/accountSync')
+          scheduleSyncAccount(accountId)
         }
 
         result.success++
@@ -1122,8 +1142,17 @@ export async function bulkInstallFromUrls(
           }
         } else {
           await updateAddons(authKey, dedupedAddons, accountId)
+          const state = useAccountStore.getState()
+          const stremioAccount = state.accounts.find(a => a.id === accountId)
+          if (stremioAccount) {
+            const clearedTombstones = reconcileTombstones(stremioAccount.deletedAddons, dedupedAddons)
+            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, deletedAddons: clearedTombstones } : a) })
+            persistAccounts(useAccountStore.getState().accounts)
+          }
           const { pushToConnections } = await import('../account/accountAddonOps')
-          pushToConnections(accountId).catch(() => {})
+          pushToConnections(accountId, { addons: dedupedAddons }).catch(() => {})
+          const { scheduleSyncAccount } = await import('../account/accountSync')
+          scheduleSyncAccount(accountId)
         }
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, dedupedAddons)

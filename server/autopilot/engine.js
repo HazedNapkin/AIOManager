@@ -4,7 +4,9 @@ import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { globalHealthCache, healthCheckInFlight, serverState } from '../state.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
+import { safeFetchWithRedirects } from '../utils/safe-fetch.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
+import { trace } from '../utils/trace.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { isUnifiedEnforcement } from '../config.js'
 
@@ -26,6 +28,10 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const ruleFetchCache = new Map()
     let ruleFetchCacheBytes = 0
     const ruleCacheStats = { hits: 0, misses: 0, bytesSaved: 0, windowStart: Date.now() }
+
+    const customCheckCache = new Map()
+    const customCheckInFlight = new Map()
+    const CUSTOM_CHECK_CACHE_TTL = 30000
 
     const ruleCacheEntryBytes = (row) =>
         Buffer.byteLength(row.addon_list || '', 'utf8') +
@@ -228,6 +234,69 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
     }
 
+    const CUSTOM_CHECK_TIMEOUT_MS = 10000
+
+    const performSingleCustomCheck = async (checkUrl) => {
+        if (!(await isSafeUrlResolved(checkUrl))) {
+            return false
+        }
+        let queueKey = checkUrl
+        try { queueKey = new URL(checkUrl).origin } catch (e) { }
+        return enqueueProxyRequest(checkUrl, async () => {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), CUSTOM_CHECK_TIMEOUT_MS)
+            try {
+                const res = await safeFetchWithRedirects(checkUrl, { signal: controller.signal, methodFallback: true })
+                if (!res) return false
+                return res.ok || res.status === 401 || res.status === 403
+            } finally {
+                clearTimeout(timeout)
+            }
+        }, queueKey)
+    }
+
+    const checkCustomUrlsHealth = async (urls, ruleId, accountId) => {
+        if (!Array.isArray(urls) || urls.length === 0) return true
+        trace('autopilot.customCheck', 'start', { ruleId, urlCount: urls.length })
+        const results = await Promise.all(urls.map(async (checkUrl) => {
+            const normalized = normalizeAddonUrl(checkUrl).toLowerCase()
+            const cached = customCheckCache.get(normalized)
+            if (cached && Date.now() - cached.ts < CUSTOM_CHECK_CACHE_TTL) {
+                return cached.healthy
+            }
+            const existing = customCheckInFlight.get(normalized)
+            if (existing) return existing
+            const promise = (async () => {
+                let healthy = false
+                try {
+                    healthy = await performSingleCustomCheck(checkUrl)
+                } catch (err) {
+                    healthy = false
+                    trace('autopilot.customCheck', 'error', { ruleId, url: checkUrl, error: err?.message || String(err) })
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Custom check error for ${truncateUrl(checkUrl)}: ${err?.message}`)
+                }
+                customCheckCache.set(normalized, { healthy, ts: Date.now() })
+                if (customCheckCache.size > 2000) {
+                    const nowTs = Date.now()
+                    for (const [key, val] of customCheckCache.entries()) {
+                        if (nowTs - val.ts > CUSTOM_CHECK_CACHE_TTL) customCheckCache.delete(key)
+                    }
+                }
+                if (!healthy) {
+                    trace('autopilot.customCheck', 'failed', { ruleId, url: checkUrl })
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Custom check failed for ${truncateUrl(checkUrl)}`)
+                } else {
+                    trace('autopilot.customCheck', 'passed', { ruleId, url: checkUrl })
+                }
+                return healthy
+            })()
+            customCheckInFlight.set(normalized, promise)
+            promise.finally(() => customCheckInFlight.delete(normalized))
+            return promise
+        }))
+        return results.every(r => r === true)
+    }
+
     const sanitizeManifest = (manifest, transportUrl = '') => {
         const isUnknown = !manifest?.name || manifest?.name === 'Unknown Addon' || manifest?.name === 'Restoring Addon...'
         const name = isUnknown && transportUrl ? deriveAddonName(transportUrl) : (manifest?.name || 'Unknown Addon')
@@ -261,26 +330,16 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 const controller = new AbortController()
                 const timeout = setTimeout(() => controller.abort(), 10000)
                 try {
-                    let res = await fetch(url, {
-                        headers: { 'x-stremio-account': accountId || 'autopilot-sync' },
+                    const res = await safeFetchWithRedirects(url, {
+                        method: 'GET',
                         signal: controller.signal,
-                        redirect: 'manual'
+                        headers: { 'x-stremio-account': accountId || 'autopilot-sync' }
                     })
-                    if (res.status >= 300 && res.status < 400) {
-                        const location = res.headers.get('location')
-                        if (!location || !(await isSafeUrlResolved(location))) throw new Error(`Manifest redirect to unsafe URL`)
-                        res = await fetch(location, {
-                            headers: { 'x-stremio-account': accountId || 'autopilot-sync' },
-                            signal: controller.signal,
-                            redirect: 'manual'
-                        })
-                    }
-                    clearTimeout(timeout)
+                    if (!res) throw new Error(`Manifest redirect to unsafe URL`)
                     if (!res.ok) throw new Error(`Manifest fetch ${res.status}`)
                     return await res.json()
-                } catch (err) {
+                } finally {
                     clearTimeout(timeout)
-                    throw err
                 }
             });
             const manifest = response?.manifest || response;
@@ -754,6 +813,33 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Addon list parse failed: ${e.message}`)
         }
 
+        let customChecks = []
+        try {
+            const raw = rule.custom_check_urls
+            let parsed = null
+            if (typeof raw === 'string' && raw.length > 0) {
+                const decrypted = decrypt(raw, FALLBACK_KEYS)
+                if (decrypted && decrypted.startsWith('[')) {
+                    parsed = JSON.parse(decrypted)
+                } else if (raw.startsWith('[')) {
+                    parsed = JSON.parse(raw)
+                }
+            } else if (Array.isArray(raw)) {
+                parsed = raw
+            }
+            if (Array.isArray(parsed)) {
+                customChecks = parsed.map(item => {
+                    if (typeof item === 'string') return item.trim() ? { url: item, appliesTo: [] } : null
+                    if (item && typeof item === 'object' && typeof item.url === 'string') {
+                        return { url: item.url, appliesTo: Array.isArray(item.appliesTo) ? item.appliesTo.filter(u => typeof u === 'string') : [] }
+                    }
+                    return null
+                }).filter(Boolean).filter(c => c.url)
+            }
+        } catch (e) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Custom check URLs parse failed: ${e.message}`)
+        }
+
         let stabilization = {}
         try {
             if (decryptedStabilizationStr && typeof decryptedStabilizationStr === 'object') {
@@ -778,7 +864,19 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         for (const i of checkOrder) {
             const url = chain[i]
             const normUrl = normalizedChainUrls[i]
-            const isHealthy = await checkAddonHealthInternal(url)
+            let isHealthy = await checkAddonHealthInternal(url)
+
+            if (isHealthy && customChecks.length > 0) {
+                const applicableChecks = customChecks.filter(c =>
+                    c.appliesTo.length === 0 ||
+                    c.appliesTo.some(au => normalizeAddonUrl(au).toLowerCase() === normUrl)
+                )
+                if (applicableChecks.length > 0) {
+                    const checkUrls = [...new Set(applicableChecks.map(c => c.url))]
+                    const customPassed = await checkCustomUrlsHealth(checkUrls, rule.id, rule.account_id)
+                    isHealthy = isHealthy && customPassed
+                }
+            }
 
             if (isHealthy) {
                 const prevSuccesses = stabilization[normUrl]?.successes || 0
@@ -1096,7 +1194,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 COALESCE(s.last_check, r.last_check) AS last_check,
                                 COALESCE(s.last_notification, r.last_notification) AS last_notification,
                                 r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
-                                r.platform, r.connection_id, r.updated_at,
+                                r.platform, r.connection_id, r.updated_at, r.custom_check_urls,
                                 (SELECT c.account_name FROM server_credentials c
                                  WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
                                    AND c.account_name <> ''

@@ -227,11 +227,11 @@ export function DeploymentPreview({
         </div>
       </div>
 
-      <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+      <div className="mt-3 flex flex-wrap gap-2">
         {selectedAddons.slice(0, 8).map(addon => {
           const logo = addon.metadata?.customLogo || addon.manifest.logo
           return (
-            <div key={addon.id} className="flex min-w-[150px] max-w-[190px] items-center gap-2 rounded-xl border border-border/25 bg-background/40 px-2.5 py-2">
+            <div key={addon.id} className="flex min-w-0 max-w-[190px] flex-1 basis-[150px] items-center gap-2 rounded-xl border border-border/25 bg-background/40 px-2.5 py-2">
               <AddonPreviewIcon name={addon.name} logo={logo} />
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium">{addon.name}</div>

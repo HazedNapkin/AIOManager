@@ -6,6 +6,7 @@ import {
 } from '@/api/addons'
 import { mergeAddons, normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
+import { trace } from '@/lib/trace'
 import { useAuthStore } from '@/store/authStore'
 import { AddonDescriptor } from '@/types/addon'
 import type { Account } from '@/types/account'
@@ -62,7 +63,8 @@ export function scheduleSyncAccount(id: string, forceRefresh = false): void {
     }, SYNC_DEBOUNCE_MS))
 }
 
-export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescriptor[]): AddonDescriptor[] {
+export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescriptor[], forceRefresh = false): AddonDescriptor[] {
+    trace('sync.merge', 'enter', { accountId: account.id, remote: remoteAddons.length, local: account.addons.length, forceRefresh })
     const normalizedAddons = remoteAddons
         .filter(a => !syncManager.isPendingRemoval(account.id, a.transportUrl))
         .map((addon) => ({
@@ -71,7 +73,24 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
         }))
 
     const survivingRemote = filterResurrected(normalizedAddons, account.addons, account.deletedAddons)
-    return mergeAddons(account.addons, survivingRemote)
+    trace('sync.merge', 'post-tombstone', { accountId: account.id, afterTombstone: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length })
+    const survivingUrls = new Set(survivingRemote.map(a => normalizeAddonUrl(a.transportUrl)))
+    const strippedByTombstone = normalizedAddons
+        .filter(a => !survivingUrls.has(normalizeAddonUrl(a.transportUrl)))
+        .map(a => ({ id: a.manifest?.id || '?', url: (a.transportUrl || '').slice(-48) }))
+    trace('mergeRemoteIntoHub', 'tombstone-filter', {
+        accountId: account.id,
+        forceRefresh,
+        remote: normalizedAddons.length,
+        local: (account.addons || []).length,
+        surviving: survivingRemote.length,
+        tombstoneCount: Object.keys(account.deletedAddons || {}).length,
+        strippedByTombstone,
+    })
+    // Hub-canonical: passive read is additive; only an explicit forceRefresh adopts platform removals.
+    const out = mergeAddons(account.addons, survivingRemote, { keepMissingLocal: !forceRefresh })
+    trace('sync.merge', 'result', { accountId: account.id, out: out.length, keepMissingLocal: !forceRefresh })
+    return out
 }
 
 async function repairAndFlag(
@@ -208,6 +227,8 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     let stremioAuthKey: string | undefined
     let finalAddons: AddonDescriptor[]
 
+    trace('sync.core', 'start', { accountId: id, useStremio, hasConnections: !!currentAccount.connections?.some(c => c.enabled) })
+
     if (useStremio) {
         const encryptionKey = getEncryptionKey()
         let authKey = await getCachedAuthKey(accountAuthKey, encryptionKey)
@@ -227,8 +248,9 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
             remoteAddons = await getAddons(authKey, currentAccount.id)
         }
         stremioAuthKey = authKey
+        trace('sync.core', 'read', { accountId: id, remote: remoteAddons.length })
         if (!useAuthStore.getState().encryptionKey) return { changed: false, authKeyRefreshed }
-        const merged = mergeRemoteIntoHub(currentAccount, remoteAddons)
+        const merged = mergeRemoteIntoHub(currentAccount, remoteAddons, forceRefresh)
         finalAddons = await repairAndFlag(currentAccount, merged, forceRefresh)
     } else {
         finalAddons = await repairAndFlag(currentAccount, currentAccount.addons, forceRefresh)
@@ -248,7 +270,10 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
         }
     }
 
+    trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length })
+
     const addonsChanged = JSON.stringify(currentAccount.addons) !== JSON.stringify(finalAddons)
+    trace('sync.core', 'flags', { accountId: id, addonsChanged, discoveryChanged, forceRefresh })
     let updatedProfiles = currentAccount.profiles
     if (currentAccount.activeProfileId && updatedProfiles) {
         updatedProfiles = updatedProfiles.map(p =>
@@ -286,14 +311,16 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     if (!useAuthStore.getState().encryptionKey) return { changed: addonsChanged || discoveryChanged || authKeyRefreshed, authKeyRefreshed }
 
     const pushPromises: Promise<void>[] = []
-    if (useStremio && stremioAuthKey && (forceRefresh || addonsChanged || discoveryChanged)) {
+    trace('sync.core', 'writeback-gate', { accountId: id, willPushStremio: !!(useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)), reason: forceRefresh ? 'forceRefresh' : discoveryChanged ? 'discoveryChanged' : 'passive-skip' })
+    if (useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)) {
         pushPromises.push(
             updateAddons(stremioAuthKey, finalAddons, currentAccount.id, { previousCollection: currentAccount.addons })
                 .catch(err => { if (!isTransientSyncError(err)) throw err })
         )
     }
 
-    if (updatedAccount.connections?.some(c => c.enabled)) {
+    trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || discoveryChanged) })
+    if ((forceRefresh || discoveryChanged) && updatedAccount.connections?.some(c => c.enabled)) {
         pushPromises.push(
             (async () => {
                 try {

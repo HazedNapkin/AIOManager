@@ -19,6 +19,7 @@ import { registerActivityRoutes } from './routes/activity.js'
 import { registerHydraRoutes } from './routes/hydra.js'
 import { createReconciler } from './providers/reconciler.js'
 import { registerProviderRoutes } from './routes/providers.js'
+import { traceClientBatch, traceEnabled } from './utils/trace.js'
 
 const fastify = Fastify({
     logger: loggerConfig,
@@ -164,6 +165,17 @@ fastify.get('/api/config', { config: { rateLimit: { max: 60, timeWindow: '1 minu
         customHtml: process.env.CUSTOM_HTML || null,
         registrationsClosed: isRegistrationsClosed()
     }
+})
+
+// Debug trace sink: client seams batch-POST here so client + server traces land in one
+fastify.post('/api/debug/trace', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (!traceEnabled()) {
+        reply.status(204)
+        return null
+    }
+    traceClientBatch(request.body?.entries)
+    reply.status(204)
+    return null
 })
 
 registerSyncRoutes(fastify)

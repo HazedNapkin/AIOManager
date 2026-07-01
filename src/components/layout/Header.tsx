@@ -278,7 +278,7 @@ export function Header() {
     <>
     <header className="flex-shrink-0 relative z-50 md:sticky md:top-0">
 
-      <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header'}`}>
+      <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header backdrop-blur-xl'}`}>
         <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
             <img

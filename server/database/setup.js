@@ -71,7 +71,8 @@ export async function initializeDatabase(fastify) {
         message_template TEXT,
         owner_sync_user TEXT,
         platform TEXT DEFAULT 'stremio',
-        connection_id TEXT
+        connection_id TEXT,
+        custom_check_urls TEXT DEFAULT NULL
       );
 
 
@@ -389,6 +390,7 @@ export async function initializeDatabase(fastify) {
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS owner_sync_user TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration owner_sync_user: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'stremio'`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration platform: ${e?.message}`) }
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS connection_id TEXT`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration connection_id: ${e?.message}`) }
+            try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS custom_check_urls TEXT DEFAULT NULL`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration custom_check_urls: ${e?.message}`) }
 
             try {
                 const platformBackfill = await db.run(`UPDATE autopilot_rules SET platform = 'stremio' WHERE platform IS NULL`)
@@ -484,6 +486,11 @@ export async function initializeDatabase(fastify) {
             if (!hasConnectionId) {
                 await db.run(`ALTER TABLE autopilot_rules ADD COLUMN connection_id TEXT`)
                 fastify.log.info({ category: 'Database' }, 'Migrated: Added connection_id column to autopilot_rules')
+            }
+            const hasCustomCheckUrls = tableInfo.some(col => col.name === 'custom_check_urls')
+            if (!hasCustomCheckUrls) {
+                await db.run(`ALTER TABLE autopilot_rules ADD COLUMN custom_check_urls TEXT DEFAULT NULL`)
+                fastify.log.info({ category: 'Database' }, 'Migrated: Added custom_check_urls column to autopilot_rules')
             }
             if (!hasPlatform) {
                 try {

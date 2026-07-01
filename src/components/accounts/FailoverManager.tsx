@@ -100,6 +100,27 @@ async function testWebhook(
     }
 }
 
+type CustomCheckEntry = { url: string; appliesTo: string[] }
+
+const normalizeCustomChecks = (raw: unknown): CustomCheckEntry[] => {
+    if (!Array.isArray(raw)) return []
+    return raw
+        .map((item): CustomCheckEntry => {
+            if (typeof item === 'string') return { url: item, appliesTo: [] }
+            if (item && typeof item === 'object') {
+                const obj = item as { url?: unknown; appliesTo?: unknown }
+                return {
+                    url: typeof obj.url === 'string' ? obj.url : '',
+                    appliesTo: Array.isArray(obj.appliesTo)
+                        ? obj.appliesTo.filter((u): u is string => typeof u === 'string')
+                        : []
+                }
+            }
+            return { url: '', appliesTo: [] }
+        })
+        .slice(0, 5)
+}
+
 interface SortableChainTierProps {
     id: string
     url: string
@@ -204,6 +225,9 @@ export function FailoverManager({
     const [ruleMessageTemplate, setRuleMessageTemplate] = useState("")
     const [isRuleDialogOpen, setIsRuleDialogOpen] = useState(false)
     const [ruleToDelete, setRuleToDelete] = useState<string | null>(null)
+    const [customChecks, setCustomChecks] = useState<Array<{ url: string; appliesTo: string[] }>>([])
+    const [urlTestResults, setUrlTestResults] = useState<Record<number, { status: 'ok' | 'fail' | 'checking'; code?: number; error?: string }>>({})
+    const [expandedChecks, setExpandedChecks] = useState<Set<number>>(new Set())
     const [localActiveFailoverTab, setLocalActiveFailoverTab] = useState<FailoverView>("rules")
     const activeFailoverTab = activeView ?? localActiveFailoverTab
     const handleFailoverTabChange = useCallback((value: string) => {
@@ -221,6 +245,9 @@ export function FailoverManager({
         setRuleWebhookUrl("")
         setRuleNotifyMode('default')
         setRuleMessageTemplate("")
+        setCustomChecks([])
+        setUrlTestResults({})
+        setExpandedChecks(new Set())
         setEditingRuleId(null)
         setIsRuleDialogOpen(false)
     }
@@ -300,6 +327,10 @@ export function FailoverManager({
         const webhookUrl = ruleNotifyMode === 'custom' ? ruleWebhookUrl.trim() : ''
 
         const messageTemplate = ruleMessageTemplate.trim() || undefined
+        const filteredCustomChecks = customChecks
+            .map(c => ({ url: c.url.trim(), appliesTo: c.appliesTo }))
+            .filter(c => c.url.length > 0)
+            .slice(0, 5)
 
         if (editingRuleId) {
             const existingRule = rules.find(r => r.id === editingRuleId)
@@ -312,11 +343,12 @@ export function FailoverManager({
                 notifyEnabled,
                 webhookUrl,
                 messageTemplate,
+                customCheckUrls: filteredCustomChecks,
             })
             toast({ title: "Rule Updated", description: "Rule settings modified." })
             setEditingRuleId(null)
         } else {
-            await addRule(accountId, filteredChain, ruleName.trim() || undefined, cooldownMs, webhookUrl, notifyEnabled, messageTemplate)
+            await addRule(accountId, filteredChain, ruleName.trim() || undefined, cooldownMs, webhookUrl, notifyEnabled, messageTemplate, filteredCustomChecks)
             toast({ title: "Rule Created", description: "Autopilot is now monitoring this chain." })
         }
 
@@ -329,6 +361,92 @@ export function FailoverManager({
         const newChain = [...chain]
         newChain[index] = url
         setChain(newChain)
+    }
+
+    const addCustomCheck = () => {
+        if (customChecks.length < 5) {
+            setCustomChecks([...customChecks, { url: '', appliesTo: [] }])
+        }
+    }
+    const removeCustomCheck = (index: number) => {
+        setCustomChecks(customChecks.filter((_, i) => i !== index))
+        setExpandedChecks(prev => {
+            const next = new Set<number>()
+            prev.forEach(i => {
+                if (i < index) next.add(i)
+                else if (i > index) next.add(i - 1)
+            })
+            return next
+        })
+        setUrlTestResults(prev => {
+            const next: Record<number, { status: 'ok' | 'fail' | 'checking'; code?: number; error?: string }> = {}
+            Object.entries(prev).forEach(([key, value]) => {
+                const i = Number(key)
+                if (i < index) next[i] = value
+                else if (i > index) next[i - 1] = value
+            })
+            return next
+        })
+    }
+    const updateCustomCheckUrl = (index: number, url: string) => {
+        const next = [...customChecks]
+        next[index] = { ...next[index], url }
+        setCustomChecks(next)
+    }
+    const toggleAddonForCheck = (checkIndex: number, addonUrl: string) => {
+        const current = customChecks[checkIndex].appliesTo
+        if (!current.includes(addonUrl) && current.length >= 10) return
+        const next = [...customChecks]
+        if (current.includes(addonUrl)) {
+            next[checkIndex].appliesTo = current.filter(u => u !== addonUrl)
+        } else {
+            next[checkIndex].appliesTo = [...current, addonUrl]
+        }
+        setCustomChecks(next)
+    }
+    const getUnassignedAddons = (checkIndex: number) => {
+        const assigned = new Set(customChecks[checkIndex].appliesTo)
+        return chain.filter(url => !!url && !assigned.has(url))
+    }
+    const toggleExpand = (index: number) => {
+        setExpandedChecks(prev => {
+            const next = new Set(prev)
+            if (next.has(index)) next.delete(index)
+            else next.add(index)
+            return next
+        })
+    }
+    const testCustomCheckUrl = async (index: number) => {
+        const url = customChecks[index]?.url.trim()
+        if (!url) return
+        setUrlTestResults(prev => ({ ...prev, [index]: { status: 'checking' } }))
+        try {
+            const { useSyncStore } = await import('@/store/syncStore')
+            const { serverUrl } = useSyncStore.getState()
+            const baseUrl = serverUrl || ''
+            const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+            const { deriveSyncToken } = await import('@/lib/crypto')
+            const syncPassword = useSyncStore.getState().auth.password
+            const { auth } = useSyncStore.getState()
+            const syncToken = await deriveSyncToken(syncPassword)
+            const res = await fetch(`${apiPath}/autopilot/test-url`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-sync-password': syncToken,
+                    'x-sync-user': auth.id
+                },
+                body: JSON.stringify({ url })
+            })
+            const data = await res.json().catch(() => ({}))
+            if (!res.ok) {
+                setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: data.error || `Server error (${res.status})` } }))
+                return
+            }
+            setUrlTestResults(prev => ({ ...prev, [index]: { status: data.ok ? 'ok' : 'fail', code: data.status, error: data.error } }))
+        } catch {
+            setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: 'Request failed' } }))
+        }
     }
 
 
@@ -582,6 +700,12 @@ export function FailoverManager({
                                                     setRuleNotifyMode(rule.notifyEnabled === false ? 'off' : rule.webhookUrl ? 'custom' : 'default')
                                                     setRuleWebhookUrl(rule.webhookUrl || '')
                                                     setRuleMessageTemplate(rule.messageTemplate || '')
+                                                    const normalizedChecks = normalizeCustomChecks(rule.customCheckUrls)
+                                                    setCustomChecks(normalizedChecks)
+                                                    const initialExpanded = new Set<number>()
+                                                    normalizedChecks.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
+                                                    setExpandedChecks(initialExpanded)
+                                                    setUrlTestResults({})
                                                     setEditingRuleId(rule.id)
                                                     handleFailoverTabChange("rules")
                                                     setIsRuleDialogOpen(true)
@@ -696,6 +820,158 @@ export function FailoverManager({
                                             className="bg-muted/30 border-border rounded-xl min-h-[60px] resize-none"
                                         />
                                     </div>
+                                )}
+                            </div>
+
+                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
+                                <div className="space-y-0.5">
+                                    <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
+                                    <p className="text-xs text-muted-foreground/60">Additional URLs to monitor. If any fail, the rule will fail over. Max 5.</p>
+                                </div>
+
+                                {customChecks.map((check, index) => {
+                                    const result = urlTestResults[index]
+                                    const isExpanded = expandedChecks.has(index)
+                                    const unassigned = getUnassignedAddons(index)
+                                    return (
+                                        <div key={index} className="rounded-xl border border-border/40 bg-muted/10 p-3 space-y-2">
+                                            <div className="flex gap-2 items-center">
+                                                <Input
+                                                    placeholder="https://api.torbox.app/v1/api/user/me"
+                                                    value={check.url}
+                                                    onChange={(e) => updateCustomCheckUrl(index, e.target.value)}
+                                                    className="bg-muted/30 border-border rounded-xl"
+                                                />
+                                                <Button
+                                                    size="sm"
+                                                    className="shrink-0 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
+                                                    onClick={() => testCustomCheckUrl(index)}
+                                                    disabled={!check.url.trim() || result?.status === 'checking'}
+                                                >
+                                                    {result?.status === 'checking' ? (
+                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    ) : 'Test'}
+                                                </Button>
+                                                <button
+                                                    className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
+                                                    onClick={() => removeCustomCheck(index)}
+                                                    aria-label="Remove URL"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            </div>
+                                            {result && result.status !== 'checking' && (
+                                                <div className={`flex items-center gap-1.5 text-xs ml-1 ${result.status === 'ok' ? 'text-success' : 'text-destructive'}`}>
+                                                    {result.status === 'ok' ? (
+                                                        <Check className="w-3.5 h-3.5" />
+                                                    ) : (
+                                                        <XCircle className="w-3.5 h-3.5" />
+                                                    )}
+                                                    <span>
+                                                        {result.status === 'ok'
+                                                            ? `Healthy (HTTP ${result.code})`
+                                                            : result.error
+                                                                ? `Failed: ${result.error}`
+                                                                : `Failed (HTTP ${result.code})`}
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                            <div className="space-y-1.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleExpand(index)}
+                                                    className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase hover:text-foreground/80 transition-colors ml-0.5"
+                                                >
+                                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                                    Applied to
+                                                    <span className="normal-case font-mono text-[10px] text-foreground/50">
+                                                        {check.appliesTo.length > 0
+                                                            ? `${check.appliesTo.length} addon${check.appliesTo.length !== 1 ? 's' : ''}`
+                                                            : 'all'}
+                                                    </span>
+                                                </button>
+                                                {isExpanded && (
+                                                    <div className="space-y-1.5">
+                                                        {check.appliesTo.length === 0 ? (
+                                                            <p className="text-xs text-muted-foreground/70 px-3 py-2 bg-muted/30 rounded-xl">
+                                                                All addons (rule-level gate)
+                                                            </p>
+                                                        ) : (
+                                                            check.appliesTo.map(addonUrl => {
+                                                                const addon = getAddonForUrl(addonUrl)
+                                                                const addonName = addon?.metadata?.customName || identifyAddon(addonUrl, addon?.manifest).name
+                                                                const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
+                                                                return (
+                                                                    <div key={addonUrl} className="bg-muted/30 rounded-xl px-3 py-2 flex items-center gap-2">
+                                                                        <AddonIcon
+                                                                            name={addonName}
+                                                                            logo={addonLogo}
+                                                                            className="h-5 w-5"
+                                                                            textClassName="text-xs"
+                                                                            imageClassName="p-0.5"
+                                                                        />
+                                                                        <span className="text-sm truncate flex-1">{addonName}</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
+                                                                            onClick={() => toggleAddonForCheck(index, addonUrl)}
+                                                                            aria-label="Remove addon"
+                                                                        >
+                                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                                        </button>
+                                                                    </div>
+                                                                )
+                                                            })
+                                                        )}
+                                                        {unassigned.length > 0 && check.appliesTo.length < 10 && (
+                                                            <Select
+                                                                key={`add-${index}-${check.appliesTo.join(',')}`}
+                                                                onValueChange={(val) => toggleAddonForCheck(index, val)}
+                                                            >
+                                                                <SelectTrigger className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-9 rounded-xl gap-2 font-normal">
+                                                                    <Plus className="w-3.5 h-3.5" />
+                                                                    <SelectValue placeholder="Add addon from chain" />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {unassigned.map(url => {
+                                                                        const addon = getAddonForUrl(url)
+                                                                        const addonName = addon?.metadata?.customName || identifyAddon(url, addon?.manifest).name
+                                                                        const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
+                                                                        return (
+                                                                            <SelectItem key={url} value={url}>
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <AddonIcon
+                                                                                        name={addonName}
+                                                                                        logo={addonLogo}
+                                                                                        className="h-5 w-5"
+                                                                                        textClassName="text-xs"
+                                                                                        imageClassName="p-0.5"
+                                                                                    />
+                                                                                    <span>{addonName}</span>
+                                                                                </div>
+                                                                            </SelectItem>
+                                                                        )
+                                                                    })}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+
+                                {customChecks.length < 5 && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={addCustomCheck}
+                                        className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-9 rounded-xl gap-2"
+                                    >
+                                        <Plus className="w-3.5 h-3.5" /> Add URL
+                                    </Button>
                                 )}
                             </div>
 
@@ -958,10 +1234,10 @@ export function FailoverManager({
                                 const activeAddonName = getAddonNameForUrl(activeUrl)
                                 const primaryAddonName = getAddonNameForUrl(rule.priorityChain[0])
                                 return (
-                                    <div key={rule.id} className="bg-card border border-border/40 rounded-2xl p-5 flex flex-col gap-5 shadow-sm">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg">
+                                    <div key={rule.id} className="bg-card border border-border/40 rounded-2xl p-5 flex flex-col gap-5 shadow-sm min-w-0">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0" title={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
                                                     {rule.name || `RULE ${rule.id.slice(0, 8)}`}
                                                 </div>
                                                 {rule.cooldown_ms && (
@@ -994,7 +1270,7 @@ export function FailoverManager({
                                                     </StatusChip>
                                                 )}
                                             </div>
-                                            <div className="flex items-center gap-3">
+                                            <div className="flex items-center gap-3 shrink-0">
                                                 <div className="flex items-center gap-2 mr-1">
                                                     <span className={`text-xs uppercase font-semibold ${rule.isActive ? 'text-primary' : 'text-foreground/60'}`}>
                                                         {rule.isActive ? 'On' : 'Off'}
@@ -1024,6 +1300,13 @@ export function FailoverManager({
                                                             setCooldownMinutes(rule.cooldown_ms ? String(Math.round(rule.cooldown_ms / 60000)) : '')
                                                             setRuleNotifyMode(rule.notifyEnabled === false ? 'off' : rule.webhookUrl ? 'custom' : 'default')
                                                             setRuleWebhookUrl(rule.webhookUrl || '')
+                                                            setRuleMessageTemplate(rule.messageTemplate || '')
+                                                            const normalizedChecks = normalizeCustomChecks(rule.customCheckUrls)
+                                                            setCustomChecks(normalizedChecks)
+                                                            const initialExpanded = new Set<number>()
+                                                            normalizedChecks.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
+                                                            setExpandedChecks(initialExpanded)
+                                                            setUrlTestResults({})
                                                             setEditingRuleId(rule.id)
                                                             setIsRuleDialogOpen(true)
                                                         }}>

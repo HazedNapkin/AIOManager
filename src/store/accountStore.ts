@@ -281,6 +281,7 @@ export interface AccountStore {
       removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
       removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
       reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
+      bulkDeleteAddons: (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => Promise<void>
       exportAccounts: (includeCredentials: boolean) => Promise<string>
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
@@ -802,6 +803,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return removeAddonByIndexFromAccount(accountId, index)
       },
 
+      bulkDeleteAddons: async (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => {
+            const { bulkDeleteAddons } = await import('./account/accountAddonOps')
+            return bulkDeleteAddons(accountId, keptAddons, removedUrls)
+      },
       reorderAddons: async (accountId: string, newOrder: AddonDescriptor[]) => {
             const { reorderAddons } = await import('./account/accountAddonOps')
             return reorderAddons(accountId, newOrder)

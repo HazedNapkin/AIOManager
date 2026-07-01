@@ -196,8 +196,26 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             }, 'hydra').catch(() => {})
         }
         if (wasEnabled === false) {
+            try {
+                const acct = useAccountStore.getState().accounts.find(a => a.id === accountId)
+                if (acct) {
+                    const { discoverFromConnections } = await import('@/lib/connection-discovery')
+                    const { discovered } = await discoverFromConnections(acct, accountId)
+                    const urls = discovered.filter(d => d.connectionId === connectionId).map(d => d.transportUrl)
+                    if (urls.length > 0) {
+                        const { reconcileTombstones } = await import('@/lib/addon-tombstones')
+                        await updateAccount(accountId, account => ({
+                            ...account,
+                            deletedAddons: reconcileTombstones(account.deletedAddons, urls.map(u => ({ transportUrl: u }))),
+                        }))
+                    }
+                }
+            } catch { /* best-effort: sync still runs below */ }
             import('./account/accountSync').then(({ scheduleSyncAccount }) => {
                 scheduleSyncAccount(accountId)
+            })
+            import('./account/accountAddonOps').then(({ pushToConnections }) => {
+                pushToConnections(accountId).catch(() => {})
             })
         }
     },

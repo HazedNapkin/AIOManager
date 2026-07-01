@@ -39,8 +39,14 @@ export interface FailoverRule {
     webhookUrl?: string      // Per-rule override URL. Empty string = use global default.
     notifyEnabled?: boolean  // Per-rule notification toggle. Undefined/true = enabled.
     messageTemplate?: string // Custom notification message. Supports {account} {addon} {status} {from} {to} {rule}
+    customCheckUrls?: CustomCheckEntry[] // Additional URLs to health-check alongside specific addons
     platform?: string
     connectionId?: string
+}
+
+export interface CustomCheckEntry {
+    url: string
+    appliesTo: string[]
 }
 
 export interface WebhookConfig {
@@ -62,7 +68,7 @@ interface FailoverStore {
     initialize: () => Promise<void>
     syncServerState: () => Promise<void>
     setWebhook: (url: string, enabled: boolean) => Promise<void>
-    addRule: (accountId: string, priorityChain: string[], name?: string, cooldown_ms?: number, webhookUrl?: string, notifyEnabled?: boolean, messageTemplate?: string) => Promise<void>
+    addRule: (accountId: string, priorityChain: string[], name?: string, cooldown_ms?: number, webhookUrl?: string, notifyEnabled?: boolean, messageTemplate?: string, customCheckUrls?: CustomCheckEntry[]) => Promise<void>
     updateRule: (ruleId: string, updates: Partial<FailoverRule>) => Promise<void>
     removeRule: (ruleId: string) => Promise<void>
     toggleRuleActive: (ruleId: string, isActive: boolean) => Promise<void>
@@ -107,6 +113,23 @@ const hasEnabledMismatch = (addons: AddonEnabledSnapshot[] | undefined, normaliz
     const addon = findAddonByNormalizedUrl(addons, normalizedUrl)
     if (!addon) return false
     return (addon.flags?.enabled !== false) !== shouldBeEnabled
+}
+
+const normalizeCustomChecks = (checks: Array<CustomCheckEntry | string> | undefined): CustomCheckEntry[] => {
+    if (!Array.isArray(checks)) return []
+    return checks
+        .map(c => {
+            if (typeof c === 'string') return { url: c.trim(), appliesTo: [] }
+            if (c && typeof c === 'object' && typeof c.url === 'string') {
+                return {
+                    url: c.url.trim(),
+                    appliesTo: Array.isArray(c.appliesTo) ? c.appliesTo.filter((u: unknown) => typeof u === 'string') : [],
+                }
+            }
+            return null
+        })
+        .filter((c): c is CustomCheckEntry => c !== null && c.url.length > 0)
+        .slice(0, 5)
 }
 
 const reconcileAccountAddonsWithActiveRule = async (rule: FailoverRule) => {
@@ -272,6 +295,7 @@ const syncRuleToServer = async (rule: FailoverRule) => {
                     : (rule.webhookUrl || useFailoverStore.getState().webhook.url),
                 cooldown_ms: rule.cooldown_ms,
                 messageTemplate: rule.messageTemplate || null,
+                customCheckUrls: normalizeCustomChecks(rule.customCheckUrls),
             })
         })
         if (import.meta.env.DEV) console.log(`[Autopilot] Rule ${rule.id} synced to server (Live Mode).`)
@@ -337,6 +361,7 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
                     : (rule.webhookUrl || useFailoverStore.getState().webhook.url),
                 cooldown_ms: rule.cooldown_ms,
                 messageTemplate: rule.messageTemplate || null,
+                customCheckUrls: normalizeCustomChecks(rule.customCheckUrls),
             })
         }
 
@@ -778,8 +803,9 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         syncRulesToServerBatch(defaultModeRules).catch(e => { if (import.meta.env.DEV) console.error(e) })
     },
 
-    addRule: async (accountId, priorityChain, name, cooldown_ms, webhookUrl, notifyEnabled, messageTemplate) => {
+    addRule: async (accountId, priorityChain, name, cooldown_ms, webhookUrl, notifyEnabled, messageTemplate, customCheckUrls) => {
         const safeChain = Array.isArray(priorityChain) ? priorityChain : []
+        const safeCustomChecks = normalizeCustomChecks(customCheckUrls)
         const newRule: FailoverRule = {
             id: crypto.randomUUID(),
             accountId,
@@ -793,6 +819,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             webhookUrl: webhookUrl || '',
             notifyEnabled: notifyEnabled !== false,
             messageTemplate: messageTemplate || undefined,
+            customCheckUrls: safeCustomChecks,
         }
 
         const rules = [...get().rules, newRule]

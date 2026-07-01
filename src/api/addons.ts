@@ -8,6 +8,7 @@ import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
 import { compareManifestShape } from '@/lib/addon-manifest-diff'
 import { shouldBlockShrink } from '@/lib/shrink-guard'
+import { trace, briefAddons } from '@/lib/trace'
 import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 
 const KNOWN_DEAD_DOMAINS = ['opensubtitles.strem.io']
@@ -37,6 +38,7 @@ interface UpdateAddonOptions {
 export async function getAddons(authKey: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
   const cached = addonCollectionCache.get(authKey)
   if (cached && Date.now() - cached.ts < COLLECTION_CACHE_TTL) {
+    trace('getAddons', 'cache-hit', { accountId: accountContext, ageMs: Date.now() - cached.ts, count: cached.data.length, addons: briefAddons(cached.data) })
     return cached.data
   }
   const version = addonCollectionVersions.get(authKey) || 0
@@ -46,14 +48,16 @@ export async function getAddons(authKey: string, accountContext: string = 'Unkno
   }
 
   const promise = (async () => {
-    const addons = await stremioClient.getAddonCollection(authKey, accountContext)
+    let addons = await stremioClient.getAddonCollection(authKey, accountContext)
     const knownCount = knownAddonCounts.get(authKey) || 0
     if (knownCount > 0 && addons.length < Math.ceil(knownCount * 0.25)) {
-      if (cached?.data?.length) {
-        if (import.meta.env.DEV) console.warn(`[AddonCollection] Suspicious collection shrink (${knownCount} → ${addons.length}); using cached last-good collection.`)
-        return cached.data
-      }
-      throw new Error(`Safety guard: suspicious addon collection shrink detected (${knownCount} → ${addons.length}).`)
+      // Suspicious shrink: re-read once for a transient, then accept; prefer cache only on persistent empty.
+      trace('read', 'suspicious-shrink', { accountId: accountContext, known: knownCount, got: addons.length })
+      if (import.meta.env.DEV) console.warn(`[AddonCollection] Suspicious collection shrink (${knownCount} → ${addons.length}); re-reading to confirm.`)
+      const retry = await stremioClient.getAddonCollection(authKey, accountContext).catch(() => addons)
+      if (retry.length > addons.length) addons = retry
+      trace('read', 'shrink-retry', { accountId: accountContext, before: addons.length, afterRetry: retry.length })
+      if (addons.length === 0 && cached?.data?.length) return cached.data
     }
     if ((addonCollectionVersions.get(authKey) || 0) === version) {
       if (addons.length > 0) {
@@ -61,6 +65,7 @@ export async function getAddons(authKey: string, accountContext: string = 'Unkno
       }
       addonCollectionCache.set(authKey, { data: addons, ts: Date.now() })
     }
+    trace('getAddons', 'fetched', { accountId: accountContext, knownCount, count: addons.length, addons: briefAddons(addons) })
     return addons
   })()
 
@@ -141,16 +146,19 @@ export async function updateAddons(authKey: string, addons: AddonDescriptor[], a
 
   if (invalidAddons.length > 0) {
     const firstInvalid = invalidAddons[0]
+    trace('push', 'invalid-blocked', { accountId: accountContext, count: invalidAddons?.length || 0 })
     throw new Error(`Safety guard: refusing to push invalid addon collection. Entry ${firstInvalid.index + 1}: ${firstInvalid.reason}`)
   }
 
   if (preparedAddons.length > MAX_ADDON_COLLECTION_SIZE) {
+    trace('push', 'size-blocked', { accountId: accountContext, prepared: preparedAddons.length, limit: MAX_ADDON_COLLECTION_SIZE })
     throw new Error(`Safety guard: refusing to push ${preparedAddons.length} addons. Limit is ${MAX_ADDON_COLLECTION_SIZE}.`)
   }
 
   const allowCollectionShrink = options?.allowCollectionShrink || options?.bypassEmptyGuard
   const knownCount = knownAddonCounts.get(authKey) || 0
   const shrinkDecision = shouldBlockShrink(preparedAddons.length, knownCount, !!allowCollectionShrink)
+  trace('updateAddons', 'shrink-decision', { accountId: accountContext, inputCount: (addons || []).length, preparedCount: preparedAddons.length, knownCount, allowCollectionShrink: !!allowCollectionShrink, blocked: shrinkDecision.blocked, reason: shrinkDecision.reason, addons: briefAddons(preparedAddons) })
   if (shrinkDecision.blocked && shrinkDecision.reason === 'empty') {
     throw new Error(`Anti-wipe guard: refusing to push empty addon collection (${knownCount} addon${knownCount !== 1 ? 's' : ''} previously seen)`)
   }
@@ -169,6 +177,7 @@ export async function updateAddons(authKey: string, addons: AddonDescriptor[], a
       : undefined
   invalidateAddonCache(authKey)
   await stremioClient.setAddonCollection(authKey, preparedAddons, accountContext, { allowCollectionShrink, previousCollection })
+  trace('push', 'sent', { accountId: accountContext, prepared: preparedAddons.length, allowCollectionShrink: !!allowCollectionShrink })
 
   if (preparedAddons.length > 0 || allowCollectionShrink) {
     knownAddonCounts.set(authKey, preparedAddons.length)

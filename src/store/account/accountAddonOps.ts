@@ -13,6 +13,7 @@ import { syncManager } from '@/lib/sync/syncManager'
 import { autopilotManager } from '@/lib/autopilot/autopilotManager'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
+import { trace, briefAddons } from '@/lib/trace'
 import { toast } from '@/hooks/use-toast'
 import {
     getCachedAuthKey,
@@ -126,7 +127,11 @@ export async function pushToConnections(accountId: string, options: { addons?: A
 
     const sourceAddons = options.addons ?? account.addons ?? []
     const enabledAddons = sourceAddons.filter(a => a?.flags?.enabled !== false)
-    if (enabledAddons.length === 0 && !options.allowCollectionShrink) return // wipe-guard: never push an empty set unless an explicit clear
+    trace('push', 'connections-start', { accountId, eligible: eligible.map(c => c.platform), source: sourceAddons.length, enabled: enabledAddons.length, allowCollectionShrink: !!options.allowCollectionShrink })
+    if (enabledAddons.length === 0 && !options.allowCollectionShrink) {
+        trace('push', 'connections-skip-empty', { accountId })
+        return
+    }
 
     const { useConnectionStore } = await import('@/store/connectionStore')
     const now = Date.now()
@@ -172,6 +177,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
             setStatus(conn.id, 'active')
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Connection sync failed'
+            trace('push', 'connection-error', { accountId, platform: conn.platform, connId: conn.id, auth: isAuthError(err), error: msg })
             if (isAuthError(err)) {
                 setStatus(conn.id, 'expired', msg)
                 authFailures++
@@ -195,10 +201,11 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 }
 
-function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }) {
+function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }, trigger = 'unknown') {
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)
+    trace('backgroundSync', 'enter', { accountId, hasAuthKey: !!authKey, count: updatedAddons.length, allowCollectionShrink: !!options?.allowCollectionShrink, trigger, addons: briefAddons(updatedAddons) })
     if (authKey) {
         const context = options?.allowCollectionShrink ? 'Bulk Op' : accountId
         promises.push(
@@ -214,7 +221,7 @@ function backgroundSync(accountId: string, account: Account, updatedAddons: Addo
         )
     }
 
-    promises.push(pushToConnections(accountId).catch(err => { console.error('Failed to push to connections:', err) }))
+    promises.push(pushToConnections(accountId, { addons: updatedAddons, allowCollectionShrink: options?.allowCollectionShrink }).catch(err => { console.error('Failed to push to connections:', err) }))
 
     Promise.all(promises).finally(() => {
         triggerSync()
@@ -412,7 +419,7 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, updatedAddons)
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true }, 'remove')
 
         const removedAddon = account.addons.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(transportUrl))
         const removedAddonName = removedAddon?.metadata?.customName || removedAddon?.manifest.name || 'Unknown Addon'
@@ -477,7 +484,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
             action: 'removed'
         })
 
-        backgroundSync(accountId, account, updatedAddons)
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true }, 'remove-index')
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to remove addon'
         store.setState({ error: message })
@@ -515,6 +522,33 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         backgroundSync(accountId, account, timestampedOrder)
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to reorder addons'
+        store.setState({ error: message })
+        throw error
+    } finally {
+        releaseMutex()
+        clearAccountLoading(accountId)
+    }
+}
+
+export async function bulkDeleteAddons(accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) {
+    const store = await getStore()
+    store.setState({ error: null })
+    setAccountLoading(accountId)
+    const releaseMutex = await acquireSyncMutex(accountId)
+    try {
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) throw new Error('Account not found')
+
+        const timestamped = keptAddons.map(addon => ({ ...addon, metadata: { ...addon.metadata, lastUpdated: Date.now() } }))
+        let updatedAccount: Account = { ...account, addons: timestamped, deletedAddons: addTombstones(account.deletedAddons, removedUrls), lastSync: new Date() }
+        updatedAccount = updateActiveProfile(updatedAccount, timestamped)
+        const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
+        store.setState({ accounts })
+        persistAccounts(accounts)
+
+        backgroundSync(accountId, account, timestamped, { allowCollectionShrink: true }, 'bulk-delete')
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to delete addons'
         store.setState({ error: message })
         throw error
     } finally {
@@ -612,7 +646,7 @@ export async function bulkToggleAddonEnabled(accountId: string, addonUrls: strin
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: !isEnabled })
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: !isEnabled }, 'toggle-bulk')
 
         addonUrls.forEach(url => {
             autopilotManager.handleManualToggle(accountId, url)
@@ -1005,7 +1039,7 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
         )
         store.setState({ accounts })
         persistAccounts(accounts)
-        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true })
+        backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true }, 'local-remove')
     } finally {
         releaseMutex()
     }

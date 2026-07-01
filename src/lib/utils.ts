@@ -4,6 +4,7 @@ import { inflateSync, strFromU8 } from 'fflate'
 import type { AddonDescriptor } from '@/types/addon'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { normalizeAddonUrl } from '@/lib/addon-url'
+import { trace } from '@/lib/trace'
 
 export { normalizeAddonUrl }
 
@@ -44,10 +45,7 @@ export function openStremioDetail(type: string, id: string) {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
   if (isMobile) {
-    // On mobile, just use the deep link, browsers handle it better with a prompt
     window.location.href = deepLink
-    // Fallback if they don't have it? We can't easily detect.
-    // But we can offer a button in the UI if we want to be fancy.
     return
   }
 
@@ -62,8 +60,6 @@ export function openStremioDetail(type: string, id: string) {
   setTimeout(() => {
     window.removeEventListener('blur', onBlur)
     if (!blurred && (Date.now() - start < 1000)) {
-      // If we didn't blur and it's been ~500ms, the protocol probably isn't handled.
-      // We open the web version as a fallback.
       window.open(webLink, '_blank')
     }
   }, 500)
@@ -118,8 +114,6 @@ export function getLatestAddonVersion(
   const instanceVersion = latestVersions[getAddonVersionKey(addon)]
   if (instanceVersion) return instanceVersion
 
-  // Pre-release/custom builds are often separate instances sharing a manifest ID.
-  // Do not inherit another instance's stable latest version until this URL is checked.
   if (addon.manifest?.version && /[-+]/.test(addon.manifest.version)) return undefined
 
   const legacyLatest = id ? latestVersions[id] : undefined
@@ -194,8 +188,9 @@ export function hasFallbackAddonIdentity(addon: Pick<AddonDescriptor, 'transport
  * Source of Truth: Remote presence determines "enabled" status, but local flags and metadata are preserved.
  */
 
-export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[]) {
-  // STRICT: Case-sensitive URL matching only. No ID-based deduplication.
+export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean } = {}) {
+  trace('merge', 'enter', { local: localAddons.length, remote: remoteAddons.length, keepMissingLocal: !!options.keepMissingLocal })
+  let merged = 0, netNew = 0, keptMissingLocal = 0, keptSpecial = 0, dropped = 0
   const remoteAddonMap = new Map<string, AddonDescriptor>()
 
   remoteAddons.forEach((a) => {
@@ -212,13 +207,11 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
   localAddons.forEach((localAddon) => {
     const normLocal = normalizeAddonUrl(localAddon.transportUrl)
 
-    // STRICT: Only match by transportUrl to support multiple instances of same manifest ID (e.g. AIOStreams variants)
     const remoteAddon = remoteAddonMap.get(normLocal)
 
     const isRecentLocalChange = localAddon.metadata?.lastUpdated && (now - localAddon.metadata.lastUpdated < MANIFEST_GRACE_PERIOD)
 
     if (remoteAddon) {
-      // ANTI-WIPE GUARD: Favor local manifest if remote is 'broken' or if we recently updated/enabled it locally.
       const isSubstantial = (addon: AddonDescriptor | undefined) => {
         const m = addon?.manifest;
         if (!addon || !m || !m.name || m.name === 'Unknown Addon' || hasFallbackAddonName(addon)) return false;
@@ -231,16 +224,10 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       const localManifest = localAddon.manifest;
       const useLocalManifest = (isSubstantial(localAddon) && !isSubstantial(remoteAddon)) || isRecentLocalChange;
 
-      // Metadata: start from local (which carries customName, customLogo, etc.)
       let mergedMetadata = localAddon.metadata
         ? { ...localAddon.metadata }
         : (remoteAddon.metadata ? { ...remoteAddon.metadata } : undefined)
 
-      // MIGRATION: If we chose the remote manifest over local, check whether the
-      // local manifest had a different name/description/logo. If so, the local value
-      // was a user customization that was baked into the manifest but never migrated
-      // to the metadata fields. Migrate it now so it survives all future merges.
-      // Guard: only migrate if metadata doesn't already have an explicit override.
       if (!useLocalManifest && localManifest && remoteManifest) {
         if (localManifest.name && localManifest.name !== remoteManifest.name && !mergedMetadata?.customName) {
           mergedMetadata = { ...(mergedMetadata || {}), customName: localManifest.name }
@@ -253,11 +240,8 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         }
       }
 
-      // NAME COLLISION GUARD: If the remote name looks like a hostname/URL, and we have a local customized name,
-      // favor the local name more aggressively to avoid showing "https://..." in the UI.
       const isHostname = (s: string) => /^[a-z0-9-]+\.[a-z0-9-]{2,}/i.test(s) || s.startsWith('http');
       if (remoteManifest.name && isHostname(remoteManifest.name) && mergedMetadata?.customName) {
-        // Local customName is already in mergedMetadata from the logic above or existing state
       }
 
       const finalManifest = useLocalManifest ? localManifest : remoteManifest;
@@ -278,29 +262,30 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
 
       processedRemoteNormUrls.add(normalizeAddonUrl(remoteAddon.transportUrl))
       processedRemoteNormUrls.add(normLocal)
+      merged++
+    } else if (options.keepMissingLocal) {
+      finalAddons.push({ ...localAddon })
+      keptMissingLocal++
     } else {
-      // 1. Missing from remote but was RECENTLY changed locally (e.g. just installed or enabled)
-      // 2. OR it is currently DISABLED.
-      // 3. OR it has PROTECTED status or CUSTOM METADATA that we want to keep.
-      // Rationale: AIOManager intentionally hides disabled addons from Stremio.
-      // We MUST keep them locally to avoid a sync-deletion loop.
       const hasCustomizations = localAddon.metadata?.customName || localAddon.metadata?.customLogo || localAddon.metadata?.customDescription;
       const isProtected = localAddon.flags?.protected;
       const hasNote = Boolean(localAddon.note?.trim());
 
       if (localAddon.flags?.enabled === false) {
         finalAddons.push({ ...localAddon })
+        keptSpecial++
       } else if (isRecentLocalChange || hasCustomizations || isProtected || hasNote) {
         finalAddons.push({ ...localAddon })
+        keptSpecial++
+      } else {
+        dropped++
       }
     }
-    // If not in remote AND none of the above -> DROP (1:1 Mirroring)
   })
 
   remoteAddons.forEach((remoteAddon) => {
     const normRemote = normalizeAddonUrl(remoteAddon.transportUrl)
 
-    // STRICT: Only skip if this exact URL has been processed
     const alreadyProcessed = processedRemoteNormUrls.has(normRemote)
 
     if (!alreadyProcessed) {
@@ -308,9 +293,11 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         ...remoteAddon,
         flags: { ...(remoteAddon.flags || {}), enabled: true },
       })
+      netNew++
     }
   })
 
+  trace('merge', 'result', { local: localAddons.length, remote: remoteAddons.length, out: finalAddons.length, merged, netNew, keptMissingLocal, keptSpecial, dropped })
   return finalAddons
 }
 

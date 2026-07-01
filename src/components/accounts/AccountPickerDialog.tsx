@@ -113,7 +113,7 @@ export function AccountPickerDialog({
                     <DialogDescription>{description}</DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-4 py-4">
+                <div className="min-w-0 space-y-4 py-4">
                     <div className="relative">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
@@ -177,7 +177,7 @@ export function AccountPickerDialog({
                     </ScrollArea>
 
                     {renderPreview && selectedAccountIds.length > 0 && (
-                        <div>
+                        <div className="min-w-0">
                             {renderPreview(selectedAccountIds)}
                         </div>
                     )}
