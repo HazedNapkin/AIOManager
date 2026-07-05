@@ -90,6 +90,7 @@ export async function initializeDatabase(fastify) {
       );
 
       CREATE INDEX IF NOT EXISTS idx_history_account_ts ON failover_history (account_id, timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_history_rule_ts ON failover_history (rule_id, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_rules_account ON autopilot_rules (account_id);
       CREATE INDEX IF NOT EXISTS idx_rules_active_check ON autopilot_rules (is_active, last_check, id);
       CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id);
@@ -312,6 +313,7 @@ export async function initializeDatabase(fastify) {
         `CREATE INDEX IF NOT EXISTS idx_creds_sync_user ON server_credentials (sync_user)`,
         `CREATE INDEX IF NOT EXISTS idx_creds_account ON server_credentials (account_id)`,
         `CREATE INDEX IF NOT EXISTS idx_creds_type_updated ON server_credentials (credential_type, updated_at DESC, id ASC)`,
+        `CREATE INDEX IF NOT EXISTS idx_creds_account_sync_type ON server_credentials (account_id, sync_user, credential_type, updated_at DESC)`,
     ], ['id', 'sync_user', 'account_id', 'auth_key'], {
         sync_user: 'ALTER TABLE server_credentials ADD COLUMN sync_user TEXT NOT NULL DEFAULT \'\'',
         account_id: 'ALTER TABLE server_credentials ADD COLUMN account_id TEXT NOT NULL DEFAULT \'\'',

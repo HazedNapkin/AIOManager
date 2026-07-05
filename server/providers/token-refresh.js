@@ -1,6 +1,7 @@
 import db from '../db.js'
 import { decrypt, encrypt } from '../crypto.js'
 import { FALLBACK_KEYS, PRIMARY_KEY } from '../keys.js'
+import { trace } from '../utils/trace.js'
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 
@@ -40,22 +41,32 @@ export function refreshNuvioToken(connectionId, accountId) {
 }
 
 async function refreshNuvioTokenInner(connectionId, accountId) {
+    const start = Date.now()
+    trace('tokenRefresh', 'nuvio.start', { connectionId, accountId })
     const cred = await db.get(
         "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'nuvio' LIMIT 1",
         [connectionId]
     )
-    if (!cred?.auth_key) return null
+    if (!cred?.auth_key) {
+        trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'no-credential' })
+        return null
+    }
 
     let bundle
     try {
         bundle = JSON.parse(decrypt(cred.auth_key, FALLBACK_KEYS))
     } catch {
+        trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'decrypt-failed' })
         return null
     }
 
-    if (!bundle.refreshToken) return null
+    if (!bundle.refreshToken) {
+        trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'no-refresh-token' })
+        return null
+    }
 
     if (bundle.expiresAt && bundle.expiresAt - Date.now() > REFRESH_BUFFER_MS) {
+        trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'not-expiring' })
         return bundle
     }
 
@@ -77,11 +88,13 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
         }
 
         await persistRotatedToken(connectionId, 'nuvio', newBundle)
+        trace('tokenRefresh', 'nuvio.success', { connectionId, accountId, timing: Date.now() - start })
         return newBundle
     } catch (err) {
         if (err.isAuthError) {
             err._authExpired = true
         }
+        trace('tokenRefresh', 'nuvio.error', { connectionId, accountId, isAuthError: !!err.isAuthError, error: err.message, timing: Date.now() - start })
         throw err
     }
 }
@@ -91,22 +104,32 @@ export function refreshRealStreamToken(connectionId) {
 }
 
 async function refreshRealStreamTokenInner(connectionId) {
+    const start = Date.now()
+    trace('tokenRefresh', 'realstream.start', { connectionId })
     const cred = await db.get(
         "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'realstream' LIMIT 1",
         [connectionId]
     )
-    if (!cred?.auth_key) return null
+    if (!cred?.auth_key) {
+        trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'no-credential' })
+        return null
+    }
 
     let bundle
     try {
         bundle = JSON.parse(decrypt(cred.auth_key, FALLBACK_KEYS))
     } catch {
+        trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'decrypt-failed' })
         return null
     }
 
-    if (!bundle.accessToken) return null
+    if (!bundle.accessToken) {
+        trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'no-access-token' })
+        return null
+    }
 
     if (bundle.expiresAt && bundle.expiresAt - Date.now() > REFRESH_BUFFER_MS) {
+        trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'not-expiring' })
         return bundle
     }
 
@@ -124,9 +147,13 @@ async function refreshRealStreamTokenInner(connectionId) {
             password: bundle.password,
         }
         await persistRotatedToken(connectionId, 'realstream', newBundle)
+        trace('tokenRefresh', 'realstream.success', { connectionId, path: 'refresh', timing: Date.now() - start })
         return newBundle
     } catch (err) {
-        if (!err.isAuthError) throw err
+        if (!err.isAuthError) {
+            trace('tokenRefresh', 'realstream.error', { connectionId, isAuthError: false, error: err.message, timing: Date.now() - start })
+            throw err
+        }
 
         if (bundle.email && bundle.password) {
             try {
@@ -140,14 +167,17 @@ async function refreshRealStreamTokenInner(connectionId) {
                     password: bundle.password,
                 }
                 await persistRotatedToken(connectionId, 'realstream', newBundle)
+                trace('tokenRefresh', 'realstream.success', { connectionId, path: 'reauth', timing: Date.now() - start })
                 return newBundle
             } catch (reauthErr) {
                 reauthErr._authExpired = true
+                trace('tokenRefresh', 'realstream.error', { connectionId, path: 'reauth', error: reauthErr.message, timing: Date.now() - start })
                 throw reauthErr
             }
         }
 
         err._authExpired = true
+        trace('tokenRefresh', 'realstream.error', { connectionId, isAuthError: true, error: err.message, timing: Date.now() - start })
         throw err
     }
 }

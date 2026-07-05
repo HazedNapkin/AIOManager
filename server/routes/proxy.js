@@ -5,6 +5,7 @@ import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
 import { trace, keyTag } from '../utils/trace.js'
+import { getAddonUrlKey } from '../utils/addon-url.js'
 
 const briefAddons = (addons) => (Array.isArray(addons) ? addons.map(a => ({ id: a?.manifest?.id || a?.id || '?', url: truncateUrl(a?.transportUrl || '') })) : [])
 
@@ -141,14 +142,6 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             }
         }
     }
-
-    const getAddonUrlKey = (url) => String(url || '')
-        .trim()
-        .replace(/^stremio:\/\//i, 'https://')
-        .replace(/\/manifest\.json$/i, '')
-        .replace(/\/+$/, '')
-        .toLowerCase()
-
     const hasKeys = (value) => value && Object.keys(value).length > 0
     const withoutUndefined = (value) => Object.fromEntries(
         Object.entries(value || {}).filter(([, entry]) => entry !== undefined)
@@ -356,11 +349,10 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                     for (const [k, v] of manifestCache) {
                         if (now - v.ts > MANIFEST_CACHE_TTL) manifestCache.delete(k)
                     }
-                    if (manifestCache.size > 5000) {
-                        const entries = [...manifestCache.entries()].sort((a, b) => a[1].ts - b[1].ts)
-                        for (let i = 0; i < entries.length - 4000; i++) {
-                            manifestCache.delete(entries[i][0])
-                        }
+                    while (manifestCache.size > 4000) {
+                        const oldestKey = manifestCache.keys().next().value
+                        if (oldestKey === undefined) break
+                        manifestCache.delete(oldestKey)
                     }
                 }
                 if (!hasUpstreamAuth) {
@@ -1312,7 +1304,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     })
 
     fastify.get('/api/addon-health', {
-        config: { rateLimit: { max: 30, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Authentication required' } }
@@ -1336,6 +1328,81 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             fastify.log.error({ category: 'HealthProxy' }, `Failed to check health for ${url}: ${err.message}`)
             reply.status(500);
             return { isOnline: false, error: 'Internal Server Error' }
+        }
+    })
+
+    fastify.get('/api/discover-proxy', {
+        config: { rateLimit: { max: 600, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const targetUrl = request.query.url
+        if (!targetUrl || !targetUrl.startsWith('https://stremio-addons.net/api/v0/')) {
+            return reply.code(400).send({ error: 'Invalid URL' })
+        }
+
+        const start = Date.now()
+        const cacheKey = `discover:${targetUrl}`
+        const cached = manifestCache.get(cacheKey)
+        const isCategory = targetUrl.includes('/categories')
+        const ttl = isCategory ? 60 * 60 * 1000 : 30 * 60 * 1000
+        const cacheHit = Boolean(cached && Date.now() - cached.ts < ttl)
+        trace('discover-proxy', 'request', { url: targetUrl, cacheHit })
+
+        if (cacheHit) {
+            reply.header('X-Cache', 'HIT')
+            reply.header('Cache-TTL-Ms', ttl - (Date.now() - cached.ts))
+            trace('discover-proxy', 'response', { url: targetUrl, cacheHit: true, timing: Date.now() - start })
+            return reply.send(cached.data)
+        }
+
+        try {
+            const data = await enqueueProxyRequest(targetUrl, async () => {
+                const controller = new AbortController()
+                const timeout = setTimeout(() => controller.abort(), 15000)
+                try {
+                    const res = await fetch(targetUrl, {
+                        signal: controller.signal,
+                        headers: { 'Accept': 'application/json' }
+                    })
+                    if (!res.ok) {
+                        reply.code(res.status)
+                        return { error: `Upstream returned ${res.status}` }
+                    }
+                    return await res.json()
+                } finally {
+                    clearTimeout(timeout)
+                }
+            })
+
+            if (data.error) {
+                reply.header('X-Cache', 'MISS')
+                trace('discover-proxy', 'response', { url: targetUrl, cacheHit: false, error: true, timing: Date.now() - start })
+                reply.send(data)
+            } else {
+                manifestCache.set(cacheKey, { data, ts: Date.now() })
+                if (manifestCache.size > 5000) {
+                    const now = Date.now()
+                    for (const [k, v] of manifestCache) {
+                        if (now - v.ts > MANIFEST_CACHE_TTL) manifestCache.delete(k)
+                    }
+                    while (manifestCache.size > 4000) {
+                        const oldestKey = manifestCache.keys().next().value
+                        if (oldestKey === undefined) break
+                        manifestCache.delete(oldestKey)
+                    }
+                }
+                reply.header('X-Cache', 'MISS')
+                trace('discover-proxy', 'response', { url: targetUrl, cacheHit: false, timing: Date.now() - start })
+                reply.send(data)
+            }
+        } catch (err) {
+            const cachedStale = manifestCache.get(cacheKey)
+            if (cachedStale) {
+                reply.header('X-Cache', 'STALE')
+                trace('discover-proxy', 'response', { url: targetUrl, cacheHit: false, stale: true, timing: Date.now() - start })
+                return reply.send(cachedStale.data)
+            }
+            trace('discover-proxy', 'response', { url: targetUrl, cacheHit: false, error: true, timing: Date.now() - start })
+            reply.code(502).send({ error: 'Failed to fetch from stremio-addons.net' })
         }
     })
 }

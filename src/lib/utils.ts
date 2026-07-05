@@ -3,8 +3,27 @@ import { twMerge } from 'tailwind-merge'
 import { inflateSync, strFromU8 } from 'fflate'
 import type { AddonDescriptor } from '@/types/addon'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
-import { normalizeAddonUrl } from '@/lib/addon-url'
+import { normalizeAddonUrl as _normalizeAddonUrl } from '@/lib/addon-url'
 import { trace } from '@/lib/trace'
+
+const NON_ALPHANUMERIC_REGEX = /[^a-z0-9]/g
+const CANONICAL_URL_CACHE = new Map<string, string>()
+const CANONICAL_URL_CACHE_MAX_SIZE = 500
+
+const normalizeAddonUrl = (url: string): string => {
+  const cached = CANONICAL_URL_CACHE.get(url)
+  if (cached !== undefined) return cached
+
+  const result = _normalizeAddonUrl(url)
+
+  if (CANONICAL_URL_CACHE.size >= CANONICAL_URL_CACHE_MAX_SIZE) {
+    const oldestKey = CANONICAL_URL_CACHE.keys().next().value
+    if (oldestKey !== undefined) CANONICAL_URL_CACHE.delete(oldestKey)
+  }
+
+  CANONICAL_URL_CACHE.set(url, result)
+  return result
+}
 
 export { normalizeAddonUrl }
 
@@ -161,7 +180,7 @@ export function isNewerVersion(current?: string, latest?: string): boolean {
   return false
 }
 
-const normalizeIdentityText = (value: string | undefined) => (value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const normalizeIdentityText = (value: string | undefined) => (value || '').toLowerCase().replace(NON_ALPHANUMERIC_REGEX, '')
 
 export function hasFallbackAddonName(addon: Pick<AddonDescriptor, 'transportUrl' | 'manifest'>): boolean {
   const manifestName = addon.manifest?.name

@@ -7,6 +7,7 @@ import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { safeFetchWithRedirects } from '../utils/safe-fetch.js'
 import { maskContext } from '../utils/log-helpers.js'
 import { proxyQueue, proxyQueueKeyCounts, serverState } from '../state.js'
+import { trace } from '../utils/trace.js'
 
 export function registerAutopilotRoutes(fastify, autopilotEngine) {
     async function upsertCredential(owner, accountId, accountName, encryptedAuthKey, credentialType = 'stremio', connectionId = null) {
@@ -364,6 +365,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
     fastify.post('/api/autopilot/sync', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = request.body
+        const start = Date.now()
+        trace('autopilot', 'sync.start', { ruleId: id, accountId })
 
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
@@ -396,6 +399,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey, (platform || 'stremio').toLowerCase(), connectionId || null)
                 }
                 scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                trace('autopilot', 'sync.success', { ruleId: id, accountId, skipped: true, timing: Date.now() - start })
                 return { success: true, skipped: true }
             }
         } catch (cmpErr) {
@@ -407,14 +411,17 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Rule synced to server (Swap & Hide Mode).`)
         clearRuleRuntimeState?.(id)
         scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+        trace('autopilot', 'sync.success', { ruleId: id, accountId, skipped: false, timing: Date.now() - start })
         return { success: true }
     })
 
 
     fastify.post('/api/autopilot/sync-batch', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
         const rules = request.body
+        const start = Date.now()
         if (!Array.isArray(rules)) return reply.code(400).send({ error: 'Expected array' })
         if (rules.length > 100) return reply.code(400).send({ error: 'Batch too large. Maximum 100 rules per request.' })
+        trace('autopilot', 'batch-sync.start', { count: rules.length })
 
         const authUser = await verifyAuth(request)
         if (!authUser) return reply.code(401).send({ error: 'Unauthorized' })
@@ -469,6 +476,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             }
         }
 
+        const okCount = results.filter(r => r.ok).length
+        trace('autopilot', 'batch-sync.complete', { count: rules.length, ok: okCount, failed: results.length - okCount, timing: Date.now() - start })
         return { results }
     })
 
@@ -563,6 +572,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
     fastify.post('/api/autopilot/test-webhook', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { webhookUrl, accountName } = request.body
+        const start = Date.now()
+        trace('autopilot', 'test-webhook.start', {})
         if (!webhookUrl) {
             reply.status(400);
             return { error: 'Webhook URL required' }
@@ -582,6 +593,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             activeName: 'System Test'
         })
 
+        trace('autopilot', 'test-webhook.success', { timing: Date.now() - start })
         return { success: true }
     })
 
@@ -616,6 +628,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
     fastify.delete('/api/autopilot/:id', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { id } = request.params
+        const start = Date.now()
+        trace('autopilot', 'delete.start', { ruleId: id })
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
@@ -630,6 +644,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             await tx.run('DELETE FROM autopilot_rules WHERE id = $1', [id])
         })
         clearRuleRuntimeState?.(id)
+        trace('autopilot', 'delete.success', { ruleId: id, timing: Date.now() - start })
         return { success: true }
     })
 

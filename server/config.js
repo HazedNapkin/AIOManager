@@ -31,30 +31,39 @@ export const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
     : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173']
 
+const prettyStream = pinoPretty({
+    colorize: true,
+    translateTime: 'HH:MM:ss',
+    ignore: 'pid,hostname,level,category',
+    singleLine: true,
+    messageFormat: (log, messageKey) => {
+        const levelEmoji = log.level === 30 ? '🔵' : log.level === 40 ? '⚠️' : log.level >= 50 ? '❌' : '📝'
+        const levelText = log.level === 30 ? 'INFO ' : log.level === 40 ? 'WARN ' : log.level >= 50 ? 'ERROR' : 'LOG  '
+        const categoryMap = {
+            'Database': '🗄️ DB   ',
+            'Server': '💻 SRV  ',
+            'Sync': '🔄 SYNC ',
+            'MetaProxy': '🌐 PROXY',
+            'Proxy': '🌐 PROXY',
+            'Security': '🛡️ SEC  ',
+            'Addon Health': '🩺 HLTH '
+        }
+        const category = categoryMap[log.category] || (log.category ? `📦 ${log.category.padEnd(6)}` : '🚀 MAIN ')
+
+        return `${levelEmoji} ${levelText} | ${category} | ${log[messageKey]}`
+    }
+})
+
+const filteredStream = {
+    write: (chunk) => {
+        if (typeof chunk === 'string' && chunk.includes('premature close')) return true
+        return prettyStream.write(chunk)
+    }
+}
+
 export const loggerConfig = process.env.LOG_PRETTY_PRINT !== 'false' ? {
     level: process.env.LOG_LEVEL || 'info',
-    stream: pinoPretty({
-        colorize: true,
-        translateTime: 'HH:MM:ss',
-        ignore: 'pid,hostname,level,category',
-        singleLine: true,
-        messageFormat: (log, messageKey) => {
-            const levelEmoji = log.level === 30 ? '🔵' : log.level === 40 ? '⚠️' : log.level >= 50 ? '❌' : '📝'
-            const levelText = log.level === 30 ? 'INFO ' : log.level === 40 ? 'WARN ' : log.level >= 50 ? 'ERROR' : 'LOG  '
-            const categoryMap = {
-                'Database': '🗄️ DB   ',
-                'Server': '💻 SRV  ',
-                'Sync': '🔄 SYNC ',
-                'MetaProxy': '🌐 PROXY',
-                'Proxy': '🌐 PROXY',
-                'Security': '🛡️ SEC  ',
-                'Addon Health': '🩺 HLTH '
-            }
-            const category = categoryMap[log.category] || (log.category ? `📦 ${log.category.padEnd(6)}` : '🚀 MAIN ')
-
-            return `${levelEmoji} ${levelText} | ${category} | ${log[messageKey]}`
-        }
-    })
+    stream: filteredStream
 } : { level: process.env.LOG_LEVEL || 'info' }
 
 export function ensureDataDirectory(fastify) {

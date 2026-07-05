@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ArrowRight, Circle, Crown, Gem, Info, Loader2, Plus, RotateCcw, Shield, Sparkles, Star, Undo2, Upload } from 'lucide-react'
 import { getAddonResources, RESOURCE_LABELS, type DiscoverAddon } from '@/api/discover'
-import { getRarity, getRarityConfig, RARITY_CONFIGS, countByRarity, type RarityTier } from './rarity'
+import { getRarity, getRarityConfig, countByRarity, type RarityTier } from './rarity'
 import { useConfetti } from '@/components/ui/confetti'
 import { AddonLogo } from './AddonLogo'
 
@@ -23,18 +23,13 @@ interface DiscoverDeckProps {
   accountTotal?: number
 }
 
-function DeckBackdrop({ addon, offset }: { addon: DiscoverAddon; offset: number }) {
-  const background = addon.manifest?.background
-  const [imgError, setImgError] = useState(false)
+function DeckBackdrop({ offset }: { offset: number }) {
   return (
     <div
       className="absolute inset-0 -z-10 overflow-hidden rounded-3xl border border-border/40 bg-card shadow-lg"
-      style={{ transform: `scale(${1 - offset * 0.04}) translateY(${offset * 14}px)`, opacity: 1 - offset * 0.35 }}
+      style={{ transform: `scale(${1 - offset * 0.04}) translateY(${offset * 14}px)`, opacity: 1 - offset * 0.6 }}
       aria-hidden
-    >
-      {background && !imgError && <img src={background} alt="" className="h-full w-full object-cover opacity-60" loading="lazy" onError={() => setImgError(true)} />}
-      <div className="absolute inset-0 bg-gradient-to-t from-card via-card/30 to-transparent" />
-    </div>
+    />
   )
 }
 
@@ -45,7 +40,7 @@ function RarityGem({ tier, className, style }: { tier: RarityTier; className?: s
 
 function CardBack() {
   return (
-    <div className="relative flex h-full flex-col items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-primary/20 via-muted to-card">
+    <div className="relative flex h-full flex-col items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-muted to-card">
       <div className="absolute inset-0 opacity-5" style={{
         backgroundImage: 'radial-gradient(circle at 25% 25%, currentColor 1px, transparent 1px), radial-gradient(circle at 75% 75%, currentColor 1px, transparent 1px)',
         backgroundSize: '24px 24px',
@@ -242,7 +237,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
 
   if (loading && pool.length === 0) {
     return (
-      <div className="flex h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="flex h-[clamp(22rem,55vh,32rem)] sm:h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin" />
         <p className="text-sm">Unwrapping your collection...</p>
       </div>
@@ -251,7 +246,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
 
   if (!loading && pool.length === 0) {
     return (
-      <div className="flex h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+      <div className="flex h-[clamp(22rem,55vh,32rem)] sm:h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-center text-muted-foreground">
         <Sparkles className="h-8 w-8 text-muted-foreground/40" />
         <p className="text-sm">Nothing to surface right now. Try again in a bit.</p>
         <Button variant="outline" size="sm" onClick={reset} className="gap-1.5"><RotateCcw className="h-4 w-4" /> Reshuffle</Button>
@@ -261,7 +256,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
 
   if (!current) {
     return (
-      <div className="flex h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-center">
+      <div className="flex h-[clamp(22rem,55vh,32rem)] sm:h-[clamp(28rem,70vh,44rem)] flex-col items-center justify-center gap-3 text-center">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
           <Sparkles className="h-8 w-8 text-primary" />
         </div>
@@ -278,9 +273,9 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
     <div className="flex flex-col items-center gap-6 sm:gap-7">
       {/* Portrait card whose height tracks the viewport (grows on desktop, bounded on mobile);
           width follows the 7:10 aspect so the proportions stay uniform at every size. */}
-      <div className="relative aspect-[7/10] h-[clamp(28rem,70vh,44rem)] max-w-full">
-        {afterNext && <DeckBackdrop addon={afterNext} offset={2} />}
-        {upcoming && <DeckBackdrop addon={upcoming} offset={1} />}
+      <div className="relative aspect-[7/10] h-[clamp(22rem,55vh,32rem)] sm:h-[clamp(28rem,70vh,44rem)] max-w-full">
+        {afterNext && <DeckBackdrop offset={2} />}
+        {upcoming && <DeckBackdrop offset={1} />}
         <motion.div
           key={current.uuid}
           className="absolute inset-0 cursor-grab active:cursor-grabbing"
@@ -292,9 +287,9 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
           onPointerDownCapture={() => { draggedRef.current = false }}
           onDragStart={() => { draggedRef.current = true }}
           onTap={() => { if (draggedRef.current) return; if (!revealed) flip(); else onOpenDetail(current) }}
-          initial={{ scale: 0.92, opacity: 0, y: 20 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          transition={prefersReducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 20 }}
+          initial={{ scale: 0.95, y: 12 }}
+          animate={{ scale: 1, y: 0 }}
+          transition={prefersReducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 28 }}
         >
           <motion.div
             className="absolute inset-0"
@@ -323,7 +318,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
         </motion.div>
       </div>
 
-      <div className="flex items-center gap-2.5 sm:gap-3">
+      <div className="flex items-center gap-2.5 sm:gap-3 rounded-2xl border border-border/40 bg-card p-3 shadow-sm">
         <Tooltip content="Undo" side="bottom">
           <Button
             variant="outline"
@@ -387,22 +382,8 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
         </Tooltip>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {(() => {
-          const counts = countByRarity(pool)
-          return (['legendary', 'epic', 'rare'] as Array<RarityTier>)
-            .filter(tier => counts[tier] > 0)
-            .map(tier => (
-              <span key={tier} className="flex items-center gap-1">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: RARITY_CONFIGS[tier].color }} />
-                {counts[tier]} {RARITY_CONFIGS[tier].label}
-              </span>
-            ))
-        })()}
-      </div>
-
       <p className="text-xs text-muted-foreground">
-        Card {index + 1} · {!revealed ? 'tap to reveal' : 'tap for details'} · drag or use Next to browse
+        {!revealed ? 'tap to reveal' : 'tap for details'} · drag or use Next to browse
       </p>
     </div>
   )

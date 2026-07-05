@@ -9,6 +9,7 @@ import { useFailoverStore } from './failoverStore'
 import { useAuthStore } from './authStore'
 import { useVaultStore } from './vaultStore'
 import { toast } from '@/hooks/use-toast'
+import { deflateSync, strToU8 } from 'fflate'
 import { deriveSyncToken } from '@/lib/crypto'
 import { resilientFetch } from '@/lib/api-resilience'
 import { decompressSyncPayload } from '@/lib/utils'
@@ -17,6 +18,7 @@ import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { createSafeStorage } from './safe-storage'
 import { wipeAllData } from '@/lib/storage-reset'
 import { resetAllStores } from '@/lib/store-coordinator'
+import { trace } from '@/lib/trace'
 
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
 let _appReady = false
@@ -28,6 +30,16 @@ async function computeHash(data: string): Promise<string> {
     const encoded = new TextEncoder().encode(data)
     const hashBuffer = await crypto.subtle.digest('SHA-256', encoded)
     return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function compressSyncPayload(jsonStr: string): string {
+    const bytes = deflateSync(strToU8(jsonStr))
+    let binary = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    return btoa(binary)
 }
 let _pendingRetry = false
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -293,6 +305,8 @@ export const useSyncStore = create<SyncState>()(
                 set({ isSyncing: true })
                 const { serverUrl } = get()
                 const apiPath = getSyncApiPath(serverUrl)
+                const pullStart = Date.now()
+                trace('sync', 'pull.start', { accountId: id, isSilent })
 
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${id}`, {
@@ -590,6 +604,7 @@ export const useSyncStore = create<SyncState>()(
                         message: `Fetched cloud state. Decision: ${decision}`,
                         isAuto: isSilent
                     })
+                    trace('sync', 'pull.success', { accountId: id, isSilent, decision, timing: Date.now() - pullStart })
 
                     if (!isSilent) {
                         toast({ title: "Login Successful", description: "Data loaded." })
@@ -631,6 +646,7 @@ export const useSyncStore = create<SyncState>()(
                             message: `Pull Failed: ${msg}`,
                             isAuto: isSilent
                         })
+                    trace('sync', 'pull.error', { accountId: id, isSilent, error: msg, timing: Date.now() - pullStart })
                     if (!isSilent) {
                         toast({ variant: "destructive", title: "Login Failed", description: msg })
                     }
@@ -727,8 +743,10 @@ export const useSyncStore = create<SyncState>()(
                 const releaseSyncLock = await acquireSyncLock()
 
                 const apiPath = getSyncApiPath(serverUrl)
+                const pushStart = Date.now()
 
                 try {
+                    trace('sync', 'push.start', { accountId: auth.id, isAuto })
                     const { loadSalt } = await import('@/lib/crypto')
                     const salt = loadSalt()
                     const saltBase64 = salt ? btoa(String.fromCharCode(...salt)) : undefined
@@ -799,15 +817,23 @@ export const useSyncStore = create<SyncState>()(
                         throw new Error(`Sync payload too large (${mb}MB). Remove some accounts or data.`)
                     }
 
-                    if (_lastPushedHash !== null && await computeHash(stringifiedState) === _lastPushedHash) {
+                    const stateHash = await computeHash(stringifiedState)
+                    if (_lastPushedHash !== null && stateHash === _lastPushedHash) {
                         return
                     }
 
-                    // Keep the primary sync blob readable by the current public build.
-                    // New clients still support compressed records if they already exist.
                     const { syncSaltB64 } = get()
                     const syncSalt = syncSaltB64 ? Uint8Array.from(atob(syncSaltB64), c => c.charCodeAt(0)) : undefined
-                    const encryptedState = await encryptSyncPayload(stringifiedState, auth.password, syncSalt)
+                    const shouldCompress = stringifiedState.length > 51200
+                    let compressedPayload: string = stringifiedState
+                    let isCompressed = false
+                    if (shouldCompress) {
+                        try {
+                            compressedPayload = compressSyncPayload(stringifiedState)
+                            isCompressed = true
+                        } catch {}
+                    }
+                    const encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
 
                     // Canonical addon lists for Hubs the server can't otherwise read
                     // (no Stremio authKey; Nuvio-only or local-only). Stremio accounts are
@@ -828,6 +854,7 @@ export const useSyncStore = create<SyncState>()(
                         body: JSON.stringify({
                             data: encryptedState,
                             isEncrypted: true,
+                            compressed: isCompressed,
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
                             apiKeys: useAccountStore.getState().accounts.reduce<Record<string, string>>((map, a) => {
@@ -864,7 +891,7 @@ export const useSyncStore = create<SyncState>()(
                         return
                     }
 
-                    _lastPushedHash = await computeHash(stringifiedState)
+                    _lastPushedHash = stateHash
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the
@@ -890,6 +917,7 @@ export const useSyncStore = create<SyncState>()(
                         message: 'Sync successful',
                         isAuto
                     })
+                    trace('sync', 'push.success', { accountId: auth.id, isAuto, bytes: payloadBytes, compressed: isCompressed, timing: Date.now() - pushStart })
                     _pendingRetry = false
 
                     try {
@@ -907,6 +935,7 @@ export const useSyncStore = create<SyncState>()(
                             message: `Push Failed: ${message}`,
                             isAuto
                         })
+                    trace('sync', 'push.error', { accountId: auth.id, isAuto, error: message, timing: Date.now() - pushStart })
                     if (!isAuto && !isDebounced && _appReady) {
                         toast({ variant: "destructive", title: "Save Failed", description: message })
                     }
@@ -1049,14 +1078,22 @@ export const useSyncStore = create<SyncState>()(
                 const { auth, serverUrl } = get()
                 if (!auth.isAuthenticated) return
                 const apiPath = getSyncApiPath(serverUrl)
+                const start = Date.now()
+                trace('sync', 'delete.start', { accountId: auth.id })
 
-                const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
-                    method: 'DELETE',
-                    headers: { 'x-sync-password': await deriveSyncToken(auth.password) }
-                })
+                try {
+                    const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
+                        method: 'DELETE',
+                        headers: { 'x-sync-password': await deriveSyncToken(auth.password) }
+                    })
 
-                if (!res.ok) throw new Error("Failed to delete account from server")
-                get().logout()
+                    if (!res.ok) throw new Error("Failed to delete account from server")
+                    trace('sync', 'delete.success', { accountId: auth.id, timing: Date.now() - start })
+                    get().logout()
+                } catch (e) {
+                    trace('sync', 'delete.error', { accountId: auth.id, error: (e as Error)?.message, timing: Date.now() - start })
+                    throw e
+                }
             },
 
             reset: () => {

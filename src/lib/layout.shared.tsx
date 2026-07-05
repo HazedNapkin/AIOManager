@@ -10,6 +10,7 @@ export function baseOptions(): BaseLayoutProps {
             <img
               src="/logo.png"
               alt="AIOManager"
+              loading="lazy"
               className="h-full w-full object-contain brightness-0 invert"
             />
           </span>

@@ -1,4 +1,5 @@
 import db from '../db.js'
+import { normalizeAddonUrl } from '../utils/addon-url.js'
 import { encrypt, decrypt, generateRandomKey } from '../crypto.js'
 import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
@@ -9,6 +10,19 @@ import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.
 import { trace } from '../utils/trace.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { isUnifiedEnforcement } from '../config.js'
+
+async function mapConcurrent(items, limit, worker) {
+    const results = new Array(items.length)
+    let nextIndex = 0
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const i = nextIndex++
+            results[i] = await worker(items[i], i)
+        }
+    })
+    await Promise.all(workers)
+    return results
+}
 
 export function createAutopilotEngine(fastify, reconciler = null) {
 
@@ -66,16 +80,6 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             ruleFetchCacheBytes -= o.bytes
         }
     }
-
-    const normalizeAddonUrl = (url) => {
-        if (!url) return ''
-        let normalized = url.trim()
-        normalized = normalized.replace(/^stremio:\/\//i, 'https://')
-        normalized = normalized.replace(/\/manifest\.json$/i, '')
-        normalized = normalized.replace(/\/+$/, '')
-        return normalized
-    }
-
     const pruneRuleRuntimeState = () => {
         if (ruleRuntimeState.size <= MAX_RULE_RUNTIME_ENTRIES) return
         const cutoff = Date.now() - RULE_RUNTIME_TTL_MS
@@ -190,6 +194,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                             clearTimeout(timeout2)
                             if (res2.ok || res2.status === 401 || res2.status === 403 || (res2.status >= 300 && res2.status < 400)) return true
 
+                            if (res2.status === 429) {
+                                fastify.log.warn({ category: 'Autopilot' }, `Health check rate limited (429), deferring: ${truncateUrl(normalizedUrl)}`)
+                                return true
+                            }
+
                             if (res2.status >= 500 && attempt < retries) continue
                             return false
                         } catch (err) {
@@ -199,7 +208,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
                             if (isTLSError) return true
                             if (attempt < retries && (isTimeout || isNetworkError)) {
-                                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+                                await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000))
                                 continue
                             }
                             return false
@@ -223,8 +232,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (pruneNow - val.timestamp > HEALTH_CACHE_TTL_MS) globalHealthCache.delete(key)
                 }
                 if (globalHealthCache.size > 15000) {
-                    const entries = [...globalHealthCache.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp)
-                    for (let i = 0; i < entries.length - 10000; i++) globalHealthCache.delete(entries[i][0])
+                    while (globalHealthCache.size > 10000) {
+                        const oldestKey = globalHealthCache.keys().next().value
+                        if (oldestKey === undefined) break
+                        globalHealthCache.delete(oldestKey)
+                    }
                 }
             }
             globalHealthCache.set(normalizedUrl, { isHealthy, latencyMs, timestamp: Date.now() })
@@ -258,7 +270,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const checkCustomUrlsHealth = async (urls, ruleId, accountId) => {
         if (!Array.isArray(urls) || urls.length === 0) return true
         trace('autopilot.customCheck', 'start', { ruleId, urlCount: urls.length })
-        const results = await Promise.all(urls.map(async (checkUrl) => {
+        const results = await mapConcurrent(urls, 5, async (checkUrl) => {
             const normalized = normalizeAddonUrl(checkUrl).toLowerCase()
             const cached = customCheckCache.get(normalized)
             if (cached && Date.now() - cached.ts < CUSTOM_CHECK_CACHE_TTL) {
@@ -293,7 +305,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             customCheckInFlight.set(normalized, promise)
             promise.finally(() => customCheckInFlight.delete(normalized))
             return promise
-        }))
+        })
         return results.every(r => r === true)
     }
 
@@ -572,7 +584,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     }
 
     const writeStremioCollection = async (authKey, canonical, { remoteAddons = [], normalizedActive, accountId }) => {
-        const refreshedMerged = await Promise.all((canonical || []).map(async addon => {
+        const refreshedMerged = await mapConcurrent(canonical || [], 5, async addon => {
             const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
             if (normUrl === normalizedActive && addon.flags?.enabled !== false) {
                 const freshManifest = await fetchAndRefreshManifest(addon.transportUrl, accountId)
@@ -582,7 +594,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 }
             }
             return addon
-        }))
+        })
 
         const finalAddons = prepareAddonsForStremio(refreshedMerged)
 
@@ -1175,6 +1187,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     continue
                 }
 
+                const accountNameMap = new Map()
+                const accountNameIds = [...new Set(dueRules.map(r => r.account_id).filter(Boolean))]
+                if (accountNameIds.length > 0) {
+                    const credPh = accountNameIds.map((_, i) => `$${i + 1}`).join(',')
+                    const credRows = await db.query(
+                        `SELECT account_id, sync_user, account_name FROM server_credentials
+                         WHERE account_name <> '' AND account_id IN (${credPh})`,
+                        accountNameIds
+                    )
+                    for (const c of credRows) {
+                        const k = `${c.account_id}\0${c.sync_user || ''}`
+                        if (!accountNameMap.has(k)) accountNameMap.set(k, c.account_name)
+                    }
+                }
+
                 const hitRows = []
                 const missIds = []
                 for (const candidate of dueRules) {
@@ -1194,11 +1221,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 COALESCE(s.last_check, r.last_check) AS last_check,
                                 COALESCE(s.last_notification, r.last_notification) AS last_notification,
                                 r.name, r.cooldown_ms, r.message_template, r.owner_sync_user,
-                                r.platform, r.connection_id, r.updated_at, r.custom_check_urls,
-                                (SELECT c.account_name FROM server_credentials c
-                                 WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
-                                   AND c.account_name <> ''
-                                 LIMIT 1) AS account_name
+                                r.platform, r.connection_id, r.updated_at, r.custom_check_urls
                          FROM autopilot_rules r
                          LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                          WHERE r.id IN (${placeholders})
@@ -1206,6 +1229,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         missIds
                     )
                     for (const row of missRows) {
+                        row.account_name = accountNameMap.get(`${row.account_id}\0${row.owner_sync_user || ''}`) || null
                         ruleCacheSet(row.id, row.updated_at, row)
                         ruleCacheStats.misses++
                         rules.push(row)
@@ -1219,11 +1243,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         `SELECT r.id,
                                 COALESCE(s.stabilization, r.stabilization) AS stabilization,
                                 COALESCE(s.last_check, r.last_check) AS last_check,
-                                COALESCE(s.last_notification, r.last_notification) AS last_notification,
-                                (SELECT c.account_name FROM server_credentials c
-                                 WHERE c.account_id = r.account_id AND c.sync_user = r.owner_sync_user
-                                   AND c.account_name <> ''
-                                 LIMIT 1) AS account_name
+                                COALESCE(s.last_notification, r.last_notification) AS last_notification
                          FROM autopilot_rules r
                          LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                          WHERE r.id IN (${placeholders})
@@ -1234,6 +1254,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     for (const hit of hitRows) {
                     const volatile = volatileById.get(hit.id)
                     if (!volatile) continue
+                        volatile.account_name = accountNameMap.get(`${hit.row.account_id}\0${hit.row.owner_sync_user || ''}`) || null
                         rules.push({ ...hit.row, ...volatile })
                         ruleCacheStats.hits++
                         ruleCacheStats.bytesSaved += hit.bytes
@@ -1285,15 +1306,6 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 if (dirtyUpdates.length > 0) {
                     const fullUpdates = dirtyUpdates.filter(u => u.type === 'full')
                     const heartbeatUpdates = dirtyUpdates.filter(u => u.type === 'heartbeat')
-                    const STATS_UPSERT = `
-                        INSERT INTO autopilot_rule_stats (rule_id, stabilization, last_check, last_notification, updated_at)
-                        VALUES ($1, $2, $3, $4, $5)
-                        ON CONFLICT (rule_id) DO UPDATE SET
-                            stabilization = EXCLUDED.stabilization,
-                            last_check = EXCLUDED.last_check,
-                            last_notification = EXCLUDED.last_notification,
-                            updated_at = EXCLUDED.updated_at
-                    `
                     await db.tx(async (conn) => {
                         for (const update of fullUpdates) {
                             await conn.run(`
@@ -1301,10 +1313,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 SET active_url = COALESCE($1, active_url), addon_list = $2, updated_at = $3
                                 WHERE id = $4
                             `, update.ruleParams)
-                            await conn.run(STATS_UPSERT, update.statsParams)
                         }
-                        for (const update of heartbeatUpdates) {
-                            await conn.run(STATS_UPSERT, update.statsParams)
+                        const allStats = [...fullUpdates, ...heartbeatUpdates]
+                        for (let si = 0; si < allStats.length; si += 100) {
+                            const statChunk = allStats.slice(si, si + 100)
+                            const statRows = statChunk.map((_, j) => `($${j * 5 + 1}, $${j * 5 + 2}, $${j * 5 + 3}, $${j * 5 + 4}, $${j * 5 + 5})`).join(',')
+                            const statParams = statChunk.flatMap(u => u.statsParams)
+                            await conn.run(`
+                                INSERT INTO autopilot_rule_stats (rule_id, stabilization, last_check, last_notification, updated_at)
+                                VALUES ${statRows}
+                                ON CONFLICT (rule_id) DO UPDATE SET
+                                    stabilization = EXCLUDED.stabilization,
+                                    last_check = EXCLUDED.last_check,
+                                    last_notification = EXCLUDED.last_notification,
+                                    updated_at = EXCLUDED.updated_at
+                            `, statParams)
                         }
                     })
                 }

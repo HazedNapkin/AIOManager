@@ -4,6 +4,7 @@ import { resilientFetch } from '@/lib/api-resilience'
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
 import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
+import { trace } from '@/lib/trace'
 
 async function getProxyAuthHeaders(): Promise<Record<string, string>> {
     const { auth } = useSyncStore.getState()
@@ -148,6 +149,7 @@ export class StremioClient {
 
   async getAddonCollection(authKey: string, accountContext: string = 'System Check', update: boolean = true): Promise<AddonDescriptor[]> {
     try {
+      const start = Date.now()
       const fetchCollection = (shouldUpdate: boolean) => serverPost('/api/stremio-proxy', {
           type: 'AddonCollectionGet',
           authKey,
@@ -155,6 +157,7 @@ export class StremioClient {
         }, { 'x-account-context': accountContext })
 
       let data = await fetchCollection(update)
+      trace('stremio', 'api-call', { method: 'AddonCollectionGet', timing: Date.now() - start })
 
       if (data?.error) {
         const errorText = typeof data.error === 'string' ? data.error : JSON.stringify(data.error)
@@ -209,12 +212,14 @@ export class StremioClient {
         ? options.previousCollection ?? await this.getAddonCollection(authKey, accountContext).catch(() => null)
         : null
       const previousCount = previousCollection?.length || 0
+      const start = Date.now()
       const data = await serverPost('/api/stremio-proxy', {
         type: 'AddonCollectionSet',
         authKey,
         addons,
         allowCollectionShrink: Boolean(options.allowCollectionShrink),
       }, { 'x-account-context': accountContext })
+      trace('stremio', 'api-call', { method: 'AddonCollectionSet', timing: Date.now() - start })
 
       if (data?.error) {
         const err = data.error as Record<string, unknown>
@@ -335,12 +340,14 @@ export class StremioClient {
 
   async getLibraryItems(authKey: string, accountContext: string = 'System Check'): Promise<LibraryItem[]> {
     try {
+      const start = Date.now()
       const data = await serverPost('/api/stremio-proxy', {
         type: 'DatastoreGet',
         authKey,
         collection: 'libraryItem',
         all: true
       }, { 'x-account-context': accountContext })
+      trace('stremio', 'api-call', { method: 'DatastoreGet', timing: Date.now() - start })
 
       if (data?.error) {
         const e = data.error as Record<string, unknown>

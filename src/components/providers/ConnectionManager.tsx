@@ -127,14 +127,14 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     }
 
     const handleNuvioComplete = async (tokens: { accessToken: string; refreshToken: string; expiresAt: number }, profileId: string | null, _profiles: unknown[], _email: string, backend: NuvioBackend) => {
-        const backendCreds: Record<string, string> = {
-            ...(backend.baseUrl ? { baseUrl: backend.baseUrl } : {}),
-            ...(backend.publishableKey ? { publishableKey: backend.publishableKey } : {}),
-        }
         const existing = resolvedConnections.find(c => c.platform === 'nuvio')
+        const effBaseUrl = backend.baseUrl || existing?.credentials?.baseUrl || undefined
+        const effPublishableKey = backend.publishableKey || existing?.credentials?.publishableKey || undefined
+        const effBackendCreds: Record<string, string> = {
+            ...(effBaseUrl ? { baseUrl: effBaseUrl } : {}),
+            ...(effPublishableKey ? { publishableKey: effPublishableKey } : {}),
+        }
         if (existing) {
-            const effBaseUrl = backend.baseUrl || existing.credentials?.baseUrl || undefined
-            const effPublishableKey = backend.publishableKey || existing.credentials?.publishableKey || undefined
             const { updateConnection } = useConnectionStore.getState()
             updateConnection(accountId, existing.id, {
                 credentials: {
@@ -142,8 +142,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     refreshToken: tokens.refreshToken,
                     expiresAt: String(tokens.expiresAt),
                     profileId: profileId || '',
-                    ...(effBaseUrl ? { baseUrl: effBaseUrl } : {}),
-                    ...(effPublishableKey ? { publishableKey: effPublishableKey } : {}),
+                    ...effBackendCreds,
                 },
                 status: 'active',
             })
@@ -172,7 +171,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     refreshToken: tokens.refreshToken,
                     expiresAt: String(tokens.expiresAt),
                     profileId: profileId || '',
-                    ...backendCreds,
+                    ...effBackendCreds,
                 },
                 capabilities: ['addons', 'plugins', 'profiles'],
             })
@@ -229,6 +228,10 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 open={nuvioDialogOpen}
                 onOpenChange={(open) => { setNuvioDialogOpen(open); notifySubDialog(open) }}
                 onComplete={handleNuvioComplete}
+                initialBackend={(() => {
+                    const existing = resolvedConnections.find(c => c.platform === 'nuvio')
+                    return existing ? { baseUrl: existing.credentials?.baseUrl, publishableKey: existing.credentials?.publishableKey } : undefined
+                })()}
             />
             <RealStreamSetupDialog
                 open={realstreamDialogOpen}
@@ -382,7 +385,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                             <button
                                 type="button"
                                 onClick={() => setShowAdvanced(s => !s)}
-                                className="mt-3 inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+                                className="mt-3 inline-flex items-center gap-1 rounded-md font-medium text-foreground transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
                                 <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', showAdvanced && 'rotate-90')} />
                                 Advanced: push to another server

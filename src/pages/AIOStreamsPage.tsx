@@ -451,7 +451,7 @@ function MobileSectionBar({ activeSection, onChange }: { activeSection: Section;
                                 type="button"
                                 onClick={() => onChange(item.id)}
                                 className={cn(
-                                    'flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-[transform,opacity,box-shadow]',
+                                    'flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                                     isActive
                                         ? 'border-border/40 bg-background text-foreground shadow-sm'
                                         : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
@@ -485,7 +485,7 @@ function DesktopSidebar({ activeSection, onChange, group }: { activeSection: Sec
                         type="button"
                         onClick={() => onChange(item.id)}
                         className={cn(
-                            'relative flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-sm font-medium transition-[transform,opacity,box-shadow] text-left w-full',
+                            'relative flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-sm font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-left w-full',
                             isActive
                                 ? 'border-border/40 bg-background text-foreground shadow-sm'
                                 : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50'

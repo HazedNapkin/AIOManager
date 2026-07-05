@@ -28,6 +28,7 @@ import { useAddonStore } from '@/store/addonStore'
 import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
 import { getPlatformEntry } from '@/lib/platform-registry'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
+import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
 import { Tooltip } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -35,6 +36,7 @@ import { AccountListRow } from './AccountListRow'
 import { AccountReorderDialog } from './AccountReorderDialog'
 
 export function AccountList() {
+  useScrollRestoration('accounts')
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
   const { accounts, error, clearError, syncAllAccounts, removeAccount, loading } = useAccounts()
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())

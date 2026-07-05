@@ -378,23 +378,25 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
         if (!getPendingFetch(manifestKey)) {
           setPendingFetch(manifestKey, (async () => {
             const healthVal = await healthPromise
-            if (!healthVal.isOnline) throw new Error('Addon is offline')
+            if (!healthVal.isOnline) return null
 
             await acquireDomainSlot(origin)
             try {
               return await stremioClient.fetchAddonManifest(addon.transportUrl, accountContext)
+            } catch {
+              return null
             } finally {
               releaseDomainSlot(origin)
             }
-          })().catch(err => {
-            throw err
-          }))
+          })() as Promise<AddonDescriptor>)
         }
 
         const [latestManifest, healthStatus] = await Promise.all([
           getPendingFetch(manifestKey)!,
           healthPromise,
         ])
+
+        if (!latestManifest) return null
 
         const hasUpdate = isNewerVersion(addon.manifest.version, latestManifest.manifest.version)
 

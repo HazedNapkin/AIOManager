@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { CHART_PALETTE } from '@/lib/chart-colors'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface ActivitySparklineProps {
     streakMap: number[]
@@ -43,16 +44,16 @@ export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps
                     const height = Math.max(8, (d.count / max) * 100)
                     const active = d.count > 0
                     return (
-                        <div
-                            key={`${d.day}-${i}`}
-                            title={`${d.day}: ${d.count} plays`}
-                            className="flex-1 rounded-full transition-opacity hover:opacity-100"
-                            style={{
-                                height: `${height}%`,
-                                background: active ? CHART_PALETTE.blue.text : 'hsl(var(--muted))',
-                                opacity: active ? 0.35 + (d.count / max) * 0.65 : 0.35,
-                            }}
-                        />
+                        <Tooltip key={`${d.day}-${i}`} content={`${d.day}: ${d.count} plays`} delayDuration={100}>
+                            <div
+                                className="flex-1 rounded-full transition-opacity hover:opacity-100"
+                                style={{
+                                    height: `${height}%`,
+                                    background: active ? CHART_PALETTE.blue.text : 'hsl(var(--muted))',
+                                    opacity: active ? 0.35 + (d.count / max) * 0.65 : 0.35,
+                                }}
+                            />
+                        </Tooltip>
                     )
                 })}
             </div>

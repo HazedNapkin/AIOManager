@@ -1,8 +1,8 @@
 // Client trace sink. Records structured entries into an in-memory ring buffer (always, so a
-// devtools `aiomTrace.dump()` works regardless of flags or a fetch-wrapping extension) and,
-// when localStorage.aiomTrace==='1', also batch-POSTs them to /api/debug/trace for the file log.
+// devtools `aiomanTrace.dump()` works regardless of flags or a fetch-wrapping extension) and,
+// when localStorage.aiomanTrace==='1', also batch-POSTs them to /api/debug/trace for the file log.
 // console.* is stripped by esbuild (drop:['console']) even in dev, so dump() returns a string
-// the user copies with `copy(aiomTrace.dump())` instead of streaming to the console.
+// the user copies with `copy(aiomanTrace.dump())` instead of streaming to the console.
 
 type TraceData = Record<string, unknown>
 
@@ -13,11 +13,20 @@ interface TraceEntry extends TraceData {
 }
 
 const RING_MAX = 300
-const ring: TraceEntry[] = []
+const ring: TraceEntry[] = new Array(RING_MAX)
+let head = 0
+let size = 0
+
+try {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem('aiomTrace') === '1') {
+    localStorage.setItem('aiomanTrace', '1')
+    localStorage.removeItem('aiomTrace')
+  }
+} catch {}
 
 const isOn = (): boolean => {
   try {
-    return localStorage.getItem('aiomTrace') === '1'
+    return localStorage.getItem('aiomanTrace') === '1'
   } catch {
     return false
   }
@@ -56,12 +65,13 @@ const flush = () => {
 export const traceEnabled = isOn
 
 export function trace(scope: string, event: string, data: TraceData = {}) {
-  const entry: TraceEntry = { t: new Date().toISOString(), scope, event, ...data }
-  ring.push(entry)
-  if (ring.length > RING_MAX) ring.shift()
   // In dev, always ship to the server file so no flag/console step is needed; in a prod build
   // only ship when the user has explicitly opted in via localStorage.
-  if (!import.meta.env.DEV && !isOn()) return
+  const entry: TraceEntry = { t: new Date().toISOString(), scope, event, ...data }
+  ring[(head + size) % RING_MAX] = entry
+  if (size < RING_MAX) size++
+  else head = (head + 1) % RING_MAX
+  if (!import.meta.env?.DEV && !isOn()) return
   buffer.push(entry)
   if (buffer.length >= 15) {
     flush()
@@ -88,15 +98,22 @@ const formatEntry = (e: TraceEntry): string => {
   return `${time} ${scope}/${event} ${body}`
 }
 
-const dump = (): string => ring.map(formatEntry).join('\n')
+const dump = (): string => {
+  const entries: string[] = []
+  for (let i = 0; i < size; i++) {
+    entries.push(formatEntry(ring[(head + i) % RING_MAX]))
+  }
+  return entries.join('\n')
+}
 
 if (typeof window !== 'undefined') {
-  ;(window as unknown as { aiomTrace?: unknown }).aiomTrace = {
-    on: () => { try { localStorage.setItem('aiomTrace', '1') } catch { /* ignore */ } },
-    off: () => { try { localStorage.removeItem('aiomTrace') } catch { /* ignore */ } },
+  ;(window as unknown as { aiomanTrace?: unknown }).aiomanTrace = {
+    on: () => { try { localStorage.setItem('aiomanTrace', '1') } catch { /* ignore */ } },
+    off: () => { try { localStorage.removeItem('aiomanTrace') } catch { /* ignore */ } },
     status: isOn,
     dump,
-    clear: () => { ring.length = 0 },
-    count: () => ring.length,
+    clear: () => { head = 0; size = 0 },
+    count: () => size,
   }
+  ;(window as unknown as { aiomTrace?: unknown }).aiomTrace = (window as unknown as { aiomanTrace?: unknown }).aiomanTrace
 }

@@ -71,11 +71,12 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
           className="absolute inset-0"
         >
           {showBackground ? (
-            <img 
-              src={background!} 
-              alt="" 
-              className="absolute inset-0 h-full w-full object-cover" 
-              onError={() => setFailedBackgrounds(prev => new Set(prev).add(addon.uuid))} 
+            <img
+              src={background!}
+              alt=""
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover"
+              onError={() => setFailedBackgrounds(prev => new Set(prev).add(addon.uuid))}
             />
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-primary/30 via-primary/10 to-background" />
@@ -95,11 +96,12 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
           <div className="flex items-center gap-3">
             <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border/50 bg-card/80 shadow-lg backdrop-blur">
               {showLogo ? (
-                <img 
-                  src={logo!} 
-                  alt="" 
-                  className="h-full w-full object-contain" 
-                  onError={() => setFailedLogos(prev => new Set(prev).add(addon.uuid))} 
+                <img
+                  src={logo!}
+                  alt=""
+                  loading="lazy"
+                  className="h-full w-full object-contain"
+                  onError={() => setFailedLogos(prev => new Set(prev).add(addon.uuid))}
                 />
               ) : (
                 <span className="text-lg font-bold text-muted-foreground">{name.charAt(0).toUpperCase()}</span>

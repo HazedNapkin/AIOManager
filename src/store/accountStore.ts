@@ -14,6 +14,7 @@ import { AddonDescriptor } from '@/types/addon'
 import { identifyAddon } from '@/lib/addon-identifier'
 import type { AddonCollectionDiff } from '@/lib/addon-collection-diff'
 import localforage from 'localforage'
+import { trace } from '@/lib/trace'
 
 import { create } from 'zustand'
 
@@ -90,6 +91,67 @@ export const getCachedAuthKey = async (encryptedAuthKey: string, encryptionKey: 
     }
     authKeyCache.set(encryptedAuthKey, decrypted)
     return decrypted
+}
+
+const authKeyHashSet = new Set<string>()
+const authKeyHashByAccount = new Map<string, string>()
+let _authKeyHashesPopulated = false
+let _authKeyHashesPopulatePromise: Promise<void> | null = null
+
+const sha256Hex = async (text: string): Promise<string> => {
+    const data = new TextEncoder().encode(text)
+    const buf = await crypto.subtle.digest('SHA-256', data)
+    const bytes = new Uint8Array(buf)
+    let hex = ''
+    for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0')
+    return hex
+}
+
+const upsertAuthKeyHash = async (accountId: string, decryptedAuthKey: string) => {
+    const hash = await sha256Hex(decryptedAuthKey)
+    const prev = authKeyHashByAccount.get(accountId)
+    if (prev !== undefined) authKeyHashSet.delete(prev)
+    authKeyHashByAccount.set(accountId, hash)
+    authKeyHashSet.add(hash)
+}
+
+const removeAuthKeyHash = (accountId: string) => {
+    const prev = authKeyHashByAccount.get(accountId)
+    if (prev !== undefined) {
+        authKeyHashSet.delete(prev)
+        authKeyHashByAccount.delete(accountId)
+    }
+}
+
+const resetAuthKeyHashes = () => {
+    authKeyHashSet.clear()
+    authKeyHashByAccount.clear()
+    _authKeyHashesPopulated = false
+    _authKeyHashesPopulatePromise = null
+}
+
+const populateAuthKeyHashes = async (): Promise<void> => {
+    if (_authKeyHashesPopulated) return
+    if (_authKeyHashesPopulatePromise) return _authKeyHashesPopulatePromise
+    _authKeyHashesPopulatePromise = (async () => {
+        try {
+            const encKey = useAuthStore.getState().encryptionKey
+            if (!encKey) return
+            const accounts = useAccountStore.getState().accounts
+            await Promise.all(accounts.map(async (a) => {
+                const encrypted = getStremioAuthKey(a)
+                if (!encrypted) return
+                try {
+                    const decrypted = await decrypt(encrypted, encKey)
+                    await upsertAuthKeyHash(a.id, decrypted)
+                } catch {}
+            }))
+            _authKeyHashesPopulated = true
+        } finally {
+            _authKeyHashesPopulatePromise = null
+        }
+    })()
+    return _authKeyHashesPopulatePromise
 }
 
 export const applyAutopilotAddonFlags = async (accountId: string, addons: AddonDescriptor[]) => {
@@ -200,6 +262,7 @@ export const refreshAuthKeyFromStoredPassword = async (
 
       authKeyCache.delete(getStremioAuthKey(account))
       authKeyCache.set(encryptedAuthKey, response.authKey)
+      await upsertAuthKeyHash(account.id, response.authKey)
 
       const updatedConnections = (account.connections || []).map(c =>
             c.platform === 'stremio'
@@ -465,6 +528,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       addAccountByAuthKey: async (authKey: string, name: string, accentColor?: string, emoji?: string) => {
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
+            const start = Date.now()
+            trace('account', 'add.start', { method: 'auth-key' })
             try {
                   const { stremioClient } = await import('@/api/stremio-client')
 
@@ -489,13 +554,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   if (import.meta.env.DEV) console.log('[AccountStore] Resolved account name:', accountName)
 
                   const existingAccount = await (async () => {
-                        const encKey = getEncryptionKey()
+                        const encKey = useAuthStore.getState().encryptionKey
                         if (!encKey) return null
+                        await populateAuthKeyHashes()
+                        const newHash = await sha256Hex(authKey)
+                        if (!authKeyHashSet.has(newHash)) return null
                         for (const a of get().accounts) {
-                            try {
-                                const decrypted = await decrypt(getStremioAuthKey(a), encKey)
-                                if (decrypted === authKey) return a
-                            } catch { continue }
+                            if (authKeyHashByAccount.get(a.id) === newHash) return a
                         }
                         return null
                   })()
@@ -536,15 +601,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const accounts = [...get().accounts, account]
                   set({ accounts })
                   persistAccounts(accounts)
+                  await upsertAuthKeyHash(account.id, authKey)
 
                   const { useLibraryCache } = await import('@/store/libraryCache')
                   useLibraryCache.setState({ isStale: true })
 
                   triggerSync()
                   scheduleSessionBoundAuthCheck(account.id)
+                  trace('account', 'add.success', { accountId: account.id, method: 'auth-key', addonCount: normalizedAddons.length, timing: Date.now() - start })
             } catch (error) {
                   const message = error instanceof Error ? error.message : 'Failed to add account'
                   set({ error: message })
+                  trace('account', 'add.error', { method: 'auth-key', error: message, timing: Date.now() - start })
                   throw error
             } finally {
                   set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
@@ -556,6 +624,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             _registrationInProgress = true
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
+            const start = Date.now()
+            trace('account', 'add.start', { method: 'credentials', intent })
             try {
                   let response: LoginResponse
                   if (intent === 'signup') {
@@ -632,24 +702,29 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const accounts = [...get().accounts, account]
                   set({ accounts })
                   persistAccounts(accounts)
+                  await upsertAuthKeyHash(account.id, response.authKey)
 
                   const { useLibraryCache } = await import('@/store/libraryCache')
                   useLibraryCache.setState({ isStale: true })
 
                   triggerSync()
+                  trace('account', 'add.success', { accountId: account.id, method: 'credentials', intent, addonCount: normalizedAddons.length, timing: Date.now() - start })
             } catch (error) {
                   const message = error instanceof Error ? error.message : 'Failed to add account'
                   set({ error: message })
+                  trace('account', 'add.error', { method: 'credentials', intent, error: message, timing: Date.now() - start })
                   throw error
             } finally {
                   set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
                   _registrationInProgress = false
              }
-       },
+        },
 
       addLocalAccount: async (name: string, accentColor?: string, emoji?: string) => {
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
+            trace('account', 'add.start', { method: 'local' })
+            const start = Date.now()
             try {
                   const account: Account = {
                         id: safeUUID(),
@@ -670,9 +745,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const { useLibraryCache } = await import('@/store/libraryCache')
                   useLibraryCache.setState({ isStale: true })
 
+                  trace('account', 'add.success', { accountId: account.id, method: 'local', timing: Date.now() - start })
                   return account.id
             } catch (error) {
                   set({ error: error instanceof Error ? error.message : 'Failed to create account' })
+                  trace('account', 'add.error', { method: 'local', error: error instanceof Error ? error.message : 'unknown', timing: Date.now() - start })
                   throw error
             } finally {
                   set({ loadingAccounts: new Set([...get().loadingAccounts].filter(id => id !== opId)) })
@@ -681,6 +758,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
       removeAccount: async (id: string) => {
             const releaseMutex = await acquireSyncMutex(id)
+            const start = Date.now()
+            trace('account', 'remove.start', { accountId: id })
             try {
             try {
                   const { useFailoverStore } = await import('@/store/failoverStore')
@@ -761,8 +840,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             const accounts = get().accounts.filter((acc) => acc.id !== id)
             set({ accounts })
             persistAccounts(accounts)
+            removeAuthKeyHash(id)
 
             triggerSync()
+            trace('account', 'remove.success', { accountId: id, remainingAccounts: accounts.length, timing: Date.now() - start })
             } finally {
                   releaseMutex()
             }
@@ -828,6 +909,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             // mutex so this serializes with addon writes instead of racing them.
             const releaseMutex = await acquireSyncMutex(id)
             set({ loadingAccounts: new Set([...get().loadingAccounts, id]), error: null })
+            const start = Date.now()
+            trace('account', 'update.start', { accountId: id })
             try {
                   const account = getAccountById(get().accounts, id)
                   if (!account) throw new Error('Account not found')
@@ -863,6 +946,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     : c
                         )
                         authKeyCache.set(getStremioAuthKey(updatedAccount), authKey)
+                        await upsertAuthKeyHash(updatedAccount.id, authKey)
                         const addons = await getAddons(authKey, updatedAccount.id)
                         updatedAccount.addons = addons.map((a) => ({
                               ...a,
@@ -880,8 +964,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   if (data.authKey && !updatedAccount.password) {
                         scheduleSessionBoundAuthCheck(updatedAccount.id)
                   }
+                  trace('account', 'update.success', { accountId: id, reauthed: !!(data.authKey || (data.email && data.password)), timing: Date.now() - start })
             } catch (error) {
                   set({ error: (error as Error).message })
+                  trace('account', 'update.error', { accountId: id, error: (error as Error).message, timing: Date.now() - start })
                   throw error
             } finally {
                   set({ loadingAccounts: new Set([...get().loadingAccounts].filter(x => x !== id)) })
@@ -994,6 +1080,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   error: null,
                   changelog: [],
             })
+            resetAuthKeyHashes()
             await localforage.removeItem(STORAGE_KEY)
             await localforage.removeItem(CHANGELOG_KEY)
       },

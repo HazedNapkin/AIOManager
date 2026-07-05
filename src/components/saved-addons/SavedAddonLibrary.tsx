@@ -43,8 +43,10 @@ import { DeploymentPreview } from './DeploymentPreview'
 import { useSavedAddonLibraryData } from './hooks/useSavedAddonLibraryData'
 import { useSavedAddonSyncActions } from './hooks/useSavedAddonSyncActions'
 import { useSavedAddonSelectionActions } from './hooks/useSavedAddonSelectionActions'
+import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
 export function SavedAddonLibrary() {
+  useScrollRestoration('saved-addons')
   const formatRelativeTime = useRelativeTime()
 
 
@@ -269,6 +271,11 @@ export function SavedAddonLibrary() {
       setCheckingUpdates(false)
     }
   }, [checkingUpdates, savedAddons, toast, updateLatestVersions, updateManifestChangeHints])
+
+  const handleDeploySingle = useCallback((savedAddonId: string) => {
+    setSelectedIds(new Set([savedAddonId]))
+    setShowAccountPicker(true)
+  }, [])
 
   const handleUpdateSavedAddon = useCallback(
     async (savedAddonId: string, addonName: string) => {
@@ -710,10 +717,7 @@ export function SavedAddonLibrary() {
                 manifestChangeHints={manifestChangeHints}
                 deploymentSummaryByAddonId={deploymentSummaryByAddonId}
                 onUpdate={handleUpdateSavedAddon}
-                onDeploy={(savedAddonId) => {
-                  setSelectedIds(new Set([savedAddonId]))
-                  setShowAccountPicker(true)
-                }}
+                onDeploy={handleDeploySingle}
                 isSelectionMode={isSelectionMode}
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}

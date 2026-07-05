@@ -5,6 +5,8 @@ const RPC_PATH = `${REST_PATH}/rpc`
 const RPC_TIMEOUT_MS = 30000
 const REST_TIMEOUT_MS = 15000
 
+import { trace } from '@/lib/trace'
+
 interface NuvioError extends Error {
     status?: number
     isAuthError?: boolean
@@ -28,7 +30,7 @@ interface DriverPlugin {
 // Client-side Nuvio driver. No authenticate/refresh; the server owns the rotating refresh token
 // (the client fetches a fresh access token from the server before writing).
 export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: string } = {}) {
-    const baseUrl = options.baseUrl || DEFAULT_BASE_URL
+    const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
     const publishableKey = options.publishableKey || DEFAULT_PUBLISHABLE_KEY
 
     const makeHeaders = (accessToken: string): Record<string, string> => ({
@@ -96,49 +98,85 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
 
     return {
         async pullProfiles(accessToken: string): Promise<Array<Record<string, unknown>>> {
-            const profiles = await rpc('sync_pull_profiles', {}, accessToken)
-            return Array.isArray(profiles) ? profiles : []
+            const start = Date.now()
+            trace('nuvioDriver', 'pullProfiles.start', {})
+            try {
+                const profiles = await rpc('sync_pull_profiles', {}, accessToken)
+                const result = Array.isArray(profiles) ? profiles : []
+                trace('nuvioDriver', 'pullProfiles.success', { count: result.length, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'pullProfiles.error', { error: (err as NuvioError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async writeAddons(accessToken: string, addons: DriverAddon[], profileId?: string | number) {
-            const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
-            return rpc('sync_push_addons', {
-                p_profile_id: idx,
-                p_addons: addons.map((a, i) => ({
-                    url: a.transportUrl || '',
-                    name: a.manifest?.name || '',
-                    enabled: (a.flags?.enabled ?? a.enabled) !== false,
-                    sort_order: i,
-                })),
-            }, accessToken)
+            const start = Date.now()
+            trace('nuvioDriver', 'writeAddons.start', { count: addons.length })
+            try {
+                const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
+                const result = await rpc('sync_push_addons', {
+                    p_profile_id: idx,
+                    p_addons: addons.map((a, i) => ({
+                        url: a.transportUrl || '',
+                        name: a.manifest?.name || '',
+                        enabled: (a.flags?.enabled ?? a.enabled) !== false,
+                        sort_order: i,
+                    })),
+                }, accessToken)
+                trace('nuvioDriver', 'writeAddons.success', { count: addons.length, profileIndex: idx, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'writeAddons.error', { count: addons.length, error: (err as NuvioError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async readAddons(accessToken: string, profileId?: string | number) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const query = `select=*&profile_id=eq.${idx}&order=sort_order`
-            const res = await fetch(`${baseUrl}${REST_PATH}/addons?${query}`, {
-                method: 'GET',
-                headers: makeHeaders(accessToken),
-                signal: AbortSignal.timeout(REST_TIMEOUT_MS),
-            })
-            if (!res.ok) {
-                const err: NuvioError = new Error(`Nuvio readAddons returned ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401
+            const start = Date.now()
+            trace('nuvioDriver', 'readAddons.start', {})
+            try {
+                const idx = await resolveProfileIndex(accessToken, profileId)
+                const query = `select=*&profile_id=eq.${idx}&order=sort_order`
+                const res = await fetch(`${baseUrl}${REST_PATH}/addons?${query}`, {
+                    method: 'GET',
+                    headers: makeHeaders(accessToken),
+                    signal: AbortSignal.timeout(REST_TIMEOUT_MS),
+                })
+                if (!res.ok) {
+                    const err: NuvioError = new Error(`Nuvio readAddons returned ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401
+                    throw err
+                }
+                const addons = await res.json()
+                const result = Array.isArray(addons) ? addons : []
+                trace('nuvioDriver', 'readAddons.success', { count: result.length, profileIndex: idx, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'readAddons.error', { error: (err as NuvioError)?.message, timing: Date.now() - start })
                 throw err
             }
-            const addons = await res.json()
-            return Array.isArray(addons) ? addons : []
         },
 
         async readWatchHistory(accessToken: string, profileId?: string | number, opts: { page?: number; pageSize?: number } = {}) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const rows = await rpc('sync_pull_watched_items', {
-                p_profile_id: idx,
-                p_page: opts.page ?? 1,
-                p_page_size: opts.pageSize ?? 100000,
-            }, accessToken)
-            return Array.isArray(rows) ? rows : []
+            const start = Date.now()
+            trace('nuvioDriver', 'readWatchHistory.start', {})
+            try {
+                const idx = await resolveProfileIndex(accessToken, profileId)
+                const rows = await rpc('sync_pull_watched_items', {
+                    p_profile_id: idx,
+                    p_page: opts.page ?? 1,
+                    p_page_size: opts.pageSize ?? 100000,
+                }, accessToken)
+                const result = Array.isArray(rows) ? rows : []
+                trace('nuvioDriver', 'readWatchHistory.success', { count: result.length, profileIndex: idx, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'readWatchHistory.error', { error: (err as NuvioError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async readWatchProgress(accessToken: string, profileId?: string | number) {

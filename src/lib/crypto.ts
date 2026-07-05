@@ -1,3 +1,5 @@
+import { trace } from '@/lib/trace'
+
 const PBKDF2_ITERATIONS = 600000
 const SALT_LENGTH = 16
 const IV_LENGTH = 12
@@ -23,28 +25,145 @@ export async function deriveSyncToken(password: string, salt?: string): Promise<
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-export async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const encoder = new TextEncoder()
-  const strPassword = String(password)
-  const passwordBuffer = encoder.encode(strPassword)
+let pbkdf2Worker: Worker | null = null
+let pbkdf2WorkerFailed = false
+let pbkdf2RequestId = 0
 
+interface Pbkdf2WorkerRequest {
+  id: number
+  password: string
+  salt: Uint8Array
+  iterations: number
+  length: number
+}
+
+interface Pbkdf2WorkerResponse {
+  id: number
+  bits?: ArrayBuffer
+  error?: string
+}
+
+function getPbkdf2Worker(): Worker | null {
+  if (pbkdf2WorkerFailed) return null
+  if (pbkdf2Worker) return pbkdf2Worker
+  try {
+    pbkdf2Worker = new Worker(new URL('../workers/pbkdf2-worker.ts', import.meta.url))
+    return pbkdf2Worker
+  } catch {
+    pbkdf2WorkerFailed = true
+    return null
+  }
+}
+
+async function derivePbkdf2OnMain(
+  password: string,
+  salt: Uint8Array,
+  iterations: number,
+  length: number
+): Promise<ArrayBuffer> {
+  const encoder = new TextEncoder()
+  const passwordBuffer = encoder.encode(String(password))
   const keyMaterial = await crypto.subtle.importKey('raw', passwordBuffer, 'PBKDF2', false, [
     'deriveBits',
-    'deriveKey',
   ])
-
-  return crypto.subtle.deriveKey(
+  return crypto.subtle.deriveBits(
     {
       name: 'PBKDF2',
       salt: salt as BufferSource,
-      iterations: PBKDF2_ITERATIONS,
+      iterations,
       hash: 'SHA-256',
     },
     keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    true,
-    ['encrypt', 'decrypt']
+    length
   )
+}
+
+function derivePbkdf2ViaWorker(
+  password: string,
+  salt: Uint8Array,
+  iterations: number,
+  length: number
+): Promise<ArrayBuffer> {
+  const worker = getPbkdf2Worker()
+  if (!worker) {
+    trace('crypto', 'pbkdf2.path', { path: 'main', reason: 'no-worker' })
+    return derivePbkdf2OnMain(password, salt, iterations, length)
+  }
+  const id = ++pbkdf2RequestId
+  return new Promise<ArrayBuffer>((resolve) => {
+    let completed = false
+    const cleanup = () => {
+      worker.removeEventListener('message', onMessage)
+      worker.removeEventListener('error', onError)
+    }
+    const doResolve = (value: PromiseLike<ArrayBuffer> | ArrayBuffer) => {
+      if (!completed) {
+        completed = true
+        cleanup()
+        clearTimeout(timer)
+        resolve(value)
+      }
+    }
+    const onMessage = (event: MessageEvent<Pbkdf2WorkerResponse>) => {
+      const data = event.data
+      if (!data || data.id !== id) return
+      if (data.error || !data.bits) {
+        trace('crypto', 'pbkdf2.path', { path: 'main', reason: 'worker-error' })
+        doResolve(derivePbkdf2OnMain(password, salt, iterations, length))
+      } else {
+        trace('crypto', 'pbkdf2.path', { path: 'worker' })
+        doResolve(data.bits)
+      }
+    }
+    const onError = () => {
+      pbkdf2WorkerFailed = true
+      trace('crypto', 'pbkdf2.path', { path: 'main', reason: 'worker-error' })
+      doResolve(derivePbkdf2OnMain(password, salt, iterations, length))
+    }
+    worker.addEventListener('message', onMessage)
+    worker.addEventListener('error', onError)
+    const request: Pbkdf2WorkerRequest = { id, password, salt, iterations, length }
+    worker.postMessage(request)
+    const timer = setTimeout(() => {
+      pbkdf2WorkerFailed = true
+      worker.terminate()
+      trace('crypto', 'pbkdf2.path', { path: 'main', reason: 'worker-timeout' })
+      doResolve(derivePbkdf2OnMain(password, salt, iterations, length))
+    }, 5000)
+  })
+}
+
+async function runPbkdf2(
+  password: string,
+  salt: Uint8Array,
+  iterations: number,
+  length: number
+): Promise<ArrayBuffer> {
+  try {
+    return await derivePbkdf2ViaWorker(password, salt, iterations, length)
+  } catch {
+    return derivePbkdf2OnMain(password, salt, iterations, length)
+  }
+}
+
+export async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+  const start = Date.now()
+  trace('crypto', 'deriveKey.start', { iterations: PBKDF2_ITERATIONS })
+  try {
+    const bits = await runPbkdf2(String(password), salt, PBKDF2_ITERATIONS, 256)
+    const key = await crypto.subtle.importKey(
+      'raw',
+      bits,
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt']
+    )
+    trace('crypto', 'deriveKey.success', { timing: Date.now() - start })
+    return key
+  } catch (err) {
+    trace('crypto', 'deriveKey.error', { timing: Date.now() - start, error: (err as Error)?.message })
+    throw err
+  }
 }
 
 export async function encrypt(data: string, key: CryptoKey): Promise<string> {
@@ -80,24 +199,7 @@ export async function decrypt(encrypted: string, key: CryptoKey): Promise<string
 }
 
 export async function hashPassword(password: string, salt: Uint8Array): Promise<string> {
-  const encoder = new TextEncoder()
-  const strPassword = String(password)
-  const passwordBuffer = encoder.encode(strPassword)
-
-  const keyMaterial = await crypto.subtle.importKey('raw', passwordBuffer, 'PBKDF2', false, [
-    'deriveBits',
-  ])
-
-  const hashBits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: salt as BufferSource,
-      iterations: PBKDF2_ITERATIONS,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    256
-  )
+  const hashBits = await runPbkdf2(String(password), salt, PBKDF2_ITERATIONS, 256)
 
   const hashArray = new Uint8Array(hashBits)
   return btoa(String.fromCharCode(...hashArray))
@@ -230,11 +332,10 @@ export function restoreLocalAuthSecrets(snapshot: LocalAuthSecretsSnapshot): voi
 const SYNC_KEY_SALT = new TextEncoder().encode('aiomanager-sync-key-v2')
 
 export async function deriveSyncEncryptionKey(password: string, salt?: Uint8Array): Promise<CryptoKey> {
-  const encoder = new TextEncoder()
-  const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(String(password)), 'PBKDF2', false, ['deriveKey'])
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: (salt ?? SYNC_KEY_SALT) as BufferSource, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    keyMaterial,
+  const bits = await runPbkdf2(String(password), salt ?? SYNC_KEY_SALT, PBKDF2_ITERATIONS, 256)
+  return crypto.subtle.importKey(
+    'raw',
+    bits,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
@@ -242,19 +343,38 @@ export async function deriveSyncEncryptionKey(password: string, salt?: Uint8Arra
 }
 
 export async function encryptSyncPayload(plaintext: string, password: string, salt?: Uint8Array): Promise<string> {
-  const key = await deriveSyncEncryptionKey(password, salt)
-  return encrypt(plaintext, key)
+  const start = Date.now()
+  trace('crypto', 'encryptSyncPayload.start', { bytes: plaintext.length })
+  try {
+    const key = await deriveSyncEncryptionKey(password, salt)
+    const result = await encrypt(plaintext, key)
+    trace('crypto', 'encryptSyncPayload.success', { bytes: plaintext.length, timing: Date.now() - start })
+    return result
+  } catch (err) {
+    trace('crypto', 'encryptSyncPayload.error', { bytes: plaintext.length, timing: Date.now() - start, error: (err as Error)?.message })
+    throw err
+  }
 }
 
 export async function decryptSyncPayload(ciphertext: string, password: string, salt?: Uint8Array): Promise<string> {
-  const key = await deriveSyncEncryptionKey(password, salt)
+  const start = Date.now()
+  trace('crypto', 'decryptSyncPayload.start', {})
   try {
-    return await decrypt(ciphertext, key)
-  } catch {
-    const { AES, enc } = await import('crypto-js')
-    const bytes = AES.decrypt(ciphertext, password)
-    const decrypted = bytes.toString(enc.Utf8)
-    if (!decrypted) throw new Error('Decryption failed')
-    return decrypted
+    const key = await deriveSyncEncryptionKey(password, salt)
+    try {
+      const result = await decrypt(ciphertext, key)
+      trace('crypto', 'decryptSyncPayload.success', { path: 'gcm', timing: Date.now() - start })
+      return result
+    } catch {
+      const { AES, enc } = await import('crypto-js')
+      const bytes = AES.decrypt(ciphertext, password)
+      const decrypted = bytes.toString(enc.Utf8)
+      if (!decrypted) throw new Error('Decryption failed')
+      trace('crypto', 'decryptSyncPayload.success', { path: 'legacy-fallback', timing: Date.now() - start })
+      return decrypted
+    }
+  } catch (err) {
+    trace('crypto', 'decryptSyncPayload.error', { timing: Date.now() - start, error: (err as Error)?.message })
+    throw err
   }
 }

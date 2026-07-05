@@ -26,6 +26,7 @@ import { memo, useMemo, useRef, useEffect, useState, useCallback } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useLongPress } from '@/hooks/useLongPress'
 import { useToast } from '@/hooks/use-toast'
+import { useRelativeTime } from '@/hooks/use-relative-time'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 
@@ -53,7 +54,6 @@ export const AccountCard = memo(function AccountCard({
   const navigate = useNavigate()
   const preventNavRef = useRef(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [, setTick] = useState(0)
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteValue, setNoteValue] = useState(account.note || '')
   const [noteHistory, setNoteHistory] = useState<string[]>([account.note || ''])
@@ -142,11 +142,8 @@ export const AccountCard = memo(function AccountCard({
     useAccountStore.getState().updateAccountNote(account.id, '')
     handleNoteClose(false)
   }, [account.id, handleNoteClose])
-  useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 60 * 1000)
-    return () => clearInterval(interval)
-  }, [])
   const { toast } = useToast()
+  useRelativeTime()
   const { syncAccount, repairAccount, loading } = useAccounts()
   const { openAddAccountDialog, isAddAccountDialogOpen } = useUIStore(
     useShallow((state) => ({
@@ -162,13 +159,13 @@ export const AccountCard = memo(function AccountCard({
 
 
 
-  const updateCount = useAddonStore(
-    useShallow((state) =>
-      account.addons.filter(addon => {
-        const latest = getLatestAddonVersion(state.latestVersions, addon)
-        return latest && isNewerVersion(addon.manifest.version, latest)
-      }).length
-    )
+  const latestVersions = useAddonStore((state) => state.latestVersions)
+  const updateCount = useMemo(() =>
+    account.addons.filter(addon => {
+      const latest = getLatestAddonVersion(latestVersions, addon)
+      return latest && isNewerVersion(addon.manifest.version, latest)
+    }).length,
+    [account.addons, latestVersions]
   )
   const recentChanges = useAccountStore(
     useShallow((state) => state.changelog.filter(
@@ -211,7 +208,10 @@ export const AccountCard = memo(function AccountCard({
       return null
     }
 
-    const latest = [...accountItems].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+    const latest = accountItems.reduce<ActivityItem>(
+      (max, item) => new Date(item.timestamp).getTime() > new Date(max.timestamp).getTime() ? item : max,
+      accountItems[0]
+    )
     prevLastWatchedRef.current = latest
     return latest
   }, [accountItems, libraryLoading])

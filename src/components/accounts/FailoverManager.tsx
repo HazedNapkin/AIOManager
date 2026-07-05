@@ -452,7 +452,7 @@ export function FailoverManager({
 
 
     const handleDuplicateRule = async (rule: typeof rules[0]) => {
-        await addRule(accountId, [...rule.priorityChain])
+        await addRule(accountId, [...rule.priorityChain], rule.name, rule.cooldown_ms, rule.webhookUrl, rule.notifyEnabled, rule.messageTemplate, rule.customCheckUrls?.map(c => ({ ...c })) || [])
         toast({ title: 'Rule Duplicated', description: 'A copy of the priority chain has been created.' })
     }
 
@@ -469,7 +469,8 @@ export function FailoverManager({
                 rule.cooldown_ms,
                 rule.webhookUrl,
                 rule.notifyEnabled,
-                rule.messageTemplate
+                rule.messageTemplate,
+                rule.customCheckUrls?.map(c => ({ ...c })) || []
             )
             imported++
         }

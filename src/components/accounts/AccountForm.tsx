@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/popover'
 import { useAuthStore } from '@/store/authStore'
 import { StremioOAuth } from './StremioOAuth'
-import { NuvioSetupDialog } from '@/components/providers/NuvioSetupDialog'
+import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/NuvioSetupDialog'
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
 import { ProviderSetupDialog } from '@/components/providers/ProviderSetupDialog'
 import { useConnectionStore } from '@/store/connectionStore'
@@ -275,7 +275,8 @@ export function AccountForm() {
     tokens: { accessToken: string; refreshToken: string; expiresAt: number },
     profileId: string | null,
     _profiles: unknown[],
-    email: string
+    email: string,
+    backend: NuvioBackend
   ) => {
     let accountId: string | undefined
     try {
@@ -299,6 +300,8 @@ export function AccountForm() {
           profileId: profileId || '',
           profileIndex,
           email,
+          ...(backend?.baseUrl ? { baseUrl: backend.baseUrl } : {}),
+          ...(backend?.publishableKey ? { publishableKey: backend.publishableKey } : {}),
         },
         capabilities: ['addons', 'plugins', 'profiles'],
       })
@@ -633,7 +636,7 @@ export function AccountForm() {
                 'flex h-11 w-11 items-center justify-center rounded-2xl border transition-colors',
                 'border-border/45 bg-background/60 text-muted-foreground group-hover:text-foreground'
               )}>
-                <img src={p.logo} alt={p.name} className="h-6 w-6 rounded" />
+                <img src={p.logo} alt={p.name} loading="lazy" className="h-6 w-6 rounded" />
               </span>
               <span className="space-y-1.5 pr-5">
                 <span className="block text-[15px] font-semibold leading-tight text-foreground">{p.name}</span>
@@ -715,8 +718,8 @@ export function AccountForm() {
       {!isEditing && mode === 'credentials' && (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1">
-            <button type="button" onClick={() => { setAuthIntent('login'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors', authIntent === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
-            <button type="button" onClick={() => { setAuthIntent('signup'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors', authIntent === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
+            <button type="button" onClick={() => { setAuthIntent('login'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
+            <button type="button" onClick={() => { setAuthIntent('signup'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
           </div>
           <p className="text-xs text-muted-foreground px-1">
             {authIntent === 'login'
@@ -826,14 +829,15 @@ export function AccountForm() {
             )}
           </div>
           <div className="flex items-center justify-between">
-            <button
+            <Button
               type="button"
+              variant="link"
               onClick={() => setShowHelp(!showHelp)}
-              className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+              className="h-auto gap-1 p-0 text-xs font-medium"
             >
               <HelpCircle className="h-3.5 w-3.5" />
               {showHelp ? 'Hide instructions' : 'Where to find?'}
-            </button>
+            </Button>
             <Link
               to="/kronorium/getting-started/first-account#method-2-authkey-advanced"
               onClick={handleClose}
@@ -1135,7 +1139,7 @@ export function AccountForm() {
                       key="none"
                       type="button"
                       onClick={() => setAccentColor('none')}
-                      className={`w-8 h-8 rounded-xl flex items-center justify-center transition-[transform,opacity,box-shadow] hover:scale-110 relative overflow-hidden group ${accentColor === 'none' ? 'ring-2 ring-foreground ring-offset-2 ring-offset-background' : 'border border-foreground/20'}`}
+              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-[transform,opacity,box-shadow] hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background relative overflow-hidden group ${accentColor === 'none' ? 'ring-2 ring-foreground ring-offset-2 ring-offset-background' : 'border border-foreground/20'}`}
                     >
                       <div className="absolute inset-x-0 h-0.5 bg-destructive/50 rotate-45" />
                       <div className="text-xs font-bold opacity-40 group-hover:opacity-100 transition-opacity">Off</div>
@@ -1147,7 +1151,7 @@ export function AccountForm() {
                       key={hex}
                       type="button"
                       onClick={() => setAccentColor(hex)}
-                      className={`w-8 h-8 rounded-xl transition-[transform,opacity,box-shadow] hover:scale-115 ${accentColor === hex ? 'ring-2 ring-white ring-offset-2 ring-offset-background shadow-lg' : ''}`}
+              className={`w-8 h-8 rounded-xl transition-[transform,opacity,box-shadow] hover:scale-115 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${accentColor === hex ? 'ring-2 ring-white ring-offset-2 ring-offset-background shadow-lg' : ''}`}
                       style={{ backgroundColor: hex }}
                     />
                   ))}
@@ -1157,7 +1161,7 @@ export function AccountForm() {
                       <PopoverTrigger asChild>
                         <button
                           type="button"
-                          className={`w-8 h-8 rounded-xl transition-[transform,opacity,box-shadow] hover:scale-115 bg-[conic-gradient(red,yellow,lime,cyan,blue,magenta,red)] ${(accentColor && accentColor !== 'none' && !ACCOUNT_COLORS.includes(accentColor)) ? 'ring-2 ring-white ring-offset-2 ring-offset-background shadow-lg' : ''}`}
+                  className={`w-8 h-8 rounded-xl transition-[transform,opacity,box-shadow] hover:scale-115 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background bg-[conic-gradient(red,yellow,lime,cyan,blue,magenta,red)] ${(accentColor && accentColor !== 'none' && !ACCOUNT_COLORS.includes(accentColor)) ? 'ring-2 ring-white ring-offset-2 ring-offset-background shadow-lg' : ''}`}
                         />
                       </PopoverTrigger>
                     </Tooltip>

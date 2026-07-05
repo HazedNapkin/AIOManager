@@ -66,7 +66,7 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
     if (isHydra) {
         return (
             <div className={cn('relative overflow-hidden rounded-xl', className)}>
-                <img src={hydraLogo} alt="Hydra" className="h-full w-full object-contain p-1" />
+                <img src={hydraLogo} alt="Hydra" loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
     }
@@ -74,7 +74,7 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
     if (entry) {
         return (
             <div className={cn('relative overflow-hidden rounded-xl', className)}>
-                <img src={entry.logo} alt={entry.name} className="h-full w-full object-contain p-1" />
+                <img src={entry.logo} alt={entry.name} loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
     }

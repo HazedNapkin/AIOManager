@@ -169,7 +169,10 @@ export function AccountPickerDialog({
                                 </label>
                             ))}
                             {filteredAccounts.length === 0 && (
-                                <div className="text-center py-8">
+                                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                                    <div className="rounded-full bg-muted/50 p-3 text-muted-foreground">
+                                        <User className="h-6 w-6" />
+                                    </div>
                                     <p className="text-sm text-muted-foreground">No accounts found</p>
                                 </div>
                             )}

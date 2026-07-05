@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { CHART_PALETTE } from '@/lib/chart-colors'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface ActivityHeatmapProps {
     itemsByHour: number[]
@@ -53,16 +54,16 @@ export function ActivityHeatmap({ itemsByHour, loading }: ActivityHeatmapProps) 
                 {data.map((entry) => {
                     const height = Math.max(8, (entry.count / maxVal) * 100)
                     return (
-                        <div
-                            key={entry.hour}
-                            title={`${entry.hour}: ${entry.count} plays`}
-                            className="rounded-full transition-opacity hover:opacity-100"
-                            style={{
-                                height: `${height}%`,
-                                background: entry.color,
-                                opacity: entry.count > 0 ? 0.22 + (entry.count / maxVal) * 0.78 : 0.18,
-                            }}
-                        />
+                        <Tooltip key={entry.hour} content={`${entry.hour}: ${entry.count} plays`} delayDuration={100}>
+                            <div
+                                className="rounded-full transition-opacity hover:opacity-100"
+                                style={{
+                                    height: `${height}%`,
+                                    background: entry.color,
+                                    opacity: entry.count > 0 ? 0.22 + (entry.count / maxVal) * 0.78 : 0.18,
+                                }}
+                            />
+                        </Tooltip>
                     )
                 })}
             </div>

@@ -7,6 +7,7 @@ import {
 import { mergeAddons, normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
+import { mapConcurrent } from '@/lib/concurrency'
 import { useAuthStore } from '@/store/authStore'
 import { AddonDescriptor } from '@/types/addon'
 import type { Account } from '@/types/account'
@@ -48,6 +49,7 @@ let _syncAllRunning = false
 // Per-account debounce: rapid sequential triggers (toggle, addon op, etc.) coalesce into one sync.
 const _pendingSyncs = new Map<string, ReturnType<typeof setTimeout>>()
 const SYNC_DEBOUNCE_MS = 800
+const SYNC_BATCH_DELAY_MS = 200
 
 /**
  * Schedule a debounced syncAccount for state-change-triggered syncs.
@@ -105,8 +107,7 @@ async function repairAndFlag(
         }
     }
 
-    const repairedAddons = await Promise.all(
-        addons.map(async (addon) => {
+    const repairedAddons = await mapConcurrent(addons, 4, async (addon) => {
             try {
                 const v = (addon.manifest?.version || '').replace(/^v/, '')
                 const isBroken = !addon.manifest?.name ||
@@ -201,7 +202,6 @@ async function repairAndFlag(
                 return { ...addon, manifest: finalManifest }
             }
         })
-    )
 
     const autopilotResult = await applyAutopilotAddonFlags(account.id, repairedAddons)
     return autopilotResult.addons
@@ -272,10 +272,13 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
 
     trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length })
 
-    const addonsChanged = JSON.stringify(currentAccount.addons) !== JSON.stringify(finalAddons)
+    const prevAddons = currentAccount.addons
+    const addonsChanged = prevAddons.length !== finalAddons.length
+        ? true
+        : JSON.stringify(prevAddons) !== JSON.stringify(finalAddons)
     trace('sync.core', 'flags', { accountId: id, addonsChanged, discoveryChanged, forceRefresh })
     let updatedProfiles = currentAccount.profiles
-    if (currentAccount.activeProfileId && updatedProfiles) {
+    if (addonsChanged && currentAccount.activeProfileId && updatedProfiles) {
         updatedProfiles = updatedProfiles.map(p =>
             p.id === currentAccount.activeProfileId
                 ? { ...p, addons: structuredClone(finalAddons) }
@@ -432,6 +435,9 @@ export async function syncAllAccounts(silent = false) {
 
     for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
         await Promise.all(accounts.slice(i, i + BATCH_SIZE).map(syncOne))
+        if (i + BATCH_SIZE < accounts.length) {
+            await new Promise(r => setTimeout(r, SYNC_BATCH_DELAY_MS))
+        }
     }
 
     try {

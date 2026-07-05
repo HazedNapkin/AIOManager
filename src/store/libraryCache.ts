@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/authStore'
 import { Account } from '@/types/account'
 import { toast } from '@/hooks/use-toast'
 import { mapConcurrent } from '@/lib/concurrency'
+import { trace } from '@/lib/trace'
 
 const CACHE_KEY = 'aio_library_cache_v3'
 const OLD_CACHE_KEY = 'aio_library_cache'
@@ -130,6 +131,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
     ensureLoaded: async (accounts: Account[]) => {
         if (accounts.length === 0) return
+        trace('libraryCache', 'ensureLoaded.start', { accountCount: accounts.length })
 
         const storedVersion = localStorage.getItem('aio-cache-version')
         if (storedVersion !== String(CACHE_VERSION)) {
@@ -149,6 +151,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 now - state.lastFetched < CACHE_TTL &&
                 hasAccountCoverage(state.lastMtimeByAccount, accounts)
             ) {
+                trace('libraryCache', 'ensureLoaded.cache-hit', { accountCount: accounts.length, items: state.items.length })
                 return
             }
 
@@ -176,6 +179,8 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 const now = Date.now()
                 const activeAccountIds = new Set(accounts.map(account => account.id))
                 const generation = cacheGeneration
+                const loadStart = Date.now()
+                trace('libraryCache', 'ensureLoaded.load', { accountCount: accounts.length, reason: state.isStale ? 'stale' : (!state.lastFetched ? 'cold' : 'ttl') })
 
                 set({ loading: true })
 
@@ -417,6 +422,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         driver.readWatchProgress(token.accessToken, profileId).catch(err => { if (import.meta.env.DEV) console.warn('[LibraryCache] Nuvio readWatchProgress failed:', err); return [] }),
                                     ])
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
+                                    trace('libraryCache', 'nuvio.fetch', { accountId: account.id, watched: watched.length, progress: progress.length })
                                     const nuvioTitles = new Map<string, string>()
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))
@@ -478,6 +484,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 } catch (err) {
                                     invalidateNuvioToken(conn.id)
                                     if (import.meta.env.DEV) console.warn(`[LibraryCache] Nuvio history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
+                                    trace('libraryCache', 'nuvio.fetch.error', { accountId: account.id, error: (err as Error)?.message })
                                     if (!toastedNuvioFailures.has(conn.id)) {
                                         toastedNuvioFailures.add(conn.id)
                                         toast({ title: 'Nuvio history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
@@ -506,6 +513,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         return driver.readWatchProgress(refreshed.accessToken, userId)
                                     })
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] RealStream fetched ${progress.length} progress for ${account.name || account.id}`)
+                                    trace('libraryCache', 'realstream.fetch', { accountId: account.id, progress: progress.length })
                                     const progressActivities = await Promise.all(
                                         progress.map(async (row) => {
                                             try {
@@ -548,6 +556,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     }
                                 } catch (err) {
                                     if (import.meta.env.DEV) console.warn(`[LibraryCache] RealStream history fetch failed for ${account.name || account.id}, preserving last known items:`, err)
+                                    trace('libraryCache', 'realstream.fetch.error', { accountId: account.id, error: (err as Error)?.message })
                                     if (!toastedRealStreamFailures.has(conn.id)) {
                                         toastedRealStreamFailures.add(conn.id)
                                         toast({ title: 'RealStream history unavailable', description: `Could not fetch watch history for ${account.name || 'account'}. Using last cached data.`, variant: 'destructive' })
@@ -620,6 +629,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     loading: false,
                     isStale: false
                 })
+                trace('libraryCache', 'ensureLoaded.load.complete', { accountCount: accounts.length, items: filteredFinal.length, timing: Date.now() - loadStart })
 
                 if (encryptionKey) {
                     const encrypted = await encrypt(JSON.stringify({

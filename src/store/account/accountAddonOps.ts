@@ -26,6 +26,7 @@ import {
     getStremioAuthKey,
     setAccountLoading,
     clearAccountLoading,
+    hasPlatformConnection,
 } from '../accountStore'
 import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
 import type { Account, AccountProfile } from '@/types/account'
@@ -202,6 +203,9 @@ export async function pushToConnections(accountId: string, options: { addons?: A
 }
 
 function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }, trigger = 'unknown') {
+    if (!hasPlatformConnection(account)) {
+        return
+    }
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)

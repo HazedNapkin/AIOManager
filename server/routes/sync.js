@@ -7,6 +7,20 @@ import { timingSafeEqual } from '../auth.js'
 import { hashApiKey } from '../api-keys.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
 import { isRegistrationsClosed } from '../config.js'
+import { trace } from '../utils/trace.js'
+
+function buildMultiRowPlaceholders(numRows, numCols) {
+    const rows = []
+    let p = 1
+    for (let r = 0; r < numRows; r++) {
+        const cols = []
+        for (let c = 0; c < numCols; c++) {
+            cols.push(`$${p++}`)
+        }
+        rows.push(`(${cols.join(', ')})`)
+    }
+    return rows.join(', ')
+}
 
 export function registerSyncRoutes(fastify) {
     fastify.get('/api/sync/:id', {
@@ -28,8 +42,11 @@ export function registerSyncRoutes(fastify) {
     }, async (request, reply) => {
         const { id } = request.params
         const password = request.headers['x-sync-password']
+        const start = Date.now()
+        trace('syncRoute', 'pull.start', { accountId: id })
 
         if (!id || !password) {
+            trace('syncRoute', 'pull.error', { accountId: id, error: 'missing-credentials' })
             reply.status(400);
             return { error: 'Missing ID or Password header' }
         }
@@ -38,6 +55,7 @@ export function registerSyncRoutes(fastify) {
             const row = await db.get('SELECT value, password FROM kv_store WHERE key = $1', [id])
 
             if (!row) {
+                trace('syncRoute', 'pull.error', { accountId: id, error: 'not-found' })
                 reply.status(401);
                 return { error: 'Unauthorized: Invalid credentials' }
             }
@@ -48,6 +66,7 @@ export function registerSyncRoutes(fastify) {
                 const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
                 if (!decryptedPassword || !timingSafeEqual(decryptedPassword, password)) {
                     fastify.log.warn({ category: 'Sync' }, `[${id}] Unauthorized: Password mismatch.`)
+                    trace('syncRoute', 'pull.error', { accountId: id, error: 'password-mismatch' })
                     reply.status(401);
                     return { error: 'Unauthorized: Invalid credentials' }
                 }
@@ -77,9 +96,12 @@ export function registerSyncRoutes(fastify) {
                     syncData = {}
                 }
             }
+            const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
+            trace('syncRoute', 'pull.success', { accountId: id, bytes: payloadBytes, timing: Date.now() - start })
             return syncData && typeof syncData === 'object' ? syncData : {}
         } catch (err) {
             fastify.log.error({ category: 'Sync' }, `[${id}] GET Error: ${err.message}`)
+            trace('syncRoute', 'pull.error', { accountId: id, error: err.message, timing: Date.now() - start })
             reply.status(500);
             return { error: 'Server error, please try again later.' }
         }
@@ -101,12 +123,15 @@ export function registerSyncRoutes(fastify) {
             }
         }
     }, async (request, reply) => {
+        const postStart = Date.now()
         try {
         const { id } = request.params
         const password = request.headers['x-sync-password']
         const data = request.body
+        trace('syncRoute', 'push.start', { accountId: id, compressed: !!data?.compressed })
 
         if (!id || !password) {
+            trace('syncRoute', 'push.error', { accountId: id, error: 'missing-credentials' })
             reply.status(400);
             return { error: 'Missing ID or Password header' }
         }
@@ -137,12 +162,14 @@ export function registerSyncRoutes(fastify) {
                 }
 
                 if (row.content_hash === contentHash) {
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', timing: Date.now() - postStart })
                     return { success: true, syncedAt: serverTime, skipped: true }
                 }
 
                 const serverUpdated = row.updated_at || 0
                 if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', timing: Date.now() - postStart })
                     return { success: true, conflict: true, syncedAt: serverTime }
                 }
 
@@ -169,15 +196,21 @@ export function registerSyncRoutes(fastify) {
             const apiKeys = data.apiKeys
             if (apiKeys && typeof apiKeys === 'object') {
                 await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+                const apiKeyRows = []
                 for (const [accountId, apiKey] of Object.entries(apiKeys)) {
                     if (typeof apiKey !== 'string' || !apiKey) continue
-                    const keyHash = hashApiKey(apiKey)
-                    await tx.run(
-                        db.type === 'postgres'
-                            ? 'INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ($1, $2, $3, $4) ON CONFLICT (sync_user, api_key_hash) DO UPDATE SET account_id = EXCLUDED.account_id, created_at = EXCLUDED.created_at'
-                            : 'INSERT OR REPLACE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ($1, $2, $3, $4)',
-                        [accountId, id, keyHash, Date.now()]
-                    )
+                    apiKeyRows.push([accountId, id, hashApiKey(apiKey), Date.now()])
+                }
+                const API_KEY_CHUNK = 100
+                for (let i = 0; i < apiKeyRows.length; i += API_KEY_CHUNK) {
+                    const chunk = apiKeyRows.slice(i, i + API_KEY_CHUNK)
+                    if (chunk.length === 0) continue
+                    const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
+                    const params = chunk.flat()
+                    const sql = db.type === 'postgres'
+                        ? `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders} ON CONFLICT (sync_user, api_key_hash) DO UPDATE SET account_id = EXCLUDED.account_id, created_at = EXCLUDED.created_at`
+                        : `INSERT OR REPLACE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
+                    await tx.run(sql, params)
                 }
             }
 
@@ -187,14 +220,25 @@ export function registerSyncRoutes(fastify) {
             const canonicalAddons = data.canonicalAddons
             if (canonicalAddons && typeof canonicalAddons === 'object') {
                 const now = Date.now()
+                const canonicalRows = []
+                const canonicalWrites = []
                 for (const [accountId, addons] of Object.entries(canonicalAddons)) {
                     if (!accountId || !Array.isArray(addons)) continue
-                    await tx.run(
-                        db.type === 'postgres'
-                            ? 'INSERT INTO account_canonical_addons (account_id, sync_user, updated_at) VALUES ($1, $2, $3) ON CONFLICT (account_id) DO NOTHING'
-                            : 'INSERT OR IGNORE INTO account_canonical_addons (account_id, sync_user, updated_at) VALUES ($1, $2, $3)',
-                        [accountId, id, now]
-                    )
+                    canonicalRows.push([accountId, id, now])
+                    canonicalWrites.push([accountId, addons])
+                }
+                const CANONICAL_CHUNK = 100
+                for (let i = 0; i < canonicalRows.length; i += CANONICAL_CHUNK) {
+                    const chunk = canonicalRows.slice(i, i + CANONICAL_CHUNK)
+                    if (chunk.length === 0) continue
+                    const placeholders = buildMultiRowPlaceholders(chunk.length, 3)
+                    const params = chunk.flat()
+                    const sql = db.type === 'postgres'
+                        ? `INSERT INTO account_canonical_addons (account_id, sync_user, updated_at) VALUES ${placeholders} ON CONFLICT (account_id) DO NOTHING`
+                        : `INSERT OR IGNORE INTO account_canonical_addons (account_id, sync_user, updated_at) VALUES ${placeholders}`
+                    await tx.run(sql, params)
+                }
+                for (const [accountId, addons] of canonicalWrites) {
                     await writeEncryptedIfChanged(
                         'account_canonical_addons',
                         { sql: 'account_id = $1', params: [accountId] },
@@ -206,10 +250,12 @@ export function registerSyncRoutes(fastify) {
             }
 
             invalidateCachedAuth('sync:' + id)
+            trace('syncRoute', 'push.success', { accountId: id, bytes: JSON.stringify(data).length, timing: Date.now() - postStart })
             return { success: true, syncedAt: serverTime }
         })
         } catch (err) {
             fastify.log.error({ category: 'Sync' }, `POST /api/sync error: ${err.message}`)
+            trace('syncRoute', 'push.error', { accountId: request.params?.id, error: err.message, timing: Date.now() - postStart })
             reply.status(500)
             return { error: 'Internal sync error' }
         }
@@ -218,14 +264,17 @@ export function registerSyncRoutes(fastify) {
     fastify.delete('/api/sync/:id', {
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
     }, async (request, reply) => {
+        const delStart = Date.now()
         try {
         const { id } = request.params
         const password = request.headers['x-sync-password']
+        trace('syncRoute', 'delete.start', { accountId: id })
 
         fastify.log.info({ category: 'Server' }, `Received DELETE request for ID: ${id}`)
 
         if (!id || !password) {
             fastify.log.warn({ category: 'Server' }, `DELETE failed: Missing header for ID ${id}`)
+            trace('syncRoute', 'delete.error', { accountId: id, error: 'missing-credentials' })
             reply.status(400);
             return { error: 'Missing ID or Password header' }
         }
@@ -234,6 +283,7 @@ export function registerSyncRoutes(fastify) {
 
         if (!row) {
             fastify.log.warn({ category: 'Server' }, `DELETE failed: ID ${id} not found`)
+            trace('syncRoute', 'delete.error', { accountId: id, error: 'not-found' })
             reply.status(401);
             return { error: 'Unauthorized: Invalid credentials' }
         }
@@ -244,6 +294,7 @@ export function registerSyncRoutes(fastify) {
             const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
             if (!timingSafeEqual(decryptedPassword, password)) {
                 fastify.log.warn({ category: 'Server' }, `DELETE failed: Password mismatch for ID ${id}`)
+                trace('syncRoute', 'delete.error', { accountId: id, error: 'password-mismatch' })
                 reply.status(401);
                 return { error: 'Unauthorized: Invalid credentials' }
             }
@@ -266,10 +317,12 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM kv_store WHERE key = $1', [id])
         })
         invalidateCachedAuth('sync:' + id)
+        trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })
 
         return { success: true }
         } catch (err) {
             fastify.log.error({ category: 'Server' }, `DELETE failed: ${err.message}`)
+            trace('syncRoute', 'delete.error', { accountId: request.params?.id, error: err.message, timing: Date.now() - delStart })
             reply.status(500)
             return { error: 'Internal server error' }
         }

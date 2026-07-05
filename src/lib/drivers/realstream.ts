@@ -5,6 +5,8 @@ const PROGRESS_PATH = '/api/collections/progress/records'
 const AUTH_TIMEOUT_MS = 30000
 const DEFAULT_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
+import { trace } from '@/lib/trace'
+
 const USER_FIELD = 'user'
 const ADDON_TYPE = 'stremio'
 
@@ -141,30 +143,48 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
 
     return {
         async refreshAccessToken(accessToken: string): Promise<RealStreamTokens> {
-            const res = await fetch(`${baseUrl}${REFRESH_PATH}`, {
-                method: 'POST',
-                headers: makeHeaders(accessToken),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
-            })
-            if (!res.ok) {
-                const err: RealStreamError = new Error(`RealStream token refresh failed: ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401 || res.status === 403
+            const start = Date.now()
+            trace('realstreamDriver', 'refreshAccessToken.start', {})
+            try {
+                const res = await fetch(`${baseUrl}${REFRESH_PATH}`, {
+                    method: 'POST',
+                    headers: makeHeaders(accessToken),
+                    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS),
+                })
+                if (!res.ok) {
+                    const err: RealStreamError = new Error(`RealStream token refresh failed: ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401 || res.status === 403
+                    throw err
+                }
+                const data = await res.json()
+                const result: RealStreamTokens = {
+                    accessToken: data.token,
+                    userId: data.record?.id || null,
+                    expiresAt: decodeJwtExpMs(data.token) || Date.now() + DEFAULT_TOKEN_TTL_MS,
+                }
+                trace('realstreamDriver', 'refreshAccessToken.success', { userId: result.userId, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('realstreamDriver', 'refreshAccessToken.error', { error: (err as RealStreamError)?.message, timing: Date.now() - start })
                 throw err
-            }
-            const data = await res.json()
-            return {
-                accessToken: data.token,
-                userId: data.record?.id || null,
-                expiresAt: decodeJwtExpMs(data.token) || Date.now() + DEFAULT_TOKEN_TTL_MS,
             }
         },
 
         async readAddons(accessToken: string, userId: string) {
-            if (!userId) throw new Error('RealStream readAddons requires a userId')
-            const records = await listRecords(accessToken, userId)
-            const data = records[0]?.data
-            return Array.isArray(data) ? data : []
+            const start = Date.now()
+            trace('realstreamDriver', 'readAddons.start', { userId })
+            try {
+                if (!userId) throw new Error('RealStream readAddons requires a userId')
+                const records = await listRecords(accessToken, userId)
+                const data = records[0]?.data
+                const result = Array.isArray(data) ? data : []
+                trace('realstreamDriver', 'readAddons.success', { userId, count: result.length, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('realstreamDriver', 'readAddons.error', { userId, error: (err as RealStreamError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async readWatchProgress(accessToken: string, userId: string): Promise<RealStreamProgressItem[]> {
@@ -176,13 +196,25 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
         },
 
         async writeAddons(accessToken: string, addons: Array<RsRecord>, userId: string) {
-            if (!userId) throw new Error('RealStream writeAddons requires a userId')
-            const data = (addons || []).filter(a => (a.transportUrl || a.url)).map(toRecordAddon)
-            if (data.length === 0) return { skipped: true, reason: 'No valid addons to push' }
-            const records = await listRecords(accessToken, userId)
-            const existing = records[0]
-            if (existing) return request('PATCH', `${ADDONS_PATH}/${existing.id}`, accessToken, { data })
-            return request('POST', ADDONS_PATH, accessToken, { [USER_FIELD]: userId, data })
+            const start = Date.now()
+            trace('realstreamDriver', 'writeAddons.start', { userId, count: addons.length })
+            try {
+                if (!userId) throw new Error('RealStream writeAddons requires a userId')
+                const data = (addons || []).filter(a => (a.transportUrl || a.url)).map(toRecordAddon)
+                if (data.length === 0) {
+                    trace('realstreamDriver', 'writeAddons.success', { userId, count: 0, skipped: true, timing: Date.now() - start })
+                    return { skipped: true, reason: 'No valid addons to push' }
+                }
+                const records = await listRecords(accessToken, userId)
+                const existing = records[0]
+                const result = existing ? await request('PATCH', `${ADDONS_PATH}/${existing.id}`, accessToken, { data })
+                    : await request('POST', ADDONS_PATH, accessToken, { [USER_FIELD]: userId, data })
+                trace('realstreamDriver', 'writeAddons.success', { userId, count: data.length, mode: existing ? 'patch' : 'post', timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('realstreamDriver', 'writeAddons.error', { userId, count: addons.length, error: (err as RealStreamError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
     }
 }

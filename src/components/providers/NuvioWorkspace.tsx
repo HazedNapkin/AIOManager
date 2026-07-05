@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, User } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import { readNuvioLibrary, readNuvioCollections, readNuvioProfiles, renameNuvioP
 import type { NuvioLibraryItem, NuvioCollection, NuvioProfileRow } from '@/lib/nuvio-data'
 import type { Connection, ConnectionStatus } from '@/types/connection'
 import { fetchConnectionToken } from '@/api/connection'
-import { createNuvioDriver } from '@/lib/drivers/nuvio'
+import { nuvioDriverFor } from '@/lib/drivers/factory'
 
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
@@ -296,8 +296,6 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
 // Separate from ProfilesSection: lets the user choose which profile this
 // account's addons push to. Loads on mount since it's always visible.
 
-const _nuvioSessionDriver = createNuvioDriver()
-
 interface NuvioProfile { id: string; index: number; name: string }
 
 function NuvioProfilePicker({ accountId, connection }: { accountId: string; connection: Connection }) {
@@ -306,6 +304,8 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
     const [switching, setSwitching] = useState(false)
     const [pending, setPending] = useState<NuvioProfile | null>(null)
 
+    const nuvioSessionDriver = useMemo(() => nuvioDriverFor(connection), [connection.id, connection.credentials?.baseUrl, connection.credentials?.publishableKey])
+
     const currentId = connection.credentials?.profileId || ''
     const matches = (p: NuvioProfile) => p.id === currentId || String(p.index) === String(currentId)
 
@@ -313,7 +313,7 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
         let cancelled = false
         setLoading(true)
         fetchConnectionToken(accountId, connection.id, 'nuvio')
-            .then(token => _nuvioSessionDriver.pullProfiles(token.accessToken))
+            .then(token => nuvioSessionDriver.pullProfiles(token.accessToken))
             .then(rows => {
                 if (!cancelled) setProfiles(rows.map(r => ({
                     id: String(r.id ?? ''),
@@ -326,7 +326,7 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
             })
             .finally(() => { if (!cancelled) setLoading(false) })
         return () => { cancelled = true }
-    }, [accountId, connection.id])
+    }, [accountId, connection.id, nuvioSessionDriver])
 
     const doSwitch = useCallback(async (p: NuvioProfile) => {
         const profileKey = p.index > 0 ? String(p.index) : p.id

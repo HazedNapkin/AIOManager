@@ -247,7 +247,7 @@ export function ReplaySharePage() {
 
             <div className="fixed top-0 inset-x-0 h-16 md:h-20 z-[100] flex items-center justify-between px-6 md:px-8 bg-[#08080f]/80 backdrop-blur-xl border-b border-white/5 pt-2 md:pt-0">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <img src="/logo.png" alt="" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
+                    <img src="/logo.png" alt="" loading="lazy" style={{ width: '20px', height: '20px', objectFit: 'contain' }} />
                     <span style={{ fontFamily: '"Inter", monospace', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'white', textTransform: 'uppercase' }}>AIOManager</span>
                 </div>
                 <a href="/" style={{ fontFamily: '"Inter", sans-serif', fontSize: '13px', fontWeight: 700, color: '#818cf8', textDecoration: 'none', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '999px', padding: '6px 16px' }}>

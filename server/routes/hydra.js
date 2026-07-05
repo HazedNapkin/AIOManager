@@ -7,6 +7,7 @@ import { FALLBACK_KEYS } from '../keys.js'
 import { VERSION } from '../config.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
+import { normalizeAddonUrl } from '../utils/addon-url.js'
 
 const HYDRA_SPEC_VERSION = '1.0.0'
 const MAX_ADDON_URL_LENGTH = 2048
@@ -14,15 +15,6 @@ const MAX_ADDONS_IN_COLLECTION = 500
 const LAST_USED_COALESCE_MS = 60_000
 
 let logger = console
-
-const normalizeAddonUrl = (url) => {
-    if (!url) return ''
-    return url.trim()
-        .replace(/^stremio:\/\//i, 'https://')
-        .replace(/\/manifest\.json$/i, '')
-        .replace(/\/+$/, '')
-        .toLowerCase()
-}
 
 const isValidAddonUrl = (url) =>
     typeof url === 'string' &&

@@ -73,6 +73,7 @@ export function AppLoader({
             <img
               src="/logo.png"
               alt="AIOManager"
+              loading="lazy"
               className={cn('h-11 w-11 object-contain', isLight && 'invert')}
             />
           </div>

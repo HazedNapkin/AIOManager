@@ -43,7 +43,7 @@ export const SubscriberCard = memo(function SubscriberCard({ subscriber, onRemov
             <div className="flex items-start gap-3 p-4">
                 <div className="relative mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-muted">
                     {subscriber.logo
-                        ? <img src={subscriber.logo} alt={subscriber.name} className="h-full w-full object-contain p-1" />
+                        ? <img src={subscriber.logo} alt={subscriber.name} loading="lazy" className="h-full w-full object-contain p-1" />
                         : <span className="text-sm font-bold text-muted-foreground">{subscriber.name[0]?.toUpperCase() || '?'}</span>}
                 </div>
                 <div className="min-w-0 flex-1 space-y-1.5">

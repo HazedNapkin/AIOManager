@@ -284,6 +284,7 @@ export function Header() {
             <img
               src="/logo.png"
               alt="AIOManager"
+              loading="lazy"
               className={`h-6 w-6 object-contain transition-[transform,opacity,box-shadow] ${isLight ? 'invert' : ''}`}
             />
             <span className="text-[13px] font-bold tracking-tight text-foreground/90">AIOManager</span>

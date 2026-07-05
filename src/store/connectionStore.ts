@@ -88,6 +88,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 refreshToken: connection.credentials.refreshToken,
                 expiresAt: connection.credentials.expiresAt,
                 profileId: connection.credentials.profileId || null,
+                baseUrl: connection.credentials?.baseUrl || null,
+                publishableKey: connection.credentials?.publishableKey || null,
             }
             await storeConnectionCredential(accountId, connection.id, bundle, 'nuvio').catch(() => {})
         }

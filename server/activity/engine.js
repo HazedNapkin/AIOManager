@@ -4,6 +4,7 @@ import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { STREMIO_API } from '../config.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
+import { trace } from '../utils/trace.js'
 
 function envBool(name, fallback = false) {
     const value = process.env[name]
@@ -482,14 +483,18 @@ async function deleteSnapshots(keys, tx) {
 }
 
 async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null) {
+    const scanStart = Date.now()
+    trace('activity', 'scanAccount.start', { accountId })
     const library = await fetchLibrary(authKey, limits.deadline, log)
     if (!library || !Array.isArray(library)) {
+        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: 'no-library', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: true }
     }
 
     const hashKey = `${syncUser}:${accountId}`
     const libraryHash = computeLibraryHash(library)
     if (getCachedLibraryHash(hashKey) === libraryHash) {
+        trace('activity', 'scanAccount.complete', { accountId, libraryItems: library.length, skipped: true, reason: 'hash-match', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: true, complete: true }
     }
 
@@ -590,12 +595,22 @@ async function scanAccount(syncUser, accountId, accountName, authKey, limits, lo
 
     if (complete) setCachedLibraryHash(hashKey, libraryHash)
 
+    trace('activity', 'scanAccount.complete', { accountId, libraryItems: library.length, eventsWritten, snapshotWrites, snapshotDeletes, complete, timing: Date.now() - scanStart })
     return { eventsWritten, snapshotWrites, snapshotDeletes, skippedByHash: false, complete }
 }
 
 async function runActivityCycle(fastify) {
-    if (isScanning) return { skipped: true, reason: 'scan_in_progress' }
-    if (!ACTIVITY_ENGINE_ENABLED) return { skipped: true, reason: 'activity_engine_disabled' }
+    if (isScanning) {
+        trace('activity', 'runActivityCycle.skipped', { reason: 'scan_in_progress' })
+        return { skipped: true, reason: 'scan_in_progress' }
+    }
+    if (!ACTIVITY_ENGINE_ENABLED) {
+        trace('activity', 'runActivityCycle.skipped', { reason: 'activity_engine_disabled' })
+        return { skipped: true, reason: 'activity_engine_disabled' }
+    }
+
+    const cycleStart = Date.now()
+    trace('activity', 'runActivityCycle.start', {})
 
     isScanning = true
     const startTime = Date.now()
@@ -669,10 +684,12 @@ async function runActivityCycle(fastify) {
             { category: 'Activity' },
             `Activity scan complete: ${summary.accountsScanned} accounts scanned (${summary.accountsSkippedByHash} hash-skipped), ${summary.eventsWritten} events, ${summary.snapshotWrites} snapshot writes, ${summary.snapshotDeletes} snapshot deletes in ${Date.now() - startTime}ms${summary.budgetExhausted ? ' (budget exhausted)' : ''}`
         )
+        trace('activity', 'runActivityCycle.complete', { accountsScanned: summary.accountsScanned, accountsSkippedByHash: summary.accountsSkippedByHash, eventsWritten: summary.eventsWritten, snapshotWrites: summary.snapshotWrites, snapshotDeletes: summary.snapshotDeletes, budgetExhausted: summary.budgetExhausted, timing: Date.now() - cycleStart })
 
         return summary
     } catch (err) {
         fastify.log.error({ category: 'Activity' }, `Activity scan error: ${err.message}`)
+        trace('activity', 'runActivityCycle.error', { error: err.message, timing: Date.now() - cycleStart })
         return { ...summary, error: 'scan_failed' }
     } finally {
         isScanning = false

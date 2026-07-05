@@ -74,9 +74,12 @@ export const isSafeUrl = (url) => {
 export const resolveAndValidateHost = async (hostname) => {
     const host = String(hostname || '').toLowerCase().replace(/^\[(.+)\]$/, '$1')
     if (!host) return false
+
     try {
         const records = await lookup(host, { all: true })
-        if (!Array.isArray(records) || records.length === 0) return true
+        if (!Array.isArray(records) || records.length === 0) {
+            return true
+        }
         return !records.some(r => isPrivateIp(r.address))
     } catch {
         return true

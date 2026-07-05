@@ -2,6 +2,8 @@
 import { SavedAddon } from '@/types/saved-addon'
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
+import { normalizeAddonUrl } from '@/lib/utils'
+import { trace } from '@/lib/trace'
 
 export interface HealthStatus {
   isOnline: boolean
@@ -20,64 +22,54 @@ export function isLocalOrPrivateUrl(url: string): boolean {
       /^192\.168\./.test(hostname) ||
       /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
     )
-  } catch {
+  } catch (err) {
+    if (import.meta.env?.DEV) console.warn('[addon-health] Invalid URL:', err instanceof Error ? err.message : String(err))
     return false
   }
 }
 
 export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> {
   const startTime = Date.now()
+  trace('health', 'check-start', { url: addonUrl })
 
   if (isLocalOrPrivateUrl(addonUrl)) {
+    trace('health', 'check-result', { url: addonUrl, isOnline: false, latencyMs: Date.now() - startTime })
     return { isOnline: false, error: 'Local addon unreachable from server', latencyMs: Date.now() - startTime }
   }
-
-  const manifestUrl = addonUrl.endsWith('/manifest.json') ? addonUrl : `${addonUrl}/manifest.json`
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 5000)
 
-  const directFetch = (async (): Promise<HealthStatus> => {
-    const response = await fetch(manifestUrl, {
-      method: 'GET',
-      signal: controller.signal,
-      cache: 'no-cache'
-    })
-    if (!response.ok) throw new Error('Direct fetch not ok')
-    const data = await response.json()
-    if (!data || typeof data !== 'object') throw new Error('Invalid manifest')
-    return { isOnline: true, latencyMs: Date.now() - startTime }
-  })()
-
-  const proxyFetch = (async (): Promise<HealthStatus> => {
+  try {
     const { auth } = useSyncStore.getState()
     const headers: Record<string, string> = {}
     if (auth.id && auth.password) {
       headers['x-sync-user'] = auth.id
       headers['x-sync-password'] = await deriveSyncToken(auth.password)
     }
+
     const response = await fetch(`/api/addon-health?url=${encodeURIComponent(addonUrl)}`, {
       signal: controller.signal,
-      headers
+      headers,
     })
-    if (!response.ok) throw new Error('Proxy fetch not ok')
-    const data = await response.json()
-    return {
-      isOnline: data.isOnline,
-      error: data.error,
-      latencyMs: Date.now() - startTime
-    }
-  })()
 
-  try {
-    const result = await Promise.any([directFetch, proxyFetch])
-    clearTimeout(timeoutId)
-    controller.abort()
-    return result
-  } catch {
-    clearTimeout(timeoutId)
-    controller.abort()
+    if (!response.ok) {
+      throw new Error(`Health endpoint returned ${response.status}`)
+    }
+
+    const data = await response.json()
+    trace('health', 'check-result', { url: addonUrl, isOnline: Boolean(data?.isOnline), latencyMs: Date.now() - startTime })
+    return {
+      isOnline: Boolean(data?.isOnline),
+      error: data?.error,
+      latencyMs: Date.now() - startTime,
+    }
+  } catch (err) {
+    if (import.meta.env?.DEV) console.warn('[addon-health] Connection failed:', err instanceof Error ? err.message : String(err))
+    trace('health', 'check-result', { url: addonUrl, isOnline: false, latencyMs: Date.now() - startTime })
     return { isOnline: false, error: 'Connection Failed', latencyMs: Date.now() - startTime }
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
@@ -90,8 +82,50 @@ export async function checkAllAddonsHealth(
   const budgetStart = Date.now()
   const budgetExceeded = () => Date.now() - budgetStart > BUDGET_MS
   const results: SavedAddon[] = [...addons]
-  const domainHealthCache: Record<string, boolean> = {}
-  const PENDING_CHECKS: Record<string, Promise<HealthStatus>> = {}
+  const originHealthCache = new Map<string, boolean>()
+  const inflightByUrl = new Map<string, Promise<HealthStatus>>()
+  const settledByUrl = new Map<string, HealthStatus>()
+
+  const checkOnce = (addon: SavedAddon): Promise<HealthStatus> => {
+    const urlKey = normalizeAddonUrl(addon.installUrl)
+
+    const settled = settledByUrl.get(urlKey)
+    if (settled) return Promise.resolve(settled)
+
+    const inflight = inflightByUrl.get(urlKey)
+    if (inflight) return inflight
+
+    let origin = ''
+    try {
+      origin = new URL(addon.installUrl).origin
+    } catch (err) {
+      if (import.meta.env?.DEV) console.warn('[addon-health] Invalid URL for origin:', err instanceof Error ? err.message : String(err))
+      origin = addon.installUrl
+    }
+
+    if (originHealthCache.get(origin) === true) {
+      const fast: HealthStatus = { isOnline: true }
+      settledByUrl.set(urlKey, fast)
+      return Promise.resolve(fast)
+    }
+
+    const promise = checkAddonHealth(addon.installUrl)
+      .then(status => {
+        if (status.isOnline) originHealthCache.set(origin, true)
+        settledByUrl.set(urlKey, status)
+        inflightByUrl.delete(urlKey)
+        return status
+      })
+      .catch((): HealthStatus => {
+        const failed: HealthStatus = { isOnline: false, error: 'Connection Failed' }
+        settledByUrl.set(urlKey, failed)
+        inflightByUrl.delete(urlKey)
+        return failed
+      })
+
+    inflightByUrl.set(urlKey, promise)
+    return promise
+  }
 
   for (let i = 0; i < addons.length; i += CONCURRENT_LIMIT) {
     if (budgetExceeded()) break
@@ -100,42 +134,7 @@ export async function checkAllAddonsHealth(
 
     await Promise.all(batch.map(async (addon, batchIndex) => {
       const globalIndex = i + batchIndex
-
-      let origin = ''
-      try {
-        origin = new URL(addon.installUrl).origin
-      } catch (e) {
-        origin = addon.installUrl
-      }
-
-      let status: HealthStatus
-      if (domainHealthCache[origin] === true) {
-        status = { isOnline: true }
-      } else {
-        // Use shared promise for in-flight checks to the same origin
-        if (!PENDING_CHECKS[origin]) {
-          PENDING_CHECKS[origin] = checkAddonHealth(addon.installUrl).then(s => {
-            if (s.isOnline) {
-              domainHealthCache[origin] = true
-            }
-            // Temporarily keep it in the cache to collapse other simultaneous requests
-            setTimeout(() => delete PENDING_CHECKS[origin], 5000)
-            return s
-          })
-        }
-
-        const sharedStatus = await PENDING_CHECKS[origin]
-        if (sharedStatus.isOnline) {
-          status = sharedStatus
-        } else {
-          // If the shared/first check failed, don't assume everyone on this domain is dead.
-          // This specific addon gets to try its own URL as a fallback.
-          status = await checkAddonHealth(addon.installUrl)
-          if (status.isOnline) {
-            domainHealthCache[origin] = true
-          }
-        }
-      }
+      const status = await checkOnce(addon)
 
       results[globalIndex] = {
         ...addon,
@@ -203,7 +202,9 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
         const proxyUrl = `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}`
         const res = await fetch(proxyUrl, { signal: controller.signal, headers })
         if (res.ok) manifest = await res.json()
-      } catch {}
+      } catch (err) {
+        if (import.meta.env?.DEV) console.warn('[addon-health] Both direct and proxy manifest fetch failed:', err instanceof Error ? err.message : String(err))
+      }
     }
     clearTimeout(id)
 
@@ -233,7 +234,9 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
         const data = await res.json()
         if (data.metas || data.streams) verifySuccess = true
       }
-    } catch {}
+    } catch (err) {
+      if (import.meta.env?.DEV) console.warn('[addon-health] Resource verification failed:', err instanceof Error ? err.message : String(err))
+    }
     clearTimeout(vId)
 
     if (verifySuccess) {

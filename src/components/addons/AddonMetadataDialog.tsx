@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { AddonDescriptor } from '@/types/addon'
 import { useEffect, useState } from 'react'
@@ -162,9 +163,8 @@ export function AddonMetadataDialog({
                         <div className="space-y-2">
                             <Label htmlFor="description">Description</Label>
                             <div className="flex gap-2">
-                                <textarea
+                                <Textarea
                                     id="description"
-                                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                     value={customDescription}
                                     onChange={(e) => setCustomDescription(e.target.value)}
                                     placeholder={addon.manifest.description}

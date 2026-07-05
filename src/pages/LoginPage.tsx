@@ -223,6 +223,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <img
                                 src="/logo.png"
                                 alt="AIOManager"
+                                loading="lazy"
                                 className={cn('h-20 w-20 object-contain', isLight && 'invert')}
                             />
                         </div>

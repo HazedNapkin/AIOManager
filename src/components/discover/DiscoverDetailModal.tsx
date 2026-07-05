@@ -150,7 +150,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           </DialogTitle>
         </DialogHeader>
 
-        <div className="-mr-2 max-h-[60vh] min-w-0 overflow-y-auto overflow-x-hidden pr-2">
+        <div className="-mr-2 max-h-[85vh] min-w-0 overflow-y-auto overflow-x-hidden pr-2">
           <div className="min-w-0 space-y-4">
             <div className="flex flex-wrap items-center gap-1.5">
               <StatusChip className="gap-1">

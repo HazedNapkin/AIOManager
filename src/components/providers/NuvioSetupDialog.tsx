@@ -18,7 +18,7 @@ import {
     Mail,
     Lock,
 } from 'lucide-react'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
 
@@ -41,6 +41,7 @@ interface NuvioSetupDialogProps {
     open: boolean
     onOpenChange: (open: boolean) => void
     onComplete: (tokens: NuvioTokens, profileId: string | null, profiles: NuvioProfile[], email: string, backend: NuvioBackend) => void | Promise<void>
+    initialBackend?: NuvioBackend
 }
 
 interface NuvioTokens {
@@ -55,7 +56,7 @@ const STEP_INDICATORS = [
     { step: 'confirm' as const, label: 'Confirm' },
 ]
 
-export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupDialogProps) {
+export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBackend }: NuvioSetupDialogProps) {
     const [step, setStep] = useState<WizardStep>('login')
     const [mode, setMode] = useState<'login' | 'signup'>('login')
     const [email, setEmail] = useState('')
@@ -90,6 +91,13 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
         baseUrl: customBaseUrl.trim() || undefined,
         publishableKey: customPublishableKey.trim() || undefined,
     })
+
+    useEffect(() => {
+        if (open && initialBackend) {
+            if (initialBackend.baseUrl) setCustomBaseUrl(initialBackend.baseUrl)
+            if (initialBackend.publishableKey) setCustomPublishableKey(initialBackend.publishableKey)
+        }
+    }, [open])
 
     const handleClose = (nextOpen: boolean) => {
         if (!nextOpen) reset()
@@ -188,8 +196,8 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
                     {step === 'login' && (
                         <div className="space-y-4 mt-2">
                             <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1">
-                                <button type="button" onClick={() => { setMode('login'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors', mode === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
-                                <button type="button" onClick={() => { setMode('signup'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors', mode === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
+                                <button type="button" onClick={() => { setMode('login'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', mode === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
+                                <button type="button" onClick={() => { setMode('signup'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', mode === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="nuvio-email">Email</Label>
@@ -256,7 +264,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete }: NuvioSetupD
                                         <Input
                                             id="nuvio-publishable-key"
                                             type="text"
-                                            placeholder="sb_publishable_..."
+                                            placeholder="eyJhbGciOiJIUzI1NiIs..."
                                             value={customPublishableKey}
                                             onChange={e => setCustomPublishableKey(e.target.value)}
                                             className="h-9 text-sm"

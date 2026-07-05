@@ -1,6 +1,7 @@
 import db from '../db.js'
 import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
+import { trace } from '../utils/trace.js'
 
 const BACKOFF_THRESHOLD = 3
 const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
@@ -303,13 +304,17 @@ export function createReconciler(fastify) {
     }
 
     const STATE_TTL_MS = 60 * 60 * 1000
+    const MAX_ENTRIES = 10000
     let lastEvictAt = 0
     const evictStaleState = () => {
         const now = Date.now()
         if (now - lastEvictAt < STATE_TTL_MS) return
         lastEvictAt = now
         for (const [key, state] of connectionState.entries()) {
-            if (state.status === 'active' && state.consecutiveFailures === 0 && state.lastSync > 0 && now - state.lastSync > STATE_TTL_MS) {
+            const lastActivity = Math.max(state.lastSync, state.lastErrorAt || 0)
+            const isStale = lastActivity > 0 && now - lastActivity > STATE_TTL_MS
+            const isFailing = state.status === 'error' || (state.consecutiveFailures || 0) > 0
+            if ((isStale && !isFailing) || (connectionState.size > MAX_ENTRIES && !isFailing)) {
                 connectionState.delete(key)
             }
         }
@@ -326,6 +331,7 @@ export function createReconciler(fastify) {
             status: 'active',
             skipCyclesRemaining: 0
         })
+        trace('reconciler', 'recordSuccess', { accountId, connectionId: connId })
     }
 
     const recordFailure = (accountId, connId, error, isAuthError) => {
@@ -343,6 +349,7 @@ export function createReconciler(fastify) {
             status,
             skipCyclesRemaining
         })
+        trace('reconciler', 'recordFailure', { accountId, connectionId: connId, consecutiveFailures, isAuthError, status, error: error.message || String(error) })
     }
 
     const EXPIRED_RETRY_COOLDOWN_MS = 30 * 60 * 1000 // 30 minutes; Supabase rate-limits auth to 6 req/min per IP. Hammering it gets users banned.
@@ -372,13 +379,15 @@ export function createReconciler(fastify) {
 
     const reconcileAccount = async (accountId, primaryConnectionId, connections, canonicalAddons, opts = {}) => {
         tickCycleCounter(accountId)
-
+        const start = Date.now()
         const canonical = (Array.isArray(canonicalAddons) ? canonicalAddons : []).filter(a => a?.flags?.enabled !== false)
+        trace('reconciler', 'reconcileAccount.start', { accountId, canonicalCount: canonical.length })
 
         // Stremio uses client-side sync pipeline, not server-side reconciliation
         const targetConnections = connections.filter(c => c.enabled && c.platform !== 'stremio')
 
         if ((canonical.length === 0 && !opts.allowCollectionShrink) || targetConnections.length === 0) {
+            trace('reconciler', 'reconcileAccount.complete', { accountId, skipped: true, reason: targetConnections.length === 0 ? 'no-targets' : 'empty-canonical', timing: Date.now() - start })
             return { changes: [], canonical }
         }
 
@@ -428,6 +437,7 @@ export function createReconciler(fastify) {
             }
         }
 
+        trace('reconciler', 'reconcileAccount.complete', { accountId, changes: changes.length, platforms: changes.map(c => c.platform), timing: Date.now() - start })
         return { changes, canonical }
     }
 
@@ -435,6 +445,8 @@ export function createReconciler(fastify) {
         const { stremioWriter } = opts
         tickCycleCounter(accountId)
         const canon = (Array.isArray(canonical) ? canonical : []).filter(a => a?.flags?.enabled !== false)
+        const start = Date.now()
+        trace('reconciler', 'enforceAccount.start', { accountId, canonicalCount: canon.length })
         const synced = []
 
         for (const connection of (connections || []).filter(c => c.enabled)) {
@@ -462,6 +474,7 @@ export function createReconciler(fastify) {
             }
         }
 
+        trace('reconciler', 'enforceAccount.complete', { accountId, synced, timing: Date.now() - start })
         return { synced, connectionStates: getConnectionStates(accountId) }
     }
 

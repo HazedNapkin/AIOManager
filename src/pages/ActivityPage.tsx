@@ -467,7 +467,7 @@ export function ActivityPage() {
                     {searchInput && (
                         <button
                             onClick={() => handleSearchChange('')}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus:outline-none"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Clear search"
                         >
                             <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -611,14 +611,14 @@ export function ActivityPage() {
                     <div className="relative group/rail">
                         <button
                             onClick={() => scrollRail('left')}
-                            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-opacity hover:bg-muted -translate-x-3"
+                            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring -translate-x-3"
                             aria-label="Scroll left"
                         >
                             <ChevronLeft className="h-4 w-4" />
                         </button>
                         <button
                             onClick={() => scrollRail('right')}
-                            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-opacity hover:bg-muted translate-x-3"
+                            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring translate-x-3"
                             aria-label="Scroll right"
                         >
                             <ChevronRight className="h-4 w-4" />

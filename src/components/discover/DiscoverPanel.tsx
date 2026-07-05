@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertCircle, ArrowLeft, Clock, Flame, Heart, LayoutGrid, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Clock, Flame, Heart, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
@@ -10,6 +10,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { useProfileStore } from '@/store/profileStore'
 import { cn, normalizeAddonUrl } from '@/lib/utils'
 import { mapConcurrent } from '@/lib/concurrency'
+import { trace } from '@/lib/trace'
 import {
   fetchDiscoverAddons,
   fetchDiscoverCategories,
@@ -20,7 +21,6 @@ import {
   type DiscoverSortBy,
 } from '@/api/discover'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
-import { motion } from 'framer-motion'
 import { DiscoverToolbar } from './DiscoverToolbar'
 import { DiscoverCard } from './DiscoverCard'
 import { DiscoverHero } from './DiscoverHero'
@@ -116,7 +116,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [compact, setCompact] = useState<boolean>(!!initialPrefs.compact)
   const [favorites, setFavorites] = useState<DiscoverAddon[]>(() => loadFavorites())
 
-  const [viewMode, setViewMode] = useState<DiscoverViewMode>(initialPrefs.viewMode === 'deck' ? 'deck' : 'store')
+  const [viewMode, setViewMode] = useState<DiscoverViewMode>('store')
   const [deckPool, setDeckPool] = useState<DiscoverAddon[]>([])
   const [deckLoading, setDeckLoading] = useState(false)
   const [deckKey, setDeckKey] = useState(0)
@@ -152,15 +152,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const requestRef = useRef(0)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
-
-  const [reducedMotion, setReducedMotion] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    setReducedMotion(mq.matches)
-    const handler = () => setReducedMotion(mq.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
 
   const isFiltering = debouncedSearch.trim() !== '' || selectedCategories.length > 0 || selectedResources.length > 0 || selectedTypes.length > 0
   const gridMode = isFiltering || forceGrid
@@ -206,11 +197,14 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
       picks.map((category) =>
         fetchDiscoverAddons({ category: [category.slug], sortBy: 'stars', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal)
           .then((res) => ({ category, addons: res.addons }))
-          .catch(() => ({ category, addons: [] as DiscoverAddon[] }))
+          .catch(() => {
+            if (ac.signal.aborted) throw new Error('aborted')
+            return { category, addons: [] as DiscoverAddon[] }
+          })
       )
     ).then((shelves) => {
       if (!ac.signal.aborted) setCategoryShelves(shelves.filter((s) => s.addons.length >= 4))
-    })
+    }).catch(() => {})
     return () => ac.abort()
   }, [categories, showAdult])
 
@@ -220,15 +214,16 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     setStoreError(false)
     const nsfw = showAdult ? undefined : 'exclude'
     Promise.all([
-      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, limit: TRENDING_SIZE }, ac.signal),
-      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal),
+      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, limit: TRENDING_SIZE }, ac.signal).catch(() => null),
+      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: SHELF_SIZE }, ac.signal).catch(() => null),
     ])
       .then(([top, fresh]) => {
         if (ac.signal.aborted) return
-        setTrending(top.addons)
-        setNewest(fresh.addons)
+        if (top) setTrending(top.addons)
+        if (fresh) setNewest(fresh.addons)
+        if (!top && !fresh) setStoreError(true)
       })
-      .catch(() => { if (!ac.signal.aborted) { setTrending([]); setNewest([]); setStoreError(true) } })
+      .catch(() => { if (!ac.signal.aborted) setStoreError(true) })
       .finally(() => { if (!ac.signal.aborted) setStoreLoading(false) })
     return () => ac.abort()
   }, [showAdult, storeReloadKey])
@@ -342,15 +337,17 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   useEffect(() => {
     if (viewMode !== 'deck') return
+    if (categories.length === 0) return
+    trace('discover', 'deck-effect', { viewMode, catCount: categories.length, deckKey })
     const ac = new AbortController()
     setDeckLoading(true)
     const nsfw = showAdult ? undefined : 'exclude'
-    const catPicks = categories.length ? shuffle(categories).slice(0, 3) : []
+    const catPicks = shuffle(categories).slice(0, 3)
     Promise.all([
-      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 40 }, ac.signal).catch(() => null),
-      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: 30 }, ac.signal).catch(() => null),
+      fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 40 }, ac.signal).catch((err) => { console.error('[deck fetch]', err?.message || err); return null }),
+      fetchDiscoverAddons({ sortBy: 'createdAt', order: 'desc', nsfw, limit: 30 }, ac.signal).catch((err) => { console.error('[deck fetch]', err?.message || err); return null }),
       ...catPicks.map((c) =>
-        fetchDiscoverAddons({ category: [c.slug], sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 20 }, ac.signal).catch(() => null)
+        fetchDiscoverAddons({ category: [c.slug], sortBy: 'stars', order: 'desc', nsfw, page: 2, limit: 20 }, ac.signal).catch((err) => { console.error('[deck fetch]', err?.message || err); return null })
       ),
     ])
       .then((results) => {
@@ -358,7 +355,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         const seen = new Set<string>()
         const merged: DiscoverAddon[] = []
         for (const res of results) {
-          for (const addon of res?.addons ?? []) {
+          if (!res) continue
+          for (const addon of res.addons ?? []) {
             if (seen.has(addon.uuid)) continue
             if (isSavedRef.current(addon) || isFavoriteRef.current(addon)) continue
             seen.add(addon.uuid)
@@ -366,7 +364,9 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           }
         }
         setDeckPool(shuffle(merged))
+        trace('discover', 'deck-result', { total: results.length, nulls: results.filter(r => !r).length, merged: merged.length })
       })
+      .catch(() => { if (!ac.signal.aborted) setDeckPool([]) })
       .finally(() => { if (!ac.signal.aborted) setDeckLoading(false) })
     return () => ac.abort()
   }, [viewMode, deckKey, categories, showAdult])
@@ -492,22 +492,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
       <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)}>
         <TabsList>
           <TabsTrigger value="store" className="h-8 px-4 text-xs">
-            <LayoutGrid className="h-3.5 w-3.5" />
             Browse
           </TabsTrigger>
-          <TabsTrigger value="deck" className="h-8 px-4 text-xs data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-500/10 data-[state=active]:to-purple-500/10 data-[state=active]:text-amber-600 dark:data-[state=active]:text-amber-400">
-            {reducedMotion ? (
-              <Sparkles className="h-3.5 w-3.5" />
-            ) : (
-              <motion.span
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-                className="inline-flex"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-              </motion.span>
-            )}
-            Discover Deck
+          <TabsTrigger value="deck" className="h-8 px-4 text-xs">
+            Deck
           </TabsTrigger>
         </TabsList>
       </Tabs>
