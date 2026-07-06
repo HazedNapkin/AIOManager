@@ -30,7 +30,7 @@ import {
 } from '../accountStore'
 import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
 import type { Account, AccountProfile } from '@/types/account'
-import type { Connection } from '@/types/connection'
+import { type Connection, isSyncEligibleConnection } from '@/types/connection'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
@@ -123,7 +123,7 @@ async function serverReconcile(accountId: string, account: Account, connections:
 export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
     const store = await getStore()
     const account = getAccountById(store.getState().accounts, accountId)
-    const eligible = (account?.connections || []).filter(c => c.enabled && c.platform !== 'stremio')
+    const eligible = (account?.connections || []).filter(c => c.enabled && isSyncEligibleConnection(c))
     if (!account || eligible.length === 0) return
 
     const sourceAddons = options.addons ?? account.addons ?? []

@@ -7,6 +7,7 @@ import { normalizeAddonUrl } from '@/lib/utils'
 import { resilientFetch } from '@/lib/api-resilience'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/hooks/use-toast'
+import { isSyncEligibleConnection } from '@/types/connection'
 
 const STORAGE_KEY = 'stremio-manager:failover-rules'
 
@@ -255,7 +256,7 @@ const syncRuleToServer = async (rule: FailoverRule) => {
         if (authKey) {
             if (!platform) platform = 'stremio'
         } else {
-            const fallbackConn = account.connections?.find(c => c.enabled && c.platform !== 'stremio')
+            const fallbackConn = account.connections?.find(c => c.enabled && isSyncEligibleConnection(c))
             connectionId = rule.connectionId || fallbackConn?.id
             credentialType = fallbackConn?.connectionType
             if (!platform || platform === 'stremio') platform = fallbackConn?.platform
@@ -336,7 +337,7 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
             if (authKey) {
                 if (!platform) platform = 'stremio'
             } else {
-                const fallbackConn = account.connections?.find(c => c.enabled && c.platform !== 'stremio')
+                const fallbackConn = account.connections?.find(c => c.enabled && isSyncEligibleConnection(c))
                 connectionId = rule.connectionId || fallbackConn?.id
                 credentialType = fallbackConn?.connectionType
                 if (!platform || platform === 'stremio') platform = fallbackConn?.platform

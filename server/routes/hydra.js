@@ -213,7 +213,7 @@ async function validateManifest(manifestUrl) {
     return { valid: errors.length === 0, errors: errors.length > 0 ? errors : undefined, manifest }
 }
 
-export function registerHydraRoutes(fastify) {
+export function registerHydraRoutes(fastify, reconciler = null) {
     logger = fastify.log
 
     fastify.get('/hydra/status', {
@@ -471,12 +471,30 @@ export function registerHydraRoutes(fastify) {
             let updated
             if (matchIdx >= 0) {
                 updated = current.slice()
-                updated[matchIdx] = { ...current[matchIdx], manifest }
+                updated[matchIdx] = {
+                    ...current[matchIdx],
+                    transportUrl: fetchUrl,
+                    manifest,
+                    metadata: { ...current[matchIdx].metadata, lastUpdated: Date.now() }
+                }
             } else {
                 updated = [...current, { transportUrl: fetchUrl, manifest }]
             }
 
             await writeCanonicalAddons(account, updated)
+
+            if (reconciler) {
+                try {
+                    const connections = await reconciler.resolveConnections(account.account_id, account.sync_user)
+                    const targets = connections.filter(c => c.enabled)
+                    if (targets.length > 0) {
+                        await reconciler.enforceAccount(account.account_id, targets, updated)
+                    }
+                } catch (e) {
+                    logger.warn({ category: 'Hydra' }, `[${account.account_id}] Cross-platform propagation after reinstall failed: ${e.message}`)
+                }
+            }
+
             return { addons: updated.map(toHydraAddon).filter(Boolean) }
         } catch {
             reply.code(500)

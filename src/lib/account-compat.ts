@@ -42,7 +42,7 @@ export async function pushAddonsToPlatform(account: Account, addons: AddonDescri
         const authKey = await getCachedAuthKey(stremioKey, getEncryptionKey())
         await updateAddons(authKey, addons, context, options)
     }
-    const hasNonStremio = (account.connections || []).some(c => c.enabled && c.platform !== 'stremio')
+    const hasNonStremio = (account.connections || []).some(c => c.enabled && (c.connectionType === 'hydra-outbound' || c.platform !== 'stremio'))
     if (hasNonStremio) {
         const { pushToConnections } = await import('@/store/account/accountAddonOps')
         await pushToConnections(account.id, { addons, allowCollectionShrink: options?.allowCollectionShrink })

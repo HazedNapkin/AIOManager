@@ -39,3 +39,7 @@ export interface PlatformDriver {
     removeAddon(credentials: Record<string, string>, addonUrl: string, options?: { profileId?: string }): Promise<void>
     healthCheck?(addonUrl?: string): Promise<{ healthy: boolean; latencyMs: number }>
 }
+
+export function isSyncEligibleConnection(c: Connection): boolean {
+    return c.connectionType === 'hydra-outbound' || c.platform !== 'stremio'
+}

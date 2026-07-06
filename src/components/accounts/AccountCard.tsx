@@ -328,7 +328,7 @@ export const AccountCard = memo(function AccountCard({
                     )}
                     {(account.connections || []).filter(c => c.platform !== 'stremio').map(conn => (
                       <Tooltip key={conn.id} content={`${conn.platform}${conn.enabled === false ? ' (Disabled)' : ''}`} side="bottom">
-                        <PlatformLogo platform={conn.platform} className={cn("h-5 w-5", conn.enabled === false && "opacity-40 grayscale")} />
+                        <PlatformLogo platform={conn.platform} className={cn("h-5 w-5", conn.enabled === false && "opacity-40 grayscale")} isHydra={conn.connectionType === 'hydra-outbound'} />
                       </Tooltip>
                     ))}
                   </div>

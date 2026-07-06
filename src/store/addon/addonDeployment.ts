@@ -8,6 +8,7 @@ import { normalizeUrl, saveAccountAddonStates, saveAddonLibrary } from '@/lib/ad
 import { useAuthStore } from '@/store/authStore'
 import { getCachedAuthKey, persistAccounts } from '@/store/accountStore'
 import type { AddonDescriptor } from '@/types/addon'
+import { isSyncEligibleConnection } from '@/types/connection'
 import type { Account } from '@/types/account'
 import type {
   AccountAddonState,
@@ -349,7 +350,7 @@ export async function bulkApplySavedAddons(
       try {
         const { useAccountStore } = await import('../accountStore')
         const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
-        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && c.platform !== 'stremio')
+        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && isSyncEligibleConnection(c))
         const isLocalAccount = !accountAuthKey
         const isConnectedNonStremio = isLocalAccount && hasNonStremioConnections
         let currentAddons: AddonDescriptor[]
@@ -1060,7 +1061,7 @@ export async function bulkInstallFromUrls(
       try {
         const { useAccountStore } = await import('../accountStore')
         const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
-        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && c.platform !== 'stremio')
+        const hasNonStremioConnections = !!(account?.connections || []).some(c => c.enabled && isSyncEligibleConnection(c))
         const isLocalAccount = !accountAuthKey
         const isConnectedNonStremio = isLocalAccount && hasNonStremioConnections
         let currentAddons: AddonDescriptor[]

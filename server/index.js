@@ -203,7 +203,7 @@ const start = async () => {
 
         registerAutopilotRoutes(fastify, autopilotEngine)
         registerActivityRoutes(fastify, activityEngine)
-        registerHydraRoutes(fastify)
+        registerHydraRoutes(fastify, reconciler)
         registerProviderRoutes(fastify, reconciler)
 
         await fastify.listen({ port: PORT, host: '0.0.0.0' })

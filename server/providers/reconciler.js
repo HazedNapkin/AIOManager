@@ -135,8 +135,7 @@ const isHydraOutbound = (c) =>
     c?.connectionType === 'hydra-outbound'
 
 async function loadDriver(platform, credentials, connection) {
-    // Stremio uses a separate driver module with different API contract
-    if (platform === 'stremio') {
+    if (platform === 'stremio' && !isHydraOutbound(connection)) {
         const { createStremioDriver } = await import('./stremio-driver.js')
         return createStremioDriver()
     }
@@ -229,8 +228,7 @@ async function loadDriver(platform, credentials, connection) {
 
 async function readPlatformAddons(driver, connection) {
     const c = connection.credentials
-    // Stremio API takes single authKey param (no profile/user context)
-    if (connection.platform === 'stremio') {
+    if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
         return driver.readAddons(c.authKey)
     }
     if (connection.platform === 'nuvio') {
@@ -259,11 +257,21 @@ export function applyCustomMetadata(addon) {
     }
 }
 
+function manifestSignature(m) {
+    if (!m) return '{}'
+    return JSON.stringify({
+        id: m.id || '',
+        version: m.version || '',
+        types: m.types || [],
+        resources: m.resources || [],
+        catalogs: m.catalogs || []
+    })
+}
+
 async function writePlatformAddons(driver, connection, addons) {
     const c = connection.credentials
     const prepared = (addons || []).map(applyCustomMetadata)
-    // Stremio API takes (authKey, addons) — no profile/user context
-    if (connection.platform === 'stremio') {
+    if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
         if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
         return driver.writeAddons(c.authKey, prepared)
     }
@@ -384,7 +392,7 @@ export function createReconciler(fastify) {
         trace('reconciler', 'reconcileAccount.start', { accountId, canonicalCount: canonical.length })
 
         // Stremio uses client-side sync pipeline, not server-side reconciliation
-        const targetConnections = connections.filter(c => c.enabled && c.platform !== 'stremio')
+        const targetConnections = connections.filter(c => c.enabled && (isHydraOutbound(c) || c.platform !== 'stremio'))
 
         if ((canonical.length === 0 && !opts.allowCollectionShrink) || targetConnections.length === 0) {
             trace('reconciler', 'reconcileAccount.complete', { accountId, skipped: true, reason: targetConnections.length === 0 ? 'no-targets' : 'empty-canonical', timing: Date.now() - start })
@@ -392,6 +400,9 @@ export function createReconciler(fastify) {
         }
 
         const canonicalUrlSet = new Set(canonical.map(a => normalizeUrl(a.transportUrl)))
+        const canonicalManifestByUrl = new Map(
+            canonical.map(a => [normalizeUrl(a.transportUrl), manifestSignature(a.manifest)])
+        )
         const customNameByUrl = new Map(
             canonical
                 .filter(a => a?.metadata?.customName)
@@ -416,13 +427,20 @@ export function createReconciler(fastify) {
                     const platformUrlSet = new Set(platformAddons.map(a => normalizeUrl(a.transportUrl || a.url)))
                     const sameUrls = platformUrlSet.size === canonicalUrlSet.size && [...canonicalUrlSet].every(u => platformUrlSet.has(u))
                     if (sameUrls) {
-                        needsWrite = customNameByUrl.size > 0 && platformAddons.some(p => {
+                        const nameMismatch = customNameByUrl.size > 0 && platformAddons.some(p => {
                             const url = normalizeUrl(p.transportUrl || p.url)
                             const expected = customNameByUrl.get(url)
                             if (expected === undefined) return false
                             const platformName = p.manifest?.name ?? p.name
                             return platformName != null && platformName !== '' && platformName !== expected
                         })
+                        const manifestMismatch = platformAddons.some(p => {
+                            const url = normalizeUrl(p.transportUrl || p.url)
+                            const canonicalManifest = canonicalManifestByUrl.get(url)
+                            if (canonicalManifest === undefined) return false
+                            return manifestSignature(p.manifest) !== canonicalManifest
+                        })
+                        needsWrite = nameMismatch || manifestMismatch
                     }
                 } catch { /* can't read, assume needs write */ }
 
@@ -457,7 +475,7 @@ export function createReconciler(fastify) {
             }
             try {
                 // Stremio uses client-side writer callback instead of server driver
-                if (connection.platform === 'stremio') {
+                if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
                     if (!stremioWriter) continue
                     await stremioWriter(connection)
                 } else {

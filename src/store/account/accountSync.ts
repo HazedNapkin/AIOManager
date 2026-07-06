@@ -8,6 +8,7 @@ import { mergeAddons, normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
 import { mapConcurrent } from '@/lib/concurrency'
+import { isSyncEligibleConnection } from '@/types/connection'
 import { useAuthStore } from '@/store/authStore'
 import { AddonDescriptor } from '@/types/addon'
 import type { Account } from '@/types/account'
@@ -406,7 +407,7 @@ export async function syncAllAccounts(silent = false) {
         const hasRootAuthKey = !!getStremioAuthKey(account)
         if (!hasAnyEnabledConnection && !hasRootAuthKey) return
 
-        const nonStremioConnections = account.connections?.filter(c => c.platform !== 'stremio' && c.enabled) || []
+        const nonStremioConnections = account.connections?.filter(c => isSyncEligibleConnection(c) && c.enabled) || []
         const allNonStremioExpired = nonStremioConnections.length > 0 && nonStremioConnections.every(c => c.status === 'expired')
         if (allNonStremioExpired) {
             if (import.meta.env.DEV) console.log(`[Account] syncAllAccounts skipping ${account.id}: all non-Stremio connections expired`)
