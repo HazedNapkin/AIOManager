@@ -10,11 +10,12 @@ import { TagManagerDialog } from './TagManagerDialog'
 
 import {
   User,
-  Pencil, Upload,
+  Pencil, Send,
   ArrowLeft, Link2,
   Check, Compass, Info
 } from 'lucide-react'
 import { AnimatedTrashIcon, AnimatedRefreshIcon } from '../ui/AnimatedIcons'
+import { Progress } from '@/components/ui/progress'
 import { useEffect, useState, useCallback, useRef, lazy, Suspense } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -95,6 +96,7 @@ export function SavedAddonLibrary() {
   const [addError, setAddError] = useState<string | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [updatingAll, setUpdatingAll] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<{ current: number; total: number } | null>(null)
   const { toast } = useToast()
 
   const profiles = useProfileStore(s => s.profiles)
@@ -315,12 +317,14 @@ export function SavedAddonLibrary() {
     if (addonsWithUpdates.length === 0) return
 
     setUpdatingAll(true)
+    setUpdateProgress({ current: 0, total: addonsWithUpdates.length })
 
     let successCount = 0
     let failCount = 0
     let shapeChangeCount = 0
 
-    for (const addon of addonsWithUpdates) {
+    for (let i = 0; i < addonsWithUpdates.length; i++) {
+      const addon = addonsWithUpdates[i]
       try {
         const result = await updateSavedAddonManifest(addon.id)
         if (result.hasManifestShapeChange) shapeChangeCount++
@@ -329,9 +333,11 @@ export function SavedAddonLibrary() {
         if (import.meta.env.DEV) console.error(`Failed to update ${addon.name}:`, err)
         failCount++
       }
+      setUpdateProgress({ current: i + 1, total: addonsWithUpdates.length })
     }
 
     setUpdatingAll(false)
+    setUpdateProgress(null)
 
     if (isMounted.current) {
       toast({
@@ -548,7 +554,7 @@ export function SavedAddonLibrary() {
               label: 'Deploy',
               onClick: () => setShowAccountPicker(true),
               variant: 'outline',
-              icon: <Upload className="h-4 w-4" />,
+              icon: <Send className="h-4 w-4" />,
             },
             {
               label: 'Remove',
@@ -618,10 +624,39 @@ export function SavedAddonLibrary() {
 
 
         {libraryTab === 'library' && <div className="space-y-6">
-          {isUpdatingAddon && (
-            <div className="flex items-center gap-2 text-sm text-primary animate-pulse bg-primary/5 p-2 rounded-md border border-primary/25">
-              <AnimatedRefreshIcon className="h-4 w-4" isAnimating={true} />
-              Updating addon...
+          {(isUpdatingAddon || updateProgress || checkingUpdates) && (
+            <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
+                    <AnimatedRefreshIcon className="h-4 w-4 text-primary" isAnimating={true} />
+                </div>
+                <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold">
+                        {updateProgress
+                            ? `Updating ${updateProgress.current} of ${updateProgress.total} addons`
+                            : checkingUpdates
+                            ? 'Checking library for updates'
+                            : 'Updating addon'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                        {updateProgress
+                            ? `${updateProgress.total - updateProgress.current} remaining`
+                            : checkingUpdates
+                            ? 'Comparing versions and manifest changes'
+                            : 'Syncing changes to Stremio'}
+                    </div>
+                </div>
+                {updateProgress && (
+                    <span className="text-sm font-bold tabular-nums text-primary shrink-0">
+                        {Math.round((updateProgress.current / updateProgress.total) * 100)}%
+                    </span>
+                )}
+              </div>
+              <Progress
+                value={updateProgress ? Math.round((updateProgress.current / updateProgress.total) * 100) : 100}
+                shimmer
+                className="h-1.5 bg-muted"
+              />
             </div>
           )}
           {loading && savedAddons.length === 0 && (

@@ -1,4 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import { checkAddonUpdates } from '@/api/addons'
 import { HealthStatus } from '@/lib/addon-health'
 import { Button } from '@/components/ui/button'
@@ -341,6 +342,7 @@ export function AddonList({ accountId }: AddonListProps) {
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [healthStatus, setHealthStatus] = useState<Record<string, HealthStatus>>({})
   const latestVersions = useAddonStore((state) => state.latestVersions)
+  const manifestChangeHints = useAddonStore((state) => state.manifestChangeHints)
   const library = useAddonStore(useShallow((state) => state.library))
   const installedKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -481,13 +483,19 @@ export function AddonList({ accountId }: AddonListProps) {
       const updateInfoList = await checkAddonUpdates(addons, accountId)
       const versions: Record<string, string> = {}
       const health: Record<string, HealthStatus> = {}
+      const hints: Record<string, SavedAddonManifestChangeSummary> = {}
 
       updateInfoList.forEach((info) => {
         versions[info.versionKey] = info.latestVersion
         versions[info.addonId] = info.latestVersion
         health[info.addonId] = info.health
+        if (info.hasManifestShapeChange && info.manifestChanges) {
+          hints[info.versionKey] = info.manifestChanges
+          hints[info.addonId] = info.manifestChanges
+        }
       })
       updateLatestVersions(versions)
+      useAddonStore.getState().updateManifestChangeHints(hints)
       setHealthStatus(prev => ({ ...prev, ...health }))
 
       const updatesCount = updateInfoList.filter((info) => info.hasUpdate).length
@@ -1258,6 +1266,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       onRemove={async () => { await removeAddonByIndex(accountId, originalIndex) }}
                       onUpdate={handleUpdateAddon}
                       latestVersion={getLatestAddonVersion(latestVersions, addon)}
+                      manifestChange={manifestChangeHints[addon.manifest.id]}
                       isOnline={healthStatus[addon.manifest.id]?.isOnline}
                       healthError={healthStatus[addon.manifest.id]?.error}
                       isSelectionMode={isSelectionMode}

@@ -3,9 +3,10 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Check, ExternalLink, Heart, Info, Loader2, Plus, Settings2, Star, Upload } from 'lucide-react'
+import { Check, ExternalLink, Heart, Info, Link2, Loader2, Plus, Send, Settings2, Star } from 'lucide-react'
 import { getAddonResources, getConfigureUrl, lastUpdatedLabel, requiresConfiguration, RESOURCE_LABELS, type DiscoverAddon } from '@/api/discover'
 import { AddonLogo } from './AddonLogo'
+import { useToast } from '@/hooks/use-toast'
 
 interface DiscoverCardProps {
   addon: DiscoverAddon
@@ -23,6 +24,7 @@ interface DiscoverCardProps {
 }
 
 function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, onDeploy, onConfigure, onOpenDetail, onToggleFavorite, deployedCount, accountTotal }: DiscoverCardProps) {
+  const { toast } = useToast()
   const manifest = addon.manifest ?? ({} as DiscoverAddon['manifest'])
   const name = manifest.name?.trim() || addon.slug || 'Unknown Addon'
   const description = manifest.description?.trim() || ''
@@ -112,7 +114,7 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
       <div className="flex h-6 shrink-0 flex-nowrap items-center gap-1.5 overflow-hidden">
         {deployedOn > 0 && (
           <StatusChip className="shrink-0 gap-1 border-primary/30 bg-primary/10 text-primary">
-            <Upload className="h-3 w-3" />
+            <Send className="h-3 w-3" />
             On {deployedOn}
           </StatusChip>
         )}
@@ -175,6 +177,22 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
             </Tooltip>
           )}
 
+          <Tooltip content="Copy Link" side="top">
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label="Copy install URL"
+              className="h-8 flex-1 bg-muted/40 text-foreground/70 shadow-none hover:bg-muted/70"
+              onClick={(e) => {
+                e.stopPropagation()
+                navigator.clipboard.writeText(addon.manifestUrl)
+                toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' })
+              }}
+            >
+              <Link2 className="h-3.5 w-3.5" />
+            </Button>
+          </Tooltip>
+
           <Tooltip content="Details" side="top">
             <Button
               size="sm"
@@ -200,7 +218,7 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
           </Button>
         ) : (
           <Button size="sm" className="h-8 w-full gap-1.5 text-xs font-semibold" onClick={() => onDeploy(addon)}>
-            <Upload className="h-3.5 w-3.5" />
+            <Send className="h-3.5 w-3.5" />
             {deployedOn > 0 ? 'Install on more' : 'Install to accounts'}
           </Button>
         )}

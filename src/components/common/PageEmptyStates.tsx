@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { BarChart3, CheckCircle2, Clock3, FilePenLine, Lock, Plus, Shield, Upload } from 'lucide-react'
+import { BarChart3, CheckCircle2, Clock3, FilePenLine, Lock, Plus, Send, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -40,7 +40,7 @@ export function VaultEmptyState({ onAdd, onImport }: EmptyActionProps) {
           )}
           {onImport && (
             <Button variant="outline" onClick={onImport} className="h-9 w-full rounded-xl gap-2">
-              <Upload className="h-4 w-4" />
+              <Send className="h-4 w-4" />
               Import from JSON
             </Button>
           )}

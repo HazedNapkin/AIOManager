@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
+import { motion } from 'framer-motion'
 import { CHART_PALETTE } from '@/lib/chart-colors'
+import { useInView } from '@/hooks/use-in-view'
 
 interface VelocityChartProps {
     contentVelocity: { item: { name: string }; velocity: number; days: number; episodes: number }[]
@@ -7,6 +9,7 @@ interface VelocityChartProps {
 }
 
 export function VelocityChart({ contentVelocity, loading }: VelocityChartProps) {
+    const { ref, inView } = useInView<HTMLDivElement>()
     const data = useMemo(() =>
         [...(contentVelocity || [])]
             .sort((a, b) => b.velocity - a.velocity)
@@ -32,7 +35,7 @@ export function VelocityChart({ contentVelocity, loading }: VelocityChartProps) 
     const max = Math.max(...data.map(d => d.velocity), 1)
 
     return (
-        <div className="space-y-2">
+        <div ref={ref} className="space-y-2">
             {data.map((entry, index) => (
                 <div key={entry.name} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
                     <div className="mb-2 flex items-center justify-between gap-3">
@@ -46,9 +49,12 @@ export function VelocityChart({ contentVelocity, loading }: VelocityChartProps) 
                         </div>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-muted/50">
-                        <div
+                        <motion.div
                             className="h-full rounded-full"
-                            style={{ width: `${Math.max(6, (entry.velocity / max) * 100)}%`, background: index < 3 ? CHART_PALETTE.green.text : CHART_PALETTE.blue.text }}
+                            style={{ background: index < 3 ? CHART_PALETTE.green.text : CHART_PALETTE.blue.text }}
+                            initial={{ width: '0%' }}
+                            animate={inView ? { width: `${Math.max(6, (entry.velocity / max) * 100)}%` } : { width: '0%' }}
+                            transition={{ type: 'spring', stiffness: 100, damping: 20, delay: index * 0.06 }}
                         />
                     </div>
                 </div>

@@ -3,7 +3,7 @@ import type { Account } from '@/types/account'
 import { isNewerVersion, getAddonConfigureUrl, cn, getTimeAgo } from '@/lib/utils'
 import { describeManifestChanges } from '@/lib/addon-manifest-diff'
 import { useLongPress } from '@/hooks/useLongPress'
-import { Copy, MoreVertical, Pencil, Check } from 'lucide-react'
+import { Copy, MoreVertical, Pencil, Check, Send } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import {
@@ -34,6 +34,7 @@ interface SavedAddonListRowProps {
     savedAddon: SavedAddon
     latestVersion?: string
     onUpdate?: (savedAddonId: string, addonName: string) => Promise<void>
+    onDeploy?: (savedAddonId: string) => void
     isSelectionMode?: boolean
     isSelected?: boolean
     onToggleSelect?: (id: string) => void
@@ -47,6 +48,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
     savedAddon,
     latestVersion,
     onUpdate,
+    onDeploy,
     isSelectionMode,
     isSelected,
     onToggleSelect,
@@ -272,9 +274,15 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                     Configure
                                 </DropdownMenuItem>
                             )}
+                            {onDeploy && (
+                                <DropdownMenuItem onClick={() => onDeploy(savedAddon.id)} className="gap-2">
+                                    <Send className="h-4 w-4" />
+                                    Deploy
+                                </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={() => setShowDetails(true)} className="gap-2">
                                 <Pencil className="h-4 w-4" />
-                                Edit
+                                Customize
                             </DropdownMenuItem>
                             <DropdownMenuItem destructive onClick={() => setShowDeleteDialog(true)} className="gap-2 text-destructive focus:text-destructive">
                                 <AnimatedTrashIcon className="h-4 w-4" />

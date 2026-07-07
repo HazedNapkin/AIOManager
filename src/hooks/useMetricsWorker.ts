@@ -108,6 +108,11 @@ export interface MetricsResult {
     thisWeekCount: number
     lastWeekCount: number
     firstWatch: { item: ActivityItem; date: Date } | null
+    dailyActivity: Record<string, number>
+    sessionDepths: { label: string; count: number }[]
+    weeklyRhythm: number[]
+    comebackTitles: { name: string; gap: number; poster: string }[]
+    dropOffAvg: number
     _error?: boolean
     _message?: string
 }
@@ -144,6 +149,11 @@ function createEmptyMetricsResult(): MetricsResult {
         thisWeekCount: 0,
         lastWeekCount: 0,
         firstWatch: null,
+        dailyActivity: {},
+        sessionDepths: [],
+        weeklyRhythm: new Array(7).fill(0),
+        comebackTitles: [],
+        dropOffAvg: 0,
     }
 }
 

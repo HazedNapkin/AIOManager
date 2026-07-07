@@ -45,7 +45,30 @@ import { NumberTicker } from '@/components/ui/number-ticker'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { StatusChip } from '@/components/ui/status-chip'
-import { ActivityHeatmap, ActivitySparkline, WatchFunnel, ContentDonut, FranchiseBars, VelocityChart, WeekComparison } from '@/components/metrics'
+import { Tooltip } from '@/components/ui/tooltip'
+import { ActivityHeatmap, ActivitySparkline, WatchFunnel, ContentDonut, FranchiseBars, VelocityChart, WeekComparison, ContributionGraph, SessionDepth, WeeklyRhythm, ComebackRate, DropOffPoint } from '@/components/metrics'
+
+const PERSONA_DESCRIPTIONS: Record<string, string> = {
+    'The Completer': 'Finishes over 80% of what they start',
+    'The Sampler': 'Starts a lot but rarely finishes',
+    'The Night Owl': 'Over 30% of watching happens after midnight',
+    'Binge King': 'Watched 8+ episodes in a single session',
+    'Weekend Warrior': 'Over 60% of watching happens on weekends',
+}
+
+const CHRONOTYPE_DESCRIPTIONS: Record<string, string> = {
+    'Early Bird': 'Most active in the morning',
+    'Day Dreamer': 'Most active in the afternoon',
+    'Prime Time Player': 'Most active in the evening',
+    'Night Owl': 'Most active late at night',
+    'Balanced Viewer': 'Watches evenly throughout the day',
+}
+
+const FORMAT_DESCRIPTIONS: Record<string, string> = {
+    'The Cinephile': 'Over 70% movies',
+    'Serial Binger': 'Over 70% series',
+    'The Hybrid': 'Mixes movies and series evenly',
+}
 
 const IconMap: Record<string, React.ElementType> = {
     CheckCircle, Ghost, Moon, Flame, Zap, Clock, Sun, Coffee, Tv, LayoutGrid, Film
@@ -301,6 +324,20 @@ export function MetricsPage() {
                             )
                         })}
                     </div>
+
+                    {/* CONTRIBUTION GRAPH */}
+                    <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="flex items-center gap-2 text-sm">
+                                <Tooltip content="Daily watching activity over the past year" side="top">
+                                    <span className="cursor-help">Activity Calendar</span>
+                                </Tooltip>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <ContributionGraph dailyActivity={stats.dailyActivity} loading={workerLoading} />
+                        </CardContent>
+                    </Card>
 
                     {/* TRENDING NOW */}
                     <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm group/trending">
@@ -586,29 +623,46 @@ export function MetricsPage() {
                                         </p>
                                     </div>
                                 </div>
-                                {stats.firstWatch ? (
-                                    <div
-                                        onClick={() => openStremioDetail(stats.firstWatch!.item.type, stats.firstWatch!.item.itemId)}
-                                        className="group flex cursor-pointer items-center gap-3 rounded-2xl border border-border/35 bg-background/30 p-3 transition-colors hover:bg-background/50"
+                                {stats.firstWatch ? (() => {
+                                    const fw = stats.firstWatch!
+                                    const daysAgo = Math.floor((Date.now() - new Date(fw.date).getTime()) / 86400000)
+                                    const relativeTime = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : daysAgo < 7 ? `${daysAgo} days ago` : daysAgo < 30 ? `${Math.floor(daysAgo / 7)} weeks ago` : daysAgo < 365 ? `${Math.floor(daysAgo / 30)} months ago` : `${Math.floor(daysAgo / 365)}y ago`
+                                    return (
+                                    <motion.div
+                                        onClick={() => openStremioDetail(fw.item.type, fw.item.itemId)}
+                                        className="group relative flex cursor-pointer items-stretch gap-0 overflow-hidden rounded-2xl border border-border/35 bg-muted/15"
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ type: 'spring', stiffness: 120, damping: 20 }}
+                                        whileHover={{ scale: 1.01 }}
                                     >
-                                        <div className="content-auto-poster h-16 w-11 shrink-0 overflow-hidden rounded-xl border border-border/40 bg-muted">
+                                        <div className="relative h-20 w-14 shrink-0 overflow-hidden">
                                             <Poster
-                                                src={stats.firstWatch.item.poster}
-                                                itemId={stats.firstWatch.item.itemId || stats.firstWatch.item.id}
-                                                itemType={stats.firstWatch.item.type}
-                                                alt={stats.firstWatch.item.name || ""}
-                                                className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                                                src={fw.item.poster}
+                                                itemId={fw.item.itemId || fw.item.id}
+                                                itemType={fw.item.type}
+                                                alt={fw.item.name || ""}
+                                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
                                             />
+                                            <div className="absolute inset-0 bg-gradient-to-r from-transparent to-muted/15" />
                                         </div>
-                                        <div className="min-w-0">
-                                            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">First watch in scope</div>
-                                            <div className="truncate text-sm font-bold">{stats.firstWatch.item.name}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {new Date(stats.firstWatch.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        <div className="flex flex-1 items-center justify-between gap-2 px-3 py-2">
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-primary/70">
+                                                    <PlayCircle className="h-3 w-3" />
+                                                    Where it began
+                                                </div>
+                                                <div className="truncate text-sm font-bold">{fw.item.name}</div>
+                                                <div className="text-xs text-muted-foreground">{relativeTime}</div>
+                                            </div>
+                                            <div className="shrink-0 text-right">
+                                                <div className="text-lg font-bold tabular-nums leading-none">{stats.totalItems}</div>
+                                                <div className="text-[10px] text-muted-foreground">watched since</div>
                                             </div>
                                         </div>
-                                    </div>
-                                ) : (
+                                    </motion.div>
+                                    )
+                                })() : (
                                     <div className="rounded-2xl border border-dashed border-border/40 bg-background/20 p-4 text-center text-xs font-semibold text-muted-foreground">
                                         No first-watch signal for this window yet.
                                     </div>
@@ -620,6 +674,88 @@ export function MetricsPage() {
                     )}
                 </TabsContent >
                 <TabsContent value="community" className="space-y-6">
+                    {/* User Profiles */}
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-sm font-semibold">User Profiles</h2>
+                            <StatusChip variant="muted">{stats.userPersonas?.length || 0} profiles</StatusChip>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {stats.userPersonas?.map((u) => {
+                                const traits = stats.userTraits?.find((t) => t.id === u.id)
+                                return (
+                                    <Card key={u.id} className="rounded-2xl bg-card/50 border border-border/40 shadow-sm">
+                                        <CardContent className="p-4 space-y-3">
+                                            <div className="flex items-center gap-3">
+                                                <div className="relative w-10 h-10 shrink-0 flex items-center justify-center">
+                                                    <SquircleOverlay />
+                                                    <span className="relative z-10 text-sm font-bold text-muted-foreground">{u.name[0]}</span>
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="font-bold text-sm truncate">{u.name}</div>
+                                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                                        {u.badges.map((b, bi: number) => {
+                                                            const BadgeIcon = IconMap[b.icon] || Flame
+                                                            const s = CHART_PALETTE[b.color] || CHART_PALETTE.blue
+                                                            return (
+                                                                <Tooltip key={bi} content={PERSONA_DESCRIPTIONS[b.type] || 'Earned through watch behavior'} side="top">
+                                                                    <span
+                                                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium border cursor-help"
+                                                                        style={{ background: s.bg, color: s.text, borderColor: s.border }}
+                                                                    >
+                                                                        <BadgeIcon className="h-2.5 w-2.5" />
+                                                                        {b.type}
+                                                                    </span>
+                                                                </Tooltip>
+                                                            )
+                                                        })}
+                                                        {u.badges.length === 0 && <span className="text-xs font-semibold text-muted-foreground">Finding persona...</span>}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            {traits && (
+                                                <div className="flex gap-2">
+                                                    <Tooltip content={CHRONOTYPE_DESCRIPTIONS[traits.chronotype.label] || 'Peak watching time'} side="top">
+                                                        <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
+                                                            {(() => {
+                                                                const ChronoIcon = IconMap[traits.chronotype.icon] || Clock
+                                                                const s = CHART_PALETTE[traits.chronotype.color] || CHART_PALETTE.blue
+                                                                return (
+                                                                    <>
+                                                                        <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: s.bg }}>
+                                                                            <ChronoIcon className="h-3 w-3" style={{ color: s.text }} />
+                                                                        </div>
+                                                                        <div className="text-xs font-bold truncate">{traits.chronotype.label}</div>
+                                                                    </>
+                                                                )
+                                                            })()}
+                                                        </div>
+                                                    </Tooltip>
+                                                    <Tooltip content={FORMAT_DESCRIPTIONS[traits.formatLoyalty.label] || 'Content format preference'} side="top">
+                                                        <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
+                                                            {(() => {
+                                                                const FormatIcon = IconMap[traits.formatLoyalty.icon] || LayoutGrid
+                                                                const s = CHART_PALETTE[traits.formatLoyalty.color] || CHART_PALETTE.blue
+                                                                return (
+                                                                    <>
+                                                                        <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: s.bg }}>
+                                                                            <FormatIcon className="h-3 w-3" style={{ color: s.text }} />
+                                                                        </div>
+                                                                        <div className="text-xs font-bold truncate">{traits.formatLoyalty.label}</div>
+                                                                    </>
+                                                                )
+                                                            })()}
+                                                        </div>
+                                                    </Tooltip>
+                                                </div>
+                                            )}
+                                        </CardContent>
+                                    </Card>
+                                )
+                            })}
+                        </div>
+                    </div>
+
                     {/* 1. TOP STREAMERS (FULL LIST) - REDESIGNED */}
                     <div className="space-y-4">
                         <div className="flex items-center justify-between gap-3">
@@ -725,7 +861,9 @@ export function MetricsPage() {
                         <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
                             <CardHeader className="pb-3">
                                 <CardTitle className="flex items-center justify-between gap-2 text-sm">
-                                    Format DNA
+                                    <Tooltip content="Your content mix across movies, series, and other formats" side="top">
+                                        <span className="cursor-help">Format DNA</span>
+                                    </Tooltip>
                                     <StatusChip variant="muted"><NumberTicker value={stats.totalItems} /> titles</StatusChip>
                                 </CardTitle>
                             </CardHeader>
@@ -738,7 +876,9 @@ export function MetricsPage() {
                         <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
                             <CardHeader className="pb-3">
                                 <CardTitle className="flex items-center justify-between gap-2 text-sm">
-                                    Time Dilation
+                                    <Tooltip content="Week-over-week comparison of your watch activity" side="top">
+                                        <span className="cursor-help">Time Dilation</span>
+                                    </Tooltip>
                                     <StatusChip variant="primary">{stats.totalHours}h</StatusChip>
                                 </CardTitle>
                             </CardHeader>
@@ -752,44 +892,6 @@ export function MetricsPage() {
                             </CardContent>
                         </Card>
                     </div>
-
-                    {/* ACTIVITY PATTERNS */}
-                    <div className="grid md:grid-cols-2 gap-4">
-                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
-                            <CardHeader className="pb-3">
-                                <CardTitle className="flex items-center gap-2 text-sm">
-                                    Hourly Activity
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <ActivityHeatmap itemsByHour={stats.itemsByHour} loading={workerLoading} />
-                            </CardContent>
-                        </Card>
-
-                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
-                            <CardHeader className="pb-3">
-                                <CardTitle className="flex items-center gap-2 text-sm">
-                                    30-Day Trend
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <ActivitySparkline streakMap={stats.streakMap} loading={workerLoading} />
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* WATCH FUNNEL */}
-                    <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
-                        <CardHeader className="pb-3">
-                            <CardTitle className="flex items-center gap-2 text-sm">
-                                Watch Funnel
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <WatchFunnel funnel={stats.funnel} loading={workerLoading} />
-                        </CardContent>
-                    </Card>
-
 
                     {/* SHARED UNIVERSE (ACCOUNT OVERLAP) */}
                     <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
@@ -877,86 +979,137 @@ export function MetricsPage() {
                         )}
                     </div>
 
+                    {/* HIDDEN GEMS */}
+                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-sm font-semibold">Hidden Gems</h2>
+                            <StatusChip variant="muted">{stats.rareFinds?.length || 0} rare</StatusChip>
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                            {stats.rareFinds?.map((item) => (
+                                <div
+                                    key={item.itemId}
+                                    onClick={() => openStremioDetail(item.type, item.itemId)}
+                                    className="content-auto-poster group relative w-28 aspect-[2/3] rounded-xl overflow-hidden border border-border/40 shadow-sm transition-transform hover:-translate-y-1 cursor-pointer"
+                                >
+                                    <Poster
+                                        src={item.poster}
+                                        itemId={item.itemId || item.id}
+                                        itemType={item.type}
+                                        alt={item.name || ""}
+                                        className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-[transform,opacity,box-shadow] duration-500"
+                                    />
+                                    <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="text-xs font-medium text-white">{item.accountName}'s Choice</div>
+                                    </div>
+                                    <div className="absolute top-2 right-2 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">
+                                        Rare
+                                    </div>
+                                </div>
+                            ))}
+                            {stats.rareFinds?.length === 0 && (
+                                <div className="p-8 bg-muted/10 rounded-xl w-full text-center border-2 border-dashed border-border/40">
+                                    <p className="text-sm font-semibold text-muted-foreground">No rare finds yet</p>
+                                    <p className="text-xs text-muted-foreground mt-1">You all watch the same things!</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                 </TabsContent >
 
 
                 {/* TAB 6: PERSONALITY (Watch DNA) */}
                 <TabsContent value="insights" className="space-y-6">
-                    {/* User Profiles */}
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between gap-3">
-                            <h2 className="text-sm font-semibold">User Profiles</h2>
-                            <StatusChip variant="muted">{stats.userPersonas?.length || 0} profiles</StatusChip>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {stats.userPersonas?.map((u) => {
-                                const traits = stats.userTraits?.find((t) => t.id === u.id)
-                                return (
-                                    <Card key={u.id} className="rounded-2xl bg-card/50 border border-border/40 shadow-sm">
-                                        <CardContent className="p-4 space-y-3">
-                                            <div className="flex items-center gap-3">
-                                                <div className="relative w-10 h-10 shrink-0 flex items-center justify-center">
-                                                    <SquircleOverlay />
-                                                    <span className="relative z-10 text-sm font-bold text-muted-foreground">{u.name[0]}</span>
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="font-bold text-sm truncate">{u.name}</div>
-                                                    <div className="flex flex-wrap gap-1 mt-1.5">
-                                                        {u.badges.map((b, bi: number) => {
-                                                            const BadgeIcon = IconMap[b.icon] || Flame
-                                                            const s = CHART_PALETTE[b.color] || CHART_PALETTE.blue
-                                                            return (
-                                                                <span
-                                                                    key={bi}
-                                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium border"
-                                                                    style={{ background: s.bg, color: s.text, borderColor: s.border }}
-                                                                >
-                                                                    <BadgeIcon className="h-2.5 w-2.5" />
-                                                                    {b.type}
-                                                                </span>
-                                                            )
-                                                        })}
-                                                        {u.badges.length === 0 && <span className="text-xs font-semibold text-muted-foreground">Finding persona...</span>}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            {traits && (
-                                                <div className="flex gap-2">
-                                                    <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0">
-                                                        {(() => {
-                                                            const ChronoIcon = IconMap[traits.chronotype.icon] || Clock
-                                                            const s = CHART_PALETTE[traits.chronotype.color] || CHART_PALETTE.blue
-                                                            return (
-                                                                <>
-                                                                    <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: s.bg }}>
-                                                                        <ChronoIcon className="h-3 w-3" style={{ color: s.text }} />
-                                                                    </div>
-                                                                    <div className="text-xs font-bold truncate">{traits.chronotype.label}</div>
-                                                                </>
-                                                            )
-                                                        })()}
-                                                    </div>
-                                                    <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0">
-                                                        {(() => {
-                                                            const FormatIcon = IconMap[traits.formatLoyalty.icon] || LayoutGrid
-                                                            const s = CHART_PALETTE[traits.formatLoyalty.color] || CHART_PALETTE.blue
-                                                            return (
-                                                                <>
-                                                                    <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0" style={{ background: s.bg }}>
-                                                                        <FormatIcon className="h-3 w-3" style={{ color: s.text }} />
-                                                                    </div>
-                                                                    <div className="text-xs font-bold truncate">{traits.formatLoyalty.label}</div>
-                                                                </>
-                                                            )
-                                                        })()}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                )
-                            })}
-                        </div>
+                    {/* ACTIVITY PATTERNS */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">
+                                    Hourly Activity
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <ActivityHeatmap itemsByHour={stats.itemsByHour} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
+
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">
+                                    30-Day Trend
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <ActivitySparkline streakMap={stats.streakMap} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* WEEKLY RHYTHM */}
+                    <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                        <CardHeader className="pb-3">
+                            <CardTitle className="flex items-center gap-2 text-sm">
+                                <Tooltip content="Which days of the week you watch most" side="top">
+                                    <span className="cursor-help">Weekly Rhythm</span>
+                                </Tooltip>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <WeeklyRhythm weeklyRhythm={stats.weeklyRhythm} loading={workerLoading} />
+                        </CardContent>
+                    </Card>
+
+                    {/* WATCH FUNNEL + SESSION DEPTH */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">Watch Funnel</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <WatchFunnel funnel={stats.funnel} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">
+                                    <Tooltip content="How many episodes you watch per sitting" side="top">
+                                        <span className="cursor-help">Session Depth</span>
+                                    </Tooltip>
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <SessionDepth sessionDepths={stats.sessionDepths} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* DROP-OFF POINT + COMEBACKS */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">
+                                    <Tooltip content="Average episodes watched before abandoning a series" side="top">
+                                        <span className="cursor-help">Drop-off Point</span>
+                                    </Tooltip>
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <DropOffPoint avgEpisodes={stats.dropOffAvg} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
+                        <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
+                            <CardHeader className="pb-3">
+                                <CardTitle className="flex items-center gap-2 text-sm">
+                                    <Tooltip content="Titles you returned to after 2+ weeks away" side="top">
+                                        <span className="cursor-help">Comebacks</span>
+                                    </Tooltip>
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <ComebackRate titles={stats.comebackTitles} loading={workerLoading} />
+                            </CardContent>
+                        </Card>
                     </div>
 
                         {/* Franchise Spotlight */}
@@ -977,42 +1130,6 @@ export function MetricsPage() {
                             <VelocityChart contentVelocity={stats.contentVelocity} loading={workerLoading} />
                         </div>
 
-                        {/* RARE FINDS */}
-                        <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4 md:col-span-2 mt-6">
-                            <div className="flex items-center justify-between gap-3">
-                                <h2 className="text-sm font-semibold">Hidden Gems</h2>
-                                <StatusChip variant="muted">{stats.rareFinds?.length || 0} rare</StatusChip>
-                            </div>
-                            <div className="flex flex-wrap gap-4">
-                                {stats.rareFinds?.map((item) => (
-                                    <div
-                                        key={item.itemId}
-                                        onClick={() => openStremioDetail(item.type, item.itemId)}
-                                        className="content-auto-poster group relative w-28 aspect-[2/3] rounded-xl overflow-hidden border border-border/40 shadow-sm transition-transform hover:-translate-y-1 cursor-pointer"
-                                    >
-                                        <Poster
-                                            src={item.poster}
-                                            itemId={item.itemId || item.id}
-                                            itemType={item.type}
-                                            alt={item.name || ""}
-                                            className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-[transform,opacity,box-shadow] duration-500"
-                                        />
-                                        <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <div className="text-xs font-medium text-white">{item.accountName}'s Choice</div>
-                                        </div>
-                                        <div className="absolute top-2 right-2 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">
-                                            Rare
-                                        </div>
-                                    </div>
-                                ))}
-                                {stats.rareFinds?.length === 0 && (
-                                    <div className="p-8 bg-muted/10 rounded-xl w-full text-center border-2 border-dashed border-border/40">
-                                        <p className="text-sm font-semibold text-muted-foreground">No rare finds yet</p>
-                                        <p className="text-xs text-muted-foreground mt-1">You all watch the same things!</p>
-                                    </div>
-                                )}
-                            </div>
-                    </div>
                 </TabsContent >
                 </> )}
             </Tabs >

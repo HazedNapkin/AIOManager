@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { animate, motion, useMotionValue, useTransform, type PanInfo } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { ArrowRight, Circle, Crown, Gem, Info, Loader2, Plus, RotateCcw, Shield, Sparkles, Star, Undo2, Upload } from 'lucide-react'
+import { ArrowRight, Circle, Crown, Gem, Info, Loader2, Plus, RotateCcw, Send, Shield, Sparkles, Star, Undo2 } from 'lucide-react'
 import { getAddonResources, RESOURCE_LABELS, type DiscoverAddon } from '@/api/discover'
 import { getRarity, getRarityConfig, countByRarity, type RarityTier } from './rarity'
 import { useConfetti } from '@/components/ui/confetti'
@@ -122,7 +122,7 @@ function DeckFace({ addon, saved, deployedOn, prefersReducedMotion }: { addon: D
         </div>
         {deployedOn > 0 && (
           <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
-            <Upload className="h-2.5 w-2.5" />
+            <Send className="h-2.5 w-2.5" />
             On {deployedOn} account{deployedOn !== 1 ? 's' : ''}
           </div>
         )}
@@ -353,7 +353,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
               disabled={!revealed || onAllAccounts}
               aria-label="Install to accounts"
             >
-              <Upload className="h-5 w-5" />
+              <Send className="h-5 w-5" />
             </Button>
           </Tooltip>
         )}

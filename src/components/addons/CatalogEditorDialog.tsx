@@ -31,16 +31,17 @@ import {
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Trash2, Info } from 'lucide-react'
+import { GripVertical, Home, Trash2, Info } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
 interface SortableCatalogItemProps {
     catalog: Catalog & { _tempId: string }
     onRename: (id: string, name: string) => void
     onDelete: (id: string) => void
+    onToggleHome: (id: string) => void
 }
 
-function SortableCatalogItem({ catalog, onRename, onDelete }: SortableCatalogItemProps) {
+function SortableCatalogItem({ catalog, onRename, onDelete, onToggleHome }: SortableCatalogItemProps) {
     const {
         attributes,
         listeners,
@@ -49,6 +50,8 @@ function SortableCatalogItem({ catalog, onRename, onDelete }: SortableCatalogIte
         transition,
         isDragging,
     } = useSortable({ id: catalog._tempId })
+
+    const isHiddenFromHome = Array.isArray(catalog.extra) && catalog.extra.some(e => e?.name === 'search' && e.isRequired === true)
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -91,16 +94,35 @@ function SortableCatalogItem({ catalog, onRename, onDelete }: SortableCatalogIte
                 </div>
             </div>
 
-            <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => onDelete(catalog._tempId)}
-                className="h-9 w-9 rounded-full text-destructive/75 hover:bg-destructive/10 hover:text-destructive"
-                aria-label={`Delete ${catalog.name || catalog.id}`}
-            >
-                <Trash2 className="h-4 w-4" />
-            </Button>
+            <div className="flex shrink-0 items-center gap-1">
+                <Tooltip content={isHiddenFromHome ? 'Show on Home' : 'Hide from Home'} side="top">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onToggleHome(catalog._tempId)}
+                        className={cn(
+                            'h-9 w-9 rounded-full transition-colors',
+                            isHiddenFromHome
+                                ? 'text-muted-foreground/50 hover:bg-muted/40 hover:text-muted-foreground'
+                                : 'text-primary hover:bg-primary/10'
+                        )}
+                        aria-label={isHiddenFromHome ? `Show ${catalog.name || catalog.id} on Home` : `Hide ${catalog.name || catalog.id} from Home`}
+                    >
+                        <Home className="h-4 w-4" />
+                    </Button>
+                </Tooltip>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => onDelete(catalog._tempId)}
+                    className="h-9 w-9 rounded-full text-destructive/75 hover:bg-destructive/10 hover:text-destructive"
+                    aria-label={`Delete ${catalog.name || catalog.id}`}
+                >
+                    <Trash2 className="h-4 w-4" />
+                </Button>
+            </div>
         </div>
     )
 }
@@ -182,6 +204,23 @@ export function CatalogEditorDialog({
 
     const handleDelete = (id: string) => {
         setCatalogs((items) => items.filter((item) => item._tempId !== id))
+        setHasChanges(true)
+    }
+
+    const handleToggleHome = (id: string) => {
+        setCatalogs((items) => items.map((item) => {
+            if (item._tempId !== id) return item
+            const extra = Array.isArray(item.extra) ? [...item.extra] : []
+            const searchIdx = extra.findIndex(e => e?.name === 'search')
+            const isCurrentlyHidden = searchIdx !== -1 && extra[searchIdx].isRequired === true
+            if (isCurrentlyHidden) {
+                if (searchIdx !== -1) extra[searchIdx] = { ...extra[searchIdx], isRequired: false }
+            } else {
+                if (searchIdx !== -1) extra[searchIdx] = { ...extra[searchIdx], isRequired: true }
+                else extra.push({ name: 'search', isRequired: true })
+            }
+            return { ...item, extra }
+        }))
         setHasChanges(true)
     }
 
@@ -294,6 +333,7 @@ export function CatalogEditorDialog({
                                             catalog={catalog}
                                             onRename={handleRename}
                                             onDelete={handleDelete}
+                                            onToggleHome={handleToggleHome}
                                         />
                                     ))}
                                 </div>

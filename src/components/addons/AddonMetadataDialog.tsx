@@ -13,7 +13,9 @@ import { AddonIcon } from '@/components/ui/addon-icon'
 import { AddonDescriptor } from '@/types/addon'
 import { useEffect, useState } from 'react'
 import { useUIStore } from '@/store/uiStore'
+import { useAccountStore } from '@/store/accountStore'
 import { SourceUrlBox } from './SourceUrlBox'
+import { ManifestJSONEditor } from './ManifestJSONEditor'
 
 interface AddonMetadataDialogProps {
     open: boolean
@@ -39,6 +41,11 @@ export function AddonMetadataDialog({
     const [error, setError] = useState<string | null>(null)
     const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
 
+    const hasChanges =
+        customName !== (addon.metadata?.customName || '') ||
+        customLogo !== (addon.metadata?.customLogo || '') ||
+        customDescription !== (addon.metadata?.customDescription || '')
+
 
     useEffect(() => {
         if (open) {
@@ -47,7 +54,7 @@ export function AddonMetadataDialog({
             setCustomDescription(addon.metadata?.customDescription || '')
             setError(null)
         }
-    }, [open, addon, accountId])
+    }, [open, addon])
 
     const handleSave = async () => {
         setSaving(true)
@@ -242,6 +249,18 @@ export function AddonMetadataDialog({
                     </div>
                 </div>
 
+                <ManifestJSONEditor
+                    manifest={addon.manifest}
+                    onSave={async (newManifest) => {
+                        await useAccountStore.getState().updateAddonSettings(
+                            accountId,
+                            addon.transportUrl,
+                            { manifest: newManifest }
+                        )
+                        onOpenChange(false)
+                    }}
+                />
+
                 <div className="mt-4 flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between [&_button]:h-11 [&_button]:w-full [&_button]:rounded-full [&_button]:px-5 sm:[&_button]:w-auto">
                     <Button type="button" variant="subtle" onClick={handleReset} disabled={saving}>
                         Reset Details
@@ -250,7 +269,7 @@ export function AddonMetadataDialog({
                         <Button variant="subtle" onClick={() => onOpenChange(false)} disabled={saving}>
                             Cancel
                         </Button>
-                        <Button onClick={handleSave} disabled={saving}>
+                        <Button onClick={handleSave} disabled={saving || !hasChanges}>
                             {saving ? 'Syncing...' : 'Save & Sync'}
                         </Button>
                     </div>

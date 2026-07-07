@@ -3,7 +3,7 @@ import { getAddons, updateAddons, fetchAddonManifest } from '@/api/addons'
 import { identifyAddon } from '@/lib/addon-identifier'
 import { mergeAddons, removeAddons } from '@/lib/addon-merger'
 import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
-import { normalizeAddonUrl } from '@/lib/utils'
+import { normalizeAddonUrl, getAddonVersionKey } from '@/lib/utils'
 import { normalizeUrl, saveAccountAddonStates, saveAddonLibrary } from '@/lib/addon-storage'
 import { useAuthStore } from '@/store/authStore'
 import { getCachedAuthKey, persistAccounts } from '@/store/accountStore'
@@ -916,14 +916,13 @@ export async function bulkReinstallAddons(
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, targetCollection)
 
-        const localOnlyUpdated = updateResults.filter(r => localOnlyAddons.some(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId)))
-        if (localOnlyUpdated.length > 0) {
+        if (updateResults.length > 0) {
           const { useAccountStore: acctStore } = await import('@/store/accountStore')
           const accountStore = acctStore.getState()
           const account = accountStore.accounts.find(a => a.id === accountId)
           if (account) {
             const updatedByUrl = new Map(
-              localOnlyUpdated.map(r => {
+              updateResults.map(r => {
                 const descriptor = targetCollection.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId))
                 return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
               }).filter((e): e is [string, AddonDescriptor] => e !== null)
@@ -939,6 +938,18 @@ export async function bulkReinstallAddons(
               ),
             })
             persistAccounts(acctStore.getState().accounts)
+
+            const latestVersionUpdates: Record<string, string> = {}
+            for (const [url, descriptor] of updatedByUrl) {
+              if (descriptor.manifest?.id && descriptor.manifest?.version) {
+                latestVersionUpdates[descriptor.manifest.id] = descriptor.manifest.version
+                latestVersionUpdates[getAddonVersionKey({ transportUrl: url, manifest: descriptor.manifest })] = descriptor.manifest.version
+              }
+            }
+            if (Object.keys(latestVersionUpdates).length > 0) {
+              const { useAddonStore } = await import('../addonStore')
+              useAddonStore.getState().updateLatestVersions(latestVersionUpdates)
+            }
           }
         }
 

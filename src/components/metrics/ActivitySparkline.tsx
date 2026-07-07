@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
+import { motion } from 'framer-motion'
 import { CHART_PALETTE } from '@/lib/chart-colors'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useInView } from '@/hooks/use-in-view'
 
 interface ActivitySparklineProps {
     streakMap: number[]
@@ -8,6 +10,7 @@ interface ActivitySparklineProps {
 }
 
 export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps) {
+    const { ref, inView } = useInView<HTMLDivElement>()
     const data = useMemo(() => {
         if (!streakMap?.length) return []
         const visible = streakMap.slice(-30)
@@ -34,7 +37,7 @@ export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps
     const total = data.reduce((sum, d) => sum + d.count, 0)
 
     return (
-        <div className="h-[140px] rounded-2xl border border-border/35 bg-muted/15 p-3">
+        <div ref={ref} className="h-[140px] rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Last 30 days</span>
                 <span className="text-xs font-bold text-foreground">{total} plays</span>
@@ -45,13 +48,15 @@ export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps
                     const active = d.count > 0
                     return (
                         <Tooltip key={`${d.day}-${i}`} content={`${d.day}: ${d.count} plays`} delayDuration={100}>
-                            <div
+                            <motion.div
                                 className="flex-1 rounded-full transition-opacity hover:opacity-100"
                                 style={{
-                                    height: `${height}%`,
                                     background: active ? CHART_PALETTE.blue.text : 'hsl(var(--muted))',
                                     opacity: active ? 0.35 + (d.count / max) * 0.65 : 0.35,
                                 }}
+                                initial={{ height: '0%' }}
+                                animate={inView ? { height: `${height}%` } : { height: '0%' }}
+                                transition={{ type: 'spring', stiffness: 140, damping: 16, delay: i * 0.015 }}
                             />
                         </Tooltip>
                     )

@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { SavedAddon } from '@/types/saved-addon'
 import type { Account } from '@/types/account'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useToast } from '@/hooks/use-toast'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
+import { ManifestJSONEditor } from '@/components/addons/ManifestJSONEditor'
 import type { AddonDescriptor } from '@/types/addon'
 
 export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }: { savedAddon: SavedAddon; deployedAccounts?: Account[]; onClose: () => void }) {
@@ -28,7 +29,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
   const currentProfileId = savedAddon.profileId ?? 'unassigned'
 
   const [formData, setFormData] = useState({
-    name: savedAddon.name,
+    name: savedAddon.metadata?.customName || '',
     tags: savedAddon.tags.join(', '),
     customLogo: savedAddon.metadata?.customLogo || '',
     customDescription: savedAddon.metadata?.customDescription || '',
@@ -36,10 +37,21 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
     profileId: currentProfileId,
   })
 
+  useEffect(() => {
+    setFormData({
+      name: savedAddon.metadata?.customName || '',
+      tags: savedAddon.tags.join(', '),
+      customLogo: savedAddon.metadata?.customLogo || '',
+      customDescription: savedAddon.metadata?.customDescription || '',
+      syncWithInstalled: savedAddon.syncWithInstalled ?? false,
+      profileId: savedAddon.profileId ?? 'unassigned',
+    })
+  }, [savedAddon])
+
   const [formError, setFormError] = useState<string | null>(null)
 
   const hasChanges =
-    formData.name !== savedAddon.name ||
+    formData.name !== (savedAddon.metadata?.customName || '') ||
     formData.tags !== savedAddon.tags.join(', ') ||
     formData.customLogo !== (savedAddon.metadata?.customLogo || '') ||
     formData.customDescription !== (savedAddon.metadata?.customDescription || '') ||
@@ -59,12 +71,12 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
       const name = formData.name.trim()
 
       await updateSavedAddon(savedAddon.id, {
-        name,
+        name: name || savedAddon.manifest.name,
         tags,
         syncWithInstalled: formData.syncWithInstalled,
         profileId: formData.profileId === 'unassigned' ? null : formData.profileId,
         metadata: {
-          customName: name,
+          customName: name || undefined,
           customLogo: formData.customLogo.trim() || undefined,
           customDescription: formData.customDescription.trim() || undefined
         }
@@ -98,7 +110,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
 
       setFormData(prev => ({
         ...prev,
-        name: originalManifest.name || savedAddon.manifest.name,
+        name: '',
         customLogo: '',
         customDescription: ''
       }))
@@ -119,7 +131,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
       })
       setFormData(prev => ({
         ...prev,
-        name: savedAddon.manifest.name,
+        name: '',
         customLogo: '',
         customDescription: ''
       }))
@@ -150,7 +162,6 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
                 onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder={savedAddon.manifest.name}
                 maxLength={100}
-                required
               />
               <Button
                 type="button"
@@ -317,6 +328,21 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
             className="mt-1 bg-background/45"
           />
         </div>
+      </div>
+
+      <div className="mt-4">
+      <ManifestJSONEditor
+        manifest={savedAddon.manifest}
+        onSave={async (newManifest) => {
+          await updateSavedAddon(savedAddon.id, { manifest: newManifest, name: newManifest.name })
+          await updateSavedAddonMetadata(savedAddon.id, {
+            customName: undefined,
+            customLogo: undefined,
+            customDescription: undefined
+          })
+          onClose()
+        }}
+      />
       </div>
 
       <div className="mt-4 flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between [&_button]:h-11 [&_button]:w-full [&_button]:rounded-full [&_button]:px-5 sm:[&_button]:w-auto">

@@ -144,6 +144,11 @@ interface MetricsResult {
     thisWeekCount: number
     lastWeekCount: number
     firstWatch: { item: ActivityItem; date: Date } | null
+    dailyActivity: Record<string, number>
+    sessionDepths: { label: string; count: number }[]
+    weeklyRhythm: number[]
+    comebackTitles: { name: string; gap: number; poster: string }[]
+    dropOffAvg: number
     _error?: boolean
     _message?: string
 }
@@ -498,6 +503,68 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         date: allContentFirsts[0].firstSeen
     } : null
 
+    const dailyActivity: Record<string, number> = {}
+    const weeklyRhythm = new Array(7).fill(0)
+    const allSessionLengths: number[] = []
+
+    normalizedItems.forEach((h: ActivityItem) => {
+        const ts = h.timestamp instanceof Date ? h.timestamp : new Date(h.timestamp)
+        const dayKey = toLocalDayKey(ts.getTime())
+        dailyActivity[dayKey] = (dailyActivity[dayKey] || 0) + 1
+        const dow = ts.getDay()
+        weeklyRhythm[dow]++
+    })
+
+    const chronoForSessions = [...normalizedItems].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    let sessionCount = 0
+    let lastSessionTime: Date | null = null
+    chronoForSessions.forEach((h: ActivityItem) => {
+        if (lastSessionTime) {
+            const gap = (h.timestamp.getTime() - lastSessionTime.getTime()) / 60000
+            if (gap >= BINGE_GAP_MINUTES) {
+                if (sessionCount > 0) allSessionLengths.push(sessionCount)
+                sessionCount = 1
+            } else {
+                sessionCount++
+            }
+        } else {
+            sessionCount = 1
+        }
+        lastSessionTime = h.timestamp
+    })
+    if (sessionCount > 0) allSessionLengths.push(sessionCount)
+
+    const sessionBuckets = [
+        { label: '1 episode', min: 1, max: 1, count: 0 },
+        { label: '2-3 eps', min: 2, max: 3, count: 0 },
+        { label: '4-6 eps', min: 4, max: 6, count: 0 },
+        { label: '7+ eps', min: 7, max: Infinity, count: 0 },
+    ]
+    allSessionLengths.forEach(len => {
+        const bucket = sessionBuckets.find(b => len >= b.min && len <= b.max)
+        if (bucket) bucket.count++
+    })
+
+    const comebackTitles: { name: string; gap: number; poster: string }[] = []
+    Object.values(contentStats).forEach(cs => {
+        if (cs.count < 2) return
+        const plays = normalizedItems.filter(h => h.itemId === cs.item.itemId).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+        for (let i = 1; i < plays.length; i++) {
+            const gapDays = (plays[i].timestamp.getTime() - plays[i - 1].timestamp.getTime()) / 864e5
+            if (gapDays >= 14) {
+                comebackTitles.push({ name: cs.item.name, gap: Math.round(gapDays), poster: cs.item.poster })
+                break
+            }
+        }
+    })
+    comebackTitles.sort((a, b) => b.gap - a.gap)
+
+    const abandonedSeriesStats = Object.values(contentStats)
+        .filter(cs => isSeriesType(cs.item.type) && cs.uniqueEpisodes.size > 0 && cs.uniqueEpisodes.size < 5)
+    const dropOffAvg = abandonedSeriesStats.length > 0
+        ? Math.round(abandonedSeriesStats.reduce((sum, cs) => sum + cs.uniqueEpisodes.size, 0) / abandonedSeriesStats.length * 10) / 10
+        : 0
+
     const result: MetricsResult = {
         totalItems: items.length,
         totalHours: Math.floor(totalDurationMinutes / 60),
@@ -552,6 +619,11 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         thisWeekCount,
         lastWeekCount,
         firstWatch,
+        dailyActivity,
+        sessionDepths: sessionBuckets.map(b => ({ label: b.label, count: b.count })),
+        weeklyRhythm,
+        comebackTitles: comebackTitles.slice(0, 5),
+        dropOffAvg,
     }
 
     self.postMessage(result)

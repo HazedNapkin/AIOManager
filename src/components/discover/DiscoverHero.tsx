@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { Check, ChevronLeft, ChevronRight, Plus, Settings2, Star, Upload } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Plus, Send, Settings2, Star } from 'lucide-react'
 import { getConfigureUrl, requiresConfiguration, type DiscoverAddon } from '@/api/discover'
 
 interface DiscoverHeroProps {
@@ -122,7 +122,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
             </span>
             {deployedOn > 0 && (
               <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                <Upload className="h-3 w-3" />
+                <Send className="h-3 w-3" />
                 On {deployedOn} account{deployedOn !== 1 ? 's' : ''}
               </span>
             )}
@@ -133,7 +133,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
               </Button>
             ) : onDeploy ? (
               <Button className="gap-1.5" onClick={() => onDeploy(addon)}>
-                <Upload className="h-4 w-4" />
+                <Send className="h-4 w-4" />
                 Install to accounts
               </Button>
             ) : (

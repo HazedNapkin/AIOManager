@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
@@ -62,11 +63,17 @@ export function AccountList() {
 
       const updateInfoList = await checkAddonUpdates(allAddons, 'All-Accounts-Update-Check')
       const versions: Record<string, string> = {}
+      const hints: Record<string, SavedAddonManifestChangeSummary> = {}
       updateInfoList.forEach((info) => {
         versions[info.versionKey] = info.latestVersion
         versions[info.addonId] = info.latestVersion
+        if (info.hasManifestShapeChange && info.manifestChanges) {
+          hints[info.versionKey] = info.manifestChanges
+          hints[info.addonId] = info.manifestChanges
+        }
       })
       useAddonStore.getState().updateLatestVersions(versions)
+      useAddonStore.getState().updateManifestChangeHints(hints)
       toast({ title: 'Update Check Complete', description: 'All account addons have been checked for updates.' })
     } catch (err) {
       toast({ title: 'Update Check Failed', variant: 'destructive' })

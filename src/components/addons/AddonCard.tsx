@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { AddonIcon } from '@/components/ui/addon-icon'
@@ -134,6 +135,7 @@ interface AddonCardProps {
   onRemove: (accountId: string, transportUrl: string) => Promise<void>
   onUpdate?: (accountId: string, transportUrl: string) => Promise<void>
   latestVersion?: string
+  manifestChange?: SavedAddonManifestChangeSummary | null
   isOnline?: boolean
   healthError?: string
   loading?: boolean
@@ -159,6 +161,7 @@ export const AddonCard = React.memo(function AddonCard({
   onRemove,
   onUpdate,
   latestVersion,
+  manifestChange,
   isOnline,
   healthError,
   loading,
@@ -345,7 +348,9 @@ export const AddonCard = React.memo(function AddonCard({
     return isExternal && !isInstalled
   }, [isExternal, isInstalled])
 
-  const hasUpdate = latestVersion ? isNewerVersion(addon.manifest.version, latestVersion) : false
+  const hasVersionUpdate = latestVersion ? isNewerVersion(addon.manifest.version, latestVersion) : false
+  const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
+  const hasUpdate = hasVersionUpdate || hasManifestShapeChange
   const canUpdate = !!onUpdate
 
   const openSaveModal = () => {

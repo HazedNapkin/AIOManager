@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
+import { motion } from 'framer-motion'
 import { CHART_PALETTE } from '@/lib/chart-colors'
+import { useInView } from '@/hooks/use-in-view'
 
 interface WatchFunnelProps {
     funnel: { started: number; engaged: number; finished: number }
@@ -7,6 +9,7 @@ interface WatchFunnelProps {
 }
 
 export function WatchFunnel({ funnel, loading }: WatchFunnelProps) {
+    const { ref, inView } = useInView<HTMLDivElement>()
     const data = useMemo(() => [
         { stage: 'Started', count: funnel?.started || 0, color: CHART_PALETTE.blue.text },
         { stage: 'Engaged', count: funnel?.engaged || 0, color: CHART_PALETTE.purple.text },
@@ -18,7 +21,7 @@ export function WatchFunnel({ funnel, loading }: WatchFunnelProps) {
     }
 
     return (
-        <div className="space-y-3">
+        <div ref={ref} className="space-y-3">
             {data.map((entry, index) => {
                 const max = Math.max(...data.map(d => d.count), 1)
                 const pct = Math.round((entry.count / max) * 100)
@@ -34,9 +37,12 @@ export function WatchFunnel({ funnel, loading }: WatchFunnelProps) {
                             <div className="text-lg font-bold tabular-nums">{entry.count}</div>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-muted/50">
-                            <div
+                            <motion.div
                                 className="h-full rounded-full"
-                                style={{ width: `${pct}%`, background: entry.color }}
+                                style={{ background: entry.color }}
+                                initial={{ width: '0%' }}
+                                animate={inView ? { width: `${pct}%` } : { width: '0%' }}
+                                transition={{ type: 'spring', stiffness: 100, damping: 20, delay: index * 0.1 }}
                             />
                         </div>
                     </div>

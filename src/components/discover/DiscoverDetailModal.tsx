@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { StatusChip } from '@/components/ui/status-chip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Plus, Settings2, Star, Upload } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Link2, Plus, Send, Settings2, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   fetchDiscoverAddon,
@@ -18,6 +18,7 @@ import {
   type DiscoverAddonDetail,
 } from '@/api/discover'
 import { AddonLogo } from './AddonLogo'
+import { useToast } from '@/hooks/use-toast'
 
 const DiscoverMarkdown = lazy(() => import('./DiscoverMarkdown'))
 
@@ -37,6 +38,7 @@ interface DiscoverDetailModalProps {
 }
 
 export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved, onSave, onDeploy, onConfigure }: DiscoverDetailModalProps) {
+  const { toast } = useToast()
   const [detail, setDetail] = useState<DiscoverAddonDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [descExpanded, setDescExpanded] = useState(false)
@@ -261,7 +263,12 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                           )}
                           <Tooltip content="Deploy to account(s)" side="top">
                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onDeploy(inst)}>
-                              <Upload className="h-3.5 w-3.5" />
+                              <Send className="h-3.5 w-3.5" />
+                            </Button>
+                          </Tooltip>
+                          <Tooltip content="Copy Link" side="top">
+                             <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => { navigator.clipboard.writeText(inst.manifestUrl); toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' }) }}>
+                              <Link2 className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
                           <Tooltip content="View on stremio-addons.net" side="top">
@@ -354,7 +361,12 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                             )}
                             <Tooltip content="Deploy to account(s)" side="top">
                               <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onDeploy(s)}>
-                                <Upload className="h-3.5 w-3.5" />
+                                <Send className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                            <Tooltip content="Copy Link" side="top">
+                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => { navigator.clipboard.writeText(s.manifestUrl); toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' }) }}>
+                                <Link2 className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
                           </div>
@@ -392,7 +404,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
             </Button>
           )}
           <Button variant="subtle" className="gap-1.5" onClick={() => onDeploy(view)}>
-            <Upload className="h-4 w-4" />
+            <Send className="h-4 w-4" />
             Deploy
           </Button>
           {configureUrl && (
@@ -401,6 +413,10 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
               Configure
             </Button>
           )}
+          <Button variant="subtle" className="gap-1.5" onClick={() => { navigator.clipboard.writeText(view.manifestUrl); toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' }) }}>
+            <Link2 className="h-4 w-4" />
+            Copy Link
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

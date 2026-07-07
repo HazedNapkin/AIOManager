@@ -78,7 +78,7 @@ export function removeCinemetaSearchArtifacts(manifest: CinemetaManifest): Cinem
     .filter((catalog) => catalog.id !== 'cinemeta.search')
     .map((catalog) => ({
       ...catalog,
-      extra: catalog.extra?.filter((extra) => extra.name !== 'search'),
+      extra: catalog.extra?.filter((extra) => extra.name !== 'search' || extra.isRequired === true),
     }))
 
   return {

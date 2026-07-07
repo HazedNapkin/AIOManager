@@ -14,7 +14,7 @@ import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
-import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil, Upload } from 'lucide-react'
+import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil, Send } from 'lucide-react'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 
@@ -290,12 +290,12 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuItem onClick={() => onDeploy?.(savedAddon.id)} className="gap-2">
-                  <Upload className="h-4 w-4" />
+                  <Send className="h-4 w-4" />
                   Deploy
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setShowDetails(true)} className="gap-2">
                   <Pencil className="h-4 w-4" />
-                  Edit
+                  Customize
                 </DropdownMenuItem>
                 <DropdownMenuItem destructive onClick={handleDelete} className="gap-2 text-destructive focus:text-destructive">
                   <AnimatedTrashIcon className="h-4 w-4" />

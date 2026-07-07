@@ -377,6 +377,7 @@ export interface AccountStore {
             settings: {
                   metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean },
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
+                  manifest?: AddonDescriptor['manifest'],
                   note?: string,
             },
             targetIndex?: number

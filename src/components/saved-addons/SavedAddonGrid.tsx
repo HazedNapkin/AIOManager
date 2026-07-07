@@ -65,6 +65,7 @@ export function SavedAddonGrid({
             })}
             manifestChange={manifestChangeHints[addon.id]}
             onUpdate={onUpdate}
+            onDeploy={onDeploy}
             isSelectionMode={isSelectionMode}
             isSelected={selectedIds.has(addon.id)}
             onToggleSelect={onToggleSelect}

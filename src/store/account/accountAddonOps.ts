@@ -870,6 +870,7 @@ export async function updateAddonSettings(
     settings: {
         metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean },
         catalogOverrides?: AddonDescriptor['catalogOverrides'],
+        manifest?: AddonDescriptor['manifest'],
         note?: string,
     },
     targetIndex?: number
@@ -934,6 +935,15 @@ export async function updateAddonSettings(
                 if (settings.catalogOverrides) {
                     newAddon.catalogOverrides = settings.catalogOverrides
                     newAddon.manifest = getEffectiveManifest(newAddon)
+                }
+
+                if (settings.manifest) {
+                    newAddon.manifest = settings.manifest
+                    newAddon.catalogOverrides = undefined
+                    if (newAddon.metadata) {
+                        const { customName, customLogo, customDescription, ...restMeta } = newAddon.metadata
+                        newAddon.metadata = restMeta as typeof newAddon.metadata
+                    }
                 }
 
                 return newAddon

@@ -121,8 +121,14 @@ export function CinemetaConfigurationDialog({
       )
 
       const updatedAddons = [...currentAddons]
+      const localAccount = useAccountStore.getState().accounts.find(a => a.id === accountId)
+      const localCinemeta = localAccount?.addons.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(addon.transportUrl))
+      const remote = currentAddons[cinemetaIndex]
       updatedAddons[cinemetaIndex] = {
-        ...currentAddons[cinemetaIndex],
+        ...remote,
+        flags: localCinemeta?.flags ?? remote.flags,
+        catalogOverrides: localCinemeta?.catalogOverrides ?? remote.catalogOverrides,
+        note: localCinemeta?.note ?? remote.note,
         manifest: modifiedManifest,
         metadata: {
           ...addon.metadata,

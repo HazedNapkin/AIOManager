@@ -50,6 +50,9 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
                             paddingAngle={3}
                             dataKey="value"
                             strokeWidth={0}
+                            isAnimationActive={true}
+                            animationDuration={600}
+                            animationBegin={100}
                         >
                             {data.map((entry, index) => (
                                 <Cell key={index} fill={entry.color} fillOpacity={0.82} />
@@ -61,7 +64,10 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
                                 border: '1px solid hsl(var(--border))',
                                 borderRadius: '0.75rem',
                                 fontSize: '12px',
+                                zIndex: 100,
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                             }}
+                            wrapperStyle={{ zIndex: 100, outline: 'none' }}
                             formatter={tooltipFormatter}
                         />
                     </PieChart>
