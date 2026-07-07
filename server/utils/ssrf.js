@@ -6,6 +6,8 @@ const DNS_REBIND_DOMAINS = [
     'requestbin.net', 'webhook.site'
 ]
 
+const ALLOW_PRIVATE = process.env.SSRF_ALLOW_PRIVATE === 'true' || process.env.SSRF_ALLOW_PRIVATE === '1'
+
 const isPrivateIPv4 = (ip) => {
     const m = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
     if (!m) return false
@@ -72,6 +74,7 @@ export const isSafeUrl = (url) => {
 // IP; on resolution failure it defers to isSafeUrl (returns true) so transient DNS issues don't
 // block legitimate public hosts. Use at SSRF-sensitive entry points that fetch user URLs.
 export const resolveAndValidateHost = async (hostname) => {
+    if (ALLOW_PRIVATE) return true
     const host = String(hostname || '').toLowerCase().replace(/^\[(.+)\]$/, '$1')
     if (!host) return false
 

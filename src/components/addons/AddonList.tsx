@@ -271,11 +271,6 @@ export function AddonList({ accountId }: AddonListProps) {
       return selectedAddonUrls.has(compositeId) && addon.flags?.protected
     }).length
 
-    if (selectedAddonUrls.size >= addons.length) {
-      toast({ variant: 'destructive', title: 'Cannot Delete All Addons', description: 'Anti-wipe protection prevents removing every addon. Keep at least one installed to protect your addon collection.' })
-      return
-    }
-
     setProtectedInSelection(protectedCount)
     setShowDeleteConfirm(true)
   }

@@ -592,7 +592,7 @@ export async function bulkRemoveAddons(
         }
 
         if (hasRemoteRemoval) {
-          await updateAddons(authKey, updatedAddons, accountId, { previousCollection: currentAddons })
+          await updateAddons(authKey, updatedAddons, accountId, { previousCollection: currentAddons, allowCollectionShrink: true })
         }
 
         if (hasLocalRemoval || hasRemoteRemoval) {
