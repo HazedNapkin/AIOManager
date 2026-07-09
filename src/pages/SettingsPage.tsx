@@ -116,6 +116,10 @@ export function SettingsPage() {
     const initializeAddonStore = useAddonStore(s => s.initialize)
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const togglePrivacyMode = useUIStore(s => s.togglePrivacyMode)
+    const privacyObscureNames = useUIStore(s => s.privacyObscureNames)
+    const privacyObscureUrls = useUIStore(s => s.privacyObscureUrls)
+    const privacyObscureProfiles = useUIStore(s => s.privacyObscureProfiles)
+    const setPrivacyOption = useUIStore(s => s.setPrivacyOption)
     const { clear: clearLibraryCache, invalidate } = useLibraryCache()
 
     const [activeTab, setActiveTab] = useState(() => {
@@ -377,23 +381,41 @@ export function SettingsPage() {
 
                             <InstallAppCard />
 
-                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                        <SquircleOverlay />
-                                        <EyeOff className="relative z-10 h-4 w-4 text-muted-foreground" />
+                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                                            <SquircleOverlay />
+                                            <EyeOff className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                        </div>
+                                        <div>
+                                            <Label htmlFor="privacy-mode" className="text-sm sm:text-base font-medium cursor-pointer">Privacy Mode</Label>
+                                            <p className="text-xs sm:text-sm text-muted-foreground">Mask secrets and sensitive data</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <Label htmlFor="privacy-mode" className="text-sm sm:text-base font-medium cursor-pointer">Privacy Mode</Label>
-                                        <p className="text-xs sm:text-sm text-muted-foreground">Mask secrets and sensitive data</p>
-                                    </div>
+                                    <Switch
+                                        id="privacy-mode"
+                                        checked={isPrivacyModeEnabled}
+                                        onCheckedChange={togglePrivacyMode}
+                                        className="self-start sm:self-auto"
+                                    />
                                 </div>
-                                <Switch
-                                    id="privacy-mode"
-                                    checked={isPrivacyModeEnabled}
-                                    onCheckedChange={togglePrivacyMode}
-                                    className="self-start sm:self-auto"
-                                />
+                                {isPrivacyModeEnabled && (
+                                    <div className="flex flex-col gap-2 pl-12 sm:pl-14 pt-1 border-t border-border/20 mt-1">
+                                        <label className="flex items-center justify-between py-1 cursor-pointer">
+                                            <span className="text-xs text-muted-foreground">Obscure account names</span>
+                                            <Switch checked={privacyObscureNames} onCheckedChange={(v) => setPrivacyOption('privacyObscureNames', v)} />
+                                        </label>
+                                        <label className="flex items-center justify-between py-1 cursor-pointer">
+                                            <span className="text-xs text-muted-foreground">Obscure addon URLs</span>
+                                            <Switch checked={privacyObscureUrls} onCheckedChange={(v) => setPrivacyOption('privacyObscureUrls', v)} />
+                                        </label>
+                                        <label className="flex items-center justify-between py-1 cursor-pointer">
+                                            <span className="text-xs text-muted-foreground">Obscure profile names</span>
+                                            <Switch checked={privacyObscureProfiles} onCheckedChange={(v) => setPrivacyOption('privacyObscureProfiles', v)} />
+                                        </label>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </TabsContent>

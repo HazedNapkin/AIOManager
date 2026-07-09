@@ -26,10 +26,14 @@ export interface NotesGraphSettings {
 export interface SyncedSettings {
     theme?: string
     privacyMode?: boolean
+    privacyObscureNames?: boolean
+    privacyObscureUrls?: boolean
+    privacyObscureProfiles?: boolean
     libraryViewMode?: SyncedViewMode
     accountsView?: SyncedViewMode
     addonListView?: SyncedViewMode
     hideDisabledAddons?: boolean
+    addonPreviewCount?: number
     customThemes?: unknown[]
     changelog?: unknown[]
     activity?: ActivitySettings
@@ -37,12 +41,16 @@ export interface SyncedSettings {
 }
 
 const STORAGE_KEYS = {
-    theme: 'stremio-manager-theme',
-    privacyMode: 'stremio-manager:privacy-mode',
-    libraryViewMode: 'stremio-manager:library-view-mode',
-    accountsView: 'stremio-manager:accounts-view',
-    addonListView: 'stremio-manager:addon-list-view',
-    hideDisabledAddons: 'stremio-manager:hide-disabled-addons',
+    theme: 'aioman-theme',
+    privacyMode: 'aioman:privacy-mode',
+    privacyObscureNames: 'aioman:privacy-obscure-names',
+    privacyObscureUrls: 'aioman:privacy-obscure-urls',
+    privacyObscureProfiles: 'aioman:privacy-obscure-profiles',
+    libraryViewMode: 'aioman:library-view-mode',
+    accountsView: 'aioman:accounts-view',
+    addonListView: 'aioman:addon-list-view',
+    hideDisabledAddons: 'aioman:hide-disabled-addons',
+    addonPreviewCount: 'aioman:addon-preview-count',
     customThemes: 'aio-custom-themes',
     activityTimeFilter: 'activity-time-filter',
     activitySinceDate: 'activity-since-date',
@@ -207,10 +215,14 @@ export function readSyncedSettings(): SyncedSettings {
     return {
         theme: getStorageItem(STORAGE_KEYS.theme) || 'dark',
         privacyMode: uiState.isPrivacyModeEnabled,
+        privacyObscureNames: readBoolean(STORAGE_KEYS.privacyObscureNames, true),
+        privacyObscureUrls: readBoolean(STORAGE_KEYS.privacyObscureUrls, true),
+        privacyObscureProfiles: readBoolean(STORAGE_KEYS.privacyObscureProfiles, true),
         libraryViewMode: uiState.libraryViewMode,
         accountsView: uiState.accountsView,
         addonListView: uiState.addonListView,
         hideDisabledAddons: readBoolean(STORAGE_KEYS.hideDisabledAddons, false),
+        addonPreviewCount: readNumber(STORAGE_KEYS.addonPreviewCount, 4),
         customThemes: readJsonArray(STORAGE_KEYS.customThemes),
         activity: {
             timeFilter: isActivityTimeFilter(getStorageItem(STORAGE_KEYS.activityTimeFilter))
@@ -260,6 +272,22 @@ export function applySyncedSettings(settings: SyncedSettings | undefined, overwr
         applied.privacyMode = settings.privacyMode
     }
 
+    if (typeof settings.privacyObscureNames === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureNames)) {
+        setStorageItem(STORAGE_KEYS.privacyObscureNames, String(settings.privacyObscureNames))
+        useUIStore.setState({ privacyObscureNames: settings.privacyObscureNames })
+        applied.privacyObscureNames = settings.privacyObscureNames
+    }
+    if (typeof settings.privacyObscureUrls === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureUrls)) {
+        setStorageItem(STORAGE_KEYS.privacyObscureUrls, String(settings.privacyObscureUrls))
+        useUIStore.setState({ privacyObscureUrls: settings.privacyObscureUrls })
+        applied.privacyObscureUrls = settings.privacyObscureUrls
+    }
+    if (typeof settings.privacyObscureProfiles === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureProfiles)) {
+        setStorageItem(STORAGE_KEYS.privacyObscureProfiles, String(settings.privacyObscureProfiles))
+        useUIStore.setState({ privacyObscureProfiles: settings.privacyObscureProfiles })
+        applied.privacyObscureProfiles = settings.privacyObscureProfiles
+    }
+
     if (isViewMode(settings.libraryViewMode) && shouldWrite(STORAGE_KEYS.libraryViewMode)) {
         setStorageItem(STORAGE_KEYS.libraryViewMode, settings.libraryViewMode)
         useUIStore.setState({ libraryViewMode: settings.libraryViewMode })
@@ -281,6 +309,11 @@ export function applySyncedSettings(settings: SyncedSettings | undefined, overwr
     if (typeof settings.hideDisabledAddons === 'boolean' && shouldWrite(STORAGE_KEYS.hideDisabledAddons)) {
         setStorageItem(STORAGE_KEYS.hideDisabledAddons, String(settings.hideDisabledAddons))
         applied.hideDisabledAddons = settings.hideDisabledAddons
+    }
+
+    if (typeof settings.addonPreviewCount === 'number' && shouldWrite(STORAGE_KEYS.addonPreviewCount)) {
+        setStorageItem(STORAGE_KEYS.addonPreviewCount, String(settings.addonPreviewCount))
+        applied.addonPreviewCount = settings.addonPreviewCount
     }
 
     const activity = getIncomingActivitySettings(settings)

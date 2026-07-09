@@ -44,14 +44,17 @@ export const AccountListRow = memo(function AccountListRow({
     const { toast } = useToast()
     const { syncAccount, repairAccount, loading } = useAccounts()
     const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
+    const privacyObscureNames = useUIStore((state) => state.privacyObscureNames)
     const [isMenuOpen, setIsMenuOpen] = useState(false)
 
     const accountEmail = getAccountEmail(account)
     const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
     const displayName =
-        isPrivacyMode && !isNameCustomized
-            ? account.name.includes('@') ? maskEmail(account.name) : '********'
-            : (account.name || accountEmail || 'Unnamed Account')
+        isPrivacyMode && privacyObscureNames
+            ? 'Account'
+            : isPrivacyMode && !isNameCustomized
+                ? account.name.includes('@') ? maskEmail(account.name) : '********'
+                : (account.name || accountEmail || 'Unnamed Account')
 
     const updateCount = useAddonStore(
         useShallow((state) =>

@@ -123,7 +123,7 @@ export interface BulkResult {
  * Storage keys for LocalForage
  */
 export const STORAGE_KEYS = {
-  ADDON_LIBRARY: 'stremio-manager:addon-library',
-  ACCOUNT_ADDONS: 'stremio-manager:account-addons',
-  ACCOUNTS: 'stremio-manager:accounts',
+  ADDON_LIBRARY: 'aioman:addon-library',
+  ACCOUNT_ADDONS: 'aioman:account-addons',
+  ACCOUNTS: 'aioman:accounts',
 } as const

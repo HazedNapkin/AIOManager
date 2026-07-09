@@ -5,7 +5,7 @@ import { encrypt, decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 import localforage from 'localforage'
 
-const STORAGE_KEY = 'stremio-manager:key-vault'
+const STORAGE_KEY = 'aioman:key-vault'
 const TOMBSTONE_KEY = `${STORAGE_KEY}:tombstones`
 
 let _vaultQueue: Promise<void> = Promise.resolve()

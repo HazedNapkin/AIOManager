@@ -187,7 +187,8 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     }
 
     const handleCloudRecoveryLogin = async () => {
-        if (!loginId || !loginPass) {
+        const effectiveId = loginId || auth.id
+        if (!effectiveId || !loginPass) {
             toast({ variant: "destructive", title: "Missing credentials", description: "Enter your UUID and password." })
             return
         }
@@ -196,12 +197,17 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         setLoginError(null)
         const localAuthBackup = clearLocalAuthSecrets()
         try {
-            await login(loginId, loginPass, false, true)
+            await login(effectiveId, loginPass, false, true)
             toast({ title: "Signed in", description: "This browser session was reset and your cloud data was restored." })
         } catch (e) {
             restoreLocalAuthSecrets(localAuthBackup)
-            setLoginError((e as Error).message)
-            if (import.meta.env.DEV) console.error("Cloud recovery login error:", e)
+            const msg = (e as Error).message
+            console.error("Cloud recovery login error:", e)
+            if (msg.includes("Encryption metadata") || msg.includes("Encryption Mismatch")) {
+                setLoginError("Could not decrypt your cloud data with this password. Make sure you are using the correct UUID and password from when you registered.")
+            } else {
+                setLoginError(msg)
+            }
         } finally {
             setLoading(false)
         }

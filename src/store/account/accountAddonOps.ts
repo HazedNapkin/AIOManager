@@ -523,7 +523,7 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, timestampedOrder)
+        backgroundSync(accountId, account, timestampedOrder, { allowCollectionShrink: true }, 'reorder')
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to reorder addons'
         store.setState({ error: message })

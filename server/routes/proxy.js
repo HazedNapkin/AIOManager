@@ -537,7 +537,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
 
         const friendlyAction = actionMap[type] || `Operation: ${type}`
-        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (String(accountContext) === PROFILE_SWAP_CONTEXT || String(accountContext) === 'Setup Swap' || String(accountContext) === 'Clear All' || String(accountContext) === 'Bulk Op')
+        const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true
         delete payload.allowCollectionShrink
 
         if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser') {

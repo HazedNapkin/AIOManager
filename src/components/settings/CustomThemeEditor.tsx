@@ -121,6 +121,7 @@ interface EditorState {
     mutedLightness: number
     destructiveHue: number
     rawPalette: Record<string, string> | null
+    customCss: string
 }
 
 type EditorAction =
@@ -158,12 +159,13 @@ function makeDefaultState(t?: CustomThemeData | null): EditorState {
         mutedLightness: parseHsl(t.palette.mutedForeground).l,
         destructiveHue: parseHsl(t.palette.destructive).h,
         rawPalette: t.palette as unknown as Record<string, string>,
+        customCss: t.customCss ?? '',
     }
     return {
         hue: 220, saturation: 70, bgTint: 0.4,
         bgLightness: 9, cardLightness: 16, borderLightness: 22,
         primaryLightness: 60, textLightness: 98, mutedLightness: 55,
-        destructiveHue: 0, rawPalette: null,
+        destructiveHue: 0, rawPalette: null, customCss: '',
     }
 }
 
@@ -305,7 +307,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     const [emoji, setEmoji] = useState(editingTheme?.emoji || '🎨')
     const [emojiSearch, setEmojiSearch] = useState('')
     const [base, setBase] = useState<'dark' | 'light' | 'oled'>(editingTheme?.base || 'dark')
-    const [activeTab, setActiveTab] = useState<'edit' | 'import'>('edit')
+    const [activeTab, setActiveTab] = useState<'edit' | 'import' | 'css'>('edit')
     const [rawPaletteText, setRawPaletteText] = useState('')
     const [rawPaletteError, setRawPaletteError] = useState('')
 
@@ -485,7 +487,6 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         const currentBase = current.rawPalette ?? (palette as unknown as Record<string, string>)
         const updated: Record<string, string> = { ...currentBase, [token]: hslStr }
         if (token === 'border') updated.input = hslStr
-        if (token === 'primary') updated.ring = hslStr
         undoStackRef.current = [...undoStackRef.current, current].slice(-MAX_UNDO)
         setUndoCount(undoStackRef.current.length)
         dispatch({ type: 'SET', key: 'rawPalette', value: updated })
@@ -521,6 +522,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 destructiveHue: parseHsl(parsed.destructive).h,
                 hue: Math.round((parsed.primary.split(' ').map(parseFloat))[0] || 220),
                 saturation: Math.round((parsed.primary.split(' ').map(parseFloat))[1] || 70),
+                ...(typeof parsed.customCss === 'string' ? { customCss: parsed.customCss } : {}),
             })
             setRawPaletteError('')
             setActiveTab('edit')
@@ -533,10 +535,11 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     const handleCopyJson = useCallback(() => {
         const out: Record<string, string> = {}
         for (const [k, v] of Object.entries(palette)) { if (typeof v === 'string') out[k] = v }
+        if (editorState.customCss?.trim()) out.customCss = editorState.customCss
         navigator.clipboard.writeText(JSON.stringify(out, null, 2)).then(() => {
             setCopiedJson(true); setTimeout(() => setCopiedJson(false), 2000)
         }).catch(() => {})
-    }, [palette])
+    }, [palette, editorState.customCss])
 
     const isValid = name.trim().length > 0
     const isEditing = !!editingTheme && customThemes.some(ct => ct.id === editingTheme.id)
@@ -550,10 +553,9 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 ...basePalette,
                 ...Object.fromEntries(Object.entries(editorState.rawPalette).filter(([, v]) => v != null && v !== '')),
                 input: editorState.rawPalette.border ?? basePalette.border,
-                ring: editorState.rawPalette.primary ?? basePalette.primary,
               }
             : palette
-        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette: finalPalette }
+        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette: finalPalette, customCss: editorState.customCss.trim() || undefined }
         if (isEditing) {
             updateCustomTheme(id, data)
         } else {
@@ -632,6 +634,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                         {([
                             { id: 'edit',   label: 'Edit'   },
                             { id: 'import', label: 'JSON' },
+                            { id: 'css',    label: 'CSS'   },
                         ] as const).map(({ id, label }) => (
                             <button
                                 key={id}
@@ -833,6 +836,26 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                         </div>
                     )}
 
+                    {activeTab === 'css' && (
+                        <div className="px-5 py-5 space-y-4">
+                            <div>
+                                <p className="text-sm font-medium">Custom CSS</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Add custom CSS that applies when this theme is active. Use CSS variables like <span className="font-mono text-xs bg-muted/40 px-1 rounded-lg">var(--primary)</span> to reference theme colors. This enables unique effects like custom borders, backgrounds, shadows, and animations.
+                                </p>
+                            </div>
+                            <textarea
+                                className="w-full h-48 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 resize-y focus:outline-none focus:ring-1 focus:ring-primary/40"
+                                placeholder={'/* Example: thick black borders like comic books */\n* {\n  border-radius: 2px !important;\n  border-width: 2px !important;\n}\n\n/* Or a subtle glow on cards */\n.card {\n  box-shadow: 0 0 20px hsl(var(--primary) / 0.15);\n}'}
+                                value={editorState.customCss}
+                                onChange={e => dispatch({ type: 'SET', key: 'customCss', value: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                CSS is scoped globally when the theme is active. Be careful with <span className="font-mono text-xs">!important</span> overrides.
+                            </p>
+                        </div>
+                    )}
+
                     {activeTab === 'import' && (
                         <div className="px-5 py-5 space-y-4">
                             <div className="flex items-center gap-2">
@@ -842,7 +865,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                 </Button>
                             </div>
                             <pre className="w-full h-44 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 overflow-auto resize-y text-foreground/80">
-                                {JSON.stringify(Object.fromEntries(Object.entries(palette).filter(([_k, v]) => typeof v === 'string')), null, 2)}
+                                {JSON.stringify({ ...Object.fromEntries(Object.entries(palette).filter(([_k, v]) => typeof v === 'string')), ...(editorState.customCss?.trim() ? { customCss: editorState.customCss } : {}) }, null, 2)}
                             </pre>
                             <div className="border-t border-border/30 pt-4 space-y-3">
                                 <p className="text-xs font-medium text-muted-foreground uppercase">Import Palette</p>

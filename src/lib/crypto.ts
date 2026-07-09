@@ -5,9 +5,9 @@ const SALT_LENGTH = 16
 const IV_LENGTH = 12
 
 const STORAGE_KEYS = {
-  USER_SALT: 'stremio-manager:user-salt',
-  PASSWORD_HASH: 'stremio-manager:password-hash',
-  SESSION_KEY: 'stremio-manager:session-key',
+  USER_SALT: 'aioman:user-salt',
+  PASSWORD_HASH: 'aioman:password-hash',
+  SESSION_KEY: 'aioman:session-key',
 }
 
 /**

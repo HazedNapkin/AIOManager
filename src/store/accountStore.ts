@@ -18,9 +18,9 @@ import { trace } from '@/lib/trace'
 
 import { create } from 'zustand'
 
-export const STORAGE_KEY = 'stremio-manager:accounts'
-export const CHANGELOG_KEY = 'stremio-manager:changelog'
-export const BACKUP_KEY = 'stremio-manager:accounts:backup'
+export const STORAGE_KEY = 'aioman:accounts'
+export const CHANGELOG_KEY = 'aioman:changelog'
+export const BACKUP_KEY = 'aioman:accounts:backup'
 
 export const safeUUID = () => {
     try { return crypto.randomUUID() } catch {
@@ -349,7 +349,7 @@ export interface AccountStore {
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
             id: string,
-            data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean }
+            data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
       ) => Promise<void>
       updateAccountNote: (accountId: string, note: string) => Promise<void>
       toggleAddonProtection: (
@@ -795,7 +795,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         const remainingRules = failoverState.rules.filter(r => r.accountId !== id)
                         useFailoverStore.setState({ rules: remainingRules })
                         const localforageFO = await import('localforage')
-                        await localforageFO.default.setItem('stremio-manager:failover-rules', remainingRules)
+                        await localforageFO.default.setItem('aioman:failover-rules', remainingRules)
                   }
             } catch (e) {
                   if (import.meta.env.DEV) console.warn('[Account] Autopilot rule cleanup failed (non-blocking):', e)
@@ -904,7 +904,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return importAccounts(json, isSilent, mode, localDecryptionKey)
       },
 
-      updateAccount: async (id: string, data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean }) => {
+      updateAccount: async (id: string, data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {
             // The re-auth branch awaits (login + getAddons) then writes a snapshot taken before the
             // await, which would clobber any addon op that landed meanwhile. Hold the per-account
             // mutex so this serializes with addon writes instead of racing them.
@@ -923,6 +923,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         emoji: data.emoji,
                         note: data.note || undefined,
                         hideLastWatched: data.hideLastWatched ?? false,
+                        hideAddonPreview: data.hideAddonPreview ?? false,
+                        hidePlatformLogos: data.hidePlatformLogos ?? false,
                   }
                   if (data.authKey || (data.email && data.password)) {
                         const encryptionKey = getEncryptionKey()

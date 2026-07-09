@@ -9,7 +9,7 @@ import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/hooks/use-toast'
 import { isSyncEligibleConnection } from '@/types/connection'
 
-const STORAGE_KEY = 'stremio-manager:failover-rules'
+const STORAGE_KEY = 'aioman:failover-rules'
 
 export interface AutopilotCycleStats {
     scanned: number
@@ -385,7 +385,7 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
 }
 
 const DELETED_RULES_MAX = 100
-const DELETED_RULES_KEY = 'stremio-manager:failover-deleted'
+const DELETED_RULES_KEY = 'aioman:failover-deleted'
 
 const trackDeletedRule = async (ruleId: string) => {
     try {

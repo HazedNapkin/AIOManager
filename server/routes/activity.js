@@ -165,7 +165,7 @@ export function registerActivityRoutes(fastify, activityEngine) {
         const syncUser = await validateSyncAuth(request, reply)
         if (!syncUser) return { error: 'Invalid credentials' }
 
-        const { accounts } = request.body
+        const { accounts, allAccountIds } = request.body
         if (!Array.isArray(accounts)) {
             reply.status(400)
             return { error: 'Expected { accounts: [...] }' }
@@ -183,6 +183,7 @@ export function registerActivityRoutes(fastify, activityEngine) {
         const existingByAccount = new Map(existingRows.map(row => [row.account_id, row]))
         let upserted = 0
         let skipped = 0
+        let pruned = 0
         await db.tx(async (tx) => {
             for (const acc of capped) {
                 if (!acc.accountId || !acc.authKey) continue
@@ -221,8 +222,29 @@ export function registerActivityRoutes(fastify, activityEngine) {
                 }
                 upserted++
             }
+
+            const knownIds = Array.isArray(allAccountIds) && allAccountIds.length > 0
+                ? new Set(allAccountIds)
+                : new Set(capped.filter(a => a.accountId).map(a => a.accountId))
+            for (const existingId of existingByAccount.keys()) {
+                if (!knownIds.has(existingId)) {
+                    await tx.run(
+                        'DELETE FROM server_credentials WHERE sync_user = $1 AND account_id = $2',
+                        [syncUser, existingId]
+                    )
+                    await tx.run(
+                        'DELETE FROM activity_events WHERE sync_user = $1 AND account_id = $2',
+                        [syncUser, existingId]
+                    )
+                    await tx.run(
+                        'DELETE FROM activity_snapshots WHERE sync_user = $1 AND account_id = $2',
+                        [syncUser, existingId]
+                    )
+                    pruned++
+                }
+            }
         })
 
-        return { synced: upserted, skipped }
+        return { synced: upserted, skipped, pruned }
     })
 }

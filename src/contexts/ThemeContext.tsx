@@ -82,6 +82,7 @@ export interface CustomThemeData {
     hue: number
     saturation: number
     palette: ThemePalette
+    customCss?: string
 }
 
 function loadCustomThemes(): CustomThemeData[] {
@@ -128,7 +129,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
-const STORAGE_KEY = 'stremio-manager-theme'
+const STORAGE_KEY = 'aioman-theme'
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
     const [customThemes, setCustomThemes] = useState<CustomThemeData[]>(loadCustomThemes)
@@ -150,6 +151,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
                     localStorage.setItem(STORAGE_KEY, saved)
                     localStorage.setItem('aio-theme-migrated-v2', '1')
                 }
+            }
+            const migratedV3 = localStorage.getItem('aio-theme-migrated-v3')
+            if (!migratedV3 && saved) {
+                if (saved === 'synthwave-84') {
+                    saved = 'synthwave'
+                    localStorage.setItem(STORAGE_KEY, saved)
+                }
+                localStorage.setItem('aio-theme-migrated-v3', '1')
             }
             const allOptions = [...THEME_OPTIONS, ...loadCustomThemes().map(customToOption)]
             const match = saved ? allOptions.find(t => t.id === saved) : undefined
@@ -212,15 +221,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const allOptions = getAllThemeOptions()
         const themeOption = allOptions.find(t => t.id === theme)
         if (themeOption) {
-            // Force re-apply user theme to override any lingering Fumadocs CSS vars
             applyTheme(themeOption.palette)
             document.documentElement.setAttribute('data-theme', theme)
 
-            // Update theme-color meta tag for PWA/mobile status bar
             const metaThemeColor = document.querySelector('meta[name="theme-color"]')
             if (metaThemeColor) {
                 metaThemeColor.setAttribute('content', themeOption.preview.background)
             }
+
+            const customTheme = customThemes.find(t => t.id === theme)
+            const cssContent = customTheme?.customCss?.trim() || themeOption.customCss?.trim()
+            const existingStyleEl = document.getElementById('aioman-custom-theme-css')
+            if (cssContent) {
+                if (existingStyleEl) {
+                    existingStyleEl.textContent = cssContent
+                } else {
+                    const styleEl = document.createElement('style')
+                    styleEl.id = 'aioman-custom-theme-css'
+                    styleEl.textContent = cssContent
+                    document.head.appendChild(styleEl)
+                }
+            } else if (existingStyleEl) {
+                existingStyleEl.remove()
+            }
+        } else {
+            const existingStyleEl = document.getElementById('aioman-custom-theme-css')
+            if (existingStyleEl) existingStyleEl.remove()
         }
     }, [theme, customThemes, getAllThemeOptions, isDocs, isLight])
 

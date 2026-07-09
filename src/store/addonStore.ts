@@ -239,7 +239,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       const [library, accountStates, latestVersions] = await Promise.all([
         loadAddonLibrary(),
         loadAccountAddonStates(),
-        localforage.getItem<Record<string, string>>('stremio-manager:latest-versions'),
+        localforage.getItem<Record<string, string>>('aioman:latest-versions'),
       ])
 
       set({
@@ -404,7 +404,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     }
 
     set({ latestVersions: pruned })
-    localforage.setItem('stremio-manager:latest-versions', pruned).catch(e => { if (import.meta.env.DEV) console.error(e) })
+    localforage.setItem('aioman:latest-versions', pruned).catch(e => { if (import.meta.env.DEV) console.error(e) })
   },
 
   updateManifestChangeHints: (hints) => {
@@ -794,7 +794,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
   importAccountStates: async (states: Record<string, AccountAddonState>) => {
     const currentStates = { ...get().accountStates, ...states }
     set({ accountStates: currentStates })
-    await localforage.setItem('stremio-manager:account-addons', currentStates)
+    await localforage.setItem('aioman:account-addons', currentStates)
   },
 
   bulkApplySavedAddons: async (savedAddonIds, accountIds, allowProtected?) => {
@@ -1161,8 +1161,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       loading: false,
     })
     await Promise.all([
-      localforage.removeItem('stremio-manager:addon-library'),
-      localforage.removeItem('stremio-manager:account-addons'),
+      localforage.removeItem('aioman:addon-library'),
+      localforage.removeItem('aioman:account-addons'),
     ])
   },
   replaceTransportUrlUniversally: async (savedAddonId, oldUrl, newUrl, accountId, descriptor) => {

@@ -27,6 +27,8 @@ export interface Account {
   emoji?: string
   note?: string
   hideLastWatched?: boolean
+  hideAddonPreview?: boolean
+  hidePlatformLogos?: boolean
   profiles?: AccountProfile[]
   activeProfileId?: string
   connections?: Connection[]

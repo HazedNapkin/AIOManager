@@ -11,10 +11,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
-import { useAccountStore } from '@/store/accountStore'
+import { useAccountStore, hasPlatformConnection, getStremioAuthKey } from '@/store/accountStore'
 import {
   AlertCircle,
   Check,
@@ -51,6 +50,8 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PLATFORM_REGISTRY } from '@/lib/platform-registry'
 import { ConnectionManager } from '@/components/providers/ConnectionManager'
+import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
+import { AccountAvatar } from './AccountAvatar'
 
 type AccountAuthMode = 'credentials' | 'oauth' | 'authKey'
 type WizardStep = 'identity' | 'platform'
@@ -93,6 +94,8 @@ export function AccountForm() {
   const [emoji, setEmoji] = useState('')
   const [emojiSearch, setEmojiSearch] = useState('')
   const [hideLastWatched, setHideLastWatched] = useState(false)
+  const [hideAddonPreview, setHideAddonPreview] = useState(false)
+  const [hidePlatformLogos, setHidePlatformLogos] = useState(false)
   const connectionSubDialogRef = useRef(false)
   const subDialogClosedAtRef = useRef(0)
 
@@ -132,6 +135,8 @@ export function AccountForm() {
       setAccentColor(editingAccount.accentColor)
       setEmoji(editingAccount.emoji || '')
       setHideLastWatched(editingAccount.hideLastWatched ?? false)
+      setHideAddonPreview(editingAccount.hideAddonPreview ?? false)
+      setHidePlatformLogos(editingAccount.hidePlatformLogos ?? false)
     } else {
       setMode('credentials')
       setAuthIntent('login')
@@ -211,6 +216,8 @@ export function AccountForm() {
             accentColor: accentColor === 'none' ? undefined : accentColor,
             emoji: emoji.trim() || undefined,
             hideLastWatched,
+            hideAddonPreview,
+            hidePlatformLogos,
           })
         } else {
           await addAccountByCredentials(
@@ -230,6 +237,8 @@ export function AccountForm() {
             accentColor: accentColor === 'none' ? undefined : accentColor,
             emoji: emoji.trim() || undefined,
             hideLastWatched,
+            hideAddonPreview,
+            hidePlatformLogos,
           })
         } else {
           await addAccountByAuthKey(
@@ -418,6 +427,8 @@ export function AccountForm() {
           accentColor: accentColor === 'none' ? undefined : accentColor,
           emoji: emoji.trim() || undefined,
           hideLastWatched,
+          hideAddonPreview,
+          hidePlatformLogos,
         })
       } else {
         if (mode === 'authKey') {
@@ -933,6 +944,26 @@ export function AccountForm() {
               onCheckedChange={setHideLastWatched}
             />
           </div>
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium">Hide addon preview</p>
+              <p className="text-xs text-muted-foreground">Don't show addon logos on the card.</p>
+            </div>
+            <Switch
+              checked={hideAddonPreview}
+              onCheckedChange={setHideAddonPreview}
+            />
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <div>
+              <p className="text-sm font-medium">Hide platform logos</p>
+              <p className="text-xs text-muted-foreground">Don't show connection logos on the card.</p>
+            </div>
+            <Switch
+              checked={hidePlatformLogos}
+              onCheckedChange={setHidePlatformLogos}
+            />
+          </div>
         </div>
       )}
 
@@ -979,7 +1010,6 @@ export function AccountForm() {
               const hasAccent = accentColor && accentColor !== 'none'
               const displayName = name || (email ? email.split('@')[0] : 'My Account')
               const addonCount = loading ? '-' : editingAccount?.addons.length ?? 0
-              const protectedCount = editingAccount?.addons.filter(a => a.flags?.protected).length ?? 0
               return (
                 <Card
                   className="pointer-events-none relative rounded-[1.35rem] border-border/45 bg-card/80 shadow-sm"
@@ -987,21 +1017,15 @@ export function AccountForm() {
                   <CardHeader className="relative z-10 px-4 pb-3 pt-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="relative w-10 h-10 shrink-0 flex items-center justify-center">
-                          <SquircleOverlay />
+                        <div className="relative shrink-0">
+                          <AccountAvatar account={{ name: displayName, email, emoji, status: 'active' }} size="lg" showStatus={false} />
                           {hasAccent && (
                             <span
-                              className="absolute inset-0 rounded-xl opacity-70"
+                              className="pointer-events-none absolute inset-0 rounded-xl"
                               style={{ boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accentColor} 65%, transparent)` }}
                               aria-hidden="true"
                             />
                           )}
-                          <span className="relative z-10 text-lg leading-none">
-                            {emoji
-                              ? emoji
-                              : <span className="text-sm font-bold text-muted-foreground">{displayName[0]?.toUpperCase()}</span>
-                            }
-                          </span>
                         </div>
                         <div className="flex-1 min-w-0">
                           <CardTitle className="flex items-center gap-2 text-base font-semibold truncate tracking-tight">
@@ -1010,9 +1034,19 @@ export function AccountForm() {
                           {email && (
                             <p className="text-xs text-muted-foreground mt-0.5 truncate">{email}</p>
                           )}
+                          {liveAccount && (hasPlatformConnection(liveAccount) || (liveAccount.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                            <div className="flex items-center gap-1 mt-1">
+                              {getStremioAuthKey(liveAccount) && (
+                                <PlatformLogo platform="stremio" className="h-5 w-5" />
+                              )}
+                              {(liveAccount.connections || []).filter(c => c.platform !== 'stremio').map(conn => (
+                                <PlatformLogo key={conn.id} platform={conn.platform} className={cn("h-5 w-5", conn.enabled === false && "opacity-40 grayscale")} isHydra={conn.connectionType === 'hydra-outbound'} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <Button variant="ghost" className="h-8 w-8 rounded-full p-0 opacity-30 shrink-0">
+                      <Button variant="ghost" className="h-8 w-8 rounded-full p-0 text-muted-foreground opacity-30 shrink-0">
                         <MoreVertical className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1024,26 +1058,22 @@ export function AccountForm() {
                           <span className="font-semibold text-foreground">{addonCount}</span>
                           addon{addonCount === 1 ? '' : 's'}
                         </span>
-                        {protectedCount > 0 && (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="text-border">/</span>
-                            <ShieldCheck className="h-3 w-3 shrink-0 text-success/80" />
-                            <span className="font-semibold text-foreground">{protectedCount}</span>
-                            protected
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(!liveAccount || liveAccount.status !== 'error') && (
+                          <span className="inline-flex h-6 items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 text-xs font-semibold text-success">
+                            <ShieldCheck className="h-3 w-3" />
+                            Healthy
                           </span>
                         )}
                       </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        <span className="inline-flex h-6 items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 text-xs font-semibold text-success">
-                          <ShieldCheck className="h-3 w-3" />
-                          Healthy
-                        </span>
-                      </div>
                     </div>
                   </CardContent>
-                  <div className="px-4 pb-4 pt-1">
-                    <span className="text-xs text-muted-foreground/60">Synced 2m ago</span>
-                  </div>
+                  {liveAccount?.lastSync && (
+                    <div className="px-4 pb-4 pt-1">
+                      <span className="text-xs text-muted-foreground/60">Synced {new Date(liveAccount.lastSync).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                    </div>
+                  )}
                 </Card>
               )
             })()}
@@ -1206,6 +1236,26 @@ export function AccountForm() {
                 <Switch
                   checked={hideLastWatched}
                   onCheckedChange={setHideLastWatched}
+                />
+              </div>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm font-medium">Hide addon preview</p>
+                  <p className="text-xs text-muted-foreground">Don't show addon logos on the card.</p>
+                </div>
+                <Switch
+                  checked={hideAddonPreview}
+                  onCheckedChange={setHideAddonPreview}
+                />
+              </div>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm font-medium">Hide platform logos</p>
+                  <p className="text-xs text-muted-foreground">Don't show connection logos on the card.</p>
+                </div>
+                <Switch
+                  checked={hidePlatformLogos}
+                  onCheckedChange={setHidePlatformLogos}
                 />
               </div>
             </div>

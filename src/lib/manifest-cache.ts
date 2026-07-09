@@ -8,7 +8,7 @@ export interface CachedManifest {
 
 const CACHE_TTL = 10 * 60 * 1000
 const MAX_ENTRIES = 500
-const PERSIST_KEY = 'stremio-manager:manifest-cache'
+const PERSIST_KEY = 'aioman:manifest-cache'
 const PERSIST_DEBOUNCE_MS = 2000
 
 const FAILURE_BACKOFF_MS = 5 * 60 * 1000

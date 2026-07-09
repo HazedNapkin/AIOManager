@@ -107,7 +107,7 @@ export async function updateSavedAddonManifest(id: string): Promise<SavedAddonMa
       useAddonStore.setState(stateUpdates)
     }
     if (latestVersionsChanged) {
-      localforage.setItem('stremio-manager:latest-versions', latestVersions).catch(e => { if (import.meta.env.DEV) console.error(e) })
+      localforage.setItem('aioman:latest-versions', latestVersions).catch(e => { if (import.meta.env.DEV) console.error(e) })
     }
 
     if (import.meta.env.DEV) console.log(

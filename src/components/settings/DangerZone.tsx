@@ -70,7 +70,7 @@ export function DangerZone() {
             }
             useFailoverStore.setState({ rules: [] })
             const localforageModule = await import('localforage')
-            await localforageModule.default.setItem('stremio-manager:failover-rules', [])
+            await localforageModule.default.setItem('aioman:failover-rules', [])
             triggerSync()
             toast({ title: 'Autopilot Purged', description: 'All rules have been deleted from local and server.' })
         } catch (e) {

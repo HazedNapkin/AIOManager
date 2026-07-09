@@ -282,9 +282,6 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       processedRemoteNormUrls.add(normalizeAddonUrl(remoteAddon.transportUrl))
       processedRemoteNormUrls.add(normLocal)
       merged++
-    } else if (options.keepMissingLocal) {
-      finalAddons.push({ ...localAddon })
-      keptMissingLocal++
     } else {
       const hasCustomizations = localAddon.metadata?.customName || localAddon.metadata?.customLogo || localAddon.metadata?.customDescription;
       const isProtected = localAddon.flags?.protected;
@@ -296,6 +293,9 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       } else if (isRecentLocalChange || hasCustomizations || isProtected || hasNote) {
         finalAddons.push({ ...localAddon })
         keptSpecial++
+      } else if (options.keepMissingLocal) {
+        finalAddons.push({ ...localAddon })
+        keptMissingLocal++
       } else {
         dropped++
       }

@@ -7,6 +7,8 @@ import { GripVertical, Layers, Package, Plus, User } from 'lucide-react'
 import { ProfileDialog } from '../profiles/ProfileDialog'
 import { ProfileReorderDialog } from '../profiles/ProfileReorderDialog'
 import { AnimatedSettingsIcon } from '../ui/AnimatedIcons'
+import { useShallow } from 'zustand/react/shallow'
+import { useUIStore } from '@/store/uiStore'
 
 interface LibrarySidebarProps {
   profiles: Profile[]
@@ -88,6 +90,15 @@ export function LibrarySidebar({
   onDeleteProfile,
 }: LibrarySidebarProps) {
   const [showProfileReorderDialog, setShowProfileReorderDialog] = useState(false)
+  const { isPrivacyModeEnabled, privacyObscureProfiles } = useUIStore(
+    useShallow((state) => ({
+      isPrivacyModeEnabled: state.isPrivacyModeEnabled,
+      privacyObscureProfiles: state.privacyObscureProfiles
+    }))
+  )
+  const obscureProfiles = isPrivacyModeEnabled && privacyObscureProfiles
+  const profileDisplayName = (profile: Profile, index: number) =>
+    obscureProfiles ? `Profile ${String.fromCharCode(65 + index)}` : profile.name
 
   const handleMobileProfileSelect = (id: string | null) => {
     onSelectProfile(id)
@@ -116,11 +127,11 @@ export function LibrarySidebar({
         icon={<Package className="shrink-0" />}
         onClick={() => mobile ? handleMobileProfileSelect('unassigned') : onSelectProfile('unassigned')}
       />
-      {mobile && profiles.map(profile => (
+      {mobile && profiles.map((profile, index) => (
           <FilterButton
             key={profile.id}
             active={selectedProfileId === profile.id}
-            label={profile.name}
+            label={profileDisplayName(profile, index)}
             count={profileAddonCounts[profile.id] || 0}
             showCount={(profileAddonCounts[profile.id] || 0) > 0}
             icon={<User className="shrink-0" />}
@@ -199,11 +210,11 @@ export function LibrarySidebar({
 
           {profiles.length > 0 && (
             <div className="mt-2 min-h-0 flex-1 space-y-0.5 overflow-y-auto border-t border-border/35 pt-2 pr-0.5 custom-scrollbar">
-              {profiles.map(profile => (
+              {profiles.map((profile, index) => (
                   <div key={profile.id} className="group flex items-center gap-1">
                     <FilterButton
                       active={selectedProfileId === profile.id}
-                      label={profile.name}
+                      label={profileDisplayName(profile, index)}
                       count={profileAddonCounts[profile.id] || 0}
                       showCount={(profileAddonCounts[profile.id] || 0) > 0}
                       icon={<User className="shrink-0" />}
@@ -274,9 +285,9 @@ export function LibrarySidebar({
             {renderProfileFilters(true)}
             {profiles.length > 0 && (
               <div className="mt-1 space-y-0.5 border-t border-border/30 pt-1">
-                {profiles.map(profile => (
+                {profiles.map((profile, index) => (
                   <div key={profile.id} className="flex items-center gap-1">
-                    <span className="flex-1 truncate px-2 py-1 text-xs text-muted-foreground">{profile.name}</span>
+                    <span className="flex-1 truncate px-2 py-1 text-xs text-muted-foreground">{profileDisplayName(profile, index)}</span>
                     <ProfileDialog
                       profile={profile}
                       onDelete={onDeleteProfile}

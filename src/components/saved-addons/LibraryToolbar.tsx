@@ -6,6 +6,8 @@ import { AnimatedRefreshIcon, AnimatedUpdateIcon } from '@/components/ui/Animate
 import { cn } from '@/lib/utils'
 import { Check, Grid, List, Plus, Search, SlidersHorizontal, Wand2, X } from 'lucide-react'
 import type { Profile } from '@/types/profile'
+import { useShallow } from 'zustand/react/shallow'
+import { useUIStore } from '@/store/uiStore'
 
 interface LibraryToolbarProps {
   showMobileFilters: boolean
@@ -54,9 +56,17 @@ export function LibraryToolbar({
   onOpenAddDialog,
   onToggleMobileFilters,
 }: LibraryToolbarProps) {
+  const { isPrivacyModeEnabled, privacyObscureProfiles } = useUIStore(
+    useShallow((state) => ({
+      isPrivacyModeEnabled: state.isPrivacyModeEnabled,
+      privacyObscureProfiles: state.privacyObscureProfiles
+    }))
+  )
+  const obscureProfiles = isPrivacyModeEnabled && privacyObscureProfiles
   const searchPlaceholder = (() => {
     if (!selectedProfileId) return 'Search by name, tags, or URL...'
     if (selectedProfileId === 'unassigned') return 'Search unassigned addons...'
+    if (obscureProfiles) return "Search this profile's addons..."
     const profile = profiles.find(p => p.id === selectedProfileId)
     if (!profile) return 'Search...'
     const possessive = profile.name.endsWith('s') ? `${profile.name}'` : `${profile.name}'s`

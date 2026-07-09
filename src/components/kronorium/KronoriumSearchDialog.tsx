@@ -11,13 +11,24 @@ import {
 } from 'fumadocs-ui/components/dialog/search'
 import { useDocsSearch } from 'fumadocs-core/search/client'
 import { searchDocs } from '@/lib/source'
+import { useNavigate } from 'react-router-dom'
+import { useCallback } from 'react'
 
-// fumadocs' static search client always fetches an exported index from a URL, which this Vite SPA
-// doesn't serve, so we drive the dialog with an in-memory client that searches page bodies.
 export default function KronoriumSearchDialog(props: SharedProps) {
     const { search, setSearch, query } = useDocsSearch({
         client: { search: (q: string) => searchDocs(q) },
     })
+    const navigate = useNavigate()
+
+    const handleContentClick = useCallback((e: React.MouseEvent) => {
+        const target = e.target as HTMLElement
+        const anchor = target.closest('a')
+        if (anchor && anchor.pathname.startsWith('/kronorium')) {
+            e.preventDefault()
+            navigate(anchor.pathname + anchor.search + anchor.hash)
+            props.onOpenChange?.(false)
+        }
+    }, [navigate, props.onOpenChange])
 
     return (
         <SearchDialog
@@ -26,10 +37,8 @@ export default function KronoriumSearchDialog(props: SharedProps) {
             isLoading={query.isLoading}
             {...props}
         >
-            {/* Drop the backdrop-blur: re-blurring the whole docs page each frame janks the
-                open/scroll animation. A plain dimmed overlay is far cheaper and looks ~the same. */}
             <SearchDialogOverlay className="backdrop-blur-none" />
-            <SearchDialogContent>
+            <SearchDialogContent onClickCapture={handleContentClick}>
                 <SearchDialogHeader>
                     <SearchDialogIcon />
                     <SearchDialogInput placeholder="Search the Kronorium..." />

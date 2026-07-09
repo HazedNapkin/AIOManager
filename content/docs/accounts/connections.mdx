@@ -41,6 +41,10 @@ This is the common case. A backendless app, for example Fusion (which syncs acro
 1. In the app, enter your **AIOManager instance URL** and your **account API key**.
 2. Once the app syncs, it appears in your **Connections** list as a card alongside your other platforms, marked **Pull**, with a Synced/Stale indicator and its last-sync time.
 
+<Callout type="info">
+  No apps currently support this integration yet. Fusion is used here as an example of the type of app Hydra is designed for, but it does not yet have AIOManager support.
+</Callout>
+
 The app reads, and if it supports it updates, your addons through the [Hydra API](/kronorium/api/hydra). Your key stays in the app; AIOManager never holds the app's credentials. A pull app can't be toggled or pushed to from AIOManager (there's no server to reach); to stop one, remove its card from **Connections** or rotate your API key.
 
 ### Pushing to another server (advanced)

@@ -11,7 +11,7 @@ Hydra has two roles, and AIOManager implements both sides of the same endpoint c
 
 | Role | Who hosts the endpoints | Fits | How it appears in AIOManager |
 |------|-------------------------|------|------------------------------|
-| **Pull** (primary) | **AIOManager** hosts `/hydra/*`. Your app reads/syncs the user's collection on its own schedule. | **Backendless / client-only apps** (e.g. Fusion, which syncs via iCloud and has no server). This is the gap Hydra fills. | A first-class card in the user's Connections list, marked **Pull**. Your app registers on connect (see `POST /hydra/register`) and reports last-sync. |
+| **Pull** (primary) | **AIOManager** hosts `/hydra/*`. Your app reads/syncs the user's collection on its own schedule. | **Backendless / client-only apps** (e.g. Fusion, which syncs via iCloud and has no server — not yet integrated but representative of the use case). This is the gap Hydra fills. | A first-class card in the user's Connections list, marked **Pull**. Your app registers on connect (see `POST /hydra/register`) and reports last-sync. |
 | **Push** | The **platform** hosts `/hydra/*`; AIOManager calls them and pushes on every change. | Platforms that run their own backend and want real-time, AIOManager-initiated updates. | A connection card AIOManager actively pushes to and runs Autopilot against. |
 
 **Pull is the primary path**: most apps that need Hydra are backendless, which is the whole point. The user enters their AIOManager **instance URL** + **account API key** *into your app*, and your app reads from AIOManager. The endpoints below are the ones **AIOManager serves** (the pull surface). The Push role uses the identical contract in the opposite direction.

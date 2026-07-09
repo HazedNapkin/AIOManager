@@ -20,7 +20,7 @@ const safeLocalStorage: StateStorage = {
                 return null
             }
 
-            if (value && name === 'stremio-manager-sync') {
+            if (value && name === 'aioman-sync') {
                 try {
                     const parsed = JSON.parse(value)
                     if (parsed && parsed.state && parsed.state.auth && parsed.state.auth.isAuthenticated) {

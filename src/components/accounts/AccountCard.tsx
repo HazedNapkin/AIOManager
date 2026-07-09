@@ -30,6 +30,32 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 
+function HideableImage({ src, alt, className, fallback, style }: { src?: string; alt?: string; className?: string; fallback?: string; style?: React.CSSProperties }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [src])
+  if (!src || failed) {
+    if (fallback) {
+      return (
+        <div className={cn(className, 'flex items-center justify-center text-[8px] font-bold text-muted-foreground')} style={style}>
+          {fallback}
+        </div>
+      )
+    }
+    return null
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      className={className}
+      style={style}
+    />
+  )
+}
+
 interface AccountCardProps {
   account: Account
   isSelected?: boolean
@@ -145,10 +171,11 @@ export const AccountCard = memo(function AccountCard({
   const { toast } = useToast()
   useRelativeTime()
   const { syncAccount, repairAccount, loading } = useAccounts()
-  const { openAddAccountDialog, isAddAccountDialogOpen } = useUIStore(
+  const { openAddAccountDialog, isAddAccountDialogOpen, privacyObscureNames } = useUIStore(
     useShallow((state) => ({
       openAddAccountDialog: state.openAddAccountDialog,
-      isAddAccountDialogOpen: state.isAddAccountDialogOpen
+      isAddAccountDialogOpen: state.isAddAccountDialogOpen,
+      privacyObscureNames: state.privacyObscureNames
     }))
   )
   const failoverRules = useFailoverStore(
@@ -223,15 +250,23 @@ export const AccountCard = memo(function AccountCard({
   const accountEmail = getAccountEmail(account)
   const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
   const displayName =
-    isPrivacyMode && !isNameCustomized
-      ? account.name.includes('@')
-        ? maskEmail(account.name)
-        : '********'
-      : (account.name || accountEmail || 'Unnamed Account')
+    isPrivacyMode && privacyObscureNames
+      ? 'Account'
+      : isPrivacyMode && !isNameCustomized
+        ? account.name.includes('@')
+          ? maskEmail(account.name)
+          : '********'
+        : (account.name || accountEmail || 'Unnamed Account')
 
   const timeStr = getTimeAgo(new Date(account.lastSync))
   const hasAccentColor = account.accentColor && account.accentColor !== 'none'
   const accentColor = hasAccentColor ? account.accentColor! : null
+  const enabledAddons = account.addons.filter(a => a.flags?.enabled !== false)
+  const addonPreviewCount = (() => {
+    try { return parseInt(localStorage.getItem('aioman:addon-preview-count') || '4') } catch { return 4 }
+  })()
+  const previewAddons = addonPreviewCount === 0 ? enabledAddons : enabledAddons.slice(0, addonPreviewCount)
+  const remainingCount = addonPreviewCount === 0 ? 0 : Math.max(0, enabledAddons.length - addonPreviewCount)
 
   const { isLongPressTriggered, ...longPressProps } = useLongPress(() => {
     if (!isSelectionMode && onLongPress) {
@@ -295,7 +330,7 @@ export const AccountCard = memo(function AccountCard({
               <GripVertical className="h-5 w-5" />
             </div>
           )}
-          <div className="flex items-start justify-between relative z-10">
+          <div className="flex items-center justify-between relative z-10">
             <div className={`flex items-center gap-3 flex-1 min-w-0 ${restProps.dragHandleProps ? 'pl-8' : ''}`}>
 
               <div className="relative shrink-0">
@@ -319,7 +354,7 @@ export const AccountCard = memo(function AccountCard({
                     {isPrivacyMode ? maskEmail(accountEmail) : accountEmail}
                   </p>
                 )}
-                {(hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
+                {!account.hidePlatformLogos && (hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
                   <div className="flex items-center gap-1 mt-1">
                     {getStremioAuthKey(account) && (
                       <Tooltip content="Stremio" side="bottom">
@@ -448,6 +483,23 @@ export const AccountCard = memo(function AccountCard({
                 </span>
               )}
             </div>
+
+            {!account.hideAddonPreview && enabledAddons.length > 0 && (
+              <div className="flex items-center gap-1">
+                {previewAddons.map((addon, i) => (
+                  <HideableImage
+                    key={`${addon.transportUrl}-${i}`}
+                    src={addon.manifest.logo}
+                    alt={addon.manifest.name}
+                    fallback={addon.manifest.name?.[0]?.toUpperCase()}
+                    className="h-5 w-5 rounded-md bg-muted/30 object-contain p-0.5 ring-1 ring-border/20 shrink-0"
+                  />
+                ))}
+                {remainingCount > 0 && (
+                  <span className="text-[10px] font-medium text-muted-foreground ml-0.5">+{remainingCount}</span>
+                )}
+              </div>
+            )}
 
 
             <div className="flex flex-wrap gap-1.5">

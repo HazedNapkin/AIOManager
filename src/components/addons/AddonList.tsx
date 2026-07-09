@@ -180,7 +180,7 @@ export function AddonList({ accountId }: AddonListProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [hideDisabled, setHideDisabled] = useState(() => {
-    try { return localStorage.getItem('stremio-manager:hide-disabled-addons') === 'true' } catch { return false }
+    try { return localStorage.getItem('aioman:hide-disabled-addons') === 'true' } catch { return false }
   })
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -206,7 +206,7 @@ export function AddonList({ accountId }: AddonListProps) {
     setHideDisabled(v => {
       const next = !v
       try {
-        localStorage.setItem('stremio-manager:hide-disabled-addons', String(next))
+        localStorage.setItem('aioman:hide-disabled-addons', String(next))
         triggerSync()
       } catch (e) { /* localStorage unavailable */ }
       return next

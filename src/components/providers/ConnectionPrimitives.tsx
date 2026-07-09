@@ -65,7 +65,7 @@ export function ConnectionStatusPill({ status, className }: { status: DisplaySta
 export function PlatformLogo({ platform, className, isHydra }: { platform: string; className?: string; isHydra?: boolean }) {
     if (isHydra) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl', className)}>
+            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={hydraLogo} alt="Hydra" loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
@@ -73,7 +73,7 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
     const entry = getPlatformEntry(platform)
     if (entry) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl', className)}>
+            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={entry.logo} alt={entry.name} loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )

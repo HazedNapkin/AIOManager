@@ -7,6 +7,9 @@ interface UIStore {
   isAddAddonDialogOpen: boolean
 
   isPrivacyModeEnabled: boolean
+  privacyObscureNames: boolean
+  privacyObscureUrls: boolean
+  privacyObscureProfiles: boolean
   isWhatsNewOpen: boolean
   libraryViewMode: 'grid' | 'list'
   accountsView: 'grid' | 'list'
@@ -19,6 +22,7 @@ interface UIStore {
 
   setWhatsNewOpen: (open: boolean) => void
   togglePrivacyMode: () => void
+  setPrivacyOption: (key: 'privacyObscureNames' | 'privacyObscureUrls' | 'privacyObscureProfiles', value: boolean) => void
   setLibraryViewMode: (mode: 'grid' | 'list') => void
   setAccountsView: (mode: 'grid' | 'list') => void
   setAddonListView: (mode: 'grid' | 'list') => void
@@ -27,10 +31,13 @@ interface UIStore {
   selectedAccountId: string | null
 }
 
-const PRIVACY_MODE_KEY = 'stremio-manager:privacy-mode'
-const VIEW_MODE_KEY = 'stremio-manager:library-view-mode'
-const ACCOUNTS_VIEW_KEY = 'stremio-manager:accounts-view'
-const ADDON_LIST_VIEW_KEY = 'stremio-manager:addon-list-view'
+const PRIVACY_MODE_KEY = 'aioman:privacy-mode'
+const PRIVACY_NAMES_KEY = 'aioman:privacy-obscure-names'
+const PRIVACY_URLS_KEY = 'aioman:privacy-obscure-urls'
+const PRIVACY_PROFILES_KEY = 'aioman:privacy-obscure-profiles'
+const VIEW_MODE_KEY = 'aioman:library-view-mode'
+const ACCOUNTS_VIEW_KEY = 'aioman:accounts-view'
+const ADDON_LIST_VIEW_KEY = 'aioman:addon-list-view'
 
 const syncSettings = () => {
   triggerSync()
@@ -45,6 +52,15 @@ export const useUIStore = create<UIStore>((set, get) => ({
       const stored = localStorage.getItem(PRIVACY_MODE_KEY)
       return stored !== null ? JSON.parse(stored) : false
     } catch { return false }
+  })(),
+  privacyObscureNames: (() => {
+    try { return localStorage.getItem(PRIVACY_NAMES_KEY) === 'true' } catch { return false }
+  })(),
+  privacyObscureUrls: (() => {
+    try { return localStorage.getItem(PRIVACY_URLS_KEY) === 'true' } catch { return false }
+  })(),
+  privacyObscureProfiles: (() => {
+    try { return localStorage.getItem(PRIVACY_PROFILES_KEY) === 'true' } catch { return false }
   })(),
   isWhatsNewOpen: false,
   libraryViewMode: (() => {
@@ -81,6 +97,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
     const newValue = !get().isPrivacyModeEnabled
     set({ isPrivacyModeEnabled: newValue })
     localStorage.setItem(PRIVACY_MODE_KEY, JSON.stringify(newValue))
+    syncSettings()
+  },
+  setPrivacyOption: (key, value) => {
+    set({ [key]: value } as Partial<UIStore>)
+    const storageMap = {
+      privacyObscureNames: PRIVACY_NAMES_KEY,
+      privacyObscureUrls: PRIVACY_URLS_KEY,
+      privacyObscureProfiles: PRIVACY_PROFILES_KEY,
+    }
+    localStorage.setItem(storageMap[key], String(value))
     syncSettings()
   },
   setLibraryViewMode: (mode) => {

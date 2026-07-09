@@ -110,7 +110,7 @@ interface SyncState {
 
 const DEFAULT_SERVER = '/api'
 
-const SYNC_PASSWORD_KEY = 'stremio-sync-password'
+    const SYNC_PASSWORD_KEY = 'aioman-sync-password'
 
 function getSyncApiPath(serverUrl: string | undefined): string {
     const base = (serverUrl || DEFAULT_SERVER).trim().replace(/\/+$/, '')
@@ -438,16 +438,18 @@ export const useSyncStore = create<SyncState>()(
                         (Array.isArray(norm.vault) && norm.vault.length > 0)
                     const saltPolicy = resolveRestoreSaltPolicy({ cloudSalt, localSalt: localSaltBase64, hasEncryptedData })
 
-                    // Never fabricate a salt for a record that already holds encrypted data: a fresh salt
-                    // derives a different key, silently corrupting every authKey/vault entry. If no salt is
-                    // recoverable, the data can only be restored from the device that created the account.
                     if (saltPolicy.refuse) {
-                        throw new Error("Encryption metadata is missing from this account's cloud backup. Sign in once from the device or browser where you created it to finish setup.")
+                        if (bypassGuard) {
+                            console.warn('[Sync] No encryption salt recoverable. Generating fresh salt for cloud recovery.')
+                        } else {
+                            throw new Error("Encryption metadata is missing from this account's cloud backup. Sign in once from the device or browser where you created it to finish setup.")
+                        }
                     }
 
                     let unlockOk = false
                     try {
-                        await useAuthStore.getState().unlockFromSync(password, saltPolicy.saltToUse, { allowGenerate: saltPolicy.allowGenerate })
+                        const allowGen = saltPolicy.allowGenerate || (saltPolicy.refuse && bypassGuard)
+                        await useAuthStore.getState().unlockFromSync(password, saltPolicy.saltToUse, { allowGenerate: allowGen })
                         unlockOk = true
                     } catch (e) {
                         if (import.meta.env.DEV) console.error("Failed to restore session from sync:", e)
@@ -469,15 +471,12 @@ export const useSyncStore = create<SyncState>()(
                     const remoteTime = remoteLastSync ? new Date(remoteLastSync).getTime() : 0
                     const localTime = localLastSync ? new Date(localLastSync).getTime() : 0
 
-                    const isRemoteNewer = remoteTime > localTime
                     const isLocalNewer = localTime > remoteTime
+                    const isRemoteNewer = remoteTime > localTime
                     const isEqual = remoteTime === localTime
 
                     let decision = 'passive merge'
 
-                    // We NEVER mirror (replace local with remote). We always merge (union).
-                    // This prevents the class of bugs where cloud state overwrites and drops
-                    // local accounts. Merge = keep local-only + add remote-only + match overlapping.
                     if (syncData.accounts) {
                         const localAccounts = useAccountStore.getState().accounts
                         const remoteAccountsRaw = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | undefined)?.accounts || []
@@ -494,10 +493,12 @@ export const useSyncStore = create<SyncState>()(
                             decision = 'Push Local (local is newer)'
                             setTimeout(() => get().syncToRemote(true), 1500)
                         } else if (hasRemoteData) {
-                            decision = 'Merge (always-merge policy)'
-                            await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             if (isRemoteNewer) {
-                                setTimeout(() => get().syncToRemote(true), 1500)
+                                decision = 'Adopt Remote (cloud is newer, replace local)'
+                                await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'mirror', preUnlockEncryptionKey)
+                            } else {
+                                decision = 'Merge (equal timestamps)'
+                                await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             }
                         }
                     }
@@ -1110,7 +1111,7 @@ export const useSyncStore = create<SyncState>()(
             }
         }),
         {
-            name: 'stremio-manager-sync',
+            name: 'aioman-sync',
             storage: createSafeStorage(),
             partialize: (state) => ({
                 auth: {

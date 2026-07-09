@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast'
 import { fetchAddonManifest } from '@/api/addons'
 import { cn, getStremioLink, maskUrl, normalizeAddonUrl } from '@/lib/utils'
 import { useAccountStore } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
 import { Check, ExternalLink, TriangleAlert, X } from 'lucide-react'
 
@@ -37,6 +38,7 @@ export function SourceUrlBox({
 }: SourceUrlBoxProps) {
   const { toast } = useToast()
   const replaceTransportUrl = useAccountStore((state) => state.replaceTransportUrl)
+  const privacyObscureUrls = useUIStore((state) => state.privacyObscureUrls)
   const sourceUrl = addon?.transportUrl || url || ''
   const sourceManifest = addon?.manifest || manifest
   const [isEditing, setIsEditing] = useState(false)
@@ -45,7 +47,7 @@ export function SourceUrlBox({
   const [pendingDescriptor, setPendingDescriptor] = useState<AddonDescriptor | null>(null)
   const [needsConfirm, setNeedsConfirm] = useState(false)
 
-  const displayUrl = privacyMode ? maskUrl(sourceUrl) : sourceUrl
+  const displayUrl = privacyMode && privacyObscureUrls ? maskUrl(sourceUrl) : sourceUrl
   const currentId = sourceManifest?.id || 'unknown'
   const pendingId = pendingDescriptor?.manifest?.id || 'unknown'
 

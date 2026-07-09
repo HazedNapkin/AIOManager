@@ -3,7 +3,7 @@ import { Profile } from '@/types/profile'
 import localforage from 'localforage'
 import { create } from 'zustand'
 
-const STORAGE_KEY = 'stremio-manager:profiles'
+const STORAGE_KEY = 'aioman:profiles'
 
 interface ProfileState {
     profiles: Profile[]

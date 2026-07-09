@@ -6,6 +6,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { AlertCircle, GripVertical, ShieldCheck } from 'lucide-react'
 import { getAccountEmail } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
 import { cn, getTimeAgo, maskEmail } from '@/lib/utils'
 
 interface SortableAccountCardProps {
@@ -39,10 +40,13 @@ export const AccountReorderRow = memo(function AccountReorderRow({
     style,
 }: AccountReorderRowProps) {
     const accountEmail = getAccountEmail(account)
+    const privacyObscureNames = useUIStore((state) => state.privacyObscureNames)
     const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
-    const displayName = isPrivacyMode && !isNameCustomized
-        ? account.name.includes('@') ? maskEmail(account.name) : '********'
-        : (account.name || accountEmail || 'Unnamed Account')
+    const displayName = isPrivacyMode && privacyObscureNames
+        ? 'Account'
+        : isPrivacyMode && !isNameCustomized
+            ? account.name.includes('@') ? maskEmail(account.name) : '********'
+            : (account.name || accountEmail || 'Unnamed Account')
     const protectedCount = account.addons.filter(addon => addon.flags?.protected).length
     const timeStr = getTimeAgo(new Date(account.lastSync))
     const hasAccentColor = account.accentColor && account.accentColor !== 'none'

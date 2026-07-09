@@ -8,7 +8,7 @@ const parseSafe = (s: unknown): Record<string, unknown> | undefined => {
     try { return JSON.parse(s) } catch { return undefined }
 }
 
-const STORAGE_KEY = 'stremio-manager:failover-history'
+const STORAGE_KEY = 'aioman:failover-history'
 const MAX_LOGS = 25
 
 export interface HistoryLog {

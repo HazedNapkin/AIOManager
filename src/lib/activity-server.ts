@@ -139,7 +139,7 @@ export async function pushCredentialsToServer(): Promise<number> {
                 'x-sync-password': syncToken,
                 'x-sync-user': auth.id,
             },
-            body: JSON.stringify({ accounts: authKeys }),
+            body: JSON.stringify({ accounts: authKeys, allAccountIds: accounts.map(a => a.id) }),
         })
         if (!res.ok) return 0
         const data = await res.json()
