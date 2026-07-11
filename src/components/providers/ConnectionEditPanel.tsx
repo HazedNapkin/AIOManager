@@ -502,10 +502,15 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
         setTesting(true)
         setTestResult(null)
         try {
-            if (!newApiKey.trim()) throw new Error('Enter a new API key to test.')
-            const { fetchSubscribers } = await import('@/api/hydra-providers')
-            await withTimeout(fetchSubscribers(accountId))
-            setTestResult({ ok: true, message: 'Outbound endpoint reachable with the new key.' })
+            const { testHydraEndpoint } = await import('@/api/hydra-providers')
+            const baseUrl = connection.driverConfig?.baseUrl
+            const authType = connection.driverConfig?.authType || 'header'
+            const authHeader = connection.driverConfig?.authHeader || 'x-api-key'
+            const authValue = newApiKey.trim() || connection.credentials?.apiKey || ''
+            if (!authValue) throw new Error('No API key set. Enter one to test.')
+            if (!baseUrl) throw new Error('No endpoint URL configured.')
+            await withTimeout(testHydraEndpoint(baseUrl, authType, authHeader, authValue), 15000)
+            setTestResult({ ok: true, message: 'Outbound endpoint reachable.' })
             toast({ title: 'Connection healthy' })
         } catch (err) {
             const message = errMsg(err, 'Endpoint test failed. Check the API key and target server.')
@@ -524,7 +529,7 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
                     size="sm"
                     className="h-8 shrink-0 gap-1.5 text-xs"
                     onClick={handleTest}
-                    disabled={testing || !newApiKey.trim()}
+                    disabled={testing}
                 >
                     {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                     {testing ? 'Testing...' : 'Test Connection'}

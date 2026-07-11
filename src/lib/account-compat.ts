@@ -3,7 +3,24 @@ import type { AddonDescriptor } from '@/types/addon'
 
 
 export function getStremioConnection(account: Account) {
-    return account.connections?.find(c => c.platform === 'stremio') || null
+    const conn = account.connections?.find(c => c.platform === 'stremio')
+    if (conn) return conn
+    if (!account.authKey || account.authKey.length <= 60) return null
+    return {
+        id: `${account.id}:stremio`,
+        platform: 'stremio',
+        connectionType: 'native' as const,
+        enabled: true,
+        status: account.status,
+        credentials: {
+            authKey: account.authKey,
+            ...(account.email ? { email: account.email } : {}),
+        },
+        lastSync: 0,
+        lastKnownAddonCount: 0,
+        capabilities: ['addons'],
+        consecutiveFailures: 0,
+    }
 }
 
 export function getStremioAuthKey(account: Account): string {

@@ -276,9 +276,9 @@ export function Header() {
 
   return (
     <>
-    <header className="flex-shrink-0 relative z-50 md:sticky md:top-0">
+    <header className="flex-shrink-0 relative z-50 md:sticky md:top-0 pointer-events-none">
 
-      <div className={`relative z-[60] border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header backdrop-blur-xl'}`}>
+      <div className={`relative z-[60] pointer-events-auto border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header backdrop-blur-xl'}`}>
         <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
             <img
@@ -477,7 +477,7 @@ export function Header() {
         </div>
       </div>
 
-      <div className="md:hidden relative z-50 flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
+      <div className="md:hidden relative z-50 pointer-events-auto flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
         <span className="flex items-center gap-1 text-xs">
           <KeyRound className="h-3 w-3" />
           <span className="font-semibold tabular-nums">{providerKeys.length}</span>
@@ -493,11 +493,11 @@ export function Header() {
         </span>
       </div>
 
-      <div className="hidden md:block">
+      <div className="hidden md:block pointer-events-none">
         <div className="max-w-[1800px] mx-auto w-full px-4">
           <nav className="flex justify-center mt-1.5">
             <div className={cn(
-              'inline-flex h-auto w-fit max-w-[calc(100%-1rem)] flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card/92 p-1.5 text-muted-foreground shadow-sm backdrop-blur-xl',
+              'pointer-events-auto inline-flex h-auto w-fit max-w-[calc(100%-1rem)] flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card/92 p-1.5 text-muted-foreground shadow-sm backdrop-blur-xl',
               !isLight && 'border-white/10 bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
             )}>
               {NAV_ITEMS.map((item) => {
