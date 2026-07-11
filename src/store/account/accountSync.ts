@@ -70,10 +70,15 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
     trace('sync.merge', 'enter', { accountId: account.id, remote: remoteAddons.length, local: account.addons.length, forceRefresh })
     const normalizedAddons = remoteAddons
         .filter(a => !syncManager.isPendingRemoval(account.id, a.transportUrl))
-        .map((addon) => ({
-            ...addon,
-            manifest: sanitizeAddonManifest(addon.manifest, addon.transportUrl),
-        }))
+        .map((addon) => {
+            const manifestWithFallback = (!addon.manifest?.name && addon.transportName)
+                ? { ...addon.manifest, name: addon.transportName }
+                : addon.manifest
+            return {
+                ...addon,
+                manifest: sanitizeAddonManifest(manifestWithFallback, addon.transportUrl),
+            }
+        })
 
     const survivingRemote = filterResurrected(normalizedAddons, account.addons, account.deletedAddons)
     trace('sync.merge', 'post-tombstone', { accountId: account.id, afterTombstone: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length })
@@ -198,8 +203,10 @@ async function repairAndFlag(
                 return { ...addon, manifest: finalManifest, metadata: finalMetadata }
             } catch (e) {
                 if (import.meta.env.DEV) console.warn(`[Sync] Failed to baseline ${addon.manifest?.name || 'addon'}:`, e)
-                const sanitized = sanitizeAddonManifest(addon.manifest, addon.transportUrl)
-                const finalManifest = getEffectiveManifest({ ...addon, manifest: sanitized })
+                const incoming = addon.manifest
+                const hasUsableName = incoming?.name && incoming.name !== 'Unknown Addon'
+                const manifestToUse = hasUsableName ? incoming : sanitizeAddonManifest(incoming, addon.transportUrl)
+                const finalManifest = getEffectiveManifest({ ...addon, manifest: manifestToUse })
                 return { ...addon, manifest: finalManifest }
             }
         })

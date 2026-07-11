@@ -106,5 +106,5 @@ export function identifyAddon(transportUrl: string, manifest?: Partial<AddonDesc
         }
     }
 
-    return wrap({ name: getHostnameIdentifier(transportUrl) })
+    return wrap((!name || name === 'Unknown Addon') ? { name: getHostnameIdentifier(transportUrl) } : {})
 }
