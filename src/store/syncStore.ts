@@ -779,9 +779,8 @@ export const useSyncStore = create<SyncState>()(
                     }
                     const watchExport = useWatchEventStore.getState().export()
                     const state = {
-                        accounts: exportedAccounts.accounts || exportedAccounts,
+                        ...exportedAccounts,
                         addons: safeParse(rawAddons),
-                        profiles: exportedAccounts.profiles || useProfileStore.getState().profiles,
                         failover: {
                             rules: useFailoverStore.getState().rules,
                             webhook: useFailoverStore.getState().webhook
@@ -790,8 +789,6 @@ export const useSyncStore = create<SyncState>()(
                         vaultTombstones: useVaultStore.getState().tombstones,
                         notes: await (await import('@/store/notesStore')).useNotesStore.getState().getAllNotesWithContent(),
                         notesTrash: (await import('@/store/notesStore')).useNotesStore.getState().trash,
-                        settings: exportedAccounts.settings,
-                        changelog: exportedAccounts.changelog,
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
                         deletedWatchEvents: watchExport.deletedEvents,

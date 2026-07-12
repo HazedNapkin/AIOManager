@@ -3,6 +3,7 @@ import {
       getAddons,
 } from '@/api/addons'
 import { normalizeAddonUrl, ACCOUNT_COLORS, hasFallbackAddonIdentity } from '@/lib/utils'
+import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { loginWithCredentials } from '@/api/auth'
 import { LoginResponse } from '@/api/stremio-client'
 import { decrypt, encrypt } from '@/lib/crypto'
@@ -244,11 +245,13 @@ export const isTransientSyncError = (error: unknown) => {
       )
 }
 
-export const needsDisabledAddonIdentityRepair = (addon: AddonDescriptor) => (
-      addon.flags?.enabled === false &&
-      !addon.metadata?.customName &&
-      hasFallbackAddonIdentity(addon)
-)
+export const needsDisabledAddonIdentityRepair = (addon: AddonDescriptor) => {
+      if (addon.flags?.enabled !== false) return false
+      if (!hasFallbackAddonIdentity(addon)) return false
+      if (!addon.metadata?.customName) return true
+      const hostName = getHostnameIdentifier(addon.transportUrl)
+      return !!hostName && addon.metadata.customName === hostName
+}
 
 export const refreshAuthKeyFromStoredPassword = async (
       account: Account,

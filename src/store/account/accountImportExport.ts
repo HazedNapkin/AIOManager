@@ -3,6 +3,7 @@ import { mergeTombstones, filterResurrected, reconcileTombstones } from '@/lib/a
 import { readSyncedSettings } from '@/lib/synced-settings'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
+import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { Account } from '@/types/account'
 import type { Connection } from '@/types/connection'
 import { useProfileStore } from '@/store/profileStore'
@@ -75,18 +76,27 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
 
         const processAddons = (addons: AddonDescriptor[]) => {
             return addons.map((addon: AddonDescriptor) => {
-                const sanitized = sanitizeAddonManifest(addon.manifest, addon.transportUrl)
+                let exportAddon = addon
+                if (addon.metadata?.customName) {
+                    const hostName = getHostnameIdentifier(addon.transportUrl)
+                    if (hostName && addon.metadata.customName === hostName) {
+                        const { customName: _cn, ...restMeta } = addon.metadata
+                        exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
+                    }
+                }
+                const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
                 const key = getManifestKey(sanitized)
                 if (!manifestMap[key]) manifestMap[key] = sanitized
                 return {
-                    transportUrl: addon.transportUrl,
-                    transportName: addon.transportName,
+                    transportUrl: exportAddon.transportUrl,
+                    transportName: exportAddon.transportName,
                     manifestId: key,
-                    flags: addon.flags,
-                    metadata: addon.metadata,
-                    catalogOverrides: addon.catalogOverrides,
-                    syncToLibrary: addon.syncToLibrary,
-                    note: addon.note,
+                    manifest: sanitized,
+                    flags: exportAddon.flags,
+                    metadata: exportAddon.metadata,
+                    catalogOverrides: exportAddon.catalogOverrides,
+                    syncToLibrary: exportAddon.syncToLibrary,
+                    note: exportAddon.note,
                 }
             })
         }
@@ -286,18 +296,30 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 activeProfileId: acc.activeProfileId as string | undefined,
                 deletedAddons: acc.deletedAddons as Record<string, number> | undefined,
                 addons: Array.isArray(acc.addons)
-                    ? (acc.addons as Record<string, unknown>[]).map((ad: Record<string, unknown>) => ({
-                        transportUrl: String(ad.transportUrl || ''),
-                        transportName: ad.transportName as string | undefined,
-                        manifestId: String(ad.manifestId || ''),
-                        installedAt: ad.installedAt as string | undefined,
-                        flags: ad.flags as AddonDescriptor['flags'],
-                        note: typeof ad.note === 'string' ? ad.note.slice(0, 10000) : undefined,
-                        metadata: ad.metadata as AddonDescriptor['metadata'],
-                        catalogOverrides: ad.catalogOverrides as AddonDescriptor['catalogOverrides'],
-                        syncToLibrary: ad.syncToLibrary as boolean | undefined,
-                        manifest: sanitizeAddonManifest((ad.manifest || manifestMap[ad.manifestId as string]) as AddonManifest, ad.transportUrl as string | undefined),
-                    }))
+                    ? (acc.addons as Record<string, unknown>[]).map((ad: Record<string, unknown>) => {
+                        const transportUrl = String(ad.transportUrl || '')
+                        const rawMetadata = ad.metadata as AddonDescriptor['metadata']
+                        let cleanedMetadata = rawMetadata
+                        if (rawMetadata?.customName) {
+                            const hostName = getHostnameIdentifier(transportUrl)
+                            if (hostName && rawMetadata.customName === hostName) {
+                                const { customName: _cn, ...rest } = rawMetadata
+                                cleanedMetadata = rest as AddonDescriptor['metadata']
+                            }
+                        }
+                        return {
+                            transportUrl,
+                            transportName: ad.transportName as string | undefined,
+                            manifestId: String(ad.manifestId || ''),
+                            installedAt: ad.installedAt as string | undefined,
+                            flags: ad.flags as AddonDescriptor['flags'],
+                            note: typeof ad.note === 'string' ? ad.note.slice(0, 10000) : undefined,
+                            metadata: cleanedMetadata,
+                            catalogOverrides: ad.catalogOverrides as AddonDescriptor['catalogOverrides'],
+                            syncToLibrary: ad.syncToLibrary as boolean | undefined,
+                            manifest: sanitizeAddonManifest((ad.manifest || manifestMap[ad.manifestId as string]) as AddonManifest, transportUrl || undefined),
+                        }
+                    })
                     : [],
                 accentColor: acc.accentColor as string | undefined,
                 emoji: acc.emoji as string | undefined,

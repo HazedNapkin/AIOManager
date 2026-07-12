@@ -37,21 +37,41 @@ const OFFICIAL_ADDONS: Record<string, { name: string; logo?: string; description
     'aiometedata': {
         name: 'AIOMetadata',
         description: 'Metadata enrichment addon'
+    },
+    'trakt': {
+        name: 'Trakt',
+        logo: 'https://upload.wikimedia.org/wikipedia/commons/3/3d/Trakt.tv-favicon.svg',
+        description: 'Trakt watch history sync integration'
+    },
+    'publicdomainmovies': {
+        name: 'Public Domain Movies',
+        description: 'Public domain movies'
+    },
+    'watchly': {
+        name: 'Watchly',
+        description: 'Movie and series recommendations based on your Stremio library'
     }
 }
 
 const URL_PATTERNS = [
     { pattern: 'v3-cinemeta.strem.io', key: 'cinemeta' },
+    { pattern: 'cinemeta.strem.io', key: 'cinemeta' },
     { pattern: 'watchhub.strem.io', key: 'watchhub' },
     { pattern: 'v3-channels.strem.io', key: 'youtube' },
+    { pattern: 'channels.strem.io', key: 'youtube' },
     { pattern: 'opensubtitles-v3.strem.io', key: 'opensubtitles' },
+    { pattern: 'opensubtitles.strem.io', key: 'opensubtitles' },
+    { pattern: 'opensubtitles.strem.io/stremio', key: 'opensubtitles' },
     { pattern: '127.0.0.1:11470/local-addon', key: 'local' },
     { pattern: 'localhost:11470/local-addon', key: 'local' },
     { pattern: 'aiostreams', key: 'aiostreams' },
     { pattern: 'aio-streams', key: 'aiostreams' },
     { pattern: 'aiometadata', key: 'aiometadata' },
     { pattern: 'aio-metadata', key: 'aiometadata' },
-    { pattern: 'aiometedata', key: 'aiometedata' }
+    { pattern: 'aiometedata', key: 'aiometedata' },
+    { pattern: 'strem.io/trakt', key: 'trakt' },
+    { pattern: 'caching.stremio.net', key: 'publicdomainmovies' },
+    { pattern: 'watchly', key: 'watchly' },
 ]
 
 const normalizeDisplayName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -102,7 +122,12 @@ export function identifyAddon(transportUrl: string, manifest?: Partial<AddonDesc
 
     for (const { pattern, key } of URL_PATTERNS) {
         if (url.includes(pattern)) {
-            return wrap({ ...OFFICIAL_ADDONS[key], id: key })
+            const result = wrap({ ...OFFICIAL_ADDONS[key], id: key })
+            const hostName = getHostnameIdentifier(transportUrl)
+            if (result.name === hostName) {
+                result.name = OFFICIAL_ADDONS[key].name
+            }
+            return result
         }
     }
 

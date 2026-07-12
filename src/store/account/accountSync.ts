@@ -4,7 +4,7 @@ import {
     updateAddons,
     fetchAddonManifest as apiFetchAddonManifest,
 } from '@/api/addons'
-import { mergeAddons, normalizeAddonUrl } from '@/lib/utils'
+import { mergeAddons, normalizeAddonUrl, hasFallbackAddonName } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
 import { mapConcurrent } from '@/lib/concurrency'
@@ -17,6 +17,7 @@ import { isCinemetaAddon, detectAllPatches, applyCinemetaConfiguration } from '@
 import { syncManager } from '@/lib/sync/syncManager'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import { inferCustomMetadata } from '@/lib/addon-custom-metadata'
+import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { getCachedManifest, setCachedManifest, recordManifestFetchFailure, shouldSkipManifestFetch, hydrateManifestCache } from '@/lib/manifest-cache'
 import {
     getCachedAuthKey,
@@ -118,6 +119,7 @@ async function repairAndFlag(
                 const v = (addon.manifest?.version || '').replace(/^v/, '')
                 const isBroken = !addon.manifest?.name ||
                     addon.manifest.name === 'Unknown Addon' ||
+                    hasFallbackAddonName(addon) ||
                     v === '0.0.0' ||
                     v === '' ||
                     !addon.manifest.resources ||
@@ -128,7 +130,7 @@ async function repairAndFlag(
                     if (isCinemetaAddon(addon) && !addon.metadata?.cinemetaConfig) {
                         const detected = detectAllPatches(addon.manifest as CinemetaManifest)
                         if (detected.searchArtifactsPatched || detected.standardCatalogsPatched || detected.metaResourcePatched) {
-                            return {
+                            const updated = {
                                 ...addon,
                                 metadata: {
                                     ...(addon.metadata || {}),
@@ -139,9 +141,10 @@ async function repairAndFlag(
                                     }
                                 }
                             }
+                            return { ...updated, manifest: getEffectiveManifest(updated) }
                         }
                     }
-                    return addon
+                    return { ...addon, manifest: getEffectiveManifest(addon) }
                 }
 
                 let cinemetaPatches = null
@@ -155,7 +158,7 @@ async function repairAndFlag(
                     manifestRaw = cached
                 } else if (isBroken && !forceRefresh) {
                     const localManifest = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl))
-                    if (localManifest) {
+                    if (localManifest && localManifest.id && localManifest.id !== 'unknown' && localManifest.version && localManifest.version !== '0.0.0') {
                         manifestRaw = localManifest
                     }
                 }
@@ -199,12 +202,26 @@ async function repairAndFlag(
                 }
                 const finalMetadata = inferCustomMetadata(metadata, addon.manifest, repairedManifest, addon.transportUrl)
 
+                if (finalMetadata.customName) {
+                    const existingHost = getHostnameIdentifier(addon.transportUrl)
+                    if (existingHost && finalMetadata.customName === existingHost) {
+                        delete finalMetadata.customName
+                    }
+                }
+
+                if (!finalMetadata.customName && repairedManifest?.name) {
+                    const hostName = getHostnameIdentifier(addon.transportUrl)
+                    if (hostName && repairedManifest.name !== hostName && repairedManifest.name !== 'Unknown Addon') {
+                        finalMetadata.customName = repairedManifest.name
+                    }
+                }
+
                 const finalManifest = getEffectiveManifest({ ...addon, manifest: repairedManifest, metadata: finalMetadata })
                 return { ...addon, manifest: finalManifest, metadata: finalMetadata }
             } catch (e) {
                 if (import.meta.env.DEV) console.warn(`[Sync] Failed to baseline ${addon.manifest?.name || 'addon'}:`, e)
                 const incoming = addon.manifest
-                const hasUsableName = incoming?.name && incoming.name !== 'Unknown Addon'
+                const hasUsableName = incoming?.name && incoming.name !== 'Unknown Addon' && !hasFallbackAddonName(addon)
                 const manifestToUse = hasUsableName ? incoming : sanitizeAddonManifest(incoming, addon.transportUrl)
                 const finalManifest = getEffectiveManifest({ ...addon, manifest: manifestToUse })
                 return { ...addon, manifest: finalManifest }

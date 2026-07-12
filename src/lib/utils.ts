@@ -248,7 +248,8 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         : (remoteAddon.metadata ? { ...remoteAddon.metadata } : undefined)
 
       if (!useLocalManifest && localManifest && remoteManifest) {
-        if (localManifest.name && localManifest.name !== remoteManifest.name && !mergedMetadata?.customName) {
+        const localIsFallback = hasFallbackAddonName({ transportUrl: localAddon.transportUrl, manifest: localManifest })
+        if (localManifest.name && localManifest.name !== remoteManifest.name && !mergedMetadata?.customName && !localIsFallback) {
           mergedMetadata = { ...(mergedMetadata || {}), customName: localManifest.name }
         }
         if (localManifest.description && localManifest.description !== remoteManifest.description && !mergedMetadata?.customDescription) {
@@ -259,8 +260,12 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         }
       }
 
-      const isHostname = (s: string) => /^[a-z0-9-]+\.[a-z0-9-]{2,}/i.test(s) || s.startsWith('http');
-      if (remoteManifest.name && isHostname(remoteManifest.name) && mergedMetadata?.customName) {
+      if (mergedMetadata?.customName) {
+        const hostName = getHostnameIdentifier(localAddon.transportUrl)
+        if (hostName && mergedMetadata.customName === hostName) {
+          const { customName, ...rest } = mergedMetadata
+          mergedMetadata = rest
+        }
       }
 
       const finalManifest = useLocalManifest ? localManifest : remoteManifest;

@@ -182,20 +182,25 @@ export class StremioClient {
       }
 
        return (result.addons as Record<string, unknown>[]).map((addon: Record<string, unknown>) => {
-         const identifiedManifest = identifyAddon((addon.transportUrl as string) || '', addon.manifest as Record<string, unknown>)
+         const transportUrl = (addon.transportUrl as string) || ''
+         const manifest = (addon.manifest || {}) as Record<string, unknown>
+         const rawManifest = (!manifest.name && addon.transportName)
+           ? { ...manifest, name: addon.transportName as string }
+           : manifest
+         const identifiedManifest = identifyAddon(transportUrl, rawManifest)
          return {
            ...(addon as unknown as AddonDescriptor),
-          manifest: {
-            ...identifiedManifest,
-            id: identifiedManifest.id || 'unknown',
-            name: identifiedManifest.name || getHostnameIdentifier((addon.transportUrl as string) || ''),
-            version: identifiedManifest.version || '0.0.0',
-            description: identifiedManifest.description || '',
-            types: identifiedManifest.types || [],
-            resources: identifiedManifest.resources || []
-          }
-        }
-      })
+           manifest: {
+             ...identifiedManifest,
+             id: identifiedManifest.id || 'unknown',
+             name: identifiedManifest.name || getHostnameIdentifier(transportUrl),
+             version: identifiedManifest.version || '0.0.0',
+             description: identifiedManifest.description || '',
+             types: identifiedManifest.types || [],
+             resources: identifiedManifest.resources || []
+           }
+         }
+       })
     } catch (error) {
       if (error instanceof Error) {
         if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
