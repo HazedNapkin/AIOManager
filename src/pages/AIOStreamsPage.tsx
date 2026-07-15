@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
 import { CopyButton } from '@/components/ui/copy-button'
 import { StatusChip } from '@/components/ui/status-chip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import {
@@ -253,14 +254,18 @@ export function AIOStreamsPage() {
                     <div className="w-full md:w-56 lg:w-64 shrink-0 flex flex-col gap-3">
                         <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
-                                <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Summary</h2>
+                                <Tooltip content="Instance overview and quick stats" side="right">
+                                    <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Summary</h2>
+                                </Tooltip>
                             </div>
                             <DesktopSidebar activeSection={activeSection} onChange={changeSection} group="core" />
                         </div>
                         
                         <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
-                                <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Orchestration</h2>
+                                <Tooltip content="Configure addon orchestration and failover" side="right">
+                                    <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Orchestration</h2>
+                                </Tooltip>
                             </div>
                             <DesktopSidebar activeSection={activeSection} onChange={changeSection} group="advanced" />
                         </div>
@@ -284,9 +289,11 @@ export function AIOStreamsPage() {
                                     <div className="min-w-0">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <h1 className="text-lg font-bold tracking-tight truncate">{addonName}</h1>
-                                            <StatusChip variant={instanceReachable ? 'success' : 'destructive'} icon={<Wifi className="w-3 h-3" />} className="rounded-lg">
-                                                {instanceReachable ? 'Connected' : 'Unreachable'}
-                                            </StatusChip>
+                                            <Tooltip content={instanceReachable ? 'Instance is reachable and responding' : 'Instance could not be reached'} side="bottom">
+                                                <StatusChip variant={instanceReachable ? 'success' : 'destructive'} icon={<Wifi className="w-3 h-3" />} className="rounded-lg">
+                                                    {instanceReachable ? 'Connected' : 'Unreachable'}
+                                                </StatusChip>
+                                            </Tooltip>
                                             <StatusChip variant="muted" icon={<Users className="w-3 h-3" />} className="rounded-lg max-w-[14rem] sm:max-w-[18rem]">
                                                 <span className="truncate">
                                                     {account.emoji ? `${account.emoji} ` : ''}{accountLabel}

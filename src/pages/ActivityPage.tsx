@@ -13,6 +13,7 @@ import { decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 import { useSyncStore } from '@/store/syncStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
+import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
 import { historyEntryToActivityItem, nuvioProgressKey } from '@/lib/activity-utils'
 import type { Account } from '@/types/account'
@@ -24,7 +25,7 @@ import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { cn, openStremioDetail } from '@/lib/utils'
+import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { useTheme } from '@/contexts/ThemeContext'
 import { SYNCED_SETTINGS_EVENT, type ActivitySettings } from '@/lib/synced-settings'
 import {
@@ -40,6 +41,7 @@ import {
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Progress } from '@/components/ui/progress'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
+import { Tooltip } from '@/components/ui/tooltip'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
@@ -99,6 +101,10 @@ export function ActivityPage() {
     const isRefreshingFromCloud = useSyncStore(s => s.isRefreshingFromCloud)
     const refreshFromCloud = useSyncStore(s => s.refreshFromCloud)
     const watchEventsInitialized = useWatchEventStore(s => s.initialized)
+    const liveActivity = useUIStore(s => s.liveActivity)
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
 
     const { history: watchHistory, inProgress } = useWatchHistory()
 
@@ -140,6 +146,31 @@ export function ActivityPage() {
             if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
         }
     }, [])
+
+    useEffect(() => {
+        if (!liveActivity) return
+        let active = true
+        const tick = () => {
+            if (!active || document.visibilityState !== 'visible') return
+            useLibraryCache.setState({ isStale: true })
+            ensureLoaded(accounts)
+        }
+        const scheduleNext = () => {
+            const jitter = Math.floor(Math.random() * 30000)
+            return setTimeout(() => {
+                tick()
+                timerId = scheduleNext()
+            }, 60000 + jitter)
+        }
+        let timerId = scheduleNext()
+        const onVisibility = () => { if (document.visibilityState === 'visible') tick() }
+        document.addEventListener('visibilitychange', onVisibility)
+        return () => {
+            active = false
+            clearTimeout(timerId)
+            document.removeEventListener('visibilitychange', onVisibility)
+        }
+    }, [liveActivity, accounts, ensureLoaded])
 
     const [userFilter, setUserFilter] = useState('all')
     const [timeFilter, setTimeFilter] = useState(() => {
@@ -449,6 +480,22 @@ export function ActivityPage() {
     const isLoading = loading || isRefreshingFromCloud
     const loadingPercent = loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 0
 
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            const el = document.activeElement as HTMLElement
+            const isInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+            if (e.key === '/' && !isSelecting && !isInput) {
+                e.preventDefault()
+                searchInputRef.current?.focus()
+            }
+            if (e.key === 'Escape' && isSelecting && !isInput) {
+                handleDeselectAll()
+            }
+        }
+        document.addEventListener('keydown', handler)
+        return () => document.removeEventListener('keydown', handler)
+    }, [isSelecting, handleDeselectAll])
+
     return (
         <div className="space-y-6 overflow-x-hidden">
             {/* Single unified toolbar */}
@@ -559,6 +606,7 @@ export function ActivityPage() {
 
                     {/* Grid / List toggle */}
                     <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+                        <Tooltip content="Grid view" side="bottom">
                         <Button
                             variant="ghost"
                             size="sm"
@@ -573,6 +621,8 @@ export function ActivityPage() {
                         >
                             <Grid className="h-3.5 w-3.5" />
                         </Button>
+                        </Tooltip>
+                        <Tooltip content="List view" side="bottom">
                         <Button
                             variant="ghost"
                             size="sm"
@@ -587,6 +637,7 @@ export function ActivityPage() {
                         >
                             <List className="h-3.5 w-3.5" />
                         </Button>
+                        </Tooltip>
                     </div>
                 </div>
             </ToolbarShell>
@@ -677,7 +728,9 @@ export function ActivityPage() {
                                                 <span className="font-mono text-xs text-muted-foreground">S{item.season ?? 1} E{item.episode}</span>
                                             )}
                                             {account && (
-                                                <span className="truncate text-xs text-muted-foreground/60">{account.name || getAccountEmail(account)?.split('@')[0]}</span>
+                                                <span className="truncate text-xs text-muted-foreground/60">{account.name && !account.name.includes('@')
+                                                    ? maskNameLevel(account.name, privacyLevel)
+                                                    : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}</span>
                                             )}
                                         </div>
                                     </motion.div>
@@ -768,13 +821,15 @@ export function ActivityPage() {
                         onClick: handleSelectAll,
                         variant: 'outline',
                         icon: <Check className="h-4 w-4" />,
-                        disabled: selectedItems.size === filteredHistory.length
+                        disabled: selectedItems.size === filteredHistory.length,
+                        tooltip: 'Select all items',
                     },
                     {
                         label: 'Delete History',
                         onClick: () => setShowDeleteDialog(true),
                         variant: 'destructive',
-                        icon: <AnimatedTrashIcon className="h-4 w-4" />
+                        icon: <AnimatedTrashIcon className="h-4 w-4" />,
+                        tooltip: 'Delete selected items',
                     },
                 ].filter(Boolean) as FloatingActionItem[]}
             />

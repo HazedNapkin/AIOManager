@@ -165,6 +165,7 @@ export type Theme =
     | 'ice-cream'
     | 'midnight-carnival'
     | 'dragon-fruit'
+    | 'tamtaro'
     | `custom-${string}`
 
 export interface ThemePalette {
@@ -215,6 +216,7 @@ export interface ThemeOption {
     palette: ThemePalette
     preview: ThemePreview
     customCss?: string
+    logoUrl?: string
 }
 
 export function expand(c: CompactPalette): ThemePalette {
@@ -251,7 +253,7 @@ function theme(
     emoji: string,
     category: 'standard' | 'community',
     compact: CompactPalette,
-    opts?: { italic?: boolean; subcategory?: 'light' | 'dark' | 'oled'; customCss?: string },
+    opts?: { italic?: boolean; subcategory?: 'light' | 'dark' | 'oled'; customCss?: string; logoUrl?: string },
 ): ThemeOption {
     const palette = expand(compact)
     return {
@@ -265,6 +267,7 @@ function theme(
         ...(opts?.italic ? { italic: true } : {}),
         ...(opts?.subcategory ? { subcategory: opts.subcategory } : {}),
         ...(opts?.customCss ? { customCss: opts.customCss } : {}),
+        ...(opts?.logoUrl ? { logoUrl: opts.logoUrl } : {}),
     }
 }
 
@@ -1104,6 +1107,11 @@ export const THEME_OPTIONS: ThemeOption[] = [
         primary: '355 85% 55%', muted: '0 0% 12%', mutedForeground: '0 0% 70%',
         destructive: '0 63% 31%', border: '0 0% 26%',
     }),
+    theme('tamtaro', 'TamTaro', 'Tam the SEL man, warm orange aesthetic with custom logo', '🐹', 'community', {
+        background: '15 10% 11%', card: '15 15% 16%', cardForeground: '15 20% 90%',
+        primary: '27 87% 67%', muted: '16 20% 14%', mutedForeground: '15 15% 65%',
+        destructive: '0 63% 40%', border: '15 10% 21%', ring: '27 87% 67%',
+    }, { subcategory: 'dark', logoUrl: 'https://raw.githubusercontent.com/Tam-Taro/SEL-Filtering-and-Sorting/refs/heads/main/logo/aioman.png' }),
 ]
 
 export function generatePaletteFromAccent(

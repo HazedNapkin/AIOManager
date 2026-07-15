@@ -7,9 +7,10 @@ interface UIStore {
   isAddAddonDialogOpen: boolean
 
   isPrivacyModeEnabled: boolean
-  privacyObscureNames: boolean
-  privacyObscureUrls: boolean
-  privacyObscureProfiles: boolean
+  privacyLevelNames: number
+  privacyLevelUrls: number
+  privacyLevelProfiles: number
+  liveActivity: boolean
   isWhatsNewOpen: boolean
   libraryViewMode: 'grid' | 'list'
   accountsView: 'grid' | 'list'
@@ -22,7 +23,8 @@ interface UIStore {
 
   setWhatsNewOpen: (open: boolean) => void
   togglePrivacyMode: () => void
-  setPrivacyOption: (key: 'privacyObscureNames' | 'privacyObscureUrls' | 'privacyObscureProfiles', value: boolean) => void
+  setPrivacyOption: (key: 'privacyLevelNames' | 'privacyLevelUrls' | 'privacyLevelProfiles', value: number) => void
+  setLiveActivity: (value: boolean) => void
   setLibraryViewMode: (mode: 'grid' | 'list') => void
   setAccountsView: (mode: 'grid' | 'list') => void
   setAddonListView: (mode: 'grid' | 'list') => void
@@ -32,9 +34,25 @@ interface UIStore {
 }
 
 const PRIVACY_MODE_KEY = 'aioman:privacy-mode'
-const PRIVACY_NAMES_KEY = 'aioman:privacy-obscure-names'
-const PRIVACY_URLS_KEY = 'aioman:privacy-obscure-urls'
-const PRIVACY_PROFILES_KEY = 'aioman:privacy-obscure-profiles'
+const PRIVACY_LEVEL_NAMES_KEY = 'aioman:privacy-level-names'
+const PRIVACY_LEVEL_URLS_KEY = 'aioman:privacy-level-urls'
+const PRIVACY_LEVEL_PROFILES_KEY = 'aioman:privacy-level-profiles'
+const LIVE_ACTIVITY_KEY = 'aioman:live-activity'
+
+function migratePrivacyLevel(newKey: string, oldKey: string): number {
+    try {
+        const stored = localStorage.getItem(newKey)
+        if (stored !== null) return parseInt(stored, 10) || 0
+        const oldBool = localStorage.getItem(oldKey)
+        if (oldBool !== null) {
+            const level = oldBool === 'true' ? 2 : 0
+            localStorage.setItem(newKey, String(level))
+            localStorage.removeItem(oldKey)
+            return level
+        }
+        return 0
+    } catch { return 0 }
+}
 const VIEW_MODE_KEY = 'aioman:library-view-mode'
 const ACCOUNTS_VIEW_KEY = 'aioman:accounts-view'
 const ADDON_LIST_VIEW_KEY = 'aioman:addon-list-view'
@@ -53,14 +71,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
       return stored !== null ? JSON.parse(stored) : false
     } catch { return false }
   })(),
-  privacyObscureNames: (() => {
-    try { return localStorage.getItem(PRIVACY_NAMES_KEY) === 'true' } catch { return false }
-  })(),
-  privacyObscureUrls: (() => {
-    try { return localStorage.getItem(PRIVACY_URLS_KEY) === 'true' } catch { return false }
-  })(),
-  privacyObscureProfiles: (() => {
-    try { return localStorage.getItem(PRIVACY_PROFILES_KEY) === 'true' } catch { return false }
+  privacyLevelNames: (() => migratePrivacyLevel(PRIVACY_LEVEL_NAMES_KEY, 'aioman:privacy-obscure-names'))(),
+  privacyLevelUrls: (() => migratePrivacyLevel(PRIVACY_LEVEL_URLS_KEY, 'aioman:privacy-obscure-urls'))(),
+  privacyLevelProfiles: (() => migratePrivacyLevel(PRIVACY_LEVEL_PROFILES_KEY, 'aioman:privacy-obscure-profiles'))(),
+  liveActivity: (() => {
+    try { return localStorage.getItem(LIVE_ACTIVITY_KEY) === 'true' } catch { return false }
   })(),
   isWhatsNewOpen: false,
   libraryViewMode: (() => {
@@ -102,12 +117,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setPrivacyOption: (key, value) => {
     set({ [key]: value } as Partial<UIStore>)
     const storageMap = {
-      privacyObscureNames: PRIVACY_NAMES_KEY,
-      privacyObscureUrls: PRIVACY_URLS_KEY,
-      privacyObscureProfiles: PRIVACY_PROFILES_KEY,
+      privacyLevelNames: PRIVACY_LEVEL_NAMES_KEY,
+      privacyLevelUrls: PRIVACY_LEVEL_URLS_KEY,
+      privacyLevelProfiles: PRIVACY_LEVEL_PROFILES_KEY,
     }
     localStorage.setItem(storageMap[key], String(value))
     syncSettings()
+  },
+  setLiveActivity: (value) => {
+    set({ liveActivity: value })
+    localStorage.setItem(LIVE_ACTIVITY_KEY, String(value))
   },
   setLibraryViewMode: (mode) => {
     set({ libraryViewMode: mode })

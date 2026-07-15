@@ -100,6 +100,14 @@ function prepareAddonForStremio(addon: AddonDescriptor): AddonDescriptor {
     resources: identifiedManifest.resources || [],
   }
 
+  if (effectiveManifest.behaviorHints) {
+    manifest.behaviorHints = effectiveManifest.behaviorHints
+  }
+
+  if (addon.metadata?.hideConfigure) {
+    manifest.behaviorHints = { ...manifest.behaviorHints, configurable: false }
+  }
+
   if (effectiveManifest.catalogs) {
     manifest.catalogs = effectiveManifest.catalogs.map(catalog => ({
       ...catalog,
@@ -107,10 +115,16 @@ function prepareAddonForStremio(addon: AddonDescriptor): AddonDescriptor {
     }))
   }
 
-  return {
+  const prepared: AddonDescriptor = {
     transportUrl: addon.transportUrl,
     manifest
   }
+
+  if (addon.flags) {
+    prepared.flags = addon.flags
+  }
+
+  return prepared
 }
 
 function prepareAddonCollectionForStremio(addons: AddonDescriptor[]): AddonDescriptor[] {

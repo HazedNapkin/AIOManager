@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
+import { cn, maskProfileLevel } from '@/lib/utils'
 import type { Profile } from '@/types/profile'
 import { GripVertical, Layers, Package, Plus, User } from 'lucide-react'
 import { ProfileDialog } from '../profiles/ProfileDialog'
@@ -90,15 +90,15 @@ export function LibrarySidebar({
   onDeleteProfile,
 }: LibrarySidebarProps) {
   const [showProfileReorderDialog, setShowProfileReorderDialog] = useState(false)
-  const { isPrivacyModeEnabled, privacyObscureProfiles } = useUIStore(
+  const { isPrivacyModeEnabled, privacyLevelProfiles } = useUIStore(
     useShallow((state) => ({
       isPrivacyModeEnabled: state.isPrivacyModeEnabled,
-      privacyObscureProfiles: state.privacyObscureProfiles
+      privacyLevelProfiles: state.privacyLevelProfiles
     }))
   )
-  const obscureProfiles = isPrivacyModeEnabled && privacyObscureProfiles
-  const profileDisplayName = (profile: Profile, index: number) =>
-    obscureProfiles ? `Profile ${String.fromCharCode(65 + index)}` : profile.name
+  const profilePrivacyLevel = isPrivacyModeEnabled ? privacyLevelProfiles : 0
+    const profileDisplayName = (profile: Profile, _index: number) =>
+        maskProfileLevel(profile.name, profilePrivacyLevel)
 
   const handleMobileProfileSelect = (id: string | null) => {
     onSelectProfile(id)

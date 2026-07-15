@@ -305,6 +305,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     const [name, setName] = useState(editingTheme?.label || '')
     const [description, setDescription] = useState(editingTheme?.description || '')
     const [emoji, setEmoji] = useState(editingTheme?.emoji || '🎨')
+    const [logoUrl, setLogoUrl] = useState(editingTheme?.logoUrl || '')
     const [emojiSearch, setEmojiSearch] = useState('')
     const [base, setBase] = useState<'dark' | 'light' | 'oled'>(editingTheme?.base || 'dark')
     const [activeTab, setActiveTab] = useState<'edit' | 'import' | 'css'>('edit')
@@ -358,6 +359,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
 
     useEffect(() => {
         setName(editingTheme?.label || '')
+        setLogoUrl(editingTheme?.logoUrl || '')
         setDescription(editingTheme?.description || '')
         setEmoji(editingTheme?.emoji || '🎨')
         setBase(editingTheme?.base || 'dark')
@@ -523,6 +525,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 hue: Math.round((parsed.primary.split(' ').map(parseFloat))[0] || 220),
                 saturation: Math.round((parsed.primary.split(' ').map(parseFloat))[1] || 70),
                 ...(typeof parsed.customCss === 'string' ? { customCss: parsed.customCss } : {}),
+        ...(typeof parsed.logoUrl === 'string' ? { logoUrl: parsed.logoUrl } : {}),
             })
             setRawPaletteError('')
             setActiveTab('edit')
@@ -555,7 +558,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 input: editorState.rawPalette.border ?? basePalette.border,
               }
             : palette
-        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette: finalPalette, customCss: editorState.customCss.trim() || undefined }
+        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette: finalPalette, customCss: editorState.customCss.trim() || undefined, logoUrl: logoUrl.trim() || undefined }
         if (isEditing) {
             updateCustomTheme(id, data)
         } else {
@@ -721,6 +724,12 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                             placeholder="Optional description..."
                                             className="h-8 text-xs"
                                             maxLength={80}
+                                        />
+                                        <Input
+                                            value={logoUrl}
+                                            onChange={e => setLogoUrl(e.target.value)}
+                                            placeholder="Header logo URL (replaces AIOManager logo)..."
+                                            className="h-8 text-xs"
                                         />
                                     </div>
                                 </div>

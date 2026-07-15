@@ -33,11 +33,12 @@ import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { useProfileStore } from '@/store/profileStore'
 import { useUIStore } from '@/store/uiStore'
 import { AddonDescriptor } from '@/types/addon'
-import { Copy, List, Pencil, Trash2, MoreVertical, Download, Shield } from 'lucide-react'
+import { Copy, List, Pencil, Trash2, MoreVertical, Download, Shield, EyeOff, Loader2, Star, ArrowRightLeft, BadgeCheck, Bandage, ArrowUpCircle } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
@@ -556,6 +557,16 @@ export const AddonCard = React.memo(function AddonCard({
     setShowUnprotectConfirmation(false)
   }, [accountId, addon.transportUrl, index, toast])
 
+  const handleToggleHideConfigure = useCallback(async () => {
+    try {
+      await useAccountStore.getState().updateAddonSettings(accountId, addon.transportUrl, {
+        metadata: { hideConfigure: addon.metadata?.hideConfigure ? undefined : true },
+      }, index)
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Failed to update Configure button visibility', description: error instanceof Error ? error.message : undefined })
+    }
+  }, [accountId, addon.transportUrl, addon.metadata?.hideConfigure, index, toast])
+
   const effectiveCatalogCount = useMemo(() => getEffectiveManifest(addon).catalogs?.length || 0, [addon])
   const hasCatalogs = effectiveCatalogCount > 0
 
@@ -632,41 +643,60 @@ export const AddonCard = React.memo(function AddonCard({
                     <span className="truncate text-sm font-semibold leading-tight">{addonDisplayName}</span>
                     <span className="text-xs text-muted-foreground/60">v{addon.manifest.version}</span>
                     {isCinemeta && (
-                      <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-xs font-medium text-primary">
-                        Official
-                      </span>
+                      <Tooltip content="Official Addon">
+                        <span aria-label="Official Addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                          <BadgeCheck className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
                     )}
                     {isPatched && (
-                      <span className="inline-flex items-center rounded-full border border-success/20 bg-success/10 px-1.5 py-0.5 text-xs font-medium text-success">
-                        Patched
-                      </span>
+                      <Tooltip content="Cinemeta patches applied">
+                        <span aria-label="Cinemeta patches applied" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                          <Bandage className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
                     )}
                     {hasUpdate && latestVersion && (
-                      <span className="inline-flex items-center rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-xs font-medium text-primary">
-                        → {latestVersion}
-                      </span>
+                      <Tooltip content={`Update available: ${latestVersion}`}>
+                        <span aria-label={`Update available: ${latestVersion}`} className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                          <ArrowUpCircle className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
                     )}
                     {addon.flags?.protected && (
-                      <span className="inline-flex items-center rounded-full border border-success/20 bg-success/10 px-1.5 py-0.5 text-xs font-medium text-success">
-                        Protected
-                      </span>
+                      <Tooltip content="Protected">
+                        <span aria-label="Protected" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                          <Shield className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
+                    )}
+                    {(addon.metadata?.hideConfigure || (isCinemeta && addon.manifest?.behaviorHints?.configurable !== true)) && (
+                      <Tooltip content="Configure button hidden in Stremio">
+                        <span aria-label="Configure button hidden in Stremio" className="inline-flex items-center justify-center rounded-full border p-1 border-muted-foreground/20 bg-muted/30 text-muted-foreground">
+                          <EyeOff className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
                     )}
                     {isPendingRemoval && (
-                      <span className="inline-flex animate-pulse items-center rounded-full border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
-                        Deleting...
-                      </span>
+                      <Tooltip content="Deleting...">
+                        <span aria-label="Deleting..." className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        </span>
+                      </Tooltip>
                     )}
                     {isPrimary && (
-                      <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs font-medium ${isPrimaryPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
-                        <span className={`h-1 w-1 rounded-full ${isPrimaryPaused ? 'bg-muted-foreground/60' : 'bg-primary/60'}`} />
-                        Primary{isPrimaryPaused ? ' · Paused' : ''}
-                      </span>
+                      <Tooltip content={isPrimaryPaused ? 'Primary failover (paused)' : 'Primary failover'}>
+                        <span aria-label={isPrimaryPaused ? 'Primary failover (paused)' : 'Primary failover'} className={`inline-flex items-center justify-center rounded-full border p-1 ${isPrimaryPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
+                          <Star className={`h-3 w-3 ${isPrimaryPaused ? '' : 'fill-current'}`} />
+                        </span>
+                      </Tooltip>
                     )}
                     {failoverPrimaryName && (
-                      <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs font-medium ${failoverPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
-                        <span className={`h-1 w-1 rounded-full ${failoverPaused ? 'bg-muted-foreground/60' : 'bg-primary/60'}`} />
-                        Autopilot backup{failoverPaused ? ' · Paused' : ''}
-                      </span>
+                      <Tooltip content={failoverPaused ? `Autopilot backup for ${failoverPrimaryName} (paused)` : `Autopilot backup for ${failoverPrimaryName}`}>
+                        <span aria-label={failoverPaused ? `Autopilot backup for ${failoverPrimaryName} (paused)` : `Autopilot backup for ${failoverPrimaryName}`} className={`inline-flex items-center justify-center rounded-full border p-1 ${failoverPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
+                          <ArrowRightLeft className="h-3 w-3" />
+                        </span>
+                      </Tooltip>
                     )}
                   </div>
 
@@ -762,6 +792,12 @@ export const AddonCard = React.memo(function AddonCard({
                         <Shield className={`h-4 w-4 ${addon.flags?.protected ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
                         {addon.flags?.protected ? 'Unprotect Addon' : 'Protect Addon'}
                       </DropdownMenuItem>
+                      {!isCinemeta && (
+                      <DropdownMenuItem className="gap-2" onClick={(e) => { e.stopPropagation(); handleToggleHideConfigure(); }}>
+                        <EyeOff className={`h-4 w-4 ${addon.metadata?.hideConfigure ? 'text-primary' : 'text-muted-foreground'}`} />
+                        {addon.metadata?.hideConfigure ? 'Show Configure Button' : 'Hide Configure Button'}
+                      </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem className="gap-2" onClick={(e) => { e.stopPropagation(); setPickerMode('clone'); setShowAccountPicker(true); }} disabled={isActionLoading}>
                         <Copy className="h-4 w-4" />
                         Clone
@@ -770,6 +806,7 @@ export const AddonCard = React.memo(function AddonCard({
                         <Download className="h-4 w-4" />
                         Deploy to All
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       {!addon.flags?.protected && (
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleRemove(); }} className="gap-2 text-destructive focus:text-destructive">
                           <Trash2 className="h-4 w-4" />
@@ -922,48 +959,60 @@ export const AddonCard = React.memo(function AddonCard({
                     </Tooltip>
                   )}
                   {isCinemeta && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-primary/12 text-primary border border-primary/25">
-                      Official
-                    </span>
+                    <Tooltip content="Official Addon">
+                      <span aria-label="Official Addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                        <BadgeCheck className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                   {isPatched && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
-                      Patched
-                    </span>
+                    <Tooltip content="Cinemeta patches applied">
+                      <span aria-label="Cinemeta patches applied" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                        <Bandage className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                   {hasUpdate && latestVersion && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-primary/12 text-primary border border-primary/25">
-                      → {latestVersion}
-                    </span>
+                    <Tooltip content={`Update available: ${latestVersion}`}>
+                      <span aria-label={`Update available: ${latestVersion}`} className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                        <ArrowUpCircle className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                   {addon.flags?.protected && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
-                      Protected
-                    </span>
+                    <Tooltip content="Protected">
+                      <span aria-label="Protected" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                        <Shield className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
+                  )}
+                  {(addon.metadata?.hideConfigure || (isCinemeta && addon.manifest?.behaviorHints?.configurable !== true)) && (
+                    <Tooltip content="Configure button hidden in Stremio">
+                      <span aria-label="Configure button hidden in Stremio" className="inline-flex items-center justify-center rounded-full border p-1 border-muted-foreground/20 bg-muted/30 text-muted-foreground">
+                        <EyeOff className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                   {isPendingRemoval && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20 animate-pulse">
-                      Deleting...
-                    </span>
+                    <Tooltip content="Deleting...">
+                      <span aria-label="Deleting..." className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      </span>
+                    </Tooltip>
                   )}
                   {isPrimary && (
-                    <span className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full border shrink-0 ${
-                        isPrimaryPaused
-                            ? 'bg-muted/40 border-border/40 text-muted-foreground/60'
-                            : 'bg-primary/12 border-primary/25 text-primary/80'
-                    }`}>
-                        <span className={`w-1 h-1 rounded-full shrink-0 ${isPrimaryPaused ? 'bg-muted-foreground/60' : 'bg-primary/60'}`} />
-                        Primary{isPrimaryPaused ? ' · Paused' : ''}
-                    </span>
+                    <Tooltip content={isPrimaryPaused ? 'Primary failover (paused)' : 'Primary failover'}>
+                      <span aria-label={isPrimaryPaused ? 'Primary failover (paused)' : 'Primary failover'} className={`inline-flex items-center justify-center rounded-full border p-1 shrink-0 ${isPrimaryPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
+                        <Star className={`h-3 w-3 ${isPrimaryPaused ? '' : 'fill-current'}`} />
+                      </span>
+                    </Tooltip>
                   )}
                   {failoverPrimaryName && (
-                    <span className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full border shrink-0 ${failoverPaused
-                        ? 'bg-muted/40 border-border/40 text-muted-foreground/60'
-                        : 'bg-primary/12 border-primary/25 text-primary/80'
-                      }`}>
-                      <span className={`w-1 h-1 rounded-full shrink-0 ${failoverPaused ? 'bg-muted-foreground/60' : 'bg-primary/60'}`} />
-                      Autopilot backup{failoverPaused ? ' · Paused' : ''}
-                    </span>
+                    <Tooltip content={failoverPaused ? `Autopilot backup for ${failoverPrimaryName} (paused)` : `Autopilot backup for ${failoverPrimaryName}`}>
+                      <span aria-label={failoverPaused ? `Autopilot backup for ${failoverPrimaryName} (paused)` : `Autopilot backup for ${failoverPrimaryName}`} className={`inline-flex items-center justify-center rounded-full border p-1 shrink-0 ${failoverPaused ? 'border-border/40 bg-muted/40 text-muted-foreground/60' : 'border-primary/25 bg-primary/12 text-primary/80'}`}>
+                        <ArrowRightLeft className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                 </CardDescription>
               </div>
@@ -1008,6 +1057,12 @@ export const AddonCard = React.memo(function AddonCard({
                       <Shield className={`h-4 w-4 ${addon.flags?.protected ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
                       {addon.flags?.protected ? 'Unprotect Addon' : 'Protect Addon'}
                     </DropdownMenuItem>
+                    {!isCinemeta && (
+                    <DropdownMenuItem className="gap-2" onClick={(e) => { e.stopPropagation(); handleToggleHideConfigure(); }}>
+                      <EyeOff className={`h-4 w-4 ${addon.metadata?.hideConfigure ? 'text-primary' : 'text-muted-foreground'}`} />
+                      {addon.metadata?.hideConfigure ? 'Show Configure Button' : 'Hide Configure Button'}
+                    </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem className="gap-2" onClick={(e) => { e.stopPropagation(); setPickerMode('clone'); setShowAccountPicker(true); }} disabled={isActionLoading}>
                       <Copy className="h-4 w-4" />
                       Clone
@@ -1016,6 +1071,7 @@ export const AddonCard = React.memo(function AddonCard({
                       <Download className="h-4 w-4" />
                       Deploy to All
                     </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     {!addon.flags?.protected && (
                       <>
                         <DropdownMenuItem

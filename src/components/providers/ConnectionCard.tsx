@@ -96,7 +96,7 @@ export const ConnectionCard = memo(function ConnectionCard({
                             {expiry.label}
                         </p>
                     )}
-                    <p className="text-[11px] text-muted-foreground/50">{hint}</p>
+                    <p className="text-xs text-muted-foreground/60">{hint}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-center gap-1" onClick={stop} onKeyDown={stop}>
                     <Switch

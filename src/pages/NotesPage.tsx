@@ -89,12 +89,36 @@ function buildMarkdownTable(rows: number, cols: number): string {
     return `| ${header.join(' | ')} |\n|${sep.join('|')}|\n${body.map(r => '| ' + r.join(' | ') + ' |').join('\n')}`
 }
 
+function splitTableCells(content: string): string[] {
+    const cells: string[] = []
+    let current = ''
+    let inLink = false
+    for (let i = 0; i < content.length; i++) {
+        if (!inLink && content[i] === '[' && content[i + 1] === '[') {
+            inLink = true
+            current += '[['
+            i++
+        } else if (inLink && content[i] === ']' && content[i + 1] === ']') {
+            inLink = false
+            current += ']]'
+            i++
+        } else if (content[i] === '|' && !inLink) {
+            cells.push(current.trim())
+            current = ''
+        } else {
+            current += content[i]
+        }
+    }
+    cells.push(current.trim())
+    return cells
+}
+
 function getTableInfo(lines: string[], startLine: number) {
     const rowMatch = lines[startLine]?.match(/^\|(.+)\|$/)
     if (!rowMatch) return null
     const sepMatch = lines[startLine + 1]?.match(/^\|[\s\-:]+\|$/)
     const hasHeader = !!sepMatch
-    const colCount = rowMatch[1].split('|').length
+    const colCount = splitTableCells(rowMatch[1]).length
     const dataStart = hasHeader ? startLine + 2 : startLine
     let end = dataStart
     while (end < lines.length) {
@@ -108,7 +132,7 @@ function getTableInfo(lines: string[], startLine: number) {
 
 function parseRowCells(line: string): string[] {
     const m = line.match(/^\|(.+)\|$/)
-    return m ? m[1].split('|').map(c => c.trim()) : []
+    return m ? splitTableCells(m[1]) : []
 }
 
 function buildRow(cells: string[]): string {
@@ -314,7 +338,7 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
 
         if (tableRowMatch && !tableSepMatch) {
             flushList()
-            const cells = tableRowMatch[1].split('|').map(c => c.trim())
+            const cells = splitTableCells(tableRowMatch[1])
             const peekNext = lines[i + 1]?.match(/^\|[\s\-:]+\|$/)
             const isHeader = !!peekNext
 
@@ -325,7 +349,7 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
                     const rowMatch = lines[ri]?.match(/^\|(.+)\|$/)
                     const rowSep = lines[ri]?.match(/^\|[\s\-:]+\|$/)
                     if (!rowMatch || rowSep) break
-                    bodyRows.push(rowMatch[1].split('|').map(c => c.trim()))
+                    bodyRows.push(splitTableCells(rowMatch[1]))
                     ri++
                 }
                 const key = `table-${elements.length}`
@@ -359,7 +383,7 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
                     const rowMatch = lines[ri]?.match(/^\|(.+)\|$/)
                     const rowSep = lines[ri]?.match(/^\|[\s\-:]+\|$/)
                     if (!rowMatch || rowSep) break
-                    rows.push(rowMatch[1].split('|').map(c => c.trim()))
+                    rows.push(splitTableCells(rowMatch[1]))
                     ri++
                 }
                 const key = `table-${elements.length}`

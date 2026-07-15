@@ -20,6 +20,7 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -28,7 +29,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { ArrowRight, ChevronDown, AlertTriangle, Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, GripVertical, MoreVertical, Shield } from "lucide-react"
+import { ArrowRight, ChevronDown, CircleDot, AlertTriangle, Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, GripVertical, MoreVertical, Shield, Star } from "lucide-react"
 import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react"
 import {
     DndContext,
@@ -170,8 +171,20 @@ const SortableChainTier = memo(function SortableChainTier({
                 />
                 <span className="font-bold truncate text-sm flex-1">{addonName}</span>
                 <div className="flex items-center gap-2 shrink-0">
-                    {isTier1 && <span className="text-xs font-mono font-semibold text-primary bg-primary/12 px-1.5 py-0.5 rounded-full border border-primary/25">PRIMARY</span>}
-                    {isFailedOver && <span className="text-xs font-mono font-semibold text-warning bg-warning/10 px-1.5 py-0.5 rounded-full border border-warning/20">ACTIVE</span>}
+                    {isTier1 && (
+                        <Tooltip content="Primary failover addon">
+                            <span aria-label="Primary failover addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/25 bg-primary/12 text-primary/80">
+                                <Star className="h-3 w-3 fill-current" />
+                            </span>
+                        </Tooltip>
+                    )}
+                    {isFailedOver && (
+                        <Tooltip content="Currently active">
+                            <span aria-label="Currently active" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                                <CircleDot className="h-3 w-3" />
+                            </span>
+                        </Tooltip>
+                    )}
                 </div>
             </div>
             {idx < chainLength - 1 && (
@@ -1318,6 +1331,7 @@ export function FailoverManager({
                                                             <Copy className="w-4 h-4" />
                                                             Duplicate
                                                         </DropdownMenuItem>
+                                                        <DropdownMenuSeparator />
                                                         <DropdownMenuItem className="gap-2 text-destructive focus:text-destructive" onClick={() => setRuleToDelete(rule.id)}>
                                                             <Trash2 className="w-4 h-4" />
                                                             Delete Rule

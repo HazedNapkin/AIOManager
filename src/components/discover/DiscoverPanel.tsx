@@ -659,8 +659,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
       {gridMode && (
         <>
           {forceGrid && !isFiltering && (
-            <Button variant="ghost" size="sm" className="h-8 w-fit gap-1.5 text-xs text-muted-foreground hover:text-foreground" onClick={backToStore}>
-              <ArrowLeft className="h-4 w-4" />
+            <Button variant="ghost" size="sm" className="h-8 w-fit gap-2 px-2.5 text-muted-foreground hover:text-foreground" onClick={backToStore}>
+              <ArrowLeft className="w-4 h-4" />
               Back to Discover
             </Button>
           )}

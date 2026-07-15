@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
-import { getLatestAddonVersion, maskEmail, isNewerVersion, cn } from '@/lib/utils'
+import { getLatestAddonVersion, maskEmailLevel, maskNameLevel, isNewerVersion, cn } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { pushAddonsToPlatform } from '@/lib/account-compat'
@@ -15,7 +15,7 @@ import { useAddonStore } from '@/store/addonStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, Copy, Download, User, Edit2, LayoutGrid, List, Wand2 } from 'lucide-react'
+import { ArrowLeft, GripVertical, Library, Save, Plus, Search, X, Layers, Trash2, ChevronDown, Zap, Check, Shield, EyeOff, Copy, Download, User, Edit2, LayoutGrid, List, Wand2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { AnimatedRefreshIcon, AnimatedUpdateIcon, AnimatedShieldIcon } from '../ui/AnimatedIcons'
 import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from "react"
@@ -39,6 +39,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { AddonChangelog } from '@/components/accounts/AddonChangelog'
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { AccountSetupCreateDialog } from '@/components/accounts/AccountSetupCreateDialog'
 import { useConfetti } from '@/components/ui/confetti'
@@ -263,6 +264,8 @@ export function AddonList({ accountId }: AddonListProps) {
   const [showClearAllConfirm, setShowClearAllConfirm] = useState(false)
   const [protectedInSelection, setProtectedInSelection] = useState(0)
 
+  const [deleteConfirmationNames, setDeleteConfirmationNames] = useState<string[]>([])
+
   const handleBulkDeleteClick = () => {
     if (selectedAddonUrls.size === 0) return
 
@@ -272,6 +275,12 @@ export function AddonList({ accountId }: AddonListProps) {
     }).length
 
     setProtectedInSelection(protectedCount)
+    const names = filteredAddons.filter((addon) => {
+      const originalIndex = addonIndexMap.get(addon)
+      if (originalIndex === undefined) return false
+      return selectedAddonUrls.has(`${addon.transportUrl}::${originalIndex}`)
+    }).map(a => a.manifest.name || a.manifest.id || 'Unknown').slice(0, 10)
+    setDeleteConfirmationNames(names)
     setShowDeleteConfirm(true)
   }
 
@@ -417,12 +426,15 @@ export function AddonList({ accountId }: AddonListProps) {
   const filteredAddons = useMemo(() => {
     let result = addons
     if (hideDisabled) result = result.filter(a => a.flags?.enabled !== false)
-    if (!debouncedSearchQuery.trim()) return result
+    if (!debouncedSearchQuery.trim()) {
+      return result
+    }
     const query = debouncedSearchQuery.toLowerCase()
     return result.filter((addon) =>
       addon.manifest.name?.toLowerCase().includes(query) ||
       addon.manifest.id?.toLowerCase().includes(query) ||
-      addon.manifest.description?.toLowerCase().includes(query)
+      addon.manifest.description?.toLowerCase().includes(query) ||
+      addon.transportUrl?.toLowerCase().includes(query)
     )
   }, [addons, debouncedSearchQuery, hideDisabled])
 
@@ -453,6 +465,11 @@ export function AddonList({ accountId }: AddonListProps) {
       if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey) && isSelectionMode) {
         e.preventDefault()
         selectAllAddons()
+      }
+
+      if (e.key === '/' && !isSelectionMode && !isInput) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -571,6 +588,44 @@ export function AddonList({ accountId }: AddonListProps) {
     }
   }, [account, accountId, toast])
 
+  const handleHideConfigureAll = useCallback(async () => {
+    if (!account || addons.length === 0) return
+    try {
+      const changedCount = await useAccountStore.getState().bulkSetHideConfigure(accountId, true)
+      toast({
+        title: changedCount > 0 ? 'Configure Buttons Hidden' : 'Already Hidden',
+        description: changedCount > 0
+          ? `Hidden configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No addons need changes.'
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed',
+        description: error instanceof Error ? error.message : 'Could not hide configure buttons.'
+      })
+    }
+  }, [account, accountId, addons.length, toast])
+
+  const handleShowConfigureAll = useCallback(async () => {
+    if (!account || addons.length === 0) return
+    try {
+      const changedCount = await useAccountStore.getState().bulkSetHideConfigure(accountId, false)
+      toast({
+        title: changedCount > 0 ? 'Configure Buttons Shown' : 'Already Visible',
+        description: changedCount > 0
+          ? `Shown configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No addons need changes.'
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: 'Failed',
+        description: error instanceof Error ? error.message : 'Could not show configure buttons.'
+      })
+    }
+  }, [account, accountId, addons.length, toast])
+
   const handleEnableAll = useCallback(async () => {
     if (!account || addons.length === 0) return
     const allUrls = addons.map(a => a.transportUrl)
@@ -638,6 +693,42 @@ export function AddonList({ accountId }: AddonListProps) {
         title: 'Unprotection Failed',
         description: 'Could not unprotect selected addons.'
       })
+    }
+  }, [account, accountId, selectedAddonUrls, toast])
+
+  const handleHideConfigureSelected = useCallback(async () => {
+    if (!account || selectedAddonUrls.size === 0) return
+    try {
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
+      const changedCount = await useAccountStore.getState().bulkSetHideConfigureSelected(accountId, urls, true)
+      toast({
+        title: changedCount > 0 ? 'Configure Button Hidden' : 'Already Hidden',
+        description: changedCount > 0
+          ? `Hidden configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No selected addons needed changes.'
+      })
+      setIsSelectionMode(false)
+      setSelectedAddonUrls(new Set())
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Failed', description: error instanceof Error ? error.message : 'Could not hide configure buttons.' })
+    }
+  }, [account, accountId, selectedAddonUrls, toast])
+
+  const handleShowConfigureSelected = useCallback(async () => {
+    if (!account || selectedAddonUrls.size === 0) return
+    try {
+      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
+      const changedCount = await useAccountStore.getState().bulkSetHideConfigureSelected(accountId, urls, false)
+      toast({
+        title: changedCount > 0 ? 'Configure Button Shown' : 'Already Visible',
+        description: changedCount > 0
+          ? `Shown configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
+          : 'No selected addons needed changes.'
+      })
+      setIsSelectionMode(false)
+      setSelectedAddonUrls(new Set())
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Failed', description: error instanceof Error ? error.message : 'Could not show configure buttons.' })
     }
   }, [account, accountId, selectedAddonUrls, toast])
 
@@ -854,6 +945,7 @@ export function AddonList({ accountId }: AddonListProps) {
   }, [accounts, accountId, selectedAddonUrls, handleBulkCloneToAccounts, toast])
 
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
+  const privacyLevelNames = useUIStore((state) => state.privacyLevelNames)
   const selectedAddons = useMemo(() => {
     return addons.filter((_, index) => selectedAddonUrls.has(`${addons[index].transportUrl}::${index}`))
   }, [addons, selectedAddonUrls])
@@ -881,19 +973,16 @@ export function AddonList({ accountId }: AddonListProps) {
     )
   }
 
-  const accountEmail = account ? getAccountEmail(account) : undefined
-  const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
-  const displayName =
-    isPrivacyModeEnabled && !isNameCustomized
-      ? account.name.includes('@')
-        ? maskEmail(account.name)
-        : '********'
-      : account.name
+  const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
+  const displayName = account.name.includes('@')
+    ? maskEmailLevel(account.name, privacyLevel)
+    : maskNameLevel(account.name, privacyLevel)
   const activeProfileName = account.activeProfileId
     ? (account.profiles?.find(p => p.id === account.activeProfileId)?.name || 'Setup')
     : 'Main Setup'
   const allEnabled = selectedAddons.length > 0 && selectedAddons.every(a => a.flags?.enabled !== false)
   const allProtected = selectedAddons.length > 0 && selectedAddons.every(a => a.flags?.protected)
+  const allHideConfigure = selectedAddons.length > 0 && selectedAddons.every(a => a.metadata?.hideConfigure)
 
   const currentIndex = accounts.findIndex(a => a.id === accountId)
   const prevAccount = accounts.length > 1 ? (currentIndex > 0 ? accounts[currentIndex - 1] : accounts[accounts.length - 1]) : null
@@ -952,7 +1041,7 @@ export function AddonList({ accountId }: AddonListProps) {
                         <span className={`truncate flex-1 text-left ${account.activeProfileId === p.id ? 'font-semibold' : ''}`}>{p.name}</span>
                         {account.activeProfileId === p.id && <Check className="h-4 w-4 text-primary shrink-0" />}
                       </DropdownMenuItem>
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity sm:opacity-60">
                         <DropdownMenuItem
                           className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
                           onClick={(e) => {
@@ -1068,35 +1157,41 @@ export function AddonList({ accountId }: AddonListProps) {
 
               {!isSelectionMode && (
                 <>
-                  <Button
-                    onClick={handleCheckUpdates}
-                    disabled={addons.length === 0 || checkingUpdates}
-                    size="sm"
-                    variant="outline"
-                    className="w-full shrink-0 gap-1.5 h-8 text-xs font-medium sm:w-auto"
-                  >
-                    <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={checkingUpdates} />
-                    <span>{checkingUpdates ? 'Refreshing...' : 'Refresh'}</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setReorderDialogOpen(true)}
-                    variant="outline"
-                    className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:inline-flex"
-                    disabled={addons.length < 2}
-                  >
-                    <GripVertical className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Reorder</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setInstallFromLibraryOpen(true)}
-                    variant="outline"
-                    className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:flex"
-                  >
-                    <Library className="h-3.5 w-3.5" />
-                    Library
-                  </Button>
+                  <Tooltip content="Refresh addon list" side="bottom">
+                    <Button
+                      onClick={handleCheckUpdates}
+                      disabled={addons.length === 0 || checkingUpdates}
+                      size="sm"
+                      variant="outline"
+                      className="w-full shrink-0 gap-1.5 h-8 text-xs font-medium sm:w-auto"
+                    >
+                      <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={checkingUpdates} />
+                      <span>{checkingUpdates ? 'Refreshing...' : 'Refresh'}</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Reorder addons" side="bottom">
+                    <Button
+                      size="sm"
+                      onClick={() => setReorderDialogOpen(true)}
+                      variant="outline"
+                      className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:inline-flex"
+                      disabled={addons.length < 2}
+                    >
+                      <GripVertical className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Reorder</span>
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Install from library" side="bottom">
+                    <Button
+                      size="sm"
+                      onClick={() => setInstallFromLibraryOpen(true)}
+                      variant="outline"
+                      className="hidden shrink-0 gap-1.5 h-8 text-xs font-medium sm:flex"
+                    >
+                      <Library className="h-3.5 w-3.5" />
+                      Library
+                    </Button>
+                  </Tooltip>
                 </>
               )}
               {!isSelectionMode && (
@@ -1151,6 +1246,7 @@ export function AddonList({ accountId }: AddonListProps) {
                         <Wand2 className="h-4 w-4 text-primary" />
                       Find &amp; Replace URL
                     </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     {addons.some(a => !a.flags?.protected) ? (
                       <DropdownMenuItem className="gap-2" onClick={handleProtectAll}>
                         <AnimatedShieldIcon className="h-4 w-4 text-primary" />
@@ -1162,7 +1258,7 @@ export function AddonList({ accountId }: AddonListProps) {
                         Unprotect All
                       </DropdownMenuItem>
                     )}
-                      <DropdownMenuItem className="gap-2" onClick={handleEnableAll}>
+                    <DropdownMenuItem className="gap-2" onClick={handleEnableAll}>
                         <Zap className="h-4 w-4 text-success" />
                       Enable All
                     </DropdownMenuItem>
@@ -1170,6 +1266,17 @@ export function AddonList({ accountId }: AddonListProps) {
                         <X className="h-4 w-4 text-destructive" />
                       Disable All
                     </DropdownMenuItem>
+                    {addons.some(a => !a.metadata?.hideConfigure) ? (
+                      <DropdownMenuItem className="gap-2" onClick={handleHideConfigureAll}>
+                        <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        Hide Configure All
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem className="gap-2" onClick={handleShowConfigureAll}>
+                        <EyeOff className="h-4 w-4 text-primary" />
+                        Show Configure All
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!hasPlatformConnection(account) || addons.length === 0}>
                         <Trash2 className="h-4 w-4 text-destructive" />
@@ -1180,14 +1287,16 @@ export function AddonList({ accountId }: AddonListProps) {
               )}
 
               {addons.some(a => a.flags?.enabled === false) && !isSelectionMode && (
-                <Button
-                  size="sm"
-                  onClick={toggleHideDisabled}
-                  variant="outline"
-                  className="hidden h-8 shrink-0 text-xs font-medium sm:flex"
-                >
-                  {hideDisabled ? 'Show disabled' : 'Hide disabled'}
-                </Button>
+                <Tooltip content={hideDisabled ? 'Show disabled addons' : 'Hide disabled addons'} side="bottom">
+                  <Button
+                    size="sm"
+                    onClick={toggleHideDisabled}
+                    variant="outline"
+                    className="hidden h-8 shrink-0 text-xs font-medium sm:flex"
+                  >
+                    {hideDisabled ? 'Show disabled' : 'Hide disabled'}
+                  </Button>
+                </Tooltip>
               )}
 
               <Button
@@ -1391,6 +1500,7 @@ export function AddonList({ accountId }: AddonListProps) {
         onConfirm={handleBulkDeleteConfirm}
         isLoading={updatingAll}
         disabled={updatingAll}
+        impactItems={deleteConfirmationNames.length > 0 ? deleteConfirmationNames : undefined}
       />
 
       <ConfirmationDialog
@@ -1415,40 +1525,53 @@ export function AddonList({ accountId }: AddonListProps) {
             label: allEnabled ? 'Disable' : 'Enable',
             icon: allEnabled ? <X className="h-3.5 w-3.5 text-destructive" /> : <Zap className="h-3.5 w-3.5 text-success" />,
             onClick: allEnabled ? handleBulkDisable : handleBulkEnable,
+            tooltip: allEnabled ? 'Disable selected' : 'Enable selected',
           },
           {
             label: allProtected ? 'Unprotect' : 'Protect',
             icon: <Shield className={cn("h-3.5 w-3.5", allProtected ? "fill-primary/20 text-primary" : "")} />,
             onClick: allProtected ? handleUnprotectSelected : handleProtectSelected,
+            tooltip: allProtected ? 'Unprotect selected' : 'Protect selected',
+          },
+          {
+            label: allHideConfigure ? 'Show Configure' : 'Hide Configure',
+            icon: <EyeOff className={cn("h-3.5 w-3.5", allHideConfigure ? "text-primary" : "text-muted-foreground")} />,
+            onClick: allHideConfigure ? handleShowConfigureSelected : handleHideConfigureSelected,
+            tooltip: allHideConfigure ? 'Show configure button' : 'Hide configure button',
           },
           {
             label: 'Clone',
             icon: <Copy className="h-3.5 w-3.5" />,
             onClick: () => setShowBulkAccountPicker(true),
             disabled: isBulkActionLoading,
+            tooltip: 'Clone to other accounts',
           },
           {
             label: 'Deploy to All',
             icon: <Download className="h-3.5 w-3.5" />,
             onClick: handleBulkDeployToAll,
             disabled: isBulkActionLoading,
+            tooltip: 'Deploy to all accounts',
           },
           {
             label: `Reinstall (${selectedAddonUrls.size})`,
             icon: <AnimatedUpdateIcon className="h-3.5 w-3.5" isAnimating={updatingAll} />,
             onClick: handleReinstallSelected,
             disabled: updatingAll,
+            tooltip: 'Reinstall selected addons',
           },
           {
             label: 'Save',
             icon: <Save className="h-3.5 w-3.5" />,
             onClick: () => setBulkSaveOpen(true),
+            tooltip: 'Save to library',
           },
           ...(selectedAddonUrls.size >= 2 ? [{
             label: 'Autopilot',
             icon: <Zap className="h-3.5 w-3.5 text-warning" />,
             onClick: handleCreateRule,
             variant: 'default' as const,
+            tooltip: 'Create failover rule',
           }] : []),
           {
             label: 'Delete',
@@ -1456,6 +1579,7 @@ export function AddonList({ accountId }: AddonListProps) {
             onClick: handleBulkDeleteClick,
             disabled: updatingAll,
             variant: 'destructive' as const,
+            tooltip: 'Delete selected addons',
           },
         ]}
       />

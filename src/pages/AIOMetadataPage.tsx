@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CopyButton } from '@/components/ui/copy-button'
 import { StatusChip } from '@/components/ui/status-chip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { EmptyState } from '@/components/common/EmptyState'
@@ -184,14 +185,18 @@ export function AIOMetadataPage() {
                     <div className="w-full md:w-56 lg:w-64 shrink-0 flex flex-col gap-3">
                         <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
-                                <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Summary</h2>
+                                <Tooltip content="Metadata setup overview and quick stats" side="right">
+                                    <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Summary</h2>
+                                </Tooltip>
                             </div>
                             <DesktopSidebar activeSection={activeSection} onChange={setActiveSection} group="core" />
                         </div>
 
                         <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
-                                <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Orchestration</h2>
+                                <Tooltip content="Configure metadata orchestration" side="right">
+                                    <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Orchestration</h2>
+                                </Tooltip>
                             </div>
                             <DesktopSidebar activeSection={activeSection} onChange={setActiveSection} group="advanced" />
                         </div>
@@ -209,9 +214,11 @@ export function AIOMetadataPage() {
                                     <div className="min-w-0">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <h1 className="text-lg font-bold tracking-tight truncate">{addonName}</h1>
-                                            <StatusChip variant={reachable ? 'success' : 'destructive'} icon={<Wifi className="w-3 h-3" />} className="rounded-lg">
-                                                {reachable ? 'Connected' : 'Unreachable'}
-                                            </StatusChip>
+                                            <Tooltip content={reachable ? 'Instance is reachable and responding' : 'Instance could not be reached'} side="bottom">
+                                                <StatusChip variant={reachable ? 'success' : 'destructive'} icon={<Wifi className="w-3 h-3" />} className="rounded-lg">
+                                                    {reachable ? 'Connected' : 'Unreachable'}
+                                                </StatusChip>
+                                            </Tooltip>
                                         </div>
                                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5 text-xs text-muted-foreground">
                                             <span className="font-mono truncate">{baseUrl}</span>

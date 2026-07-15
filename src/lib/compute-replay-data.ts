@@ -62,14 +62,20 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         titleCounts: Map<string, { item: ActivityItem, count: number }>
     }>()
 
-    // Title aggregation (includes backfill: counts titles/episodes). Backfill contributes 0 hours
-    // rather than the duration fallback, so recovered episodes never fabricate watch time.
+    const overallSeen = new Map<string, number>()
+
     filteredHistory.forEach(item => {
         const hours = item.backfill
             ? 0
-            : (item.overallTimeWatched && item.overallTimeWatched > 0
-                ? item.overallTimeWatched
-                : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000) / 3600000;
+            : (() => {
+                if (item.overallTimeWatched && item.overallTimeWatched > 0) {
+                    const prev = overallSeen.get(item.itemId) || 0
+                    const delta = Math.max(0, item.overallTimeWatched - prev)
+                    overallSeen.set(item.itemId, item.overallTimeWatched)
+                    return delta / 3600000
+                }
+                return ((item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000) / 3600000
+            })();
 
         const uniqueId = item.itemId;
         const current = titleMap.get(uniqueId) || {
@@ -91,11 +97,19 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         }
     })
 
+    const monthOverallSeen = new Map<string, number>()
+
     timeHistory.forEach(item => {
-        const rawTimeMs = item.overallTimeWatched && item.overallTimeWatched > 0
-            ? item.overallTimeWatched
-            : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000;
-        const hours = rawTimeMs / 3600000;
+        const rawTimeMs = (() => {
+            if (item.overallTimeWatched && item.overallTimeWatched > 0) {
+                const prev = monthOverallSeen.get(item.itemId) || 0
+                const delta = Math.max(0, item.overallTimeWatched - prev)
+                monthOverallSeen.set(item.itemId, item.overallTimeWatched)
+                return delta
+            }
+            return (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
+        })()
+        const hours = rawTimeMs / 3600000
 
         const uniqueId = item.itemId;
         const mKey = format(new Date(item.timestamp), 'yyyy-MM')
@@ -306,12 +320,19 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     const dayCounts = new Array(7).fill(0)
     const dayHours = new Array(7).fill(0)
+    const dayOverallSeen = new Map<string, number>()
     timeHistory.forEach(item => {
         const day = new Date(item.timestamp).getDay()
         dayCounts[day]++
-        const timeWatchedMs = item.overallTimeWatched && item.overallTimeWatched > 0
-            ? item.overallTimeWatched
-            : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
+        const timeWatchedMs = (() => {
+            if (item.overallTimeWatched && item.overallTimeWatched > 0) {
+                const prev = dayOverallSeen.get(item.itemId) || 0
+                const delta = Math.max(0, item.overallTimeWatched - prev)
+                dayOverallSeen.set(item.itemId, item.overallTimeWatched)
+                return delta
+            }
+            return (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
+        })()
         dayHours[day] += timeWatchedMs / 3600000
     })
     const maxDayHour = Math.max(...dayHours, 1)
@@ -333,10 +354,16 @@ export function computeReplayData(history: ActivityItem[], targetYear: number | 
         if (prevYearHistory.length > 0) {
             const prevYearTimeHistory = prevYearHistory.filter(i => !i.backfill)
             const prevTitles = new Set(prevYearHistory.map(i => i.itemId)).size
+            const prevOverallSeen = new Map<string, number>()
             const prevHours = Math.round(prevYearTimeHistory.reduce((sum, item) => {
-                const tw = item.overallTimeWatched && item.overallTimeWatched > 0
-                    ? item.overallTimeWatched
-                    : (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
+                let tw: number
+                if (item.overallTimeWatched && item.overallTimeWatched > 0) {
+                    const prev = prevOverallSeen.get(item.itemId) || 0
+                    tw = Math.max(0, item.overallTimeWatched - prev)
+                    prevOverallSeen.set(item.itemId, item.overallTimeWatched)
+                } else {
+                    tw = (item.duration && item.progress) ? item.duration * (item.progress / 100) : item.duration || 3600000
+                }
                 return sum + tw / 3600000
             }, 0))
             const prevSeriesCount = new Set(prevYearHistory.filter(i => i.type === 'series').map(i => i.itemId)).size

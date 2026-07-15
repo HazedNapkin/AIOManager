@@ -131,7 +131,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                 <DialogHeader>
                     <DialogTitle>Add Hydra Connection</DialogTitle>
                     <DialogDescription>
-                        Push addons to another AIOManager instance or Hydra-compatible server.
+                        Push addons to a Hydra-compatible server.
                     </DialogDescription>
                 </DialogHeader>
 

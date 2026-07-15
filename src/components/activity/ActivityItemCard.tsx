@@ -7,7 +7,8 @@ import { memo, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 
-import { cn, openStremioDetail } from '@/lib/utils'
+import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { useUIStore } from '@/store/uiStore'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
@@ -41,12 +42,18 @@ export const ActivityItemCard = memo(({
     onDelete
 }: ActivityItemCardProps) => {
     const { isLight } = useTheme()
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
 
     const item = entry
     const isEpisodeLike = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
     const episodeLabel = isEpisodeLike && item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
 
-    const userName = item.accountName || 'Unknown User'
+    const rawName = item.accountName || 'Unknown User'
+    const userName = rawName.includes('@')
+        ? (maskEmailLevel(rawName, privacyLevel) || rawName)
+        : maskNameLevel(rawName, privacyLevel)
 
     const itemDate = useMemo(() => {
         const d = new Date(item.timestamp)

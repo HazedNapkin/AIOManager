@@ -63,7 +63,7 @@ export const SubscriberCard = memo(function SubscriberCard({ subscriber, onRemov
                     <p className="line-clamp-1 text-xs text-muted-foreground">
                         Pulls your addons · synced {timeAgo(subscriber.last_seen_at)}
                     </p>
-                    <p className="text-[11px] text-muted-foreground/50">Backendless app · read-only pull</p>
+                    <p className="text-xs text-muted-foreground/60">Backendless app · read-only pull</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1" onClick={stop} onKeyDown={stop}>
                     {confirmRemove ? (

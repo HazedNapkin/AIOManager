@@ -54,7 +54,7 @@ import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
 import { AccountAvatar } from './AccountAvatar'
 
 type AccountAuthMode = 'credentials' | 'oauth' | 'authKey'
-type WizardStep = 'identity' | 'platform'
+type WizardStep = 'identity' | 'platform' | 'connect-more'
 type PlatformStep = 'select' | 'stremio-auth'
 
 const ACCOUNT_AUTH_METHODS: Array<{ id: AccountAuthMode; label: string; subtitle: string; icon: LucideIcon }> = [
@@ -74,6 +74,8 @@ export function AccountForm() {
 
   const [wizardStep, setWizardStep] = useState<WizardStep>('identity')
   const [platformStep, setPlatformStep] = useState<PlatformStep>('select')
+  const [createdAccountId, setCreatedAccountId] = useState<string | null>(null)
+  const [connectedPlatforms, setConnectedPlatforms] = useState<Set<string>>(new Set())
   const [nuvioDialogOpen, setNuvioDialogOpen] = useState(false)
   const [realstreamDialogOpen, setRealstreamDialogOpen] = useState(false)
   const [hydraDialogOpen, setHydraDialogOpen] = useState(false)
@@ -112,6 +114,8 @@ export function AccountForm() {
     setShowHelp(false)
     setWizardStep('identity')
     setPlatformStep('select')
+    setCreatedAccountId(null)
+    setConnectedPlatforms(new Set())
 
     if (editingAccount) {
       setName(editingAccount.name)
@@ -151,6 +155,8 @@ export function AccountForm() {
   }, [editingAccount, isOpen])
 
   const handleClose = () => {
+    setCreatedAccountId(null)
+    setConnectedPlatforms(new Set())
     closeDialog()
   }
 
@@ -202,6 +208,7 @@ export function AccountForm() {
     setOauthSaving(true)
     setError('')
     try {
+      const beforeIds = !editingAccount ? new Set(useAccountStore.getState().accounts.map(a => a.id)) : null
       if (persistent) {
         const resolvedEmail = (oauthEmail || email || editingAccount?.email || '').trim()
         if (!resolvedEmail || !oauthPassword.trim()) {
@@ -249,7 +256,20 @@ export function AccountForm() {
           )
         }
       }
-      handleClose()
+      if (editingAccount) {
+        handleClose()
+      } else if (beforeIds) {
+        const newAccount = useAccountStore.getState().accounts.find(a => !beforeIds.has(a.id))
+        if (newAccount) {
+          setCreatedAccountId(newAccount.id)
+          setConnectedPlatforms(prev => new Set(prev).add('stremio'))
+          setWizardStep('connect-more')
+        } else {
+          handleClose()
+        }
+      } else {
+        handleClose()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${editingAccount ? 'update' : 'add'} account`)
     } finally {
@@ -288,12 +308,18 @@ export function AccountForm() {
     backend: NuvioBackend
   ) => {
     let accountId: string | undefined
+    const isFirstConnection = !createdAccountId
     try {
-      accountId = await addLocalAccount(name.trim() || 'Nuvio Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+      if (isFirstConnection) {
+        accountId = await addLocalAccount(name.trim() || 'Nuvio Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        setCreatedAccountId(accountId)
+      } else {
+        accountId = createdAccountId
+      }
       const profileIndex = (() => {
         if (!profileId) return ''
         const match = (_profiles as Array<Record<string, unknown>>).find(p => p?.id === profileId)
-        const idx = match ? Number(match.profile_index ?? match.profileIndex) : NaN
+        const idx = match ? Number(match.profileIndex ?? match.profileIndex) : NaN
         return Number.isFinite(idx) && idx > 0 ? String(idx) : ''
       })()
       await useConnectionStore.getState().addConnection(accountId, {
@@ -316,17 +342,28 @@ export function AccountForm() {
       })
       const { scheduleSyncAccount } = await import('@/store/account/accountSync')
       scheduleSyncAccount(accountId)
-      handleClose()
+      setConnectedPlatforms(prev => new Set(prev).add('nuvio'))
+      if (isFirstConnection) {
+        setWizardStep('connect-more')
+      } else {
+        setNuvioDialogOpen(false)
+      }
     } catch (err) {
-      if (accountId) removeAccount(accountId).catch(() => {})
+      if (isFirstConnection && accountId) removeAccount(accountId).catch(() => {})
       setError(err instanceof Error ? err.message : 'Failed to add Nuvio connection')
     }
   }
 
   const handleRealStreamAccountComplete = async (tokens: RealStreamTokens, email: string, password: string) => {
     let accountId: string | undefined
+    const isFirstConnection = !createdAccountId
     try {
-      accountId = await addLocalAccount(name.trim() || 'RealStream Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+      if (isFirstConnection) {
+        accountId = await addLocalAccount(name.trim() || 'RealStream Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        setCreatedAccountId(accountId)
+      } else {
+        accountId = createdAccountId
+      }
       await useConnectionStore.getState().addConnection(accountId, {
         platform: 'realstream',
         driverType: 'native',
@@ -344,17 +381,28 @@ export function AccountForm() {
       })
       const { scheduleSyncAccount } = await import('@/store/account/accountSync')
       scheduleSyncAccount(accountId)
-      handleClose()
+      setConnectedPlatforms(prev => new Set(prev).add('realstream'))
+      if (isFirstConnection) {
+        setWizardStep('connect-more')
+      } else {
+        setRealstreamDialogOpen(false)
+      }
     } catch (err) {
-      if (accountId) removeAccount(accountId).catch(() => {})
+      if (isFirstConnection && accountId) removeAccount(accountId).catch(() => {})
       setError(err instanceof Error ? err.message : 'Failed to add RealStream connection')
     }
   }
 
   const handleHydraAccountComplete = async (config: HydraDriverConfig, credential: string) => {
     let accountId: string | undefined
+    const isFirstConnection = !createdAccountId
     try {
-      accountId = await addLocalAccount(name.trim() || config.name, accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+      if (isFirstConnection) {
+        accountId = await addLocalAccount(name.trim() || config.name, accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        setCreatedAccountId(accountId)
+      } else {
+        accountId = createdAccountId
+      }
       await useConnectionStore.getState().addConnection(accountId, {
         platform: config.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         driverType: 'hydra-outbound',
@@ -365,9 +413,14 @@ export function AccountForm() {
         capabilities: ['addons'],
         driverConfig: config,
       })
-      handleClose()
+      setConnectedPlatforms(prev => new Set(prev).add('hydra-outbound'))
+      if (isFirstConnection) {
+        setWizardStep('connect-more')
+      } else {
+        setHydraDialogOpen(false)
+      }
     } catch (err) {
-      if (accountId) removeAccount(accountId).catch(() => {})
+      if (isFirstConnection && accountId) removeAccount(accountId).catch(() => {})
       setError(err instanceof Error ? err.message : 'Failed to add Hydra connection')
     }
   }
@@ -415,6 +468,7 @@ export function AccountForm() {
     }
 
     try {
+      const beforeIds = !editingAccount ? new Set(useAccountStore.getState().accounts.map(a => a.id)) : null
       if (editingAccount) {
         await updateAccount(editingAccount.id, {
           name: name.trim() || editingAccount.name,
@@ -445,7 +499,20 @@ export function AccountForm() {
           await addAccountByCredentials(email.trim(), password, name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, authIntent)
         }
       }
-      handleClose()
+      if (editingAccount) {
+        handleClose()
+      } else if (beforeIds) {
+        const newAccount = useAccountStore.getState().accounts.find(a => !beforeIds.has(a.id))
+        if (newAccount) {
+          setCreatedAccountId(newAccount.id)
+          setConnectedPlatforms(prev => new Set(prev).add('stremio'))
+          setWizardStep('connect-more')
+        } else {
+          handleClose()
+        }
+      } else {
+        handleClose()
+      }
     } catch (err) {
       setError(
         err instanceof Error
@@ -980,6 +1047,69 @@ export function AccountForm() {
     </div>
   )
 
+  const renderConnectMoreStep = () => (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <p className="text-sm font-semibold text-foreground">Connect more platforms</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          This account can connect to multiple platforms. Add more now or skip to finish.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {PLATFORM_REGISTRY.filter(p => p.available && (connectedPlatforms.has(p.id) || p.id !== 'stremio')).map(p => {
+          const isConnected = connectedPlatforms.has(p.id)
+          const handleConnect = () => {
+            setError('')
+            if (p.id === 'nuvio') {
+              setNuvioDialogOpen(true)
+            } else if (p.id === 'realstream') {
+              setRealstreamDialogOpen(true)
+            } else if (p.id === 'hydra-outbound') {
+              setHydraDialogOpen(true)
+            }
+          }
+          return (
+            <div
+              key={p.id}
+              className={cn(
+                'group relative flex min-h-[148px] flex-col items-start gap-4 rounded-[1.35rem] border p-4 text-left transition-[background-color,border-color,box-shadow,transform]',
+                isConnected
+                  ? 'border-success/30 bg-success/5'
+                  : 'border-border/45 bg-card/65 hover:-translate-y-0.5 hover:border-border/80 hover:bg-muted/30 hover:shadow-md'
+              )}
+            >
+              <span className={cn(
+                'flex h-11 w-11 items-center justify-center rounded-2xl border transition-colors',
+                'border-border/45 bg-background/60 text-muted-foreground group-hover:text-foreground'
+              )}>
+                <img src={p.logo} alt={p.name} loading="lazy" className="h-6 w-6 rounded" />
+              </span>
+              <span className="space-y-1.5 pr-5 flex-1">
+                <span className="block text-[15px] font-semibold leading-tight text-foreground">{p.name}</span>
+                <span className="block text-xs leading-relaxed text-muted-foreground">{p.description}</span>
+              </span>
+              {isConnected ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+                  <Check className="h-3 w-3" />
+                  Connected
+                </span>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleConnect}
+                  className="rounded-xl font-bold text-xs"
+                >
+                  Connect
+                </Button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+
   const renderEditingView = () => (
     <form onSubmit={handleSubmit} className="mt-4">
       <Tabs defaultValue="customize" className="w-full">
@@ -1329,24 +1459,32 @@ export function AccountForm() {
           <DialogTitle>
             {wizardStep === 'identity'
               ? 'Create Account'
-              : platformStep === 'select'
-                ? 'Connect a Platform'
-                : 'Connect Stremio'}
+              : wizardStep === 'connect-more'
+                ? 'Connect More Platforms'
+                : platformStep === 'select'
+                  ? 'Connect a Platform'
+                  : 'Connect Stremio'}
           </DialogTitle>
           <DialogDescription>
             {wizardStep === 'identity'
               ? 'Set up your account identity.'
-              : platformStep === 'select'
-                ? 'Link a streaming platform, or skip for a local-only hub.'
-                : 'Choose how to connect your Stremio account.'}
+              : wizardStep === 'connect-more'
+                ? 'Link additional platforms to this account.'
+                : platformStep === 'select'
+                  ? 'Link a streaming platform, or skip for a local-only hub.'
+                  : 'Choose how to connect your Stremio account.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="mt-4">
-          {wizardStep === 'identity' ? renderIdentityStep() : renderPlatformStep()}
+          {wizardStep === 'identity'
+            ? renderIdentityStep()
+            : wizardStep === 'connect-more'
+              ? renderConnectMoreStep()
+              : renderPlatformStep()}
         </div>
 
-        {error && wizardStep === 'identity' && (
+        {error && (wizardStep === 'identity' || wizardStep === 'connect-more') && (
           <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
             <div className="flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
@@ -1370,6 +1508,19 @@ export function AccountForm() {
                 className="rounded-xl font-bold text-xs px-8"
               >
                 Next
+              </Button>
+            </>
+          ) : wizardStep === 'connect-more' ? (
+            <>
+              <Button type="button" variant="subtle" onClick={handleClose} className="rounded-xl font-semibold text-xs">
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleClose}
+                className="rounded-xl font-bold text-xs px-8"
+              >
+                Finish
               </Button>
             </>
           ) : (

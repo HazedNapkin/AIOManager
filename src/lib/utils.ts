@@ -38,6 +38,70 @@ export function maskEmail(email: string): string {
   return `${local.substring(0, 3)}***@${domain}`
 }
 
+export function maskEmailLevel(email: string, level: number): string {
+  if (level <= 0 || !email || !email.includes('@')) return email
+  const [local, domain] = email.split('@')
+  if (level === 1) {
+    if (local.length <= 3) return `***@${domain}`
+    return `${local.substring(0, 3)}***@${domain}`
+  }
+  if (level === 2) {
+    const maskedLocal = local.length > 1 ? `${local[0]}***${local[local.length - 1]}` : '***'
+    const domainParts = domain.split('.')
+    if (domainParts.length > 1) {
+      const maskedDomain = `${domainParts[0][0]}***${domainParts[0][domainParts[0].length - 1] || ''}.${domainParts.slice(1).map(p => p[0] + '***').join('.')}`
+      return `${maskedLocal}@${maskedDomain}`
+    }
+    return `${maskedLocal}@${domain[0]}***`
+  }
+  return '****'
+}
+
+export function maskNameLevel(name: string, level: number): string {
+  if (level <= 0 || !name) return name
+  if (level === 1) {
+    if (name.length <= 3) return name[0] + '***'
+    return `${name.substring(0, 3)}***`
+  }
+  if (level === 2) {
+    if (name.length <= 1) return '*'
+    return `${name[0]}***${name[name.length - 1]}`
+  }
+  return '****'
+}
+
+export function maskUrlLevel(url: string, level: number): string {
+  if (level <= 0 || !url) return url
+  try {
+    const urlObj = new URL(url)
+    if (level === 1) {
+      return `${urlObj.protocol}//${urlObj.hostname}/...`
+    }
+    if (level === 2) {
+      const parts = urlObj.hostname.split('.')
+      if (parts.length > 1) {
+        return `${urlObj.protocol}//${parts[0]}.${parts.slice(1).map(p => '*'.repeat(p.length)).join('.')}/***`
+      }
+      return `${urlObj.protocol}//${'*'.repeat(urlObj.hostname.length)}/***`
+    }
+    return '********'
+  } catch {
+    return '********'
+  }
+}
+
+export function maskProfileLevel(profileName: string, level: number, count?: number): string {
+  if (level <= 0 || !profileName) return profileName
+  if (level === 1) {
+    if (profileName.length <= 1) return '*'
+    return `${profileName[0]}***${profileName[profileName.length - 1]}`
+  }
+  if (level === 2) {
+    return count != null ? `${count} profile${count !== 1 ? 's' : ''}` : '****'
+  }
+  return '****'
+}
+
 export function maskUrl(url: string): string {
   try {
     const urlObj = new URL(url)

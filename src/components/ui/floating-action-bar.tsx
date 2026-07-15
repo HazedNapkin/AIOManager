@@ -11,6 +11,7 @@ export interface FloatingActionItem {
     onClick: () => void
     variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link'
     disabled?: boolean
+    tooltip?: string
 }
 
 interface FloatingActionBarProps {
@@ -68,24 +69,25 @@ export function FloatingActionBar({
 
                         <div className="grid grid-cols-2 gap-1.5 p-2 sm:flex sm:flex-wrap sm:items-center sm:gap-1.5">
                             {actions.map((action, index) => (
-                                <Button
-                                    key={index}
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={action.onClick}
-                                    disabled={action.disabled}
-                                    className={cn(
-                                        "h-8 w-full shrink-0 gap-1.5 rounded-xl text-xs font-semibold sm:w-auto",
-                                        action.variant === 'destructive'
-                                            ? "border border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                            : action.variant === 'default'
-                                            ? "border border-primary/25 bg-primary/12 text-primary hover:bg-primary/20"
-                                            : "border border-border/25 bg-muted/20 text-foreground/80 hover:bg-muted/70 hover:text-foreground"
-                                    )}
-                                >
-                                    {action.icon}
-                                    {action.label}
-                                </Button>
+                                <Tooltip key={index} content={action.tooltip} side="top" disabled={!action.tooltip}>
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={action.onClick}
+                                        disabled={action.disabled}
+                                        className={cn(
+                                            "h-8 w-full shrink-0 gap-1.5 rounded-xl text-xs font-semibold sm:w-auto",
+                                            action.variant === 'destructive'
+                                                ? "border border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                : action.variant === 'default'
+                                                ? "border border-primary/25 bg-primary/12 text-primary hover:bg-primary/20"
+                                                : "border border-border/25 bg-muted/20 text-foreground/80 hover:bg-muted/70 hover:text-foreground"
+                                        )}
+                                    >
+                                        {action.icon}
+                                        {action.label}
+                                    </Button>
+                                </Tooltip>
                             ))}
                         </div>
                     </div>

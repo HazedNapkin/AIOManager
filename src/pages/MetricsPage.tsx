@@ -36,8 +36,9 @@ import {
 
 import { useEffect, useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
-import { cn, openStremioDetail } from '@/lib/utils'
+import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
+import { useUIStore } from '@/store/uiStore'
 import { Poster } from '@/components/common/Poster'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -139,6 +140,11 @@ export function MetricsPage() {
     const hasMetricsError = Boolean(stats?._error)
     const isLoading = !stats || (workerLoading && !hasMetricsError)
     const selectedPeriodLabel = METRIC_PERIODS.find(option => option.id === selectedPeriod)?.label || 'All Time'
+
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
+    const maskAccountName = (name: string) => { const n = name || ''; return n.includes('@') ? maskEmailLevel(n, privacyLevel) : maskNameLevel(n, privacyLevel) }
 
     return (
         <div className="space-y-4">
@@ -280,10 +286,10 @@ export function MetricsPage() {
                     {/* KEY METRICS GRID */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         {[
-                            { icon: Activity, label: 'Total Plays', value: stats.totalItems, color: 'text-primary', bg: 'bg-primary/12', border: 'border-primary/15' },
-                            { icon: Zap, label: 'Max Binge Session', value: stats.bingeMasters?.[0]?.bingeDuration || 0, color: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/15' },
-                            { icon: Clock, label: 'Hours Watched', value: stats.totalHours, palette: 'cyan' },
-                            { icon: Users, label: 'Active Profiles', value: stats.leaderboard?.length || 0, color: 'text-success', bg: 'bg-success/10', border: 'border-success/15' },
+                            { icon: Activity, label: 'Total Plays', value: stats.totalItems, color: 'text-primary', bg: 'bg-primary/12', border: 'border-primary/15', tooltip: 'Total items watched in period' },
+                            { icon: Zap, label: 'Max Binge Session', value: stats.bingeMasters?.[0]?.bingeDuration || 0, color: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/15', tooltip: 'Most titles in one session' },
+                            { icon: Clock, label: 'Hours Watched', value: stats.totalHours, palette: 'cyan', tooltip: 'Total hours of content watched' },
+                            { icon: Users, label: 'Active Profiles', value: stats.leaderboard?.length || 0, color: 'text-success', bg: 'bg-success/10', border: 'border-success/15', tooltip: 'Accounts with watch activity' },
                         ].map((card) => {
                             const { icon: Icon, label, value } = card
                             const palette = card.palette ? CHART_PALETTE[card.palette] : null
@@ -297,7 +303,9 @@ export function MetricsPage() {
                                                 <div className="text-3xl font-bold tabular-nums tracking-tight" style={{ color: label === 'Hours Watched' ? 'hsl(var(--foreground))' : palette.text }}>
                                                     <NumberTicker value={value} />
                                                 </div>
-                                                <div className="text-xs font-medium text-muted-foreground mt-1 leading-tight">{label}</div>
+                                                <Tooltip content={card.tooltip} side="top">
+                                                    <div className="text-xs font-medium text-muted-foreground mt-1 leading-tight cursor-help">{label}</div>
+                                                </Tooltip>
                                             </div>
                                             <div className="p-2 rounded-xl shrink-0" style={{ background: palette.bg }}>
                                                 <Icon className="h-4 w-4" style={{ color: palette.text }} />
@@ -313,7 +321,9 @@ export function MetricsPage() {
                                                 <div className={`text-3xl font-bold tabular-nums tracking-tight ${color}`}>
                                                     <NumberTicker value={value} />
                                                 </div>
-                                                <div className="text-xs font-medium text-muted-foreground mt-1 leading-tight">{label}</div>
+                                                <Tooltip content={card.tooltip} side="top">
+                                                    <div className="text-xs font-medium text-muted-foreground mt-1 leading-tight cursor-help">{label}</div>
+                                                </Tooltip>
                                             </div>
                                             <div className={`p-2 rounded-xl ${bg} shrink-0`}>
                                                 <Icon className={`h-4 w-4 ${color}`} />
@@ -350,12 +360,14 @@ export function MetricsPage() {
                                 <Button
                                     variant="outline" size="icon" className="h-8 w-8 rounded-full opacity-70 hover:opacity-100 disabled:opacity-20"
                                     onClick={() => document.getElementById('trending-scroll')?.scrollBy({ left: -300, behavior: 'smooth' })}
+                                    aria-label="Scroll left"
                                 >
                                     <ChevronLeft className="h-4 w-4" />
                                 </Button>
                                 <Button
                                     variant="outline" size="icon" className="h-8 w-8 rounded-full opacity-70 hover:opacity-100 disabled:opacity-20"
                                     onClick={() => document.getElementById('trending-scroll')?.scrollBy({ left: 300, behavior: 'smooth' })}
+                                    aria-label="Scroll right"
                                 >
                                     <ChevronRight className="h-4 w-4" />
                                 </Button>
@@ -402,7 +414,9 @@ export function MetricsPage() {
                             <CardHeader className="pb-3">
                                 <CardTitle className="flex items-center justify-between gap-2 text-sm">
                                     Binge Mastery
-                                    <StatusChip variant="warning">Top session</StatusChip>
+                                    <Tooltip content="Highest binge session in selected time period" side="top">
+                                        <StatusChip variant="warning">Top session</StatusChip>
+                                    </Tooltip>
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="flex flex-col md:flex-row items-center gap-8">
@@ -410,7 +424,7 @@ export function MetricsPage() {
                                     <div className="text-4xl font-bold"><NumberTicker value={stats.bingeMasters?.[0]?.bingeDuration || 0} /></div>
                                     <div className="text-xs font-medium text-muted-foreground uppercase">Titles in one session</div>
                                     <p className="text-sm mt-3 text-muted-foreground">
-                                        <span className="font-bold text-primary">{stats.bingeMasters?.[0]?.name}</span> is currently holding the crown for the most intense watch session.
+                                        <span className="font-bold text-primary">{maskAccountName(stats.bingeMasters?.[0]?.name || '')}</span> is currently holding the crown for the most intense watch session.
                                     </p>
                                 </div>
                                 <div className="flex -space-x-4">
@@ -448,7 +462,9 @@ export function MetricsPage() {
                     <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                                <h2 className="text-sm font-semibold">Community Awards</h2>
+                                <Tooltip content="Leaderboards for unusual watch habits" side="top">
+                                    <h2 className="text-sm font-semibold cursor-help">Community Awards</h2>
+                                </Tooltip>
                                 <p className="text-xs text-muted-foreground">Low-key leaderboards for unusual watch habits.</p>
                             </div>
                             <StatusChip variant="muted" icon={<Trophy />}>
@@ -470,7 +486,7 @@ export function MetricsPage() {
                                         <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
-                                                <span className="truncate text-sm font-bold">{u.name}</span>
+                                                <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
                                             </div>
                                             <Badge variant="outline" className="shrink-0 border-info/20 bg-info/10 text-xs text-info">
                                                 {u.count} late
@@ -500,7 +516,7 @@ export function MetricsPage() {
                                         <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
-                                                <span className="truncate text-sm font-bold">{u.name}</span>
+                                                <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
                                             </div>
                                             <Badge variant="outline" className="shrink-0 border-warning/20 bg-warning/10 text-xs text-warning">
                                                 {u.count} weekend
@@ -530,7 +546,7 @@ export function MetricsPage() {
                                         <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
-                                                <span className="truncate text-sm font-bold">{u.name}</span>
+                                                <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
                                             </div>
                                             <Badge variant="outline" className="shrink-0 border-success/20 bg-success/10 text-xs text-success">
                                                 {Math.round(u.rate)}%
@@ -552,7 +568,9 @@ export function MetricsPage() {
                     <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <div>
-                                <h2 className="text-sm font-semibold">Streak Hall of Fame</h2>
+                                <Tooltip content="Best and current streaks by account" side="top">
+                                    <h2 className="text-sm font-semibold cursor-help">Streak Hall of Fame</h2>
+                                </Tooltip>
                                 <p className="text-xs text-muted-foreground">Best and current streaks by account.</p>
                             </div>
                             <StatusChip variant="muted">{stats.streakMasters?.length || 0} profiles</StatusChip>
@@ -564,7 +582,7 @@ export function MetricsPage() {
                                         <div className="flex items-center gap-4">
                                             <div className="font-semibold text-sm text-muted-foreground/70">#{i + 1}</div>
                                             <div>
-                                                <div className="font-semibold">{u.name}</div>
+                                                <div className="font-semibold">{maskAccountName(u.name)}</div>
                                                 <div className="text-xs text-muted-foreground">{u.currentStreak > 0 ? "Active now" : "Inactive"}</div>
                                             </div>
                                         </div>
@@ -689,10 +707,10 @@ export function MetricsPage() {
                                             <div className="flex items-center gap-3">
                                                 <div className="relative w-10 h-10 shrink-0 flex items-center justify-center">
                                                     <SquircleOverlay />
-                                                    <span className="relative z-10 text-sm font-bold text-muted-foreground">{u.name[0]}</span>
+                                                    <span className="relative z-10 text-sm font-bold text-muted-foreground">{maskAccountName(u.name)[0]}</span>
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <div className="font-bold text-sm truncate">{u.name}</div>
+                                                    <div className="font-bold text-sm truncate">{maskAccountName(u.name)}</div>
                                                     <div className="flex flex-wrap gap-1 mt-1.5">
                                                         {u.badges.map((b, bi: number) => {
                                                             const BadgeIcon = IconMap[b.icon] || Flame
@@ -784,7 +802,7 @@ export function MetricsPage() {
                                                     </div>
                                                     <div className="min-w-0 flex-1">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="font-semibold text-base tracking-tight truncate">{user.name}</div>
+                                                            <div className="font-semibold text-base tracking-tight truncate">{maskAccountName(user.name)}</div>
                                                             {user.rank === 1 && <StatusChip variant="primary">Lead</StatusChip>}
                                                         </div>
                                                         <div className="text-xs font-medium text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 mt-1">
@@ -928,7 +946,7 @@ export function MetricsPage() {
                                                 <div className="flex -space-x-1">
                                                     {sharedAccs.slice(0, 5).map((acc) => (
                                                         <div key={acc.id} className="w-4 h-4 rounded-full bg-muted/80 border border-black/30 flex items-center justify-center text-[7px] font-bold text-white">
-                                                            {(acc.emoji || acc.name?.[0] || '?').toUpperCase()}
+                                                            {(acc.emoji || maskAccountName(acc.name || '?')[0]).toUpperCase()}
                                                         </div>
                                                     ))}
                                                 </div>
@@ -1000,7 +1018,7 @@ export function MetricsPage() {
                                         className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-[transform,opacity,box-shadow] duration-500"
                                     />
                                     <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <div className="text-xs font-medium text-white">{item.accountName}'s Choice</div>
+                                        <div className="text-xs font-medium text-white">{maskAccountName(item.accountName)}'s Choice</div>
                                     </div>
                                     <div className="absolute top-2 right-2 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">
                                         Rare

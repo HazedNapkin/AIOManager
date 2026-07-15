@@ -398,7 +398,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     <PlatformLogo platform="hydra-outbound" className="h-9 w-9 shrink-0" isHydra />
                                     <div>
                                         <p className="text-sm font-semibold text-foreground">Hydra (outbound)</p>
-                                        <p className="text-xs text-muted-foreground">Push to another AIOManager / Hydra-compatible server.</p>
+                                        <p className="text-xs text-muted-foreground">Push to a Hydra-compatible server.</p>
                                     </div>
                                 </button>
                             )}

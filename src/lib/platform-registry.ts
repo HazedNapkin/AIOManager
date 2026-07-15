@@ -70,7 +70,7 @@ export const PLATFORM_REGISTRY: PlatformRegistryEntry[] = [
         connectionType: 'hydra-outbound',
         requiresAuth: false,
         hasNativeDriver: false,
-        description: 'Push addons to another AIOManager instance or Hydra-compatible server',
+        description: 'Push addons to a Hydra-compatible server',
         available: true,
         features: ['addons'],
     },

@@ -378,7 +378,7 @@ export interface AccountStore {
             accountId: string,
             transportUrl: string,
             settings: {
-                  metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean },
+                  metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean; hideConfigure?: boolean },
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   manifest?: AddonDescriptor['manifest'],
                   note?: string,
@@ -389,6 +389,8 @@ export interface AccountStore {
       reorderAccounts: (newOrder: string[]) => Promise<void>
       bulkProtectAddons: (accountId: string, isProtected: boolean) => Promise<number>
       bulkProtectSelectedAddons: (accountId: string, transportUrls: string[], isProtected: boolean) => Promise<number>
+      bulkSetHideConfigure: (accountId: string, hideConfigure: boolean) => Promise<number>
+      bulkSetHideConfigureSelected: (accountId: string, transportUrls: string[], hideConfigure: boolean) => Promise<number>
       removeLocalAddons: (accountId: string, transportUrls: string[]) => Promise<void>
       replaceTransportUrl: (oldUrl: string, newUrl: string, accountId?: string, freshManifest?: AddonDescriptor['manifest'], metadata?: AddonDescriptor['metadata']) => Promise<ReplaceTransportUrlResult>
       reinstallAddon: (accountId: string, transportUrl: string) => Promise<void>
@@ -1026,7 +1028,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             accountId: string,
             transportUrl: string,
             settings: {
-                  metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean },
+                  metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean; hideConfigure?: boolean },
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   note?: string,
             },
@@ -1044,6 +1046,16 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       bulkProtectSelectedAddons: async (accountId: string, transportUrls: string[], isProtected: boolean) => {
             const { bulkProtectSelectedAddons } = await import('./account/accountAddonOps')
             return bulkProtectSelectedAddons(accountId, transportUrls, isProtected)
+      },
+
+      bulkSetHideConfigure: async (accountId: string, hideConfigure: boolean) => {
+            const { bulkSetHideConfigure } = await import('./account/accountAddonOps')
+            return bulkSetHideConfigure(accountId, hideConfigure)
+      },
+
+      bulkSetHideConfigureSelected: async (accountId: string, transportUrls: string[], hideConfigure: boolean) => {
+            const { bulkSetHideConfigureSelected } = await import('./account/accountAddonOps')
+            return bulkSetHideConfigureSelected(accountId, transportUrls, hideConfigure)
       },
 
       removeLocalAddons: async (accountId: string, transportUrls: string[]) => {

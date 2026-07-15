@@ -623,8 +623,8 @@ export function ConnectionEditPanel({
     return (
         <div className="space-y-4">
             <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs -ml-1" onClick={onBack}>
-                    <ArrowLeft className="h-3.5 w-3.5" />
+                <Button variant="outline" size="sm" className="h-8 shrink-0 gap-2 rounded-lg bg-background/80 px-2.5 font-medium shadow-sm" onClick={onBack}>
+                    <ArrowLeft className="w-4 h-4" />
                     Connections
                 </Button>
                 <div className="flex-1" />

@@ -7,7 +7,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { AlertCircle, GripVertical, ShieldCheck } from 'lucide-react'
 import { getAccountEmail } from '@/store/accountStore'
 import { useUIStore } from '@/store/uiStore'
-import { cn, getTimeAgo, maskEmail } from '@/lib/utils'
+import { cn, getTimeAgo, maskEmailLevel, maskNameLevel } from '@/lib/utils'
 
 interface SortableAccountCardProps {
     account: Account
@@ -40,13 +40,14 @@ export const AccountReorderRow = memo(function AccountReorderRow({
     style,
 }: AccountReorderRowProps) {
     const accountEmail = getAccountEmail(account)
-    const privacyObscureNames = useUIStore((state) => state.privacyObscureNames)
+    const privacyLevelNames = useUIStore((state) => state.privacyLevelNames)
     const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
-    const displayName = isPrivacyMode && privacyObscureNames
-        ? 'Account'
-        : isPrivacyMode && !isNameCustomized
-            ? account.name.includes('@') ? maskEmail(account.name) : '********'
-            : (account.name || accountEmail || 'Unnamed Account')
+    const privacyLevel = isPrivacyMode ? privacyLevelNames : 0
+    const displayName = isNameCustomized
+        ? maskNameLevel(account.name, privacyLevel)
+        : account.name && account.name.includes('@')
+            ? maskEmailLevel(account.name, privacyLevel)
+            : maskNameLevel(account.name || accountEmail || 'Unnamed Account', privacyLevel)
     const protectedCount = account.addons.filter(addon => addon.flags?.protected).length
     const timeStr = getTimeAgo(new Date(account.lastSync))
     const hasAccentColor = account.accentColor && account.accentColor !== 'none'
@@ -106,7 +107,7 @@ export const AccountReorderRow = memo(function AccountReorderRow({
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     {accountEmail && accountEmail !== account.name && (
                         <span className="min-w-0 truncate sm:max-w-[160px]">
-                            {isPrivacyMode ? maskEmail(accountEmail) : accountEmail}
+                            {maskEmailLevel(accountEmail, privacyLevel)}
                         </span>
                     )}
                     {accountEmail && accountEmail !== account.name && (

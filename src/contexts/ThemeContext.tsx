@@ -83,6 +83,7 @@ export interface CustomThemeData {
     saturation: number
     palette: ThemePalette
     customCss?: string
+    logoUrl?: string
 }
 
 function loadCustomThemes(): CustomThemeData[] {
@@ -111,6 +112,8 @@ function customToOption(ct: CustomThemeData): ThemeOption {
         category: 'standard' as const,
         palette: ct.palette,
         preview: derivePreview(ct.palette),
+        customCss: ct.customCss,
+        logoUrl: ct.logoUrl,
     }
 }
 
@@ -125,6 +128,7 @@ interface ThemeContextType {
     deleteCustomTheme: (id: Theme) => void
     getAllThemeOptions: () => ThemeOption[]
     isLight: boolean
+    logoUrl: string | undefined
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -173,6 +177,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const themeOption = allOptions.find(t => t.id === theme)
         if (!themeOption) return false
         return getLuminance(hslToHex(themeOption.palette.background)) > 0.18
+    }, [theme, getAllThemeOptions])
+
+    const logoUrl = useMemo(() => {
+        const allOptions = getAllThemeOptions()
+        const themeOption = allOptions.find(t => t.id === theme)
+        return themeOption?.logoUrl
     }, [theme, getAllThemeOptions])
 
     // Apply theme whenever it changes
@@ -331,7 +341,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const contextValue = useMemo(() => ({
         theme, setTheme,
         customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme,
-        getAllThemeOptions, isLight
+        getAllThemeOptions, isLight, logoUrl
     }), [theme, setTheme, customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme, getAllThemeOptions, isLight])
 
     return (

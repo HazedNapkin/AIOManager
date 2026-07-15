@@ -12,8 +12,8 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { cn, getLatestAddonVersion, maskEmail, getTimeAgo, isNewerVersion } from '@/lib/utils'
-import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRight, StickyNote, AlertCircle, MoreVertical, RotateCw, Trash } from 'lucide-react'
+import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
+import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRight, StickyNote, AlertCircle, MoreVertical, RotateCw, Trash, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
@@ -44,17 +44,17 @@ export const AccountListRow = memo(function AccountListRow({
     const { toast } = useToast()
     const { syncAccount, repairAccount, loading } = useAccounts()
     const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
-    const privacyObscureNames = useUIStore((state) => state.privacyObscureNames)
+    const privacyLevelNames = useUIStore((state) => state.privacyLevelNames)
     const [isMenuOpen, setIsMenuOpen] = useState(false)
 
     const accountEmail = getAccountEmail(account)
     const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
-    const displayName =
-        isPrivacyMode && privacyObscureNames
-            ? 'Account'
-            : isPrivacyMode && !isNameCustomized
-                ? account.name.includes('@') ? maskEmail(account.name) : '********'
-                : (account.name || accountEmail || 'Unnamed Account')
+    const privacyLevel = isPrivacyMode ? privacyLevelNames : 0
+    const displayName = isNameCustomized
+        ? maskNameLevel(account.name, privacyLevel)
+        : account.name && account.name.includes('@')
+            ? maskEmailLevel(account.name, privacyLevel)
+            : maskNameLevel(account.name || accountEmail || 'Unnamed Account', privacyLevel)
 
     const updateCount = useAddonStore(
         useShallow((state) =>
@@ -152,15 +152,15 @@ export const AccountListRow = memo(function AccountListRow({
                     <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
                     {account.status === 'error' && (
                         <Tooltip content="Try syncing again. If it keeps failing, open account settings and update credentials." side="top">
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive shrink-0">
-                                <AlertCircle className="w-3 h-3" /> Sync failed
+                            <span aria-label="Sync failed" className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive shrink-0">
+                                <AlertTriangle className="h-3 w-3" />
                             </span>
                         </Tooltip>
                     )}
                     {account.status === 'expired' && (
                         <Tooltip content="A session token was rejected. Re-authenticate this account to refresh it." side="top">
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-warning shrink-0">
-                                <AlertCircle className="w-3 h-3" /> Session expired
+                            <span aria-label="Session expired" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
+                                <AlertCircle className="h-3 w-3" />
                             </span>
                         </Tooltip>
                     )}
@@ -182,7 +182,7 @@ export const AccountListRow = memo(function AccountListRow({
                         <>
                             <span className="hidden sm:inline shrink-0">·</span>
                             <span className="hidden truncate text-muted-foreground sm:inline">
-                                Watching <span className="font-medium text-foreground/80">{lastWatched.name}</span>
+                                <Play className="inline h-3 w-3 text-muted-foreground/60 mr-1" /><span className="font-medium text-foreground/80">{lastWatched.name}</span>
                             </span>
                         </>
                     )}
@@ -200,7 +200,7 @@ export const AccountListRow = memo(function AccountListRow({
             <div className="hidden items-center gap-2 shrink-0 sm:flex">
                 <Tooltip content={`${account.addons.length} addon${account.addons.length !== 1 ? 's' : ''}${protectedCount > 0 ? `, ${protectedCount} protected` : ''}`} side="top">
                     <span className="inline-flex h-6 items-center gap-1.5 text-xs text-muted-foreground">
-                        <span className="font-semibold text-foreground">{account.addons.length}</span> addons
+                        <Puzzle className="h-3.5 w-3.5 text-muted-foreground" /><span className="font-semibold text-foreground">{account.addons.length}</span>
                         {protectedCount > 0 && (
                             <>
                                 <span className="text-border">/</span>
@@ -212,9 +212,9 @@ export const AccountListRow = memo(function AccountListRow({
                 </Tooltip>
                 {updateCount > 0 && (
                     <Tooltip content={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} side="top">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/12 border border-primary/25 text-xs font-semibold text-primary">
-                            <ArrowUpCircle className="w-3 h-3" />
-                            {updateCount}
+                        <span aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                            <ArrowUpCircle className="h-3 w-3" />
+                            <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{updateCount}</span>
                         </span>
                     </Tooltip>
                 )}
@@ -226,10 +226,11 @@ export const AccountListRow = memo(function AccountListRow({
                                 e.stopPropagation()
                                 useAccountStore.getState().clearChangelog(account.id)
                             }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/12 border border-primary/25 text-xs font-semibold text-primary cursor-pointer hover:bg-primary/20 transition-colors"
+                            aria-label={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today`}
+                            className="relative inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary cursor-pointer hover:bg-primary/20 transition-colors"
                         >
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
-                            {recentChanges}
+                            <Activity className="h-3 w-3" />
+                            <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{recentChanges}</span>
                         </button>
                     </Tooltip>
                 )}
@@ -237,16 +238,16 @@ export const AccountListRow = memo(function AccountListRow({
                 {activeRules.length > 0 && (
                     failedOverRules.length > 0 ? (
                         <Tooltip content={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} side="top">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/10 border border-warning/25 text-xs font-semibold text-warning">
-                                <AlertTriangle className="w-3 h-3" />
-                                {failedOverRules.length}
+                            <span aria-label={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                                <ArrowRightLeft className="h-3 w-3" />
+                                <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-warning text-warning-foreground text-[9px] font-bold leading-none">{failedOverRules.length}</span>
                             </span>
                         </Tooltip>
                     ) : (
                         <Tooltip content={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} side="top">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/10 border border-success/25 text-xs font-semibold text-success">
-                                <ShieldCheck className="w-3 h-3" />
-                                {activeRules.length}
+                            <span aria-label={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-success text-success-foreground text-[9px] font-bold leading-none">{activeRules.length}</span>
                             </span>
                         </Tooltip>
                     )

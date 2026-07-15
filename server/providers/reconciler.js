@@ -244,17 +244,25 @@ async function readPlatformAddons(driver, connection) {
 }
 export function applyCustomMetadata(addon) {
     const meta = addon?.metadata
-    if (!meta || (!meta.customName && !meta.customLogo && !meta.customDescription)) return addon
+    if (!meta || (!meta.customName && !meta.customLogo && !meta.customDescription && !meta.hideConfigure)) return addon
     const manifest = addon.manifest || {}
-    return {
-        ...addon,
-        manifest: {
-            ...manifest,
-            name: meta.customName || manifest.name,
-            logo: meta.customLogo || manifest.logo,
-            description: meta.customDescription || manifest.description,
-        },
+    let updated = addon
+    if (meta.customName || meta.customLogo || meta.customDescription) {
+        updated = {
+            ...addon,
+            manifest: {
+                ...manifest,
+                name: meta.customName || manifest.name,
+                logo: meta.customLogo || manifest.logo,
+                description: meta.customDescription || manifest.description,
+            },
+        }
     }
+    if (meta.hideConfigure) {
+        const m = updated.manifest || {}
+        updated = { ...updated, manifest: { ...m, behaviorHints: { ...m.behaviorHints, configurable: false } } }
+    }
+    return updated
 }
 
 function manifestSignature(m) {

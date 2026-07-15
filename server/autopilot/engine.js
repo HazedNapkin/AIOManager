@@ -464,21 +464,26 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 const baseManifest = sanitizeManifest(addon.manifest, addon.transportUrl)
                 const meta = addon.metadata || {}
 
+                let manifest = baseManifest
                 if (meta.customName || meta.customDescription || meta.customLogo) {
-                    return {
-                        transportUrl: addon.transportUrl,
-                        manifest: {
-                            ...baseManifest,
-                            name: meta.customName || baseManifest.name || '',
-                            logo: meta.customLogo || baseManifest.logo || undefined,
-                            description: meta.customDescription || baseManifest.description || '',
-                        }
+                    manifest = {
+                        ...baseManifest,
+                        name: meta.customName || baseManifest.name || '',
+                        logo: meta.customLogo || baseManifest.logo || undefined,
+                        description: meta.customDescription || baseManifest.description || '',
                     }
                 }
-                return {
-                    transportUrl: addon.transportUrl,
-                    manifest: baseManifest
+                if (meta.hideConfigure) {
+                    manifest = { ...manifest, behaviorHints: { ...manifest.behaviorHints, configurable: false } }
                 }
+                const prepared = {
+                    transportUrl: addon.transportUrl,
+                    manifest
+                }
+                if (addon.flags) {
+                    prepared.flags = addon.flags
+                }
+                return prepared
             })
     }
 

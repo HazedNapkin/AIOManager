@@ -26,9 +26,9 @@ export interface NotesGraphSettings {
 export interface SyncedSettings {
     theme?: string
     privacyMode?: boolean
-    privacyObscureNames?: boolean
-    privacyObscureUrls?: boolean
-    privacyObscureProfiles?: boolean
+    privacyLevelNames?: number
+    privacyLevelUrls?: number
+    privacyLevelProfiles?: number
     libraryViewMode?: SyncedViewMode
     accountsView?: SyncedViewMode
     addonListView?: SyncedViewMode
@@ -43,9 +43,9 @@ export interface SyncedSettings {
 const STORAGE_KEYS = {
     theme: 'aioman-theme',
     privacyMode: 'aioman:privacy-mode',
-    privacyObscureNames: 'aioman:privacy-obscure-names',
-    privacyObscureUrls: 'aioman:privacy-obscure-urls',
-    privacyObscureProfiles: 'aioman:privacy-obscure-profiles',
+    privacyLevelNames: 'aioman:privacy-level-names',
+    privacyLevelUrls: 'aioman:privacy-level-urls',
+    privacyLevelProfiles: 'aioman:privacy-level-profiles',
     libraryViewMode: 'aioman:library-view-mode',
     accountsView: 'aioman:accounts-view',
     addonListView: 'aioman:addon-list-view',
@@ -215,9 +215,9 @@ export function readSyncedSettings(): SyncedSettings {
     return {
         theme: getStorageItem(STORAGE_KEYS.theme) || 'dark',
         privacyMode: uiState.isPrivacyModeEnabled,
-        privacyObscureNames: readBoolean(STORAGE_KEYS.privacyObscureNames, true),
-        privacyObscureUrls: readBoolean(STORAGE_KEYS.privacyObscureUrls, true),
-        privacyObscureProfiles: readBoolean(STORAGE_KEYS.privacyObscureProfiles, true),
+        privacyLevelNames: readNumber(STORAGE_KEYS.privacyLevelNames, uiState.privacyLevelNames ?? 0),
+        privacyLevelUrls: readNumber(STORAGE_KEYS.privacyLevelUrls, uiState.privacyLevelUrls ?? 0),
+        privacyLevelProfiles: readNumber(STORAGE_KEYS.privacyLevelProfiles, uiState.privacyLevelProfiles ?? 0),
         libraryViewMode: uiState.libraryViewMode,
         accountsView: uiState.accountsView,
         addonListView: uiState.addonListView,
@@ -272,20 +272,20 @@ export function applySyncedSettings(settings: SyncedSettings | undefined, overwr
         applied.privacyMode = settings.privacyMode
     }
 
-    if (typeof settings.privacyObscureNames === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureNames)) {
-        setStorageItem(STORAGE_KEYS.privacyObscureNames, String(settings.privacyObscureNames))
-        useUIStore.setState({ privacyObscureNames: settings.privacyObscureNames })
-        applied.privacyObscureNames = settings.privacyObscureNames
+    if (typeof settings.privacyLevelNames === 'number' && shouldWrite(STORAGE_KEYS.privacyLevelNames)) {
+        setStorageItem(STORAGE_KEYS.privacyLevelNames, String(settings.privacyLevelNames))
+        useUIStore.setState({ privacyLevelNames: settings.privacyLevelNames })
+        applied.privacyLevelNames = settings.privacyLevelNames
     }
-    if (typeof settings.privacyObscureUrls === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureUrls)) {
-        setStorageItem(STORAGE_KEYS.privacyObscureUrls, String(settings.privacyObscureUrls))
-        useUIStore.setState({ privacyObscureUrls: settings.privacyObscureUrls })
-        applied.privacyObscureUrls = settings.privacyObscureUrls
+    if (typeof settings.privacyLevelUrls === 'number' && shouldWrite(STORAGE_KEYS.privacyLevelUrls)) {
+        setStorageItem(STORAGE_KEYS.privacyLevelUrls, String(settings.privacyLevelUrls))
+        useUIStore.setState({ privacyLevelUrls: settings.privacyLevelUrls })
+        applied.privacyLevelUrls = settings.privacyLevelUrls
     }
-    if (typeof settings.privacyObscureProfiles === 'boolean' && shouldWrite(STORAGE_KEYS.privacyObscureProfiles)) {
-        setStorageItem(STORAGE_KEYS.privacyObscureProfiles, String(settings.privacyObscureProfiles))
-        useUIStore.setState({ privacyObscureProfiles: settings.privacyObscureProfiles })
-        applied.privacyObscureProfiles = settings.privacyObscureProfiles
+    if (typeof settings.privacyLevelProfiles === 'number' && shouldWrite(STORAGE_KEYS.privacyLevelProfiles)) {
+        setStorageItem(STORAGE_KEYS.privacyLevelProfiles, String(settings.privacyLevelProfiles))
+        useUIStore.setState({ privacyLevelProfiles: settings.privacyLevelProfiles })
+        applied.privacyLevelProfiles = settings.privacyLevelProfiles
     }
 
     if (isViewMode(settings.libraryViewMode) && shouldWrite(STORAGE_KEYS.libraryViewMode)) {

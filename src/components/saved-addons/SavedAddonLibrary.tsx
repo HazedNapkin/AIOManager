@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { AnimatedTrashIcon, AnimatedRefreshIcon } from '../ui/AnimatedIcons'
 import { Progress } from '@/components/ui/progress'
-import { useEffect, useState, useCallback, useRef, lazy, Suspense } from 'react'
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 const DiscoverPanel = lazy(() => import('@/components/discover/DiscoverPanel').then(m => ({ default: m.DiscoverPanel })))
@@ -214,6 +214,24 @@ export function SavedAddonLibrary() {
     filteredAddons,
     library,
   })
+
+  const librarySearchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement
+      const isInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (e.key === 'Escape' && isSelectionMode && !isInput) {
+        clearSelection()
+      }
+      if (e.key === '/' && !isSelectionMode && !isInput) {
+        e.preventDefault()
+        librarySearchRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isSelectionMode, clearSelection])
 
   const handleRefresh = useCallback(async () => {
     if (checkingUpdates) return
@@ -541,7 +559,7 @@ export function SavedAddonLibrary() {
         <FloatingActionBar
           open={selectedIds.size > 0}
           selectedCount={selectedIds.size}
-          totalCount={filteredAddons.length}
+                totalCount={filteredAddons.length}
           onClearSelection={clearSelection}
           actions={[
             {
@@ -549,30 +567,35 @@ export function SavedAddonLibrary() {
               onClick: handleSelectAll,
               variant: 'outline',
               icon: <Check className="h-4 w-4" />,
+              tooltip: selectedIds.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect all addons' : 'Select all addons',
             },
             {
               label: 'Deploy',
               onClick: () => setShowAccountPicker(true),
               variant: 'outline',
               icon: <Send className="h-4 w-4" />,
+              tooltip: 'Deploy to accounts',
             },
             {
               label: 'Remove',
               onClick: () => setShowRemoveAccountPicker(true),
               variant: 'outline',
               icon: <User className="h-4 w-4" />,
+              tooltip: 'Remove from accounts',
             },
             {
               label: 'Edit',
               onClick: () => { setShowBulkEditDialog(true) },
               variant: 'outline',
               icon: <Pencil className="h-4 w-4" />,
+              tooltip: 'Edit selected addons',
             },
             {
               label: 'Delete',
               onClick: () => setShowBulkDeleteConfirmation(true),
               variant: 'destructive',
               icon: <AnimatedTrashIcon className="h-4 w-4" />,
+              tooltip: 'Delete selected addons',
             },
           ]}
         />
@@ -685,6 +708,7 @@ export function SavedAddonLibrary() {
                 profiles={profiles}
                 searchQuery={searchQuery}
                 onSearchChange={handleSearchChange}
+                searchRef={librarySearchRef}
                 viewMode={viewMode}
                 onViewModeChange={(mode) => { setViewMode(mode); setCollapsedProfiles(new Set()) }}
                 savedAddonsCount={savedAddons.length}
@@ -814,6 +838,7 @@ export function SavedAddonLibrary() {
           isDestructive={true}
           onConfirm={handleBulkDelete}
           isLoading={loading}
+          impactItems={Array.from(selectedIds).slice(0, 10).map(id => library[id]?.name || id)}
         />
 
         <AccountPickerDialog

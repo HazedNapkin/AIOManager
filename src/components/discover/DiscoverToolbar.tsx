@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { cn } from '@/lib/utils'
 import { LayoutGrid, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
@@ -67,6 +69,20 @@ export function DiscoverToolbar({
   onToggleCompact,
 }: DiscoverToolbarProps) {
   const activeFilterCount = selectedResources.length + selectedTypes.length
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement
+      const isInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      if (e.key === '/' && !isInput) {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
 
   return (
     <div className="flex flex-col gap-2">
@@ -74,6 +90,7 @@ export function DiscoverToolbar({
         <div className="relative flex-1 min-w-0 sm:w-80">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
+            ref={searchRef}
             placeholder="Search community addons..."
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
@@ -119,6 +136,7 @@ export function DiscoverToolbar({
 
           {showSort && onToggleCompact && (
             <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+              <Tooltip content="Grid view" side="bottom">
               <Button
                 variant="ghost"
                 size="sm"
@@ -129,6 +147,8 @@ export function DiscoverToolbar({
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
               </Button>
+              </Tooltip>
+              <Tooltip content="Compact view" side="bottom">
               <Button
                 variant="ghost"
                 size="sm"
@@ -139,6 +159,7 @@ export function DiscoverToolbar({
               >
                 <Rows3 className="h-3.5 w-3.5" />
               </Button>
+              </Tooltip>
             </div>
           )}
 

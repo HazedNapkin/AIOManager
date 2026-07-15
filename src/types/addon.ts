@@ -43,6 +43,7 @@ export interface AddonDescriptor {
     customDescription?: string
     lastUpdated?: number
     cinemetaConfig?: import('./cinemeta').CinemetaConfigState
+    hideConfigure?: boolean
   }
   catalogOverrides?: CatalogOverrides
   syncToLibrary?: boolean

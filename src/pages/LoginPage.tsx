@@ -33,7 +33,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const login = useSyncStore(s => s.login)
     const logout = useSyncStore(s => s.logout)
     const { isLocked, unlock } = useAuthStore()
-    const { isLight } = useTheme()
+    const { isLight, logoUrl } = useTheme()
 
     const confetti = useConfetti()
     const [searchParams] = useSearchParams()
@@ -227,10 +227,11 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                     <div className="flex justify-center">
                         <div className="flex h-20 w-20 items-center justify-center">
                             <img
-                                src="/logo.png"
+                                src={logoUrl || "/logo.png"}
                                 alt="AIOManager"
                                 loading="lazy"
-                                className={cn('h-20 w-20 object-contain', isLight && 'invert')}
+                                onError={(e) => { if (e.currentTarget.src !== window.location.origin + '/logo.png') e.currentTarget.src = '/logo.png' }}
+                                className={cn('h-20 w-20 object-contain', !logoUrl && isLight && 'invert')}
                             />
                         </div>
                     </div>

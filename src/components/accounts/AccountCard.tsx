@@ -18,9 +18,9 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
-import { AlertCircle, AlertTriangle, ShieldCheck, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { cn, getLatestAddonVersion, maskEmail, getTimeAgo, isNewerVersion } from '@/lib/utils'
+import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
 import { STICKY_NOTE_MAX_LENGTH } from '@/lib/constants'
 import { memo, useMemo, useRef, useEffect, useState, useCallback } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -171,11 +171,11 @@ export const AccountCard = memo(function AccountCard({
   const { toast } = useToast()
   useRelativeTime()
   const { syncAccount, repairAccount, loading } = useAccounts()
-  const { openAddAccountDialog, isAddAccountDialogOpen, privacyObscureNames } = useUIStore(
+  const { openAddAccountDialog, isAddAccountDialogOpen, privacyLevelNames } = useUIStore(
     useShallow((state) => ({
       openAddAccountDialog: state.openAddAccountDialog,
       isAddAccountDialogOpen: state.isAddAccountDialogOpen,
-      privacyObscureNames: state.privacyObscureNames
+      privacyLevelNames: state.privacyLevelNames
     }))
   )
   const failoverRules = useFailoverStore(
@@ -249,14 +249,12 @@ export const AccountCard = memo(function AccountCard({
 
   const accountEmail = getAccountEmail(account)
   const isNameCustomized = account.name !== accountEmail && account.name !== 'Account' && account.name !== 'Stremio Account'
-  const displayName =
-    isPrivacyMode && privacyObscureNames
-      ? 'Account'
-      : isPrivacyMode && !isNameCustomized
-        ? account.name.includes('@')
-          ? maskEmail(account.name)
-          : '********'
-        : (account.name || accountEmail || 'Unnamed Account')
+  const privacyLevel = isPrivacyMode ? privacyLevelNames : 0
+  const displayName = isNameCustomized
+    ? maskNameLevel(account.name, privacyLevel)
+    : account.name && account.name.includes('@')
+      ? maskEmailLevel(account.name, privacyLevel)
+      : maskNameLevel(account.name || accountEmail || 'Unnamed Account', privacyLevel)
 
   const timeStr = getTimeAgo(new Date(account.lastSync))
   const hasAccentColor = account.accentColor && account.accentColor !== 'none'
@@ -351,7 +349,7 @@ export const AccountCard = memo(function AccountCard({
 
                 {accountEmail && accountEmail !== account.name && (
                   <p className="text-xs text-muted-foreground mt-0.5 truncate sr-only">
-                    {isPrivacyMode ? maskEmail(accountEmail) : accountEmail}
+                    {maskEmailLevel(accountEmail, privacyLevel)}
                   </p>
                 )}
                 {!account.hidePlatformLogos && (hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
@@ -466,21 +464,69 @@ export const AccountCard = memo(function AccountCard({
         <CardContent className="flex-grow px-4 pb-3">
           <div className="space-y-3">
 
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="font-semibold text-foreground">{account.addons.length}</span>
-                addon{account.addons.length !== 1 ? 's' : ''}
-              </span>
-              {account.status !== 'active' && (
-                <span className={cn(
-                  'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 font-medium',
-                  account.status === 'expired'
-                    ? 'border-warning/25 bg-warning/10 text-warning'
-                    : 'border-destructive/25 bg-destructive/10 text-destructive'
-                )}>
-                  <AlertCircle className="h-3 w-3 shrink-0" />
-                  {account.status === 'expired' ? 'Session expired' : 'Needs sync'}
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <Tooltip content={`${account.addons.length} addon${account.addons.length !== 1 ? 's' : ''}`} side="top">
+                <span aria-label={`${account.addons.length} addon${account.addons.length !== 1 ? 's' : ''}`} className="inline-flex items-center gap-1 rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-muted-foreground">
+                  <Puzzle className="h-2.5 w-2.5" />
+                  <span className="font-semibold text-foreground">{account.addons.length}</span>
                 </span>
+              </Tooltip>
+              {account.status !== 'active' && (
+                <Tooltip content={account.status === 'expired' ? 'Session expired' : 'Needs sync'} side="top">
+                  <span aria-label={account.status === 'expired' ? 'Session expired' : 'Needs sync'} className={cn(
+                    'inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30',
+                    account.status === 'expired'
+                      ? 'text-warning'
+                      : 'text-destructive'
+                  )}>
+                    {account.status === 'expired'
+                      ? <AlertCircle className="h-2.5 w-2.5" />
+                      : <RefreshCw className="h-2.5 w-2.5" />}
+                  </span>
+                </Tooltip>
+              )}
+
+              {updateCount > 0 && (
+                <Tooltip content={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} side="top">
+                  <span aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-primary">
+                    <ArrowUpCircle className="h-2.5 w-2.5" />
+                    <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{updateCount}</span>
+                  </span>
+                </Tooltip>
+              )}
+
+              {recentChanges > 0 && updateCount === 0 && (
+                <Tooltip content={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today · Click to dismiss`} side="top">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      useAccountStore.getState().clearChangelog(account.id)
+                    }}
+                    aria-label={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today`}
+                    className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-primary cursor-pointer hover:bg-muted/50 transition-colors"
+                  >
+                    <Activity className="h-2.5 w-2.5" />
+                    <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{recentChanges}</span>
+                  </button>
+                </Tooltip>
+              )}
+
+              {activeRules.length > 0 && (
+                failedOverRules.length > 0 ? (
+                  <Tooltip content={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} side="top">
+                    <span aria-label={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-warning">
+                      <ArrowRightLeft className="h-2.5 w-2.5" />
+                      <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-warning text-warning-foreground text-[9px] font-bold leading-none">{failedOverRules.length}</span>
+                    </span>
+                  </Tooltip>
+                ) : (
+                  <Tooltip content={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} side="top">
+                    <span aria-label={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-success">
+                      <CheckCircle2 className="h-2.5 w-2.5" />
+                      <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-success text-success-foreground text-[9px] font-bold leading-none">{activeRules.length}</span>
+                    </span>
+                  </Tooltip>
+                )
               )}
             </div>
 
@@ -502,52 +548,12 @@ export const AccountCard = memo(function AccountCard({
             )}
 
 
-            <div className="flex flex-wrap gap-1.5">
-
-              {updateCount > 0 && (
-                <span className="inline-flex h-6 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-2 text-xs font-semibold text-primary">
-                  <ArrowUpCircle className="w-3 h-3" />
-                  {updateCount} update{updateCount !== 1 ? 's' : ''}
-                </span>
-              )}
-
-
-              {recentChanges > 0 && updateCount === 0 && (
-                <Tooltip content="Click to dismiss" side="top">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      useAccountStore.getState().clearChangelog(account.id)
-                    }}
-                    className="inline-flex h-6 items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2 text-xs font-semibold text-primary cursor-pointer hover:bg-primary/20 transition-colors"
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
-                    {recentChanges} change{recentChanges !== 1 ? 's' : ''} today
-                  </button>
-                </Tooltip>
-              )}
-
-
-              {activeRules.length > 0 && (
-                failedOverRules.length > 0 ? (
-                  <span className="inline-flex h-6 items-center gap-1 rounded-full border border-warning/25 bg-warning/10 px-2 text-xs font-semibold text-warning">
-                    <AlertTriangle className="w-3 h-3" />
-                    {failedOverRules.length} failed over
-                  </span>
-                ) : (
-                  <span className="inline-flex h-6 items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 text-xs font-semibold text-success">
-                    <ShieldCheck className="w-3 h-3" />
-                    {activeRules.length} rule{activeRules.length !== 1 ? 's' : ''} healthy
-                  </span>
-                )
-              )}
-            </div>
-
-
             {!account.hideLastWatched && lastWatched && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-muted-foreground/60 shrink-0">Watching</span>
+                  <span className="inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-muted-foreground/60 shrink-0">
+                    <Play className="h-2.5 w-2.5" />
+                  </span>
                   <span className="truncate font-medium text-foreground/80">{lastWatched.name}</span>
                   <span className="shrink-0 text-muted-foreground/60">&middot; {getTimeAgo(new Date(lastWatched.timestamp))}</span>
                 </div>
@@ -624,10 +630,10 @@ export const AccountCard = memo(function AccountCard({
                 variant="ghost"
                 size="icon"
                 onClick={handleNoteOpen}
-                className={`h-7 w-7 flex items-center justify-center rounded-full p-1 transition-colors ${account.note ? 'text-primary bg-primary/12' : 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50'}`}
+                className={`h-6 w-6 flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 transition-colors ${account.note ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 bg-muted/30 hover:text-muted-foreground hover:bg-muted/50'}`}
                 aria-label="Toggle note"
               >
-                <StickyNote className="w-3.5 h-3.5" />
+                <StickyNote className="h-2.5 w-2.5" />
               </Button>
             </Tooltip>
             {!isSelectionMode && (

@@ -3,6 +3,14 @@ import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, ChevronDown, Search } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
+import { maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { useUIStore } from '@/store/uiStore'
+
+function maskedDisplayName(name: string, email: string | undefined, privacyLevel: number): string {
+    if (name && !name.includes('@')) return maskNameLevel(name, privacyLevel)
+    const emailStr = name && name.includes('@') ? name : (email || '')
+    return maskEmailLevel(emailStr, privacyLevel) || name || email || ''
+}
 
 interface Account {
     id: string
@@ -39,11 +47,15 @@ const OUTLINE_BTN = "inline-flex items-center justify-center gap-1.5 whitespace-
 function AccountAvatar({ account, size = 'sm' }: { account: Account; size?: 'sm' | 'md' }) {
     const dim = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6'
     const fontSize = size === 'sm' ? 'text-xs' : 'text-xs'
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
+    const initial = account.emoji || (maskedDisplayName(account.name, account.email, privacyLevel)[0] || '?').toUpperCase()
     return (
         <div className={`relative ${dim} shrink-0 flex items-center justify-center`}>
             <SquircleOverlay />
             <span className={`relative z-10 ${fontSize} font-bold text-muted-foreground`}>
-                {account.emoji || (account.name || account.email || '?')[0].toUpperCase()}
+                {initial}
             </span>
         </div>
     )
@@ -73,6 +85,9 @@ function SearchableDropdown({
     const dropdownRef = useRef<HTMLDivElement>(null)
     const buttonRef = useRef<HTMLButtonElement>(null)
     const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
 
     useEffect(() => {
         if (open) {
@@ -159,7 +174,7 @@ function SearchableDropdown({
                         className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg transition-colors ${acc.id === selectedId ? 'bg-primary/12 text-primary border border-primary/25' : 'hover:bg-muted/50'}`}
                     >
                         <AccountAvatar account={acc} size="sm" />
-                        <span className="truncate">{acc.name || acc.email || 'Unknown Account'}</span>
+                        <span className="truncate">{maskedDisplayName(acc.name, acc.email, privacyLevel) || 'Unknown Account'}</span>
                     </button>
                 ))}
             </div>
@@ -177,7 +192,7 @@ function SearchableDropdown({
                 {selectedAccount ? (
                     <>
                         <AccountAvatar account={selectedAccount} size="sm" />
-                        <span className="flex-1 text-left truncate">{selectedAccount.name || selectedAccount.email}</span>
+                        <span className="flex-1 text-left truncate">{maskedDisplayName(selectedAccount.name, selectedAccount.email, privacyLevel)}</span>
                     </>
                 ) : allLabel ? (
                     <span className="flex-1 text-left truncate">{allLabel}</span>

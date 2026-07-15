@@ -868,7 +868,7 @@ export async function updateAddonSettings(
     accountId: string,
     transportUrl: string,
     settings: {
-        metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean },
+        metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean; hideConfigure?: boolean },
         catalogOverrides?: AddonDescriptor['catalogOverrides'],
         manifest?: AddonDescriptor['manifest'],
         note?: string,
@@ -901,12 +901,12 @@ export async function updateAddonSettings(
                     })
                     newAddon.metadata = cleanMetadata
 
-                    if (clearedFields.length > 0) {
-                        const fieldMap: Record<string, string> = {
-                            customName: 'name',
-                            customLogo: 'logo',
-                            customDescription: 'description'
-                        }
+                    const fieldMap: Record<string, string> = {
+                        customName: 'name',
+                        customLogo: 'logo',
+                        customDescription: 'description'
+                    }
+                    if (clearedFields.some(f => fieldMap[f])) {
                         let originalManifest = getCachedManifest(addon.transportUrl)
                         if (!originalManifest) {
                             try {
@@ -943,6 +943,9 @@ export async function updateAddonSettings(
                     if (newAddon.metadata) {
                         const { customName, customLogo, customDescription, ...restMeta } = newAddon.metadata
                         newAddon.metadata = restMeta as typeof newAddon.metadata
+                    }
+                    if (newAddon.metadata?.cinemetaConfig) {
+                        newAddon.manifest = getEffectiveManifest(newAddon)
                     }
                 }
 
@@ -1125,4 +1128,61 @@ export async function replaceTransportUrl(oldUrl: string, newUrl: string, accoun
     }
 
     return { updatedAccountIds: Array.from(modifiedAccountIds), failedAccounts: [] } as ReplaceTransportUrlResult
+}
+
+export async function bulkSetHideConfigure(accountId: string, hideConfigure: boolean) {
+    const store = await getStore()
+    const account = getAccountById(store.getState().accounts, accountId)
+    if (!account) return 0
+    const changedCount = account.addons.filter((a) => Boolean(a.metadata?.hideConfigure) !== hideConfigure).length
+    if (changedCount === 0) return 0
+    const releaseMutex = await acquireSyncMutex(accountId)
+    try {
+        const updatedAddons = account.addons.map((a) => {
+            const newMetadata = { ...a.metadata }
+            if (hideConfigure) newMetadata.hideConfigure = true
+            else delete newMetadata.hideConfigure
+            return { ...a, metadata: newMetadata }
+        })
+        const accounts = store.getState().accounts.map((acc) =>
+            acc.id === accountId ? updateActiveProfile({ ...acc, addons: updatedAddons }, updatedAddons) : acc
+        )
+        store.setState({ accounts })
+        persistAccounts(accounts)
+        backgroundSync(accountId, account, updatedAddons)
+        return changedCount
+    } finally {
+        releaseMutex()
+    }
+}
+
+export async function bulkSetHideConfigureSelected(accountId: string, transportUrls: string[], hideConfigure: boolean) {
+    const store = await getStore()
+    const account = getAccountById(store.getState().accounts, accountId)
+    if (!account) return 0
+    const releaseMutex = await acquireSyncMutex(accountId)
+    try {
+        const normalizedTargets = new Set(transportUrls.map((u) => normalizeAddonUrl(u)))
+        const changedCount = account.addons.filter((a) =>
+            normalizedTargets.has(normalizeAddonUrl(a.transportUrl)) &&
+            Boolean(a.metadata?.hideConfigure) !== hideConfigure
+        ).length
+        if (changedCount === 0) return 0
+        const updatedAddons = account.addons.map((a) => {
+            if (!normalizedTargets.has(normalizeAddonUrl(a.transportUrl))) return a
+            const newMetadata = { ...a.metadata }
+            if (hideConfigure) newMetadata.hideConfigure = true
+            else delete newMetadata.hideConfigure
+            return { ...a, metadata: newMetadata }
+        })
+        const accounts = store.getState().accounts.map((acc) =>
+            acc.id === accountId ? updateActiveProfile({ ...acc, addons: updatedAddons }, updatedAddons) : acc
+        )
+        store.setState({ accounts })
+        persistAccounts(accounts)
+        backgroundSync(accountId, account, updatedAddons)
+        return changedCount
+    } finally {
+        releaseMutex()
+    }
 }

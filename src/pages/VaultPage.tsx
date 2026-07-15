@@ -594,7 +594,9 @@ export function VaultPage() {
                             <div className="flex-1 overflow-y-auto px-4 pb-4">
                                 <div className="space-y-6">
                                     <div>
-                                        <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Smart</div>
+                                        <Tooltip content="Quick filters for your vault entries" side="top">
+                                            <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground cursor-help">Smart</div>
+                                        </Tooltip>
                                         <div className="space-y-0.5">
                                             {sidebarItem('all', 'All', List, keys.length, { text: 'text-primary', bg: 'bg-primary/12' })}
                                             {sidebarItem('recent', 'Recent', Clock, Math.min(keys.length, 10), { text: 'text-info', bg: 'bg-info/10' })}
@@ -603,7 +605,9 @@ export function VaultPage() {
                                     </div>
 
                                     <div>
-                                        <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Categories</div>
+                                        <Tooltip content="Filter by provider type" side="top">
+                                            <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground cursor-help">Categories</div>
+                                        </Tooltip>
                                         <div className="space-y-0.5">
                                             {VAULT_GROUPS.map(g => {
                                                 const Icon = GROUP_ICONS[g] || Wrench
@@ -615,15 +619,17 @@ export function VaultPage() {
                             </div>
 
                             <div className="mt-auto border-t border-border/40 px-4 py-3 shrink-0">
-                                <Button
-                                    variant="ghost"
-                                    onClick={() => useProviderStore.getState().forceRefreshAll()}
-                                    disabled={isRefreshing}
-                                    className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground"
-                                >
-                                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                                    Refresh All
-                                </Button>
+                                <Tooltip content="Sync subscription status from all providers" side="top">
+                                    <Button
+                                        variant="ghost"
+                                        onClick={() => useProviderStore.getState().forceRefreshAll()}
+                                        disabled={isRefreshing}
+                                        className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground"
+                                    >
+                                        <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                        Refresh All
+                                    </Button>
+                                </Tooltip>
                             </div>
                         </>
                     ) : (
@@ -819,23 +825,29 @@ export function VaultPage() {
                     {mobileFilterOpen ? (
                         <div className="space-y-5 p-4">
                             <div className="space-y-1">
-                                <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Smart</div>
+                                <Tooltip content="Quick filters for your vault entries" side="top">
+                                    <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-help">Smart</div>
+                                </Tooltip>
                                 {mobileSmartFilters.map(renderMobileMenuItem)}
                             </div>
                             <div className="space-y-1 border-t border-border/35 pt-4">
-                                <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Categories</div>
+                                <Tooltip content="Filter by provider type" side="top">
+                                    <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground cursor-help">Categories</div>
+                                </Tooltip>
                                 {mobileGroupFilters.map(renderMobileMenuItem)}
                             </div>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => useProviderStore.getState().forceRefreshAll()}
-                                disabled={isRefreshing}
-                                className="h-9 w-full justify-start gap-2 text-xs text-muted-foreground"
-                            >
-                                <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                                Refresh All
-                            </Button>
+                            <Tooltip content="Sync subscription status from all providers" side="top">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => useProviderStore.getState().forceRefreshAll()}
+                                    disabled={isRefreshing}
+                                    className="h-9 w-full justify-start gap-2 text-xs text-muted-foreground"
+                                >
+                                    <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                    Refresh All
+                                </Button>
+                            </Tooltip>
                         </div>
                     ) : mobileDetailId ? (
                         <div className="relative">

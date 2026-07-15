@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { maskNameLevel, maskUrlLevel, maskProfileLevel } from '@/lib/utils'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
@@ -33,8 +34,13 @@ import {
     AlertTriangle,
     CheckCircle2,
     FileJson,
+    User,
+    Link,
+    Users,
+    Activity,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
 
 import { SyncDiagnostics } from '@/components/settings/SyncDiagnostics'
 
@@ -107,6 +113,24 @@ const formatFileSize = (size: number) => {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
+const BACKUP_SECTIONS = [
+    { key: 'accounts', label: 'Accounts & Connections', description: 'Stremio/Nuvio accounts, auth keys, addon configs' },
+    { key: 'library', label: 'Saved Addons', description: 'Library snapshots, profiles, tags' },
+    { key: 'vault', label: 'Vault Keys', description: 'Debrid service credentials' },
+    { key: 'failover', label: 'Autopilot Rules', description: 'Failover rules and webhook config' },
+    { key: 'settings', label: 'Settings & Themes', description: 'App settings, privacy, custom themes' },
+    { key: 'notes', label: 'Notes', description: 'Sticky notes and trash' },
+]
+
+function applySectionFilter(data: Record<string, unknown>, sections: Set<string>): void {
+    if (!sections.has('accounts')) { delete data.accounts; delete data.manifests; delete data.apiKeys; delete data.watchEvents; delete data.watchSnapshot }
+    if (!sections.has('library')) { delete data.addons; delete data.accountStates; delete data.profiles }
+    if (!sections.has('vault')) { delete data.vault; delete data.vaultTombstones }
+    if (!sections.has('failover')) { delete data.failover }
+    if (!sections.has('settings')) { delete data.settings; delete data.customThemes; delete data.changelog; delete data.identity }
+    if (!sections.has('notes')) { delete data.notes; delete data.notesTrash }
+}
+
 export function SettingsPage() {
     useDocumentTitle('Settings')
     const { theme, setTheme } = useTheme()
@@ -116,9 +140,11 @@ export function SettingsPage() {
     const initializeAddonStore = useAddonStore(s => s.initialize)
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const togglePrivacyMode = useUIStore(s => s.togglePrivacyMode)
-    const privacyObscureNames = useUIStore(s => s.privacyObscureNames)
-    const privacyObscureUrls = useUIStore(s => s.privacyObscureUrls)
-    const privacyObscureProfiles = useUIStore(s => s.privacyObscureProfiles)
+    const liveActivity = useUIStore(s => s.liveActivity)
+    const setLiveActivity = useUIStore(s => s.setLiveActivity)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelUrls = useUIStore(s => s.privacyLevelUrls)
+    const privacyLevelProfiles = useUIStore(s => s.privacyLevelProfiles)
     const setPrivacyOption = useUIStore(s => s.setPrivacyOption)
     const { clear: clearLibraryCache, invalidate } = useLibraryCache()
 
@@ -156,6 +182,39 @@ export function SettingsPage() {
     const [importing, setImporting] = useState(false)
     const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
+    const [showExportDialog, setShowExportDialog] = useState(false)
+    const [exportSections, setExportSections] = useState<Set<string>>(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
+    const [importSections, setImportSections] = useState<Set<string>>(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
+
+    const toggleExportSection = (key: string) => {
+        setExportSections(prev => {
+            const next = new Set(prev)
+            if (next.has(key)) next.delete(key)
+            else next.add(key)
+            return next
+        })
+    }
+
+    const toggleImportSection = (key: string) => {
+        setImportSections(prev => {
+            const next = new Set(prev)
+            if (next.has(key)) next.delete(key)
+            else next.add(key)
+            return next
+        })
+    }
+
+    const filterExportJson = (json: string, sections: Set<string>): string => {
+        const data = JSON.parse(json) as Record<string, unknown>
+        applySectionFilter(data, sections)
+        return JSON.stringify(data, null, 2)
+    }
+
+    const filterImportJson = (json: string, sections: Set<string>): string => {
+        const data = JSON.parse(json) as Record<string, unknown>
+        applySectionFilter(data, sections)
+        return JSON.stringify(data, null, 2)
+    }
 
     const resetFileInput = () => {
         if (fileInputRef.current) {
@@ -248,12 +307,18 @@ export function SettingsPage() {
         }
     }
 
-    const handleExport = async () => {
+    const handleExport = () => {
+        setExportSections(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
+        setShowExportDialog(true)
+    }
+
+    const handleConfirmExport = async () => {
         setExporting(true)
         try {
             const json = await exportAccounts(true)
+            const filtered = filterExportJson(json, exportSections)
 
-            const blob = new Blob([json], { type: 'application/json' })
+            const blob = new Blob([filtered], { type: 'application/json' })
             const url = URL.createObjectURL(blob)
             const now = new Date()
             const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
@@ -267,6 +332,7 @@ export function SettingsPage() {
             URL.revokeObjectURL(url)
 
             toast({ title: 'Export Complete', description: 'Data downloaded.' })
+            setShowExportDialog(false)
         } catch (error) {
             if (import.meta.env.DEV) console.error('Export failed:', error)
             toast({ variant: 'destructive', title: 'Export Failed', description: 'Could not export data.' })
@@ -310,6 +376,7 @@ export function SettingsPage() {
                 return
             }
             setPendingImport({ text, preview })
+            setImportSections(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import preview failed:', error)
             toast({ variant: 'destructive', title: 'Import Failed', description: error instanceof Error ? error.message : 'Failed to read import file' })
@@ -323,9 +390,10 @@ export function SettingsPage() {
 
         setImporting(true)
         try {
-            await importAccounts(pendingImport.text, false, 'merge', undefined)
+            const filtered = filterImportJson(pendingImport.text, importSections)
+            await importAccounts(filtered, false, 'merge', undefined)
             await initializeAddonStore()
-            toast({ title: "Import Successful", description: "All accounts, addons, and settings have been restored." })
+            toast({ title: "Import Successful", description: "Selected data has been restored." })
             setPendingImport(null)
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import failed:', error)
@@ -381,7 +449,7 @@ export function SettingsPage() {
 
                             <InstallAppCard />
 
-                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                            <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex items-center gap-3">
                                         <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -390,7 +458,7 @@ export function SettingsPage() {
                                         </div>
                                         <div>
                                             <Label htmlFor="privacy-mode" className="text-sm sm:text-base font-medium cursor-pointer">Privacy Mode</Label>
-                                            <p className="text-xs sm:text-sm text-muted-foreground">Mask secrets and sensitive data</p>
+                                            <p className="text-xs sm:text-sm text-muted-foreground">Control how sensitive data appears across AIOManager</p>
                                         </div>
                                     </div>
                                     <Switch
@@ -401,19 +469,48 @@ export function SettingsPage() {
                                     />
                                 </div>
                                 {isPrivacyModeEnabled && (
-                                    <div className="flex flex-col gap-2 pl-12 sm:pl-14 pt-1 border-t border-border/20 mt-1">
-                                        <label className="flex items-center justify-between py-1 cursor-pointer">
-                                            <span className="text-xs text-muted-foreground">Obscure account names</span>
-                                            <Switch checked={privacyObscureNames} onCheckedChange={(v) => setPrivacyOption('privacyObscureNames', v)} />
-                                        </label>
-                                        <label className="flex items-center justify-between py-1 cursor-pointer">
-                                            <span className="text-xs text-muted-foreground">Obscure addon URLs</span>
-                                            <Switch checked={privacyObscureUrls} onCheckedChange={(v) => setPrivacyOption('privacyObscureUrls', v)} />
-                                        </label>
-                                        <label className="flex items-center justify-between py-1 cursor-pointer">
-                                            <span className="text-xs text-muted-foreground">Obscure profile names</span>
-                                            <Switch checked={privacyObscureProfiles} onCheckedChange={(v) => setPrivacyOption('privacyObscureProfiles', v)} />
-                                        </label>
+                                    <div className="flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                                                <p className="text-xs font-medium text-muted-foreground">Granular Privacy Controls</p>
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground/60">Live preview below each setting</p>
+                                        </div>
+                                        <div className="flex flex-col gap-4">
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-xs font-medium"><User className="h-3.5 w-3.5 text-muted-foreground" />Account Names</span>
+                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelNames === 0 ? 'Visible' : privacyLevelNames === 1 ? 'Light' : privacyLevelNames === 2 ? 'Strict' : 'Hidden'}</span>
+                                                </div>
+                                                <PrivacyLevelSlider value={privacyLevelNames} onChange={(v) => setPrivacyOption('privacyLevelNames', v)} />
+                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
+                                                    Sonic's Account <span className="text-muted-foreground/30 mx-0.5">→</span> {maskNameLevel("Sonic's Account", privacyLevelNames)}
+                                                </p>
+                                            </div>
+                                            <div className="h-px bg-border/20" />
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-xs font-medium"><Link className="h-3.5 w-3.5 text-muted-foreground" />Addon URLs</span>
+                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelUrls === 0 ? 'Visible' : privacyLevelUrls === 1 ? 'Light' : privacyLevelUrls === 2 ? 'Strict' : 'Hidden'}</span>
+                                                </div>
+                                                <PrivacyLevelSlider value={privacyLevelUrls} onChange={(v) => setPrivacyOption('privacyLevelUrls', v)} />
+                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
+                                                    {privacyLevelUrls === 0 ? 'metadata.aiostreams.io/stremio/abc' : maskUrlLevel('https://metadata.aiostreams.io/stremio/abc/manifest.json', privacyLevelUrls)}
+                                                </p>
+                                            </div>
+                                            <div className="h-px bg-border/20" />
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5 text-muted-foreground" />Profile Names</span>
+                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelProfiles === 0 ? 'Visible' : privacyLevelProfiles === 1 ? 'Light' : privacyLevelProfiles === 2 ? 'Strict' : 'Hidden'}</span>
+                                                </div>
+                                                <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
+                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
+                                                    Main Setup <span className="text-muted-foreground/30 mx-0.5">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
+                                                </p>
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -442,11 +539,11 @@ export function SettingsPage() {
                                 </div>
                             </div>
                             <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
-                                <Button variant="outline" onClick={handleExport} disabled={exporting || accounts.length === 0} className="gap-2">
+                                <Button variant="outline" onClick={handleExport} disabled={exporting || accounts.length === 0} className="w-full gap-2 sm:w-auto">
                                     <Download className="h-4 w-4" />
                                     {exporting ? 'Exporting...' : 'Export'}
                                 </Button>
-                                <Button variant="outline" onClick={handleImportClick} disabled={importing} className="gap-2">
+                                <Button variant="outline" onClick={handleImportClick} disabled={importing} className="w-full gap-2 sm:w-auto">
                                     <Upload className="h-4 w-4" />
                                     {importing ? 'Importing...' : 'Import'}
                                 </Button>
@@ -485,9 +582,36 @@ export function SettingsPage() {
                                 </Button>
                             </div>
                         </div>
-                    </TabsContent>
 
-                    {/* Advanced Tab */}
+                        <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                                        <SquircleOverlay />
+                                        <Activity className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="live-activity" className="text-sm sm:text-base font-medium cursor-pointer">Live Activity Refresh</Label>
+                                        <p className="text-xs sm:text-sm text-muted-foreground">While viewing the Activity page, auto-refresh progress every 60 seconds</p>
+                                    </div>
+                                </div>
+                                <Switch
+                                    id="live-activity"
+                                    checked={liveActivity}
+                                    onCheckedChange={setLiveActivity}
+                                    className="self-start sm:self-auto"
+                                />
+                            </div>
+                                {liveActivity && (
+                                    <p className="text-xs text-muted-foreground/60 pl-12 sm:pl-14 pt-1 border-t border-border/20 mt-1">
+                                        {accounts.length > 10
+                                            ? <span className="text-warning/80">You have {accounts.length} accounts. Live refresh will send ~{accounts.length} requests to Stremio every 60 seconds ({accounts.length * 60} requests/hour). This may trigger rate limits.</span>
+                                            : <>Each refresh sends 1 request per account to Stremio. With {accounts.length} account{accounts.length !== 1 ? 's' : ''}, that's ~{accounts.length} requests every 60 seconds.</>
+                                        }
+                                    </p>
+                                )}
+                        </div>
+                    </TabsContent>
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
                         <NotificationsSection />
                         <RepairTools />
@@ -556,6 +680,37 @@ export function SettingsPage() {
                                 )}
                             </div>
 
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Select what to import</p>
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setImportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                        <button type="button" onClick={() => setImportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                                    {BACKUP_SECTIONS.map(section => {
+                                        const isSelected = importSections.has(section.key)
+                                        return (
+                                            <button
+                                                key={section.key}
+                                                type="button"
+                                                onClick={() => toggleImportSection(section.key)}
+                                                className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
+                                            >
+                                                <div className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                                                    {isSelected && <CheckCircle2 className="h-3 w-3" />}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-medium text-foreground">{section.label}</p>
+                                                    <p className="text-[11px] text-muted-foreground line-clamp-1">{section.description}</p>
+                                                </div>
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+
                             {pendingImport.preview.warnings.length > 0 && (
                                 <div className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
                                     <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-warning">
@@ -576,10 +731,65 @@ export function SettingsPage() {
                         <Button
                             type="button"
                             onClick={handleConfirmImport}
-                            disabled={importing}
+                            disabled={importing || importSections.size === 0}
                             className="h-11 rounded-full"
                         >
                             {importing ? 'Importing...' : 'Import Backup'}
+                        </Button>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={showExportDialog} onOpenChange={(open: boolean) => { if (!exporting) setShowExportDialog(open) }}>
+                <AlertDialogContent className="max-w-lg">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="flex items-center gap-2">
+                            <Download className="h-5 w-5 text-primary" />
+                            Export Backup
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Choose what to include in your backup file.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="space-y-3 px-6 pb-5">
+                        <div className="flex items-center justify-between">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sections</p>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => setExportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                <button type="button" onClick={() => setExportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                            {BACKUP_SECTIONS.map(section => {
+                                const isSelected = exportSections.has(section.key)
+                                return (
+                                    <button
+                                        key={section.key}
+                                        type="button"
+                                        onClick={() => toggleExportSection(section.key)}
+                                        className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
+                                    >
+                                        <div className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                                            {isSelected && <CheckCircle2 className="h-3 w-3" />}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-medium text-foreground">{section.label}</p>
+                                            <p className="text-[11px] text-muted-foreground line-clamp-1">{section.description}</p>
+                                        </div>
+                                    </button>
+                                )
+                            })}
+                        </div>
+                    </div>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={exporting}>Cancel</AlertDialogCancel>
+                        <Button
+                            type="button"
+                            onClick={handleConfirmExport}
+                            disabled={exporting || exportSections.size === 0}
+                            className="h-11 rounded-full"
+                        >
+                            {exporting ? 'Exporting...' : 'Download Backup'}
                         </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>

@@ -16,6 +16,7 @@ interface LibraryToolbarProps {
   profiles: Profile[]
   searchQuery: string
   onSearchChange: (value: string) => void
+  searchRef?: React.RefObject<HTMLInputElement | null>
   viewMode: 'grid' | 'list'
   onViewModeChange: (mode: 'grid' | 'list') => void
   savedAddonsCount: number
@@ -40,6 +41,7 @@ export function LibraryToolbar({
   profiles,
   searchQuery,
   onSearchChange,
+  searchRef,
   viewMode,
   onViewModeChange,
   savedAddonsCount,
@@ -56,13 +58,13 @@ export function LibraryToolbar({
   onOpenAddDialog,
   onToggleMobileFilters,
 }: LibraryToolbarProps) {
-  const { isPrivacyModeEnabled, privacyObscureProfiles } = useUIStore(
+  const { isPrivacyModeEnabled, privacyLevelProfiles } = useUIStore(
     useShallow((state) => ({
       isPrivacyModeEnabled: state.isPrivacyModeEnabled,
-      privacyObscureProfiles: state.privacyObscureProfiles
+      privacyLevelProfiles: state.privacyLevelProfiles
     }))
   )
-  const obscureProfiles = isPrivacyModeEnabled && privacyObscureProfiles
+  const obscureProfiles = isPrivacyModeEnabled && privacyLevelProfiles >= 2
   const searchPlaceholder = (() => {
     if (!selectedProfileId) return 'Search by name, tags, or URL...'
     if (selectedProfileId === 'unassigned') return 'Search unassigned addons...'
@@ -94,6 +96,7 @@ export function LibraryToolbar({
           <div className="relative flex-1 sm:w-72 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
+              ref={searchRef}
               placeholder={searchPlaceholder}
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
@@ -114,6 +117,7 @@ export function LibraryToolbar({
           </div>
 
           <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+            <Tooltip content="Grid view" side="bottom">
             <Button
               variant="ghost"
               size="sm"
@@ -123,6 +127,8 @@ export function LibraryToolbar({
             >
               <Grid className="h-3.5 w-3.5" />
             </Button>
+            </Tooltip>
+            <Tooltip content="List view" side="bottom">
             <Button
               variant="ghost"
               size="sm"
@@ -132,6 +138,7 @@ export function LibraryToolbar({
             >
               <List className="h-3.5 w-3.5" />
             </Button>
+            </Tooltip>
           </div>
         </div>
 

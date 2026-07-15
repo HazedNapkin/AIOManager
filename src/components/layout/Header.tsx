@@ -193,7 +193,7 @@ function TabBadge({ count, dotColor, isActive, glow }: { count?: number; dotColo
 export function Header() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { isLight } = useTheme()
+  const { isLight, logoUrl } = useTheme()
   const auth = useSyncStore(s => s.auth)
   const logout = useSyncStore(s => s.logout)
   const isSyncing = useSyncStore(s => s.isSyncing)
@@ -282,10 +282,11 @@ export function Header() {
         <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
             <img
-              src="/logo.png"
+              src={logoUrl || "/logo.png"}
               alt="AIOManager"
               loading="lazy"
-              className={`h-6 w-6 object-contain transition-[transform,opacity,box-shadow] ${isLight ? 'invert' : ''}`}
+              onError={(e) => { if (e.currentTarget.src !== window.location.origin + '/logo.png') e.currentTarget.src = '/logo.png' }}
+              className={`h-6 w-6 object-contain transition-[transform,opacity,box-shadow] ${!logoUrl && isLight ? 'invert' : ''}`}
             />
             <span className="text-[13px] font-bold tracking-tight text-foreground/90">AIOManager</span>
           </Link>

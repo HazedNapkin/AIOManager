@@ -13,8 +13,7 @@ import { describeManifestChanges } from '@/lib/addon-manifest-diff'
 import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
-import { StatusChip } from '@/components/ui/status-chip'
-import { ArrowUpCircle, Copy, Link2, MoreVertical, Pencil, Send } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, Copy, FileEdit, Link2, Loader2, MoreVertical, Pencil, Send } from 'lucide-react'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 
@@ -221,23 +220,29 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   {savedAddon.syncWithInstalled && (
                     hasUpdate ? (
                       <Tooltip content={manifestChangeLabel || 'A newer version is available to push to your installed accounts'}>
-                        <StatusChip variant="warning" icon={<ArrowUpCircle />}>Update ready</StatusChip>
+                        <span aria-label="Update ready" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                          <ArrowUpCircle className="h-3 w-3" />
+                        </span>
                       </Tooltip>
                     ) : (
                       <Tooltip content="In sync with your installed accounts">
-                        <StatusChip variant="success" icon={<Link2 />}>In Sync</StatusChip>
+                        <span aria-label="In sync" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                          <Link2 className="h-3 w-3" />
+                        </span>
                       </Tooltip>
                     )
                   )}
                   {savedAddon.sourceType === 'cloned-from-account' && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-primary/12 text-primary border border-primary/25">
-                      Cloned
-                    </span>
+                    <Tooltip content="Cloned addon">
+                      <span aria-label="Cloned addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                        <Copy className="h-3 w-3" />
+                      </span>
+                    </Tooltip>
                   )}
                   {hasManifestShapeChange && (
                     <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'}>
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-warning/10 text-warning border border-warning/25">
-                        Manifest
+                      <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                        <FileEdit className="h-3 w-3" />
                       </span>
                     </Tooltip>
                   )}
@@ -245,16 +250,18 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     const status = restorationManager.getStatus(savedAddon.installUrl)
                     if (status.status === 'restoring') {
                       return (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-warning/10 text-warning border border-warning/20 animate-pulse">
-                          Restoring...
-                        </span>
+                        <Tooltip content="Restoring...">
+                          <span aria-label="Restoring..." className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          </span>
+                        </Tooltip>
                       )
                     }
                     if (status.circuitState === 'open') {
                       return (
                         <Tooltip content="Auto-restore disabled after repeated failures. 30m cooldown.">
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium uppercase bg-destructive/10 text-destructive border border-destructive/20">
-                            Failed
+                          <span aria-label="Auto-restore disabled after repeated failures. 30m cooldown." className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive">
+                            <AlertCircle className="h-3 w-3" />
                           </span>
                         </Tooltip>
                       )

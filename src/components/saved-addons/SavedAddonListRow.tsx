@@ -3,7 +3,7 @@ import type { Account } from '@/types/account'
 import { isNewerVersion, getAddonConfigureUrl, cn, getTimeAgo } from '@/lib/utils'
 import { describeManifestChanges } from '@/lib/addon-manifest-diff'
 import { useLongPress } from '@/hooks/useLongPress'
-import { Copy, MoreVertical, Pencil, Check, Send } from 'lucide-react'
+import { Copy, FileEdit, MoreVertical, Pencil, Check, Send } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import {
@@ -177,8 +177,8 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         <span className="hidden text-xs text-muted-foreground/60 shrink-0 min-[380px]:inline">v{savedAddon.manifest.version}</span>
                         {hasManifestShapeChange && (
                             <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'} side="top">
-                                <span className="inline-flex rounded-full border border-warning/25 bg-warning/10 px-1.5 text-xs font-bold uppercase leading-5 text-warning">
-                                    Manifest
+                                <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                                    <FileEdit className="h-3 w-3" />
                                 </span>
                             </Tooltip>
                         )}

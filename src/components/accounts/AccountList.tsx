@@ -6,7 +6,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { AlertCircle, Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
 import { Input } from '@/components/ui/input'
-import { useState, useRef, useMemo, useCallback, lazy, Suspense } from 'react'
+import { useState, useRef, useMemo, useCallback, lazy, Suspense, useEffect } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountCard } from './AccountCard'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
@@ -19,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+
 import { useToast } from '@/hooks/use-toast'
 import { EmptyState } from '@/components/common/EmptyState'
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
@@ -31,7 +32,6 @@ import { getPlatformEntry } from '@/lib/platform-registry'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
-import { Tooltip } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AccountListRow } from './AccountListRow'
 import { AccountReorderDialog } from './AccountReorderDialog'
@@ -44,6 +44,7 @@ export function AccountList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [refreshMenuOpen, setRefreshMenuOpen] = useState(false)
   const { toast } = useToast()
@@ -157,12 +158,22 @@ export function AccountList() {
       setDebouncedSearchQuery(val)
     }, 150)
   }
+
   const [showBulkActions, setShowBulkActions] = useState(false)
   const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     open: boolean;
     accountIds: string[];
   }>({ open: false, accountIds: [] })
+
+  const deleteConfirmationDetails = useMemo(() => {
+    return deleteConfirmation.accountIds.map(id => {
+      const account = accounts.find(a => a.id === id)
+      return account ? { name: account.name || getAccountEmail(account) || 'Unknown', addonCount: account.addons.length } : null
+    }).filter(Boolean)
+  }, [deleteConfirmation.accountIds, accounts])
+
+  const totalAddonsInDeletion = deleteConfirmationDetails.reduce((sum, d) => sum + (d?.addonCount || 0), 0)
 
   const [isSelectionMode, setIsSelectionMode] = useState(false)
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
@@ -183,7 +194,6 @@ export function AccountList() {
     }
     return names.size === 1 ? [...names][0] : null
   }, [expiredAccounts])
-  const isStremioExpiry = expiredPlatformLabel === 'Stremio'
 
   const toggleAccountSelection = useCallback((accountId: string) => {
     setSelectedAccountIds((prev) => {
@@ -240,14 +250,32 @@ export function AccountList() {
   const filteredAccounts = useMemo(() => {
     const query = debouncedSearchQuery.toLowerCase().trim()
     if (!query) return accounts
-    return accounts.filter(a =>
-      a.name.toLowerCase().includes(query) ||
-      getAccountEmail(a)?.toLowerCase().includes(query)
-    )
+    return accounts.filter(a => {
+      if (a.name.toLowerCase().includes(query)) return true
+      if (getAccountEmail(a)?.toLowerCase().includes(query)) return true
+      if (a.status === 'expired' && 'expired'.includes(query)) return true
+      if (a.status === 'error' && ('error'.includes(query) || 'failed'.includes(query))) return true
+      if (a.connections?.some(c => c.platform.toLowerCase().includes(query))) return true
+      if (hasPlatformConnection(a) && 'stremio'.includes(query)) return true
+      return false
+    })
   }, [accounts, debouncedSearchQuery])
 
   const checkRules = useFailoverStore((state) => state.checkRules)
   const isSelectionActive = isSelectionMode || selectedAccountIds.size > 0
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === '/' && !isSelectionActive) {
+        const target = e.target as HTMLElement
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isSelectionActive])
 
   const handleRefreshAll = async () => {
     await syncAllAccounts()
@@ -305,13 +333,12 @@ export function AccountList() {
                     : 'Session tokens were rejected. Re-authenticate the affected accounts to refresh them.')
                   : error}
               </p>
-              {isSessionExpiredError && isStremioExpiry && firstExpiredAccount && (
+              {isSessionExpiredError && firstExpiredAccount && (
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    clearError()
                     openAddAccountDialog(firstExpiredAccount)
                   }}
                   className="mt-2 h-8 border-warning/35 bg-background/60 text-warning hover:bg-warning/10"
@@ -337,6 +364,7 @@ export function AccountList() {
           <div className="relative flex-1 sm:w-72 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               placeholder="Search accounts..."
               className="pl-9 pr-9 h-8 text-xs bg-muted/30 border border-border/40 focus:bg-muted/40 transition-colors w-full"
               value={searchQuery}
@@ -392,30 +420,26 @@ export function AccountList() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" collisionPadding={16} className="w-64 max-w-[calc(100vw-2rem)] p-1.5">
-                  <Tooltip content="Re-fetch addons from connected platforms for all accounts" side="right">
-                    <DropdownMenuItem
-                      onClick={handleRefreshAll}
-                      disabled={loading}
-                      className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
-                    >
-                      <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
-                      Refresh Addon Lists
-                    </DropdownMenuItem>
-                  </Tooltip>
-                  <Tooltip content="Compare installed versions across all accounts" side="right">
-                    <DropdownMenuItem
-                      onClick={handleCheckAllAddonUpdates}
-                      disabled={checkingUpdates}
-                      onSelect={(e) => e.preventDefault()}
-                      className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
-                    >
-                      {checkingUpdates
-                        ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                        : <ArrowUpCircle className="h-4 w-4 shrink-0" />
-                      }
-                      {checkingUpdates ? 'Checking for updates...' : 'Check for Addon Updates'}
-                    </DropdownMenuItem>
-                  </Tooltip>
+                  <DropdownMenuItem
+                    onClick={handleRefreshAll}
+                    disabled={loading}
+                    className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
+                  >
+                    <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
+                    Refresh Addon Lists
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleCheckAllAddonUpdates}
+                    disabled={checkingUpdates}
+                    onSelect={(e) => e.preventDefault()}
+                    className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
+                  >
+                    {checkingUpdates
+                      ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                      : <ArrowUpCircle className="h-4 w-4 shrink-0" />
+                    }
+                    {checkingUpdates ? 'Checking for updates...' : 'Check for Addon Updates'}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
@@ -491,18 +515,21 @@ export function AccountList() {
             onClick: selectAll,
             variant: 'outline',
             icon: <Check className="h-4 w-4" />,
+            tooltip: selectedAccountIds.size === accounts.length ? 'Deselect all accounts' : 'Select all accounts',
           },
           {
             label: 'Bulk Actions',
             onClick: () => setShowBulkActions(true),
             variant: 'outline',
             icon: <Layers className="h-4 w-4" />,
+            tooltip: 'Open bulk actions',
           },
           {
             label: `Delete (${selectedAccountIds.size})`,
             onClick: handleDeleteSelected,
             variant: 'destructive',
             icon: <Trash2 className="h-4 w-4" />,
+            tooltip: 'Delete selected accounts',
           },
         ]}
       />
@@ -585,7 +612,7 @@ export function AccountList() {
               Apply installs, syncs, removals, and protection changes across selected accounts.
             </DialogDescription>
           </DialogHeader>
-          <Suspense fallback={null}>
+          <Suspense fallback={<div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
             <BatchOperationsDialog
               selectedAccounts={accounts.filter((a) => selectedAccountIds.has(a.id))}
               allAccounts={accounts}
@@ -602,11 +629,12 @@ export function AccountList() {
         open={deleteConfirmation.open}
         onOpenChange={(open) => setDeleteConfirmation(prev => ({ ...prev, open }))}
         title={`Delete ${deleteConfirmation.accountIds.length > 1 ? `${deleteConfirmation.accountIds.length} Accounts` : 'Account'}`}
-        description={`Are you sure you want to delete ${deleteConfirmation.accountIds.length > 1 ? 'these accounts' : 'this account'}? This action cannot be undone.`}
+        description={`Are you sure you want to delete ${deleteConfirmation.accountIds.length > 1 ? 'these accounts' : 'this account'}?${totalAddonsInDeletion > 0 ? ` This will also remove ${totalAddonsInDeletion} addon${totalAddonsInDeletion !== 1 ? 's' : ''}.` : ''} This action cannot be undone.`}
         confirmText="Delete"
         isDestructive={true}
         isLoading={loading}
         onConfirm={confirmDelete}
+        impactItems={deleteConfirmationDetails.map((d) => d ? `${d.name} (${d.addonCount} addon${d.addonCount !== 1 ? 's' : ''})` : '')}
       />
     </div>
   )

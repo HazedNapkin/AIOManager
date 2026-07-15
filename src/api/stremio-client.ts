@@ -228,7 +228,11 @@ export class StremioClient {
 
       if (data?.error) {
         const err = data.error as Record<string, unknown>
-        throw new Error((err.message as string) || 'Failed to update addon collection')
+        const rawMessage = (err.message as string) || 'Failed to update addon collection'
+        if (/descriptor.*size|payload.*too.*large|max.*size|413/i.test(rawMessage)) {
+          throw new Error('Stremio rejected this addon - too many catalogs. This addon has too many catalogs for Stremio\'s size limit. Reduce the number of catalogs on this addon\'s configuration page, then try again.')
+        }
+        throw new Error(rawMessage)
       }
 
       const verificationCollection = shouldVerifyShrink
