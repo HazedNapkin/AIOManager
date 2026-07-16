@@ -648,7 +648,10 @@ export function ActivityPage() {
             )}
 
             {/* Continue Watching Rail */}
-            {inProgress.length > 0 && !searchTerm && userFilter === 'all' && timeFilter === 'all' && (
+            {(() => {
+              const filteredInProgress = userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter)
+              if (filteredInProgress.length === 0 || searchTerm) return null
+              return (
                 <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -656,7 +659,7 @@ export function ActivityPage() {
                             <p className="text-xs text-muted-foreground">Resume in-progress streams from the latest account sync.</p>
                         </div>
                         <StatusChip variant="muted" icon={<PlayCircle />}>
-                            {inProgress.length} active
+                            {filteredInProgress.length} active
                         </StatusChip>
                     </div>
                     <div className="relative group/rail">
@@ -675,7 +678,7 @@ export function ActivityPage() {
                             <ChevronRight className="h-4 w-4" />
                         </button>
                         <div ref={continueWatchingRef} className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
-                            {inProgress.map((item, i) => {
+                            {filteredInProgress.map((item, i) => {
                                 const account = accountById.get(item.accountId)
                                 return (
                                     <motion.div
@@ -739,7 +742,8 @@ export function ActivityPage() {
                         </div>
                     </div>
                 </div>
-            )}
+              )
+            })()}
 
             {isLoading ? (
                 <div className="space-y-3">

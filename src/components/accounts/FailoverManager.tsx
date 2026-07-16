@@ -840,7 +840,7 @@ export function FailoverManager({
                             <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
                                 <div className="space-y-0.5">
                                     <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
-                                    <p className="text-xs text-muted-foreground/60">Additional URLs to monitor. If any fail, the rule will fail over. Max 5.</p>
+                                    <p className="text-xs text-muted-foreground/60">Monitor a provider or service your addons depend on. If the URL goes down, all associated addons are skipped and the chain moves on. Associate a provider API URL with the addons that depend on it. Do NOT put your addon instance URLs here.</p>
                                 </div>
 
                                 {customChecks.map((check, index) => {
@@ -898,7 +898,7 @@ export function FailoverManager({
                                                     className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase hover:text-foreground/80 transition-colors ml-0.5"
                                                 >
                                                     <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                                    Applied to
+                                                    Associated with
                                                     <span className="normal-case font-mono text-[10px] text-foreground/50">
                                                         {check.appliesTo.length > 0
                                                             ? `${check.appliesTo.length} addon${check.appliesTo.length !== 1 ? 's' : ''}`
@@ -909,7 +909,7 @@ export function FailoverManager({
                                                     <div className="space-y-1.5">
                                                         {check.appliesTo.length === 0 ? (
                                                             <p className="text-xs text-muted-foreground/70 px-3 py-2 bg-muted/30 rounded-xl">
-                                                                All addons (rule-level gate)
+                                                                All addons in chain (not recommended unless all share the same provider)
                                                             </p>
                                                         ) : (
                                                             check.appliesTo.map(addonUrl => {

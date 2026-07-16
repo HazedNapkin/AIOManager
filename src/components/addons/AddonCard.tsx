@@ -210,6 +210,7 @@ export const AddonCard = React.memo(function AddonCard({
   const [showConfigDialog, setShowConfigDialog] = useState(false)
   const [configuring, setConfiguring] = useState(false)
   const [showUnprotectConfirmation, setShowUnprotectConfirmation] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   const isPendingRemoval = usePendingRemoval(accountId, addon.transportUrl)
 
@@ -609,7 +610,8 @@ export const AddonCard = React.memo(function AddonCard({
               ? 'border-primary/35 bg-primary/10 ring-2 ring-primary/20'
               : isSelectionMode
                 ? 'cursor-pointer hover:border-primary/45'
-                : ''
+                : '',
+            isMenuOpen && 'z-40'
           )}
           onClick={isSelectionMode ? (e) => { e.preventDefault(); if (onToggleSelect) onToggleSelect(selectionId || addon.transportUrl) } : undefined}
           onKeyDown={isSelectionMode ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardActivate() } } : undefined}
@@ -753,7 +755,7 @@ export const AddonCard = React.memo(function AddonCard({
                     aria-label="Toggle Addon"
                   />
 
-                  <DropdownMenu>
+                  <DropdownMenu onOpenChange={setIsMenuOpen}>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 p-0" onClick={(e) => e.stopPropagation()}>
                         <span className="sr-only">Open menu</span>
@@ -806,12 +808,14 @@ export const AddonCard = React.memo(function AddonCard({
                         <Download className="h-4 w-4" />
                         Deploy to All
                       </DropdownMenuItem>
-                      <DropdownMenuSeparator />
                       {!addon.flags?.protected && (
-                        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleRemove(); }} className="gap-2 text-destructive focus:text-destructive">
-                          <Trash2 className="h-4 w-4" />
-                          Remove
-                        </DropdownMenuItem>
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleRemove(); }} className="gap-2 text-destructive focus:text-destructive">
+                            <Trash2 className="h-4 w-4" />
+                            Remove
+                          </DropdownMenuItem>
+                        </>
                       )}
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -919,7 +923,7 @@ export const AddonCard = React.memo(function AddonCard({
             : isSelectionMode
               ? 'cursor-pointer hover:border-primary/50'
               : ''
-          }`}
+          } ${isMenuOpen ? 'z-40' : ''}`}
         onClick={(e) => {
           if (isLongPressTriggered) return
           if (isSelectionMode && onToggleSelect) {
@@ -1044,7 +1048,7 @@ export const AddonCard = React.memo(function AddonCard({
               </div>
 
               {!isSelectionMode && (
-                <DropdownMenu>
+                <DropdownMenu onOpenChange={setIsMenuOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-10 w-10 p-0" onClick={(e) => e.stopPropagation()}>
                       <span className="sr-only">Open menu</span>
@@ -1071,9 +1075,9 @@ export const AddonCard = React.memo(function AddonCard({
                       <Download className="h-4 w-4" />
                       Deploy to All
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     {!addon.flags?.protected && (
                       <>
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={(e) => { e.stopPropagation(); handleRemove(); }}
                           className="gap-2 text-destructive focus:text-destructive"

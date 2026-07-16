@@ -18,7 +18,7 @@ import { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { BulkResult, MergeResult, SavedAddon } from '@/types/saved-addon'
 import { AccountAvatar } from './AccountAvatar'
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Globe, GripVertical, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldAlert, ShieldCheck, Trash2, Zap, UserMinus, FileDown, Search, Tags, Wand2, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Eye, EyeOff, Globe, GripVertical, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldAlert, ShieldCheck, Trash2, Zap, UserMinus, FileDown, Search, Tags, Wand2, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
@@ -48,6 +48,8 @@ type BulkAction =
   | 'reinstall-all'
   | 'protect-all'
   | 'unprotect-all'
+  | 'hide-configure-all'
+  | 'show-configure-all'
   | 'remove-addons'
   | 'remove-by-tag'
   | 'replace-url'
@@ -77,7 +79,9 @@ const ACTION_TITLES: Record<BulkAction, string> = {
   'remove-addons': 'Remove Add-ons',
   'replace-url': 'Find & Replace URL',
   'protect-all': 'Protect All',
-  'unprotect-all': 'Unprotect All'
+  'unprotect-all': 'Unprotect All',
+  'hide-configure-all': 'Hide Configure All',
+  'show-configure-all': 'Show Configure All'
 }
 
 const ACTION_DESCRIPTIONS: Record<BulkAction, string> = {
@@ -92,14 +96,17 @@ const ACTION_DESCRIPTIONS: Record<BulkAction, string> = {
   'remove-addons': 'Choose installed add-ons to remove from selected accounts.',
   'replace-url': 'Swap a URL fragment (like a domain) across the selected accounts.',
   'protect-all': 'Lock every add-on so tag cleanup leaves them alone.',
-  'unprotect-all': 'Unlock every add-on so tag cleanup can remove them again.'
+  'unprotect-all': 'Unlock every add-on so tag cleanup can remove them again.',
+  'hide-configure-all': 'Hide the configure button on every add-on across selected accounts.',
+  'show-configure-all': 'Show the configure button on every add-on across selected accounts.'
 }
 
 const ACTION_GROUPS: Array<{ label: string; actions: BulkAction[] }> = [
   { label: 'Install', actions: ['install-from-library', 'add-saved-addons', 'install-from-url'] },
   { label: 'Sync', actions: ['clone-account', 'sync-order'] },
   { label: 'Manage', actions: ['update-addons', 'replace-url', 'remove-by-tag', 'reinstall-all', 'remove-addons'] },
-  { label: 'Protection', actions: ['protect-all', 'unprotect-all'] }
+  { label: 'Protection', actions: ['protect-all', 'unprotect-all'] },
+  { label: 'Configure', actions: ['hide-configure-all', 'show-configure-all'] }
 ]
 const ACTION_OPTIONS = ACTION_GROUPS.flatMap(group => group.actions)
 
@@ -169,6 +176,28 @@ function getReceiptLabels(action?: BulkAction) {
       removed: 'removed',
       skipped: 'skipped',
       protected: 'already unlocked',
+      protectedIsWarning: false,
+    }
+  }
+
+  if (action === 'hide-configure-all') {
+    return {
+      added: 'added',
+      updated: 'hidden',
+      removed: 'removed',
+      skipped: 'skipped',
+      protected: 'already hidden',
+      protectedIsWarning: false,
+    }
+  }
+
+  if (action === 'show-configure-all') {
+    return {
+      added: 'added',
+      updated: 'shown',
+      removed: 'removed',
+      skipped: 'skipped',
+      protected: 'already visible',
       protectedIsWarning: false,
     }
   }
@@ -316,6 +345,27 @@ function createProtectionMergeResult(account: Account | undefined, isProtected: 
   const addons = account?.addons ?? []
   const changed = addons.filter(addon => Boolean(addon.flags?.protected) !== isProtected)
   const unchanged = addons.filter(addon => Boolean(addon.flags?.protected) === isProtected)
+
+  return {
+    added: [],
+    updated: changed.map((addon) => ({
+      addonId: addon.manifest.id,
+      oldUrl: '',
+      newUrl: addon.transportUrl,
+    })),
+    removed: [],
+    skipped: [],
+    protected: unchanged.map((addon) => ({
+      addonId: addon.manifest.id,
+      name: getAddonDisplayName(addon),
+    })),
+  }
+}
+
+function createHideConfigureMergeResult(account: Account | undefined, hideConfigure: boolean): MergeResult {
+  const addons = account?.addons ?? []
+  const changed = addons.filter(addon => Boolean(addon.metadata?.hideConfigure) !== hideConfigure)
+  const unchanged = addons.filter(addon => Boolean(addon.metadata?.hideConfigure) === hideConfigure)
 
   return {
     added: [],
@@ -585,6 +635,10 @@ function getActionIcon(action: BulkAction, className = 'h-4 w-4') {
       return <ShieldCheck className={className} />
     case 'unprotect-all':
       return <ShieldAlert className={className} />
+    case 'hide-configure-all':
+      return <EyeOff className={className} />
+    case 'show-configure-all':
+      return <Eye className={className} />
     default:
       return <LayoutGrid className={className} />
   }
@@ -607,6 +661,7 @@ export function BatchOperationsDialog({
   const bulkSyncOrder = useAddonStore(s => s.bulkSyncOrder)
   const loading = useAddonStore(s => s.loading)
   const bulkProtectAddons = useAccountStore(s => s.bulkProtectAddons)
+  const bulkSetHideConfigure = useAccountStore(s => s.bulkSetHideConfigure)
   const profiles = useProfileStore(s => s.profiles)
 
   const [action, setAction] = useState<BulkAction>('install-from-library')
@@ -1500,6 +1555,22 @@ export function BatchOperationsDialog({
           }
           break
 
+        case 'hide-configure-all':
+        case 'show-configure-all': {
+          const hide = action === 'hide-configure-all'
+          runForAccount = async (target) => {
+            const targetAccount = selectedAccounts.find(account => account.id === target.id) || allAccounts.find(account => account.id === target.id)
+            await bulkSetHideConfigure(target.id, hide)
+            return {
+              success: 1,
+              failed: 0,
+              errors: [],
+              details: [{ accountId: target.id, result: createHideConfigureMergeResult(targetAccount, hide) }],
+            }
+          }
+          break
+        }
+
         case 'reinstall-all':
           runForAccount = (target) => bulkReinstallAddons(['*'], [target], true)
           break
@@ -2390,19 +2461,23 @@ export function BatchOperationsDialog({
               </div>
             )}
 
-            {(action === 'protect-all' || action === 'unprotect-all' || action === 'reinstall-all') && (
+            {(action === 'protect-all' || action === 'unprotect-all' || action === 'reinstall-all' || action === 'hide-configure-all' || action === 'show-configure-all') && (
               <div className="space-y-4">
                 <div className="p-4 rounded-lg bg-muted/30 border border-dashed text-center">
                   <p className="text-sm font-medium">
                     {action === 'reinstall-all'
                       ? `This will check every add-on on the ${selectedAccounts.length} selected accounts.`
-                      : `This will ${action === 'protect-all' ? 'lock' : 'unlock'} every add-on on the ${selectedAccounts.length} selected accounts.`
+                      : action === 'hide-configure-all' || action === 'show-configure-all'
+                        ? `This will ${action === 'hide-configure-all' ? 'hide' : 'show'} the configure button on every add-on across the ${selectedAccounts.length} selected accounts.`
+                        : `This will ${action === 'protect-all' ? 'lock' : 'unlock'} every add-on on the ${selectedAccounts.length} selected accounts.`
                     }
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {action === 'reinstall-all'
                       ? 'Useful for refreshing add-ons or picking up updates.'
-                      : 'Locked add-ons are left alone by tag-based remove tools.'
+                      : action === 'hide-configure-all' || action === 'show-configure-all'
+                        ? 'Stremio only. Applied instantly on supported add-ons.'
+                        : 'Locked add-ons are left alone by tag-based remove tools.'
                     }
                   </p>
                 </div>

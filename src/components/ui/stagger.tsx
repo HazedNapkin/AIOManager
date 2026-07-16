@@ -39,6 +39,7 @@ function StaggerItem({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
+  const [settled, setSettled] = useState(false)
   const { delay, nextIndex } = useContext(StaggerContext)
   const indexRef = useRef<number | null>(null)
   if (indexRef.current === null) {
@@ -81,17 +82,23 @@ function StaggerItem({
     return () => observer.disconnect()
   }, [])
 
+  useEffect(() => {
+    if (visible) {
+      const totalMs = (animDelay + 0.3) * 1000 + 50
+      const timer = setTimeout(() => setSettled(true), totalMs)
+      return () => clearTimeout(timer)
+    }
+  }, [visible, animDelay])
+
+  const style = settled ? undefined : visible
+    ? { opacity: 1, transform: 'none', transition: `opacity 0.3s ease ${animDelay}s, transform 0.3s ease ${animDelay}s` }
+    : { opacity: 0, transform: 'translateY(12px) scale(0.97)', transition: 'none' }
+
   return (
     <div
       ref={ref}
       className={cn('h-full', className)}
-      style={{
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'none' : 'translateY(12px) scale(0.97)',
-        transition: visible
-          ? `opacity 0.3s ease ${animDelay}s, transform 0.3s ease ${animDelay}s`
-          : 'none',
-      }}
+      style={style}
     >
       {children}
     </div>
