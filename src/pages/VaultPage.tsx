@@ -16,7 +16,7 @@ import {
     Lock, Plus, Search, Eye, EyeOff, Edit2, Trash2, ExternalLink,
     RefreshCw, ShieldCheck, Shield, Clock, AlertTriangle, List,
     Cloud, Layers, Cable, Database, Magnet, Type, Activity,
-    Sparkles, Wrench, ChevronLeft, X,
+    Sparkles, Wrench, ChevronLeft, X, ArrowDownAZ, ArrowUpDown, Hash,
 } from 'lucide-react'
 import { VAULT_GROUPS, getKeyAbbr, PROVIDERS, resolveVaultGroup } from '@/lib/constants'
 import { cn, getTimeAgo } from '@/lib/utils'
@@ -54,6 +54,21 @@ const GROUP_COLORS: Record<string, { text: string; bg: string }> = {
 
 type SmartFilter = 'all' | 'recent' | 'expiring'
 type ActiveFilter = { type: 'smart'; id: SmartFilter } | { type: 'group'; name: string }
+type CategorySort = 'default' | 'alpha' | 'count'
+type EntrySort = 'default' | 'name-asc' | 'name-desc' | 'updated'
+
+const CATEGORY_SORT_KEY = 'vault-category-sort'
+const ENTRY_SORT_KEY = 'vault-entry-sort'
+
+function loadCategorySort(): CategorySort {
+    const v = localStorage.getItem(CATEGORY_SORT_KEY)
+    return v === 'alpha' || v === 'count' ? v : 'default'
+}
+
+function loadEntrySort(): EntrySort {
+    const v = localStorage.getItem(ENTRY_SORT_KEY)
+    return v === 'name-asc' || v === 'name-desc' || v === 'updated' ? v : 'default'
+}
 
 
 
@@ -344,6 +359,16 @@ export function VaultPage() {
     const [desktopFilterOpen, setDesktopFilterOpen] = useState(true)
     const [mobileDetailId, setMobileDetailId] = useState<string | null>(null)
     const [mobileFilterOpen, setMobileFilterOpen] = useState(true)
+    const [categorySort, setCategorySort] = useState<CategorySort>(loadCategorySort)
+    const [entrySort, setEntrySort] = useState<EntrySort>(loadEntrySort)
+
+    useEffect(() => {
+        localStorage.setItem(CATEGORY_SORT_KEY, categorySort)
+    }, [categorySort])
+
+    useEffect(() => {
+        localStorage.setItem(ENTRY_SORT_KEY, entrySort)
+    }, [entrySort])
 
     useEffect(() => {
         if (encryptionKey) {
@@ -359,6 +384,12 @@ export function VaultPage() {
         }
         return counts
     }, [keys])
+
+    const sortedGroups = useMemo(() => {
+        if (categorySort === 'alpha') return [...VAULT_GROUPS].sort((a, b) => a.localeCompare(b))
+        if (categorySort === 'count') return [...VAULT_GROUPS].sort((a, b) => (groupedCounts[b] || 0) - (groupedCounts[a] || 0))
+        return VAULT_GROUPS
+    }, [categorySort, groupedCounts])
 
     const expiringKeys = useMemo(() => {
         return keys.filter(k => {
@@ -399,8 +430,14 @@ export function VaultPage() {
                 (k.customProviderName || '').toLowerCase().includes(q)
             )
         }
+        if (entrySort !== 'default' && !(activeFilter.type === 'smart' && activeFilter.id === 'recent')) {
+            list = [...list]
+            if (entrySort === 'name-asc') list.sort((a, b) => a.name.localeCompare(b.name))
+            else if (entrySort === 'name-desc') list.sort((a, b) => b.name.localeCompare(a.name))
+            else if (entrySort === 'updated') list.sort((a, b) => b.updatedAt - a.updatedAt)
+        }
         return list
-    }, [keys, activeFilter, search, expiringKeys])
+    }, [keys, activeFilter, search, expiringKeys, entrySort])
 
     const selected = useMemo(() => {
         if (selectedId) return keys.find(k => k.id === selectedId) ?? null
@@ -519,7 +556,7 @@ export function VaultPage() {
         { key: 'expiring', label: 'Expiring Soon', icon: AlertTriangle, count: expiringKeys.length, filter: { type: 'smart', id: 'expiring' } },
     ]
 
-    const mobileGroupFilters: MobileFilterItem[] = VAULT_GROUPS.map(g => ({
+    const mobileGroupFilters: MobileFilterItem[] = sortedGroups.map(g => ({
         key: g,
         label: g,
         icon: GROUP_ICONS[g] || Wrench,
@@ -605,11 +642,22 @@ export function VaultPage() {
                                     </div>
 
                                     <div>
-                                        <Tooltip content="Filter by provider type" side="top">
-                                            <div className="px-1 pb-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground cursor-help">Categories</div>
-                                        </Tooltip>
+                                        <div className="flex items-center justify-between px-1 pb-1">
+                                            <Tooltip content="Filter by provider type" side="top">
+                                                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground cursor-help">Categories</span>
+                                            </Tooltip>
+                                            <Tooltip content={categorySort === 'default' ? 'Default order' : categorySort === 'alpha' ? 'Alphabetical' : 'By count'} side="top">
+                                                <button
+                                                    onClick={() => setCategorySort(s => s === 'default' ? 'alpha' : s === 'alpha' ? 'count' : 'default')}
+                                                    className="text-muted-foreground hover:text-foreground transition-colors"
+                                                    aria-label="Toggle category sort"
+                                                >
+                                                    {categorySort === 'default' ? <ArrowUpDown className="h-3 w-3" /> : categorySort === 'alpha' ? <ArrowDownAZ className="h-3 w-3" /> : <Hash className="h-3 w-3" />}
+                                                </button>
+                                            </Tooltip>
+                                        </div>
                                         <div className="space-y-0.5">
-                                            {VAULT_GROUPS.map(g => {
+                                            {sortedGroups.map(g => {
                                                 const Icon = GROUP_ICONS[g] || Wrench
                                                 return sidebarItem(g, g, Icon, groupedCounts[g] || 0, GROUP_COLORS[g], 'group')
                                             })}
@@ -658,19 +706,30 @@ export function VaultPage() {
                             </div>
 
                             <div className="px-5 pt-4 pb-3 border-b border-border/40 shrink-0">
-                                <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 hover:border-border transition-colors">
-                                    <Search className="w-3.5 h-3.5 text-muted-foreground" />
-                                    <input
-                                        value={search}
-                                        onChange={e => setSearch(e.target.value)}
-                                        placeholder="Search vault..."
-                                        className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
-                                    />
-                                    {search && (
-                                        <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
-                                            <X className="w-3 h-3" />
+                                <div className="flex items-center gap-2">
+                                    <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 hover:border-border transition-colors flex-1">
+                                        <Search className="w-3.5 h-3.5 text-muted-foreground" />
+                                        <input
+                                            value={search}
+                                            onChange={e => setSearch(e.target.value)}
+                                            placeholder="Search vault..."
+                                            className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
+                                        />
+                                        {search && (
+                                            <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                    <Tooltip content={entrySort === 'default' ? 'Default order' : entrySort === 'name-asc' ? 'Name A-Z' : entrySort === 'name-desc' ? 'Name Z-A' : 'Recently updated'} side="top">
+                                        <button
+                                            onClick={() => setEntrySort(s => s === 'default' ? 'name-asc' : s === 'name-asc' ? 'name-desc' : s === 'name-desc' ? 'updated' : 'default')}
+                                            className="h-8 w-8 shrink-0 rounded-lg border border-border/40 bg-muted/30 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                                            aria-label="Toggle entry sort"
+                                        >
+                                            {entrySort === 'default' ? <ArrowUpDown className="w-3.5 h-3.5" /> : entrySort === 'name-asc' ? <ArrowDownAZ className="w-3.5 h-3.5" /> : entrySort === 'name-desc' ? <ArrowDownAZ className="w-3.5 h-3.5 rotate-180" /> : <Clock className="w-3.5 h-3.5" />}
                                         </button>
-                                    )}
+                                    </Tooltip>
                                 </div>
                             </div>
 
@@ -804,19 +863,30 @@ export function VaultPage() {
 
                 {!mobileFilterOpen && !mobileDetailId && (
                     <div className="px-4 pt-3 pb-2 border-b border-border/40 shrink-0">
-                        <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2">
-                            <Search className="w-3.5 h-3.5 text-muted-foreground" />
-                            <input
-                                value={search}
-                                onChange={e => setSearch(e.target.value)}
-                                placeholder="Search vault..."
-                                className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
-                            />
-                            {search && (
-                                <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
-                                    <X className="w-3 h-3" />
+                        <div className="flex items-center gap-2">
+                            <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 flex-1">
+                                <Search className="w-3.5 h-3.5 text-muted-foreground" />
+                                <input
+                                    value={search}
+                                    onChange={e => setSearch(e.target.value)}
+                                    placeholder="Search vault..."
+                                    className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
+                                />
+                                {search && (
+                                    <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                )}
+                            </div>
+                            <Tooltip content={entrySort === 'default' ? 'Default order' : entrySort === 'name-asc' ? 'Name A-Z' : entrySort === 'name-desc' ? 'Name Z-A' : 'Recently updated'} side="top">
+                                <button
+                                    onClick={() => setEntrySort(s => s === 'default' ? 'name-asc' : s === 'name-asc' ? 'name-desc' : s === 'name-desc' ? 'updated' : 'default')}
+                                    className="h-8 w-8 shrink-0 rounded-lg border border-border/40 bg-muted/30 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                                    aria-label="Toggle entry sort"
+                                >
+                                    {entrySort === 'default' ? <ArrowUpDown className="w-3.5 h-3.5" /> : entrySort === 'name-asc' ? <ArrowDownAZ className="w-3.5 h-3.5" /> : entrySort === 'name-desc' ? <ArrowDownAZ className="w-3.5 h-3.5 rotate-180" /> : <Clock className="w-3.5 h-3.5" />}
                                 </button>
-                            )}
+                            </Tooltip>
                         </div>
                     </div>
                 )}

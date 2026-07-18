@@ -150,12 +150,18 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         }
         const { invalidateConnectionCache } = await import('@/lib/connection-discovery')
         invalidateConnectionCache(connectionId)
+        const isStremioRemoval = conn?.platform === 'stremio' || connectionId === `${accountId}:stremio`
         await updateAccount(accountId, account => {
             const connections = (account.connections || []).filter(c => c.id !== connectionId)
             const primaryConnectionId = account.primaryConnectionId === connectionId
                 ? connections[0]?.id
                 : account.primaryConnectionId
-            return { ...account, connections, primaryConnectionId }
+            return {
+                ...account,
+                connections,
+                primaryConnectionId,
+                ...(isStremioRemoval ? { authKey: '' } : {}),
+            }
         })
     },
 
