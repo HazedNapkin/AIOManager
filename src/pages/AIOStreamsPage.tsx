@@ -20,10 +20,14 @@ import {
     CardFooter,
 } from '@/components/ui/card'
 import { useAccountStore, getAccountEmail } from '@/store/accountStore'
+import { useVaultStore } from '@/store/vaultStore'
+import { useToast } from '@/hooks/use-toast'
 import {
     isAIOStreamsAddon,
     parseAIOStreamsUrl,
     fetchAIOStreamsUser,
+    updateAIOStreamsUser,
+    sanitizeAIOStreamsConfigForUpdate,
     getAIOStreamsConfigureUrl,
     getStoredAIOStreamsPassword,
     saveAIOStreamsPassword,
@@ -35,28 +39,34 @@ import {
 } from '@/lib/aiostreams-utils'
 import { AIOStreamsSyncTab, TargetOption, MissingTargetAccount } from '@/components/addons/aiostreams/AIOStreamsSyncTab'
 import { AIOStreamsActionsTab } from '@/components/addons/aiostreams/AIOStreamsActionsTab'
+import { AIOStreamsDiffTab } from '@/components/addons/aiostreams/AIOStreamsDiffTab'
+import { PresetsEditor } from '@/components/addons/aiostreams/PresetsEditor'
 import { cn } from '@/lib/utils'
 import {
     ArrowLeft, Loader2, AlertTriangle, ExternalLink,
     Eye, ArrowRightLeft, EyeOff, Lock, Shield,
-    Wifi, RefreshCw,
+    Wifi, RefreshCw, Pencil,
     Tv, Users,
     Link2, Server, Layers,
+    GitCompare,
 } from 'lucide-react'
 
-type Section = 'overview' | 'addons-services' | 'users' | 'sync'
+type Section = 'overview' | 'addons-services' | 'users' | 'sync' | 'diff'
 
 const SIDEBAR_ITEMS: { id: Section; label: string; icon: React.ReactNode; group: 'config' | 'actions' }[] = [
     { id: 'overview', label: 'Overview', icon: <Eye className="w-4 h-4" />, group: 'config' },
     { id: 'addons-services', label: 'Addons & Services', icon: <Tv className="w-4 h-4" />, group: 'config' },
     { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, group: 'actions' },
     { id: 'sync', label: 'Sync', icon: <ArrowRightLeft className="w-4 h-4" />, group: 'actions' },
+    { id: 'diff', label: 'Config Diff', icon: <GitCompare className="w-4 h-4" />, group: 'actions' },
 ]
 
 export function AIOStreamsPage() {
     const { accountId, uuid } = useParams<{ accountId: string; uuid: string }>()
     const navigate = useNavigate()
     const accounts = useAccountStore(s => s.accounts)
+    const vaultLocked = useVaultStore(s => s.isLocked)
+    const { toast } = useToast()
 
     const account = useMemo(() => accounts.find(a => a.id === accountId), [accounts, accountId])
     const addon = useMemo(() => {
@@ -79,33 +89,39 @@ export function AIOStreamsPage() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [activeSection, setActiveSection] = useState<Section>('overview')
+    const [presetsEditing, setPresetsEditing] = useState(false)
     const [sourceConfig, setSourceConfig] = useState<Record<string, unknown> | null>(null)
     const [instanceStatus, setInstanceStatus] = useState<Record<string, unknown> | null>(null)
     const [instanceReachable, setInstanceReachable] = useState(true)
 
     const passwordRef = useRef<HTMLInputElement>(null)
 
-    const targetOptions: TargetOption[] = useMemo(() => accounts.flatMap(acc =>
-        (acc.addons || [])
-            .filter(a => {
-                if (!isAIOStreamsAddon(a)) return false
+    const targetOptions: TargetOption[] = useMemo(() => {
+        const seen = new Map<string, TargetOption>()
+        for (const acc of accounts) {
+            for (const a of (acc.addons || [])) {
+                if (!isAIOStreamsAddon(a)) continue
                 const p = parseAIOStreamsUrl(a.transportUrl)
-                return p && !(p.baseUrl === baseUrl && p.uuid === uuid)
-            })
-            .map(a => {
-                const p = parseAIOStreamsUrl(a.transportUrl)
-                if (!p) return null
-                return {
-                    accountId: acc.id,
-                    accountName: acc.name || getAccountEmail(acc) || acc.id,
-                    addonName: a.metadata?.customName || a.manifest.name || 'AIOStreams',
-                    transportUrl: a.transportUrl,
-                    baseUrl: p.baseUrl,
-                    uuid: p.uuid,
-                    logo: a.metadata?.customLogo || a.manifest.logo,
+                if (!p || (p.baseUrl === baseUrl && p.uuid === uuid)) continue
+                const key = `${p.baseUrl}|${p.uuid}`
+                if (!seen.has(key)) {
+                    seen.set(key, {
+                        accountId: acc.id,
+                        accountName: acc.name || getAccountEmail(acc) || acc.id,
+                        addonName: a.metadata?.customName || a.manifest.name || 'AIOStreams',
+                        transportUrl: a.transportUrl,
+                        baseUrl: p.baseUrl,
+                        uuid: p.uuid,
+                        logo: a.metadata?.customLogo || a.manifest.logo,
+                    })
+                } else {
+                    const existing = seen.get(key)!
+                    existing.accountName = `${existing.accountName}, ${acc.name || getAccountEmail(acc) || acc.id}`
                 }
-            })
-    ).filter(Boolean) as TargetOption[], [accounts, uuid, baseUrl])
+            }
+        }
+        return Array.from(seen.values())
+    }, [accounts, uuid, baseUrl])
 
     const missingAIOStreamsAccounts: MissingTargetAccount[] = useMemo(() => accounts
         .filter(acc => acc.id !== accountId && !(acc.addons || []).some(isAIOStreamsAddon))
@@ -201,6 +217,32 @@ export function AIOStreamsPage() {
         }
     }, [baseUrl, uuid, password])
 
+    const handleSavePresets = useCallback(async (presets: unknown[]): Promise<boolean> => {
+        if (!sourceConfig || !uuid || !password) {
+            toast({ title: 'Cannot save presets', description: 'Missing AIOS password or vault locked.', variant: 'destructive' })
+            return false
+        }
+        try {
+            const updated: Record<string, unknown> = { ...sourceConfig, presets }
+            const sanitized = sanitizeAIOStreamsConfigForUpdate(updated)
+            await updateAIOStreamsUser(baseUrl, uuid, password, sanitized)
+            const data = await fetchAIOStreamsUser(baseUrl, uuid, password)
+            setSourceConfig(data.userData as Record<string, unknown>)
+            toast({
+                title: 'Presets updated',
+                description: `${Array.isArray(presets) ? presets.length : 0} addon${Array.isArray(presets) && presets.length !== 1 ? 's' : ''} saved`,
+            })
+            return true
+        } catch (e: unknown) {
+            toast({
+                title: 'Failed to update presets',
+                description: e instanceof Error ? e.message : 'Unknown error',
+                variant: 'destructive',
+            })
+            return false
+        }
+    }, [sourceConfig, uuid, password, baseUrl, toast])
+
     useEffect(() => {
         if (shouldRedirect) {
             navigate(accountId ? `/account/${accountId}` : '/', { replace: true })
@@ -219,7 +261,13 @@ export function AIOStreamsPage() {
         ? `${baseUrl}/stremio/${uuid}/${encryptedPassword}/manifest.json`
         : null
 
-    const changeSection = (s: Section) => setActiveSection(s)
+    const changeSection = (s: Section) => {
+        if (presetsEditing && s !== activeSection) {
+            toast({ title: 'Save or cancel preset changes first' })
+            return
+        }
+        setActiveSection(s)
+    }
 
     return (
         <div className="w-full mx-auto py-6 px-4 md:px-8 lg:px-12 xl:px-16 space-y-4 max-w-[1800px]">
@@ -346,6 +394,12 @@ export function AIOStreamsPage() {
                                     transportUrl={addon?.transportUrl ?? ''}
                                     missingAccounts={missingAIOStreamsAccounts}
                                     onClose={() => navigate(`/account/${accountId}`)}
+                                    password={password}
+                                    vaultLocked={vaultLocked}
+                                    onSavePresets={handleSavePresets}
+                                    onOpenSync={() => changeSection('sync')}
+                                    presetsEditing={presetsEditing}
+                                    setPresetsEditing={setPresetsEditing}
                                 />
                             ) : (
                                 <div className="space-y-4">
@@ -537,6 +591,12 @@ function SectionContent({
     transportUrl,
     missingAccounts,
     onClose,
+    password,
+    vaultLocked,
+    onSavePresets,
+    onOpenSync,
+    presetsEditing,
+    setPresetsEditing,
 }: {
     activeSection: Section
     sourceConfig: Record<string, unknown>
@@ -553,9 +613,16 @@ function SectionContent({
     transportUrl: string
     missingAccounts: MissingTargetAccount[]
     onClose: () => void
+    password: string
+    vaultLocked: boolean
+    onSavePresets: (presets: unknown[]) => Promise<boolean> | boolean
+    onOpenSync: () => void
+    presetsEditing: boolean
+    setPresetsEditing: (v: boolean) => void
 }) {
     const stats = useMemo(() => getConfigStats(sourceConfig), [sourceConfig])
     const sections = useMemo(() => getConfigSections(sourceConfig), [sourceConfig])
+    const [presetsSaving, setPresetsSaving] = useState(false)
 
     const configSize = useMemo(() => {
         const json = JSON.stringify(sourceConfig)
@@ -728,10 +795,17 @@ function SectionContent({
                 </div>
             )
 
-        case 'addons-services':
+        case 'addons-services': {
+            const canEditPresets = !vaultLocked && !!password
+            const handlePresetsSave = async (presets: unknown[]) => {
+                setPresetsSaving(true)
+                const ok = await onSavePresets(presets)
+                if (ok) setPresetsEditing(false)
+                setPresetsSaving(false)
+            }
             return (
                 <div className="space-y-6">
-                    <SectionHeader title="Addons & Services" description="Read-only summary; edit details in AIOStreams" />
+                    <SectionHeader title="Addons & Services" description="Manage services and addon presets" />
 
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -779,62 +853,101 @@ function SectionContent({
                     </div>
 
                     <div className="space-y-4 border-t border-border/30 pt-6">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-semibold">Addons</h3>
-                            <span className="text-xs text-muted-foreground">{addons.length} configured</span>
-                        </div>
-                        {addons.length === 0 ? (
-                            <EmptyState
-                                icon={<Layers className="h-6 w-6" />}
-                                title="No addons configured"
-                                description="Add streaming addons (Torrentio, MediaFusion, etc.) to this AIOStreams instance so it has sources to query."
-                            />
+                        {!presetsEditing ? (
+                            <>
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <h3 className="text-sm font-semibold">Addons</h3>
+                                        <span className="text-xs text-muted-foreground">{addons.length} configured</span>
+                                    </div>
+                                    <Tooltip content={canEditPresets ? 'Edit addon presets' : 'Unlock Vault to edit.'} side="left">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-1.5 h-8 text-xs shrink-0"
+                                            disabled={!canEditPresets}
+                                            onClick={() => setPresetsEditing(true)}
+                                        >
+                                            <Pencil className="w-3 h-3" />
+                                            Edit
+                                        </Button>
+                                    </Tooltip>
+                                </div>
+                                {addons.length === 0 ? (
+                                    <EmptyState
+                                        icon={<Layers className="h-6 w-6" />}
+                                        title="No addons configured"
+                                        description="Add streaming addons (Torrentio, MediaFusion, etc.) to this AIOStreams instance so it has sources to query."
+                                    />
+                                ) : (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {addons.map((ad, idx) => {
+                                            const adOptions = ad.options && typeof ad.options === 'object' && !Array.isArray(ad.options) ? ad.options as Record<string, unknown> : {}
+                                            const name = String(adOptions.name || ad.name || ad.type || ad.id || `Addon ${idx + 1}`)
+                                            const isEnabled = ad.enabled !== false
+                                            const logo = (adOptions.logo ?? ad.logo) as string | undefined
+                                            return (
+                                                <div key={idx} className={cn(
+                                                    "p-4 rounded-2xl border shadow-sm flex items-center gap-3",
+                                                    isEnabled ? "border-border/40 bg-card" : "border-border/30 bg-muted/10"
+                                                )}>
+                                                    <AddonIcon
+                                                        name={name}
+                                                        logo={logo}
+                                                        className="h-8 w-8"
+                                                        textClassName="text-xs"
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm font-semibold truncate">{name}</p>
+                                                        <p className="text-xs text-muted-foreground font-mono truncate">{String(adOptions.id || ad.id || ad.instanceId || '')}</p>
+                                                    </div>
+                                                    <span className={cn(
+                                                        "rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
+                                                        isEnabled ? "bg-success/10 text-success" : "bg-muted/35 text-muted-foreground"
+                                                    )}>
+                                                        {isEnabled ? 'On' : 'Off'}
+                                                    </span>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </>
                         ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {addons.map((ad, idx) => {
-                                    const name = String(ad.name || ad.type || ad.id || `Addon ${idx + 1}`)
-                                    const isEnabled = ad.enabled !== false
-                                    const logo = ad.logo as string | undefined
-                                    return (
-                                        <div key={idx} className={cn(
-                                            "p-4 rounded-2xl border shadow-sm flex items-center gap-3",
-                                            isEnabled ? "border-border/40 bg-card" : "border-border/30 bg-muted/10"
-                                        )}>
-                                            <AddonIcon
-                                                name={name}
-                                                logo={logo}
-                                                className="h-8 w-8"
-                                                textClassName="text-xs"
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-sm font-semibold truncate">{name}</p>
-                                                <p className="text-xs text-muted-foreground font-mono truncate">{String(ad.id || '')}</p>
-                                            </div>
-                                            <span className={cn(
-                                                "rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
-                                                isEnabled ? "bg-success/10 text-success" : "bg-muted/35 text-muted-foreground"
-                                            )}>
-                                                {isEnabled ? 'On' : 'Off'}
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <h3 className="text-sm font-semibold">Edit Addons</h3>
+                                        {presetsSaving && (
+                                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                                <Loader2 className="w-3 h-3 animate-spin" /> Saving...
                                             </span>
-                                        </div>
-                                    )
-                                })}
+                                        )}
+                                    </div>
+                                </div>
+                                <PresetsEditor
+                                    value={addons}
+                                    onSave={handlePresetsSave}
+                                    onCancel={() => setPresetsEditing(false)}
+                                    saving={presetsSaving}
+                                />
                             </div>
                         )}
                     </div>
 
-                    {configureUrl && (
+                    {configureUrl && !presetsEditing && (
                         <div className="p-4 rounded-xl border border-primary/25 bg-primary/5 space-y-2 mt-4">
-                            <p className="text-sm text-muted-foreground">Add, remove, reorder, or edit credentials in the official AIOStreams UI.</p>
+                            <p className="text-sm text-muted-foreground">For advanced configuration, use the official AIOStreams UI.</p>
                             <Button variant="outline" size="sm" className="gap-2" asChild>
                                 <a href={configureUrl} target="_blank" rel="noopener noreferrer">
-                                    <ExternalLink className="w-3.5 w-3.5" /> Configure in AIOStreams
+                                    <ExternalLink className="w-3.5 h-3.5" /> Configure in AIOStreams
                                 </a>
                             </Button>
                         </div>
                     )}
                 </div>
             )
+        }
 
         case 'users':
             return (
@@ -869,6 +982,19 @@ function SectionContent({
                             accountId: acc.id,
                             accountName: `${acc.emoji ? `${acc.emoji} ` : ''}${acc.name || acc.email || acc.id}`,
                         }))}
+                    />
+                </div>
+            )
+
+        case 'diff':
+            return (
+                <div className="space-y-4">
+                    <SectionHeader title="Config Diff" description="Compare this instance's addon presets against another target. Read-only." />
+                    <AIOStreamsDiffTab
+                        sourceConfig={sourceConfig}
+                        targetOptions={targetOptions}
+                        vaultLocked={vaultLocked}
+                        onOpenSync={onOpenSync}
                     />
                 </div>
             )

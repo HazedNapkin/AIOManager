@@ -20,6 +20,8 @@ interface DiscoverRowProps {
   onToggleFavorite?: (addon: DiscoverAddon) => void
   deployedCount?: (addon: DiscoverAddon) => number
   accountTotal?: number
+  onInjectAIOStreams?: (addon: DiscoverAddon) => void
+  hasAIOStreams?: boolean
 }
 
 export function DiscoverRow({
@@ -37,6 +39,8 @@ export function DiscoverRow({
   onToggleFavorite,
   deployedCount,
   accountTotal,
+  onInjectAIOStreams,
+  hasAIOStreams,
 }: DiscoverRowProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -89,7 +93,7 @@ export function DiscoverRow({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, delay: Math.min(i * 0.04, 0.4), ease: 'easeOut' }}
-            className="w-[260px] sm:w-[300px] shrink-0 snap-start"
+            className="w-[290px] sm:w-[330px] shrink-0 snap-start"
           >
             <DiscoverCard
               addon={addon}
@@ -103,6 +107,8 @@ export function DiscoverRow({
               onToggleFavorite={onToggleFavorite}
               deployedCount={deployedCount}
               accountTotal={accountTotal}
+              onInjectAIOStreams={onInjectAIOStreams}
+              hasAIOStreams={hasAIOStreams}
             />
           </motion.div>
         ))}

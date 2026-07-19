@@ -25,6 +25,8 @@ import { mapConcurrent } from '@/lib/concurrency'
 import { getStremioAuthKey } from '@/lib/account-compat'
 import { reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace, briefAddons } from '@/lib/trace'
+import { cloneAddonsWithMode } from '@/lib/clone-mode'
+import type { CloneMode } from '@/lib/clone-mode'
 
 type StoreRef = { getState: () => AddonStore; setState: (partial: Partial<AddonStore> | ((state: AddonStore) => Partial<AddonStore>)) => void }
 
@@ -1198,8 +1200,10 @@ export async function bulkInstallFromUrls(
 export async function bulkCloneAccount(
   sourceAccount: { id: string; authKey: string },
   targetAccountIds: Array<{ id: string; authKey: string }>,
-  overwrite = false
+  options?: { overwrite?: boolean; cloneMode?: CloneMode }
 ): Promise<BulkResult> {
+  const overwrite = options?.overwrite ?? false
+  const cloneMode = options?.cloneMode ?? 'full-mirror'
   const useAddonStore = await getStore()
   useAddonStore.setState({ loading: true, error: null })
   try {
@@ -1231,36 +1235,11 @@ export async function bulkCloneAccount(
           ? (localTargetAccount?.addons || [])
           : (localTargetAccount ? localTargetAccount.addons : await getAddons(await getCachedAuthKey(accountAuthKey, getEncryptionKey()), accountId))
 
-        let newAddons: AddonDescriptor[] = []
-
-        if (overwrite) {
-          newAddons = []
-          if (import.meta.env.DEV) console.log(`[Clone] Overwrite mode: Strictly mirroring source add-ons onto ${accountId} `)
-        } else {
-          newAddons = [...targetAddons]
+        if (overwrite && import.meta.env.DEV) {
+          console.log(`[Clone] Overwrite mode: Strictly mirroring source add-ons onto ${accountId} `)
         }
 
-        const existingUrls = new Set(newAddons.map(a => getAddonUrlKey(a.transportUrl)))
-
-        sourceAddons.forEach(sourceAddon => {
-          const sourceUrlKey = getAddonUrlKey(sourceAddon.transportUrl)
-          if (!existingUrls.has(sourceUrlKey)) {
-            const clonedAddon = {
-              ...sourceAddon,
-              flags: {
-                ...sourceAddon.flags,
-                enabled: sourceAddon.flags?.enabled ?? true,
-                protected: sourceAddon.flags?.protected ?? false
-              },
-              metadata: { ...sourceAddon.metadata },
-              catalogOverrides: sourceAddon.catalogOverrides ? { ...sourceAddon.catalogOverrides } : undefined,
-              note: sourceAddon.note,
-              syncToLibrary: sourceAddon.syncToLibrary,
-            }
-            newAddons.push(clonedAddon)
-            existingUrls.add(sourceUrlKey)
-          }
-        })
+        const newAddons = cloneAddonsWithMode(sourceAddons, targetAddons, { mode: cloneMode, overwrite })
 
         const addonListChanged = !haveSameAddonCollection(targetAddons, newAddons)
         if (addonListChanged) {

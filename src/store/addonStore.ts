@@ -26,6 +26,7 @@ import {
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
+import type { CloneMode } from '@/lib/clone-mode'
 
 import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkReplaceUrl, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally } from './addon/addonDeployment'
 import { updateSavedAddonManifest } from './addon/addonManifest'
@@ -187,7 +188,8 @@ export interface AddonStore {
   bulkCloneAccount: (
     sourceAccount: { id: string; authKey: string },
     targetAccountIds: Array<{ id: string; authKey: string }>,
-    overwrite?: boolean
+    overwrite?: boolean,
+    cloneMode?: CloneMode
   ) => Promise<BulkResult>
   bulkSyncOrder: (
     sourceAccountId: string,
@@ -825,8 +827,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     return bulkReplaceUrl(find, replace, accountIds)
   },
 
-  bulkCloneAccount: async (sourceAccount, targetAccountIds, overwrite?) => {
-    return bulkCloneAccount(sourceAccount, targetAccountIds, overwrite)
+  bulkCloneAccount: async (sourceAccount, targetAccountIds, overwrite?, cloneMode?) => {
+    return bulkCloneAccount(sourceAccount, targetAccountIds, { overwrite, cloneMode })
   },
 
   bulkSyncOrder: async (sourceAccountId, targetAccountIds) => {

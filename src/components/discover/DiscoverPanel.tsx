@@ -28,7 +28,10 @@ import { DiscoverRow } from './DiscoverRow'
 import { DiscoverDeck } from './DiscoverDeck'
 import { DiscoverDetailModal } from './DiscoverDetailModal'
 import { DiscoverSaveDialog, type DiscoverSavePayload } from './DiscoverSaveDialog'
+import { DiscoverInjectDialog, type DiscoverInjectSelection } from './DiscoverInjectDialog'
 import { AccountPickerDialog } from '@/components/accounts/AccountPickerDialog'
+import { useAIOStreamsInstances } from '@/hooks/useAIOStreamsInstances'
+import { performInjection } from '@/lib/aiostreams-inject'
 
 const PAGE_SIZE = 36
 const SHELF_SIZE = 18
@@ -101,6 +104,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const createProfile = useProfileStore((state) => state.createProfile)
   const accounts = useAccountStore((state) => state.accounts)
 
+  const { instances: aioStreamsInstances } = useAIOStreamsInstances()
+
   const initialPrefs = useMemo(() => loadPrefs(), [])
 
   const [search, setSearch] = useState('')
@@ -148,6 +153,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [saveOpen, setSaveOpen] = useState(false)
   const [deployAddon, setDeployAddon] = useState<DiscoverAddon | null>(null)
   const [deployOpen, setDeployOpen] = useState(false)
+  const [injectAddon, setInjectAddon] = useState<DiscoverAddon | null>(null)
+  const [injectOpen, setInjectOpen] = useState(false)
 
   const requestRef = useRef(0)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -414,6 +421,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   const openSave = (addon: DiscoverAddon) => { setSaveAddon(addon); setSaveOpen(true) }
   const openDeploy = (addon: DiscoverAddon) => { setDeployAddon(addon); setDeployOpen(true) }
+  const openInject = useCallback((addon: DiscoverAddon) => { setInjectAddon(addon); setInjectOpen(true) }, [])
   const openDetail = (addon: DiscoverAddon) => { setDetailAddon(addon); setDetailOpen(true) }
 
   const handleConfigure = (addon: DiscoverAddon) => {
@@ -462,6 +470,41 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     setDeployOpen(false)
   }
 
+  const handleInjectConfirm = async (selected: DiscoverInjectSelection[]) => {
+    if (!injectAddon || selected.length === 0) return
+    const name = injectAddon.manifest?.name?.trim() || injectAddon.slug || 'Addon'
+    const manifestUrl = injectAddon.manifestUrl
+    let succeeded = 0
+    let failed = 0
+    let alreadyExists = 0
+    let reinstallFailed = 0
+    for (const { baseUrl, uuid, password, accounts, transportUrl } of selected) {
+      const result = await performInjection(baseUrl, uuid, password, name, manifestUrl)
+      if (result.success && !result.alreadyExists) {
+        succeeded++
+        for (const { accountId } of accounts) {
+          try {
+            await useAccountStore.getState().reinstallAddon(accountId, transportUrl)
+          } catch (e) {
+            reinstallFailed++
+            if (import.meta.env.DEV) console.warn('[AIOStreams Inject] Reinstall failed:', e)
+          }
+        }
+      } else if (result.alreadyExists) {
+        alreadyExists++
+      } else {
+        failed++
+      }
+    }
+    if (failed > 0) {
+      throw new Error(`${failed} of ${selected.length} instance${selected.length !== 1 ? 's' : ''} failed. ${succeeded} succeeded, ${alreadyExists} already had this addon.`)
+    }
+    if (reinstallFailed > 0) {
+      throw new Error(`Injected into ${succeeded} instance${succeeded !== 1 ? 's' : ''}, but ${reinstallFailed} reinstall${reinstallFailed !== 1 ? 's' : ''} failed. The addon may not appear until you manually refresh.`)
+    }
+    setInjectOpen(false)
+  }
+
   const toggleCategory = (slug: string) => {
     setSelectedCategories((prev) => (prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]))
   }
@@ -485,6 +528,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     onToggleFavorite: toggleFavorite,
     deployedCount,
     accountTotal,
+    onInjectAIOStreams: aioStreamsInstances.length > 0 ? openInject : undefined,
+    hasAIOStreams: aioStreamsInstances.length > 0,
   }
 
   return (
@@ -743,6 +788,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         onSave={openSave}
         onDeploy={openDeploy}
         onConfigure={handleConfigure}
+        onInjectAIOStreams={aioStreamsInstances.length > 0 ? openInject : undefined}
+        hasAIOStreams={aioStreamsInstances.length > 0}
       />
 
       <DiscoverSaveDialog
@@ -760,6 +807,14 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         description={`Install "${deployAddon?.manifest?.name ?? 'this addon'}" to the selected accounts.`}
         onConfirm={handleDeployConfirm}
         confirmLabel="Deploy"
+      />
+
+      <DiscoverInjectDialog
+        open={injectOpen}
+        onOpenChange={setInjectOpen}
+        addonName={injectAddon?.manifest?.name?.trim() || injectAddon?.slug || ''}
+        instances={aioStreamsInstances}
+        onConfirm={handleInjectConfirm}
       />
     </div>
   )

@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { mapConcurrent } from '@/lib/concurrency'
+import type { CloneMode } from '@/lib/clone-mode'
 import { cn, getAddonGroupKey, getCanonicalAddonUrl, normalizeAddonUrl } from '@/lib/utils'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getStremioAuthKey } from '@/store/accountStore'
@@ -690,6 +691,7 @@ export function BatchOperationsDialog({
   const [replaceWithText, setReplaceWithText] = useState<string>('')
   const [sourceAccountId, setSourceAccountId] = useState<string>('')
   const [overwriteClone, setOverwriteClone] = useState(false)
+  const [cloneMode, setCloneMode] = useState<CloneMode>('full-mirror')
   const [mirrorAutopilot, setMirrorAutopilot] = useState(false)
   const [showProtected, setShowProtected] = useState(true)
 
@@ -1009,12 +1011,28 @@ export function BatchOperationsDialog({
         const sourceAddons = sourceAccount?.addons ?? []
         const sourceUrls = sourceAddons.map(addon => addon.transportUrl)
         const sourceUrlSet = new Set(sourceUrls.map(url => normalizeAddonUrl(url)))
+        const effectiveOverwrite = overwriteClone && cloneMode === 'full-mirror'
+        const modeNoun = cloneMode === 'addons-only'
+          ? 'add-ons only'
+          : cloneMode === 'addons-settings'
+            ? 'add-ons with settings'
+            : 'a full mirror'
+        const modeDetail = cloneMode === 'addons-only'
+          ? 'Only add-on links are installed. No settings, protection, or custom branding are carried over.'
+          : cloneMode === 'addons-settings'
+            ? 'Protection state and configure-button visibility are copied. Custom names, logos, and overrides stay untouched.'
+            : 'Custom names, logos, catalog overrides, and notes are all copied.'
+        const modeStatLabel = cloneMode === 'addons-only'
+          ? 'Addons'
+          : cloneMode === 'addons-settings'
+            ? 'Addons + Set'
+            : 'Mirror'
         let missingInstalls = 0
         let removed = 0
         const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
           const existing = countByUrl(account, sourceUrls)
           const missing = Math.max(0, sourceAddons.length - existing)
-          const targetOnly = overwriteClone
+          const targetOnly = effectiveOverwrite
             ? account.addons.filter(addon => !sourceUrlSet.has(normalizeAddonUrl(addon.transportUrl))).length
             : 0
           missingInstalls += missing
@@ -1022,26 +1040,31 @@ export function BatchOperationsDialog({
           return {
             id: account.id,
             name: getAccountName(account),
-            detail: overwriteClone
+            detail: effectiveOverwrite
               ? `${sourceAddons.length} after copy, ${targetOnly} may be removed`
               : `${missing} to add, current add-ons stay`,
-            tone: overwriteClone && targetOnly > 0 ? 'warning' : 'success',
+            tone: effectiveOverwrite && targetOnly > 0 ? 'warning' : 'success',
           }
         })
 
         return {
-          title: overwriteClone ? `Make accounts match ${getAccountName(sourceAccount)}` : `Copy missing add-ons from ${getAccountName(sourceAccount)}`,
-          description: overwriteClone ? 'Accounts will be changed to match the source account.' : 'Current add-ons stay. Only missing add-ons are copied over.',
+          title: effectiveOverwrite
+            ? `Make accounts match ${getAccountName(sourceAccount)}`
+            : `Copy ${modeNoun} from ${getAccountName(sourceAccount)}`,
+          description: effectiveOverwrite
+            ? 'Accounts will be changed to match the source account.'
+            : modeDetail,
           targetCount,
-          tone: overwriteClone ? 'warning' : 'success',
+          tone: effectiveOverwrite ? 'warning' : 'success',
           stats: [
             { label: 'Source add-ons', value: sourceAddons.length },
-            { label: overwriteClone ? 'May remove' : 'Will add', value: overwriteClone ? removed : missingInstalls, tone: overwriteClone && removed > 0 ? 'warning' : 'success' },
+            { label: effectiveOverwrite ? 'May remove' : 'Will add', value: effectiveOverwrite ? removed : missingInstalls, tone: effectiveOverwrite && removed > 0 ? 'warning' : 'success' },
+            { label: 'Mode', value: modeStatLabel },
             { label: 'Accounts', value: targetCount },
           ],
-          addons: sourceAddons.map(addon => descriptorToPreview(addon, overwriteClone ? 'Will copy' : 'Will add')),
+          addons: sourceAddons.map(addon => descriptorToPreview(addon, effectiveOverwrite ? 'Will copy' : 'Will add')),
           rows,
-          notes: overwriteClone
+          notes: effectiveOverwrite
             ? [...notes, 'Matching can remove add-ons that only exist on the selected accounts.']
             : notes,
         }
@@ -1361,6 +1384,7 @@ export function BatchOperationsDialog({
     installMode,
     libraryArray,
     overwriteClone,
+    cloneMode,
     profiles,
     selectedAddonIds,
     selectedBulkTag,
@@ -1508,7 +1532,8 @@ export function BatchOperationsDialog({
           runForAccount = (target) => bulkCloneAccount(
             { id: sourceAccount.id, authKey: getStremioAuthKey(sourceAccount) },
             [target],
-            overwriteClone
+            overwriteClone && cloneMode === 'full-mirror',
+            cloneMode
           )
           break
         }
@@ -2155,22 +2180,64 @@ export function BatchOperationsDialog({
 
                 {action === 'clone-account' && (
                   <>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed mt-4 animate-in fade-in slide-in-from-top-2">
-                      <div className="space-y-0.5">
-                        <Label className="text-sm font-semibold flex items-center gap-2">
-                          Destructive Mirror
-                          {overwriteClone && <AlertTriangle className="h-3 w-3 text-warning" />}
-                        </Label>
-                        <p className="text-xs text-muted-foreground leading-relaxed pr-8">
-                          Replaces selected accounts with this account's add-ons. Add-ons that only exist on selected accounts can be removed.
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                      <div className="space-y-1.5 px-1">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">Clone Mode</p>
+                        <div className="flex bg-muted/50 p-1 rounded-xl gap-1 border border-border/40">
+                          <Button
+                            variant={cloneMode === 'addons-only' ? 'secondary' : 'ghost'}
+                            className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'addons-only' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
+                            onClick={() => setCloneMode('addons-only')}
+                            type="button"
+                          >
+                            <PlusCircle className={`h-3.5 w-3.5 ${cloneMode === 'addons-only' ? 'text-primary' : ''}`} />
+                            Addons Only
+                          </Button>
+                          <Button
+                            variant={cloneMode === 'addons-settings' ? 'secondary' : 'ghost'}
+                            className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'addons-settings' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
+                            onClick={() => setCloneMode('addons-settings')}
+                            type="button"
+                          >
+                            <ShieldCheck className={`h-3.5 w-3.5 ${cloneMode === 'addons-settings' ? 'text-primary' : ''}`} />
+                            Addons + Settings
+                          </Button>
+                          <Button
+                            variant={cloneMode === 'full-mirror' ? 'secondary' : 'ghost'}
+                            className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'full-mirror' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
+                            onClick={() => setCloneMode('full-mirror')}
+                            type="button"
+                          >
+                            <Copy className={`h-3.5 w-3.5 ${cloneMode === 'full-mirror' ? 'text-primary' : ''}`} />
+                            Full Mirror
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {cloneMode === 'addons-only' && 'Only add-on links are installed. No settings, protection, or custom branding are carried over.'}
+                          {cloneMode === 'addons-settings' && 'Includes protection state and configure-button visibility. Custom names, logos, and overrides stay untouched.'}
+                          {cloneMode === 'full-mirror' && 'Copies everything, including custom names, logos, catalog overrides, and notes.'}
                         </p>
                       </div>
-                      <Switch
-                        checked={overwriteClone}
-                        onCheckedChange={setOverwriteClone}
-                        className="data-[state=checked]:bg-destructive"
-                      />
                     </div>
+
+                    {cloneMode === 'full-mirror' && (
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed mt-4 animate-in fade-in slide-in-from-top-2">
+                        <div className="space-y-0.5">
+                          <Label className="text-sm font-semibold flex items-center gap-2">
+                            Destructive Mirror
+                            {overwriteClone && <AlertTriangle className="h-3 w-3 text-warning" />}
+                          </Label>
+                          <p className="text-xs text-muted-foreground leading-relaxed pr-8">
+                            Replaces selected accounts with this account's add-ons. Add-ons that only exist on selected accounts can be removed.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={overwriteClone}
+                          onCheckedChange={setOverwriteClone}
+                          className="data-[state=checked]:bg-destructive"
+                        />
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed">
                       <div className="space-y-0.5">

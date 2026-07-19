@@ -10,7 +10,7 @@ import { TagManagerDialog } from './TagManagerDialog'
 
 import {
   User,
-  Pencil, Send,
+  Pencil, Send, Layers,
   ArrowLeft, Link2,
   Check, Compass, Info
 } from 'lucide-react'
@@ -41,6 +41,9 @@ import { SavedAddonGrid } from './SavedAddonGrid'
 import { LibrarySidebar } from './LibrarySidebar'
 import { LibrarySyncTab } from './LibrarySyncTab'
 import { DeploymentPreview } from './DeploymentPreview'
+import { LibraryInjectDialog } from './LibraryInjectDialog'
+import { useAIOStreamsInstances } from '@/hooks/useAIOStreamsInstances'
+import type { SavedAddon } from '@/types/saved-addon'
 import { useSavedAddonLibraryData } from './hooks/useSavedAddonLibraryData'
 import { useSavedAddonSyncActions } from './hooks/useSavedAddonSyncActions'
 import { useSavedAddonSelectionActions } from './hooks/useSavedAddonSelectionActions'
@@ -75,6 +78,7 @@ export function SavedAddonLibrary() {
     updateManifestChangeHints: state.updateManifestChangeHints,
   })))
   const accounts = useAccountStore(state => state.accounts)
+  const { instances: aioStreamsInstances } = useAIOStreamsInstances()
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -115,6 +119,8 @@ export function SavedAddonLibrary() {
   const [collapsedProfiles, setCollapsedProfiles] = useState<Set<string>>(new Set())
   const [showTagManager, setShowTagManager] = useState(false)
   const [showBulkUrlReplaceDialog, setShowBulkUrlReplaceDialog] = useState(false)
+  const [showInjectDialog, setShowInjectDialog] = useState(false)
+  const [injectAddons, setInjectAddons] = useState<SavedAddon[]>([])
   const [showMobileFilters, setShowMobileFilters] = useState(false)
   const [libraryTab, setLibraryTab] = useState<'library' | 'discover' | 'sync'>(() => {
     const hash = window.location.hash.replace('#', '')
@@ -296,6 +302,15 @@ export function SavedAddonLibrary() {
     setSelectedIds(new Set([savedAddonId]))
     setShowAccountPicker(true)
   }, [])
+
+  const handleOpenInjectDialog = useCallback(() => {
+    const addons = Array.from(selectedIds)
+      .map((id) => library[id])
+      .filter((a): a is SavedAddon => !!a)
+    if (addons.length === 0) return
+    setInjectAddons(addons)
+    setShowInjectDialog(true)
+  }, [selectedIds, library])
 
   const handleUpdateSavedAddon = useCallback(
     async (savedAddonId: string, addonName: string) => {
@@ -576,6 +591,13 @@ export function SavedAddonLibrary() {
               icon: <Send className="h-4 w-4" />,
               tooltip: 'Deploy to accounts',
             },
+            ...(aioStreamsInstances.length > 0 ? [{
+              label: 'Add to AIOStreams',
+              onClick: handleOpenInjectDialog,
+              variant: 'outline' as const,
+              icon: <Layers className="h-4 w-4" />,
+              tooltip: 'Add to AIOStreams instances',
+            }] : []),
             {
               label: 'Remove',
               onClick: () => setShowRemoveAccountPicker(true),
@@ -878,7 +900,14 @@ export function SavedAddonLibrary() {
 
 
         <TagManagerDialog isOpen={showTagManager} onClose={() => setShowTagManager(false)} />
-          </div>}
+
+        <LibraryInjectDialog
+          open={showInjectDialog}
+          onOpenChange={setShowInjectDialog}
+          addons={injectAddons}
+          instances={aioStreamsInstances}
+        />
+      </div>}
         </div>
       </div>
       </div>

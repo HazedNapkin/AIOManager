@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { StatusChip } from '@/components/ui/status-chip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Link2, Plus, Send, Settings2, Star } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, FileText, Link2, Plus, Send, Settings2, Star, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   fetchDiscoverAddon,
@@ -35,9 +35,11 @@ interface DiscoverDetailModalProps {
   onSave: (addon: DiscoverAddon) => void
   onDeploy: (addon: DiscoverAddon) => void
   onConfigure: (addon: DiscoverAddon) => void
+  onInjectAIOStreams?: (addon: DiscoverAddon) => void
+  hasAIOStreams?: boolean
 }
 
-export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved, onSave, onDeploy, onConfigure }: DiscoverDetailModalProps) {
+export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved, onSave, onDeploy, onConfigure, onInjectAIOStreams, hasAIOStreams }: DiscoverDetailModalProps) {
   const { toast } = useToast()
   const [detail, setDetail] = useState<DiscoverAddonDetail | null>(null)
   const [loading, setLoading] = useState(false)
@@ -271,6 +273,13 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                               <Link2 className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
+                          {hasAIOStreams && onInjectAIOStreams && (
+                            <Tooltip content="Add to AIOStreams" side="top">
+                              <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onInjectAIOStreams(inst)}>
+                                <Layers className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          )}
                           <Tooltip content="View on stremio-addons.net" side="top">
                              <Button asChild size="sm" variant="ghost" className="h-7 w-7 flex items-center justify-center p-0 text-muted-foreground hover:text-foreground">
                               <a href={inst.url} target="_blank" rel="noopener noreferrer">
@@ -369,6 +378,13 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                                 <Link2 className="h-3.5 w-3.5" />
                               </Button>
                             </Tooltip>
+                            {hasAIOStreams && onInjectAIOStreams && (
+                              <Tooltip content="Add to AIOStreams" side="top">
+                                <Button size="sm" variant="subtle" className="h-7 w-7 flex items-center justify-center p-0" onClick={() => onInjectAIOStreams(s)}>
+                                  <Layers className="h-3.5 w-3.5" />
+                                </Button>
+                              </Tooltip>
+                            )}
                           </div>
                         </div>
                       )
@@ -393,7 +409,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-4">
           {saved ? (
-            <Button variant="subtle" disabled className="flex-1 gap-1.5">
+            <Button variant="subtle" className="flex-1 gap-1.5" disabled>
               <Check className="h-4 w-4" />
               In Library
             </Button>
@@ -403,20 +419,30 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
               {needsConfig ? 'Save anyway' : 'Save to Library'}
             </Button>
           )}
-          <Button variant="subtle" className="gap-1.5" onClick={() => onDeploy(view)}>
-            <Send className="h-4 w-4" />
-            Deploy
-          </Button>
-          {configureUrl && (
-            <Button variant="subtle" className="gap-1.5" onClick={() => onConfigure(view)}>
-              <Settings2 className="h-4 w-4" />
-              Configure
+          <Tooltip content="Deploy to account(s)" side="top">
+            <Button variant="subtle" className="h-9 w-9 shrink-0 p-0" onClick={() => onDeploy(view)}>
+              <Send className="h-4 w-4" />
             </Button>
+          </Tooltip>
+          {configureUrl && (
+            <Tooltip content="Configure" side="top">
+              <Button variant="subtle" className="h-9 w-9 shrink-0 p-0" onClick={() => onConfigure(view)}>
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </Tooltip>
           )}
-          <Button variant="subtle" className="gap-1.5" onClick={() => { navigator.clipboard.writeText(view.manifestUrl); toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' }) }}>
-            <Link2 className="h-4 w-4" />
-            Copy Link
-          </Button>
+          <Tooltip content="Copy Link" side="top">
+            <Button variant="subtle" className="h-9 w-9 shrink-0 p-0" onClick={() => { navigator.clipboard.writeText(view.manifestUrl); toast({ title: 'Link Copied', description: 'Addon install URL copied to clipboard' }) }}>
+              <Link2 className="h-4 w-4" />
+            </Button>
+          </Tooltip>
+          {hasAIOStreams && onInjectAIOStreams && (
+            <Tooltip content="Add to AIOStreams" side="top">
+              <Button variant="subtle" className="h-9 w-9 shrink-0 p-0" onClick={() => onInjectAIOStreams(view)}>
+                <Layers className="h-4 w-4" />
+              </Button>
+            </Tooltip>
+          )}
         </div>
       </DialogContent>
     </Dialog>
