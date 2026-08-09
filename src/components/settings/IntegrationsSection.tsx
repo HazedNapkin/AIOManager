@@ -318,13 +318,13 @@ export function IntegrationsSection() {
                                     >
                                         <div className="flex items-center gap-2">
                                         <div
-                                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-black text-[10px] text-white"
-                                            style={{ backgroundColor: option?.color || '#6b7280' }}
+                                            className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/35 bg-muted/25 overflow-hidden"
                                         >
+                                            <SquircleOverlay />
                                             {option?.logo ? (
-                                                <img src={option.logo} alt={label} className="h-full w-full rounded-lg object-cover" />
+                                                <img src={option.logo} alt={label} className="relative z-10 h-full w-full object-cover" />
                                             ) : (
-                                                option?.abbr || label.slice(0, 2)
+                                                <span className="relative z-10 font-black text-[10px] text-muted-foreground">{option?.abbr || label.slice(0, 2)}</span>
                                             )}
                                         </div>
                                             <div className="min-w-0 flex flex-col gap-0.5 flex-1">
@@ -495,13 +495,12 @@ export function IntegrationsSection() {
                                             }`}
                                         >
                                             <span
-                                                className="flex h-3.5 w-3.5 shrink-0 items-center justify-center overflow-hidden rounded text-white"
-                                                style={{ backgroundColor: opt.color }}
+                                                className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center overflow-hidden rounded border border-border/35 bg-muted/25"
                                             >
                                                 {opt.logo ? (
                                                     <img src={opt.logo} alt="" className="h-full w-full object-contain p-0.5" />
                                                 ) : (
-                                                    opt.abbr
+                                                    <span className="text-[7px] font-bold text-muted-foreground">{opt.abbr}</span>
                                                 )}
                                             </span>
                                             {!opt.available && <span className="text-[9px] uppercase opacity-60">soon</span>}

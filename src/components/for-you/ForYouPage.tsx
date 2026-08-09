@@ -351,8 +351,11 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         l: discoveryPrefs.lovedItems,
     })
 
+    const [isColdStart, setIsColdStart] = useState(false)
+
     useEffect(() => {
         if (seeds.length < 5) {
+            setIsColdStart(true)
             setRecsLoading(true)
             setRecsError(null)
             const ac = new AbortController()
@@ -371,6 +374,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         }
         const ac = new AbortController()
         const hadResults = hasResultsRef.current
+        setIsColdStart(false)
         setRecsLoading(true)
         setRecsError(null)
         performance.mark('foryou:recommend:start')
@@ -421,7 +425,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 if (ac.signal.aborted) return
                 const allSeedsFailed = result.rails.length === 0 && (result.failedSeedCount ?? 0) > 0
                 if (allSeedsFailed) {
-                    setRecsError(result.firstError || 'TMDB recommendation provider returned no results. Check the browser console for details.')
+                    setRecsError(result.firstError || 'Recommendation service temporarily unavailable. Try again in a moment.')
                     if (hadResults) return
                 }
                 hasResultsRef.current = true
@@ -675,6 +679,18 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                             )}
                         </Button>
                     )}
+                    {hasHistory && !hasPmdbKey && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="h-8 gap-1.5 text-xs font-medium opacity-50"
+                            title="Add a PMDB API key in Settings > Integrations to enable publishing"
+                        >
+                            <Upload className="h-3.5 w-3.5" />
+                            Publish to PMDB
+                        </Button>
+                    )}
                     <Button
                         variant="outline"
                         size="sm"
@@ -843,8 +859,11 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                             <Sparkles className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
                                             <p className="font-medium">No recommendations yet</p>
                                             <p className="mt-1 text-sm text-muted-foreground">
-                                                Keep watching across your accounts and check back.
+                                                Start watching content on your connected accounts to unlock personalized recommendations.
                                             </p>
+                                            <a href="/addons" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+                                                Browse addons to get started
+                                            </a>
                                         </div>
                                     )
                                 }
@@ -882,7 +901,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.movies.length > 0 && (
-                                            <ContentRail title="Movies" subtitle="Recommended for your household">
+                                            <ContentRail title="Movies" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
                                                 {buckets.movies.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`mv-${item.id}`}
@@ -899,7 +918,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.series.length > 0 && (
-                                            <ContentRail title="Series" subtitle="Recommended for your household">
+                                            <ContentRail title="Series" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
                                                 {buckets.series.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`sr-${item.id}`}
@@ -916,7 +935,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.anime.length > 0 && (
-                                            <ContentRail title="Anime" subtitle="Recommended for your household">
+                                            <ContentRail title="Anime" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
                                                 {buckets.anime.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`an-${item.id}`}

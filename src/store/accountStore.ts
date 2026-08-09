@@ -39,7 +39,7 @@ export const persistAccounts = (accounts: Account[]) => {
     _persistTimer = setTimeout(async () => {
         _persistTimer = null
         try { await localforage.setItem(STORAGE_KEY, accounts) } catch (e) { if (import.meta.env.DEV) console.error('[persistAccounts] Failed to save accounts:', e) }
-    }, 1000)
+    }, 300)
 }
 
 if (typeof window !== 'undefined') {
@@ -434,10 +434,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   const storedChangelog = await localforage.getItem<AddonChangelogEntry[]>(CHANGELOG_KEY)
 
                   // This catches the case where a corrupted re-login wiped accounts between sessions.
-                  if (!storedAccounts || !Array.isArray(storedAccounts) || storedAccounts.length === 0) {
+                  if (!storedAccounts || !Array.isArray(storedAccounts)) {
                         const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
                         if (backup && Array.isArray(backup) && backup.length > 0) {
-                              if (import.meta.env.DEV) console.warn(`[AccountStore] Accounts empty on disk. Restoring ${backup.length} accounts from backup.`)
+                              if (import.meta.env.DEV) console.warn(`[AccountStore] Accounts missing on disk. Restoring ${backup.length} accounts from backup.`)
                               storedAccounts = backup
                               await localforage.setItem(STORAGE_KEY, backup)
                         }

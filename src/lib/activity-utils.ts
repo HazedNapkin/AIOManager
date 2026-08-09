@@ -370,9 +370,14 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const watchedAt = Number(row.watched_at) || Date.now()
-    let name = stripNuvioEpisodeTag(row.title || '', row.episode)
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
-    if (!name.trim()) name = resolved.name
+    let name: string
+    if (row.episode != null && resolved.name.trim()) {
+        name = resolved.name
+    } else {
+        name = stripNuvioEpisodeTag(row.title || '', row.episode)
+        if (!name.trim()) name = resolved.name
+    }
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
@@ -406,9 +411,14 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const position = Number(row.position) || 0
     const progress = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
     const lastWatched = Number(row.last_watched) || Date.now()
-    let name = stripNuvioEpisodeTag(titleHint?.trim() || '', row.episode)
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
-    if (!name.trim()) name = resolved.name
+    let name: string
+    if (row.episode != null && resolved.name.trim()) {
+        name = resolved.name
+    } else {
+        name = stripNuvioEpisodeTag(titleHint?.trim() || '', row.episode)
+        if (!name.trim()) name = resolved.name
+    }
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {

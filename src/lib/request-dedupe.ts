@@ -37,19 +37,3 @@ export function deduped<T>(key: string, fn: () => Promise<T>, opts?: { onStale?:
 
     return promise
 }
-
-export function clearDedupe(key?: string): void {
-    if (key) {
-        inflight.delete(key)
-        staleValues.delete(key)
-    } else {
-        inflight.clear()
-        staleValues.clear()
-    }
-}
-
-export function getStaleValue<T>(key: string): T | undefined {
-    const stale = staleValues.get(key)
-    if (stale) return stale.value as T
-    return undefined
-}

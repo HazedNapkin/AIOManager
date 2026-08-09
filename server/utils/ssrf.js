@@ -81,11 +81,11 @@ export const resolveAndValidateHost = async (hostname) => {
     try {
         const records = await lookup(host, { all: true })
         if (!Array.isArray(records) || records.length === 0) {
-            return true
+            return false
         }
         return !records.some(r => isPrivateIp(r.address))
     } catch {
-        return true
+        return false
     }
 }
 

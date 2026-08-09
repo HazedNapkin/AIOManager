@@ -410,12 +410,13 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
                       Sync
+                      <span className="ml-auto text-[10px] text-muted-foreground/50">Pull addons</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={async (e) => {
                         e.stopPropagation();
                         try {
-                          toast({ title: 'Repairing...', description: `Deep refreshing ${displayName}` });
+                          toast({ title: 'Repairing...', description: `Deep-refreshing ${displayName}` });
                           await repairAccount(account.id);
                           toast({ title: 'Repair Complete', description: `Account ${displayName} is now healthy` });
                         } catch (err) {
@@ -427,25 +428,27 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RefreshCw className={`h-4 w-4 shrink-0 text-warning ${loading ? 'animate-spin' : ''}`} />
                       Repair
+                      <span className="ml-auto text-[10px] text-muted-foreground/50">Deep refresh</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={async (e) => {
                         e.stopPropagation();
                         if (!hasPlatformConnection(account)) return;
                         try {
-                          toast({ title: 'Refreshing...', description: `Reinstalling all addons on ${displayName}` });
+                          toast({ title: 'Reinstalling...', description: `Reinstalling all addons on ${displayName}` });
                           const { useAddonStore } = await import('@/store/addonStore');
                           await useAddonStore.getState().bulkReinstallAllOnAccount(account.id, getStremioAuthKey(account));
-                          toast({ title: 'Refresh Complete', description: `All addons on ${displayName} have been reinstalled` });
+                          toast({ title: 'Reinstall Complete', description: `All addons on ${displayName} have been reinstalled` });
                         } catch (err) {
-                          toast({ variant: 'destructive', title: 'Refresh Failed', description: `Could not reinstall addons on ${displayName}` });
+                          toast({ variant: 'destructive', title: 'Reinstall Failed', description: `Could not reinstall addons on ${displayName}` });
                         }
                       }}
                       disabled={loading}
                       className="gap-2 cursor-pointer"
                     >
                       <RotateCw className={`h-4 w-4 shrink-0 text-primary ${loading ? 'animate-spin' : ''}`} />
-                      Refresh Addons
+                      Reinstall All
+                      <span className="ml-auto text-[10px] text-muted-foreground/50">Re-download manifests</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={(e) => { e.stopPropagation(); onDelete?.(account.id); }}

@@ -13,6 +13,8 @@ const PERSIST_DEBOUNCE_MS = 2000
 
 const FAILURE_BACKOFF_MS = 5 * 60 * 1000
 
+const FAILURE_MAX = 500
+
 const cache = new Map<string, CachedManifest>()
 const failures = new Map<string, number>()
 const pendingFetches = new Map<string, Promise<AddonDescriptor>>()
@@ -73,7 +75,12 @@ export function setCachedManifest(url: string, manifest: AddonManifest): void {
 }
 
 export function recordManifestFetchFailure(url: string): void {
-    failures.set(url.toLowerCase(), Date.now())
+    const key = url.toLowerCase()
+    if (failures.size >= FAILURE_MAX && !failures.has(key)) {
+        const oldest = failures.keys().next().value
+        if (oldest) failures.delete(oldest)
+    }
+    failures.set(key, Date.now())
 }
 
 export function shouldSkipManifestFetch(url: string): boolean {

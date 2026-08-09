@@ -461,8 +461,8 @@ export function ActivityPage() {
         setDetailItem(item)
     }, [])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<boolean> => {
-        if (items.length === 0) return false
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; hasRealStream: boolean }> => {
+        if (items.length === 0) return { failed: false, hasRealStream: false }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
             (byAccount[item.accountId] ||= []).push(item)
@@ -504,7 +504,7 @@ export function ActivityPage() {
 
             if (realstreamItems.length > 0) failed = true
         })
-        return failed
+        return { failed, hasRealStream: items.some(i => i.source === 'realstream') }
     }, [accountById])
 
     const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
@@ -528,12 +528,15 @@ export function ActivityPage() {
 
         const itemIdSet = new Set(itemIds)
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-        const failed = await deletePlatformItems(itemsToDelete)
+        const deleteResult = await deletePlatformItems(itemsToDelete)
 
         purgeLocalActivity(itemsToDelete, itemIds)
 
-        if (failed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
+        if (deleteResult.failed) {
+            const desc = deleteResult.hasRealStream
+                ? 'RealStream items cannot be removed remotely. Other items were removed successfully.'
+                : 'Some items could not be removed from their source platform.'
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: desc })
         } else {
             toast({
                 title: 'Items Deleted',

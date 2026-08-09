@@ -43,9 +43,12 @@ export async function writeEncryptedIfChanged(table, where, column, plaintext, o
     )
 
     if (current) {
-        const currentPlaintext = decrypt(current.val, FALLBACK_KEYS)
-        if (currentPlaintext === plaintext) {
-            return { written: false }
+        try {
+            const currentPlaintext = decrypt(current.val, FALLBACK_KEYS)
+            if (currentPlaintext === plaintext) {
+                return { written: false }
+            }
+        } catch {
         }
     }
 

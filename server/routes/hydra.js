@@ -176,13 +176,15 @@ async function writeCanonicalAddons(account, addons) {
     )
     // WHERE scoped to sync_user: if the row is owned by another user (the account_id PK already
     // exists), this update matches nothing rather than overwriting their canonical list.
-    await writeEncryptedIfChanged(
-        'account_canonical_addons',
-        { sql: 'account_id = $1 AND sync_user = $2', params: [accountId, syncUser] },
-        'addon_list',
-        JSON.stringify(addons),
-        { alsoSet: { sync_user: syncUser, updated_at: now } }
-    )
+    await db.tx(async (tx) => {
+        await writeEncryptedIfChanged(
+            'account_canonical_addons',
+            { sql: 'account_id = $1 AND sync_user = $2', params: [accountId, syncUser] },
+            'addon_list',
+            JSON.stringify(addons),
+            { alsoSet: { sync_user: syncUser, updated_at: now }, runner: tx }
+        )
+    })
 }
 
 async function validateManifest(manifestUrl) {
@@ -544,6 +546,9 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         bodyLimit: 1024 * 10,
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
     }, async (request, reply) => {
+        const account = await lookupAccountByApiKey(request, reply)
+        if (!account) return
+
         const { baseUrl } = request.body || {}
         if (!baseUrl || typeof baseUrl !== 'string') {
             reply.code(400)

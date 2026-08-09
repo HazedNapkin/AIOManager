@@ -413,59 +413,59 @@ export async function syncAllAccounts(silent = false) {
         if (import.meta.env.DEV) console.log(`[Account] syncAllAccounts skipped - already running`)
         return
     }
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+    if (!useAuthStore.getState().encryptionKey) return
+
     _syncAllRunning = true
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') { _syncAllRunning = false; return }
-    if (!useAuthStore.getState().encryptionKey) { _syncAllRunning = false; return }
-
-    await hydrateManifestCache()
-
-    store.setState({ error: null })
-    const accounts = store.getState().accounts
-    setAccountsLoading(accounts.map(a => a.id))
-    let hasAnyChange = false
-
-    const BATCH_SIZE = 5
-    const syncOne = async (account: typeof accounts[0]) => {
-        if (syncMutexes.has(account.id)) return
-        const hasAnyEnabledConnection = account.connections?.some(c => c.enabled)
-        const hasRootAuthKey = !!getStremioAuthKey(account)
-        if (!hasAnyEnabledConnection && !hasRootAuthKey) return
-
-        const nonStremioConnections = account.connections?.filter(c => isSyncEligibleConnection(c) && c.enabled) || []
-        const allNonStremioExpired = nonStremioConnections.length > 0 && nonStremioConnections.every(c => c.status === 'expired')
-        if (allNonStremioExpired) {
-            if (import.meta.env.DEV) console.log(`[Account] syncAllAccounts skipping ${account.id}: all non-Stremio connections expired`)
-            return
-        }
-
-        let resolveMutex!: () => void
-        syncMutexes.set(account.id, new Promise<void>((r) => { resolveMutex = r }))
-        try {
-            const result = await syncAccountCore(account.id, false)
-            if (result.changed) hasAnyChange = true
-        } catch (error: unknown) {
-            if (isTransientSyncError(error)) return
-            const isExpired = isAuthError(error)
-            store.setState(state => ({
-                accounts: state.accounts.map(acc =>
-                    acc.id === account.id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const } : acc
-                )
-            }))
-            hasAnyChange = true
-        } finally {
-            resolveMutex()
-            syncMutexes.delete(account.id)
-        }
-    }
-
-    for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
-        await Promise.all(accounts.slice(i, i + BATCH_SIZE).map(syncOne))
-        if (i + BATCH_SIZE < accounts.length) {
-            await new Promise(r => setTimeout(r, SYNC_BATCH_DELAY_MS))
-        }
-    }
-
     try {
+        await hydrateManifestCache()
+
+        store.setState({ error: null })
+        const accounts = store.getState().accounts
+        setAccountsLoading(accounts.map(a => a.id))
+        let hasAnyChange = false
+
+        const BATCH_SIZE = 5
+        const syncOne = async (account: typeof accounts[0]) => {
+            if (syncMutexes.has(account.id)) return
+            const hasAnyEnabledConnection = account.connections?.some(c => c.enabled)
+            const hasRootAuthKey = !!getStremioAuthKey(account)
+            if (!hasAnyEnabledConnection && !hasRootAuthKey) return
+
+            const nonStremioConnections = account.connections?.filter(c => isSyncEligibleConnection(c) && c.enabled) || []
+            const allNonStremioExpired = nonStremioConnections.length > 0 && nonStremioConnections.every(c => c.status === 'expired')
+            if (allNonStremioExpired) {
+                if (import.meta.env.DEV) console.log(`[Account] syncAllAccounts skipping ${account.id}: all non-Stremio connections expired`)
+                return
+            }
+
+            let resolveMutex!: () => void
+            syncMutexes.set(account.id, new Promise<void>((r) => { resolveMutex = r }))
+            try {
+                const result = await syncAccountCore(account.id, false)
+                if (result.changed) hasAnyChange = true
+            } catch (error: unknown) {
+                if (isTransientSyncError(error)) return
+                const isExpired = isAuthError(error)
+                store.setState(state => ({
+                    accounts: state.accounts.map(acc =>
+                        acc.id === account.id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const } : acc
+                    )
+                }))
+                hasAnyChange = true
+            } finally {
+                resolveMutex()
+                syncMutexes.delete(account.id)
+            }
+        }
+
+        for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
+            await Promise.all(accounts.slice(i, i + BATCH_SIZE).map(syncOne))
+            if (i + BATCH_SIZE < accounts.length) {
+                await new Promise(r => setTimeout(r, SYNC_BATCH_DELAY_MS))
+            }
+        }
+
         if (hasAnyChange) {
             persistAccounts(store.getState().accounts)
         }

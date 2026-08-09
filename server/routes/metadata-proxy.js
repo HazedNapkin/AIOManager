@@ -252,7 +252,9 @@ export function registerMetadataProxyRoutes(fastify) {
         }
     })
 
-    fastify.get('/api/metadata/test', async (request, reply) => {
+    fastify.get('/api/metadata/test', {
+        config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) {
             reply.status(401); return { error: 'Unauthorized' }
@@ -604,6 +606,9 @@ export function registerMetadataProxyRoutes(fastify) {
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
+        if (!authUser) {
+            reply.status(401); return { error: 'Unauthorized' }
+        }
 
         const { imdbId, type, tmdbId } = request.query || {}
         if (!imdbId && !tmdbId) return []

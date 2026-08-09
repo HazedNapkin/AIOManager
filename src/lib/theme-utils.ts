@@ -29,6 +29,8 @@ export function mergeCustomThemes(incoming: unknown[], existing: unknown[]): Cus
 }
 
 export function persistCustomThemes(merged: CustomTheme[]) {
-    localStorage.setItem('aio-custom-themes', JSON.stringify(merged))
-    window.dispatchEvent(new CustomEvent('aio-custom-themes-change', { detail: { themes: merged } }))
+    try {
+        localStorage.setItem('aio-custom-themes', JSON.stringify(merged))
+        window.dispatchEvent(new CustomEvent('aio-custom-themes-change', { detail: { themes: merged } }))
+    } catch {}
 }

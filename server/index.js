@@ -110,6 +110,15 @@ if (fs.existsSync(distPath)) {
         }
         return reply.sendFile('index.html')
     })
+
+    fastify.setErrorHandler((error, request, reply) => {
+        const status = error.statusCode || error.status || 500
+        if (status >= 500) {
+            request.log.error({ err: error }, `Unhandled error on ${request.method}:${request.url}`)
+        }
+        reply.status(status >= 400 && status < 600 ? status : 500)
+        return { error: error.message || 'Internal Server Error' }
+    })
 }
 
 fastify.get('/api/health', {

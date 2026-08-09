@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { AIOSTREAMS_USER_API_THROTTLE_MS, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
 import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
@@ -6,6 +6,7 @@ import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
 import { trace, keyTag } from '../utils/trace.js'
 import { getAddonUrlKey } from '../utils/addon-url.js'
+import { PRIMARY_KEY } from '../keys.js'
 
 const briefAddons = (addons) => (Array.isArray(addons) ? addons.map(a => ({ id: a?.manifest?.id || a?.id || '?', url: truncateUrl(a?.transportUrl || '') })) : [])
 
@@ -1188,16 +1189,43 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
     })
 
+    function proxyHmac(payload) {
+        return Promise.resolve(createHmac('sha256', PRIMARY_KEY).update(payload).digest('hex'))
+    }
+
+    fastify.post('/api/proxy/mint-token', {
+        config: { rateLimit: { max: 30, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+        const { url, name, logo } = request.body || {}
+        if (!url || typeof url !== 'string') { reply.status(400); return { error: 'Missing url' } }
+        if (!(await isSafeUrlResolved(url))) { reply.status(403); return { error: 'Unsafe URL' } }
+        const payload = JSON.stringify({ url, name: name || '', logo: logo || '' })
+        const encoded = Buffer.from(payload, 'utf-8').toString('base64url')
+        const sig = await proxyHmac(encoded)
+        return { token: `${encoded}.${sig}` }
+    })
+
     fastify.all('/api/proxy/:token/*', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
         const { token } = request.params
         const pathSuffix = request.params['*']
 
-        // We use a dummy URL for the enqueue key since token might be large, 
-        // but better to decoode it to get the domain
+        const dotIdx = token.lastIndexOf('.')
+        if (dotIdx < 1) {
+            reply.status(403); return { error: 'Invalid Token' }
+        }
+        const encoded = token.slice(0, dotIdx)
+        const sig = token.slice(dotIdx + 1)
+        const expectedSig = await proxyHmac(encoded)
+        if (sig !== expectedSig) {
+            reply.status(403); return { error: 'Invalid Token Signature' }
+        }
+
         let targetDomain = 'unknown'
         let originalUrl = ''
         try {
-            const config = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'))
+            const config = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8'))
             targetDomain = new URL(config.url).origin
             originalUrl = config.url
         } catch (e) {
@@ -1215,7 +1243,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         return enqueueProxyRequest(targetDomain, async () => {
             let customName = null, customLogo = null
             try {
-                const configStr = Buffer.from(token, 'base64').toString('utf-8')
+                const configStr = Buffer.from(encoded, 'base64url').toString('utf-8')
                 const config = JSON.parse(configStr)
                 const { url: originalUrl, name, logo } = config
                 customName = name || null

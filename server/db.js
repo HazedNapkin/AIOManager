@@ -4,6 +4,8 @@ const { Pool, types } = pg
 
 types.setTypeParser(types.builtins.INT8, (val) => parseInt(val, 10))
 
+let _sqliteTxQueue = Promise.resolve()
+
 class DB {
     constructor() {
         this.type = process.env.DB_TYPE || 'sqlite'
@@ -149,30 +151,35 @@ class DB {
                 client.release()
             }
         } else {
-            this.client.exec('BEGIN')
-            try {
-                const sqliteFns = {
-                    query: (sql, params = []) => {
-                        const sqliteSql = sql.replace(/\$\d+/g, '?')
-                        return this.client.prepare(sqliteSql).all(params)
-                    },
-                    get: (sql, params = []) => {
-                        const sqliteSql = sql.replace(/\$\d+/g, '?')
-                        return this.client.prepare(sqliteSql).get(params)
-                    },
-                    run: (sql, params = []) => {
-                        const sqliteSql = sql.replace(/\$\d+/g, '?')
-                        const info = this.client.prepare(sqliteSql).run(params)
-                        return { changes: info.changes }
-                    },
+            const run = async () => {
+                this.client.exec('BEGIN')
+                try {
+                    const sqliteFns = {
+                        query: (sql, params = []) => {
+                            const sqliteSql = sql.replace(/\$\d+/g, '?')
+                            return this.client.prepare(sqliteSql).all(params)
+                        },
+                        get: (sql, params = []) => {
+                            const sqliteSql = sql.replace(/\$\d+/g, '?')
+                            return this.client.prepare(sqliteSql).get(params)
+                        },
+                        run: (sql, params = []) => {
+                            const sqliteSql = sql.replace(/\$\d+/g, '?')
+                            const info = this.client.prepare(sqliteSql).run(params)
+                            return { changes: info.changes }
+                        },
+                    }
+                    const result = await fn(sqliteFns)
+                    this.client.exec('COMMIT')
+                    return result
+                } catch (err) {
+                    try { this.client.exec('ROLLBACK') } catch {}
+                    throw err
                 }
-                const result = await fn(sqliteFns)
-                this.client.exec('COMMIT')
-                return result
-            } catch (err) {
-                this.client.exec('ROLLBACK')
-                throw err
             }
+            const next = _sqliteTxQueue.then(run, run)
+            _sqliteTxQueue = next.catch(() => {})
+            return next
         }
     }
 

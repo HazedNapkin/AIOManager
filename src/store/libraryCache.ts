@@ -434,6 +434,16 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     ])
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
                                     trace('libraryCache', 'nuvio.fetch', { accountId: account.id, watched: watched.length, progress: progress.length })
+                                    try {
+                                        const [whCursor, wpCursor] = await Promise.all([
+                                            driver.getWatchHistoryDeltaCursor(token.accessToken, profileId).catch(() => 0),
+                                            driver.getWatchProgressDeltaCursor(token.accessToken, profileId).catch(() => 0),
+                                        ])
+                                        if (whCursor > 0 || wpCursor > 0) {
+                                            const { setNuvioCursors } = await import('@/lib/drivers/nuvio')
+                                            setNuvioCursors(conn.id, { watched: whCursor, progress: wpCursor })
+                                        }
+                                    } catch {}
                                     const nuvioTitles = new Map<string, string>()
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))

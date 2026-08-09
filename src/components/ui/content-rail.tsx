@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react'
+import { useRef, memo, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, X, Heart } from 'lucide-react'
 import { Poster } from '@/components/common/Poster'
@@ -39,7 +39,7 @@ export interface ContentRailProps {
     className?: string
 }
 
-export function ContentRailCard({
+export const ContentRailCard = memo(function ContentRailCard({
     poster,
     title,
     subtitle,
@@ -142,7 +142,7 @@ export function ContentRailCard({
             </div>
         </motion.div>
     )
-}
+})
 
 export function ContentRail({
     title,

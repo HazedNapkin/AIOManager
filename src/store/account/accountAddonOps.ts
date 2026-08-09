@@ -669,9 +669,9 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
     const timeoutId = setTimeout(() => {
         if (store.getState().loadingAccounts.has(accountId)) {
             clearAccountLoading(accountId)
-            if (import.meta.env.DEV) console.warn("[AccountStore] Reinstall timeout reached. Forcing loading off.")
+            store.setState({ error: 'Addon reinstall timed out. It may still complete in the background.' })
         }
-    }, 15000)
+    }, 30000)
 
     const releaseMutex = await acquireSyncMutex(accountId)
     try {

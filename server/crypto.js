@@ -43,7 +43,6 @@ export function decrypt(encryptedData, secrets) {
     if (!secrets) throw new Error('Encryption secret is required')
 
     if (!encryptedData || typeof encryptedData !== 'string' || !encryptedData.includes(':')) return encryptedData
-    if (encryptedData.startsWith('http')) return encryptedData
 
     const parts = encryptedData.split(':')
     if (parts.length !== 3) return encryptedData
