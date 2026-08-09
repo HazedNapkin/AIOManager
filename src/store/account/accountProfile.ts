@@ -3,6 +3,7 @@ import { updateAddons } from '@/api/addons'
 import { decrypt } from '@/lib/crypto'
 import { loadSessionKey } from '@/lib/crypto'
 import { toast } from '@/hooks/use-toast'
+import { ACCOUNT_CONTEXT_PROFILE_SWAP } from '@/lib/account-contexts'
 import { buildAddonCollectionDiff } from '@/lib/addon-collection-diff'
 import {
     safeUUID,
@@ -182,7 +183,7 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
             if (!sessionKey) throw new Error('Session expired. Sign in again before switching setups.')
             const authKey = await decrypt(getStremioAuthKey(account), sessionKey)
             if (authKey) {
-                await updateAddons(authKey, newAddons, 'Setup Swap', {
+                await updateAddons(authKey, newAddons, ACCOUNT_CONTEXT_PROFILE_SWAP, {
                     allowCollectionShrink: true,
                     previousCollection: account.addons,
                 })

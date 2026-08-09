@@ -1,4 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import { ACCOUNT_CONTEXT_BULK_OP } from '@/lib/account-contexts'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
     updateAddons,
@@ -209,9 +210,11 @@ function backgroundSync(accountId: string, account: Account, updatedAddons: Addo
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)
-    trace('backgroundSync', 'enter', { accountId, hasAuthKey: !!authKey, count: updatedAddons.length, allowCollectionShrink: !!options?.allowCollectionShrink, trigger, addons: briefAddons(updatedAddons) })
-    if (authKey) {
-        const context = options?.allowCollectionShrink ? 'Bulk Op' : accountId
+    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    const stremioPushEnabled = !stremioConn || stremioConn.enabled !== false
+    trace('backgroundSync', 'enter', { accountId, hasAuthKey: !!authKey, stremioPushEnabled, count: updatedAddons.length, allowCollectionShrink: !!options?.allowCollectionShrink, trigger, addons: briefAddons(updatedAddons) })
+    if (authKey && stremioPushEnabled) {
+        const context = options?.allowCollectionShrink ? ACCOUNT_CONTEXT_BULK_OP : accountId
         promises.push(
             getCachedAuthKey(authKey, getEncryptionKey())
                 .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, context, { previousCollection: account.addons, allowCollectionShrink: options?.allowCollectionShrink }))
@@ -761,7 +764,7 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
     }
 }
 
-export async function reinstallAddons(accountId: string, transportUrls: string[], concurrency = 4) {
+export async function reinstallAddons(accountId: string, transportUrls: string[], concurrency = 4, onProgress?: (current: number, total: number) => void) {
     const store = await getStore()
     if (transportUrls.length === 0) return { successCount: 0, failCount: 0 }
     store.setState({ error: null })
@@ -771,12 +774,16 @@ export async function reinstallAddons(accountId: string, transportUrls: string[]
         const account = getAccountById(store.getState().accounts, accountId)
         if (!account) throw new Error('Account not found')
 
+        let completedCount = 0
         const manifestResults = await mapConcurrent(transportUrls, concurrency, async (transportUrl) => {
             try {
                 return { transportUrl, addon: await apiFetchAddonManifest(transportUrl, accountId, true) }
             } catch (error) {
                 if (import.meta.env.DEV) console.warn(`Failed to reinstall addon ${transportUrl}:`, error)
                 return { transportUrl, addon: null }
+            } finally {
+                completedCount++
+                if (onProgress) onProgress(completedCount, transportUrls.length)
             }
         })
 

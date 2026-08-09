@@ -12,7 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Progress } from '@/components/ui/progress'
+import { OperationProgress } from '@/components/ui/operation-progress'
 import { AddonLogo } from '@/components/discover/AddonLogo'
 import { useToast } from '@/hooks/use-toast'
 import { getStoredAIOStreamsPassword } from '@/lib/aiostreams-utils'
@@ -347,22 +347,13 @@ export function LibraryInjectDialog({
         )}
 
         {phase === 'injecting' && (
-          <div className="space-y-4 py-6">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                    {'Adding...'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {progressCurrent} of {totalOps} operation{totalOps !== 1 ? 's' : ''} complete
-                </p>
-              </div>
-            </div>
-            <Progress
-              value={totalOps > 0 ? Math.round((progressCurrent / totalOps) * 100) : 0}
-              shimmer
-              className="h-1.5 bg-muted"
+          <div className="py-6">
+            <OperationProgress
+              status="running"
+              current={progressCurrent}
+              total={totalOps}
+              label="Adding..."
+              variant="bare"
             />
           </div>
         )}

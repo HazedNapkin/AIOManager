@@ -48,7 +48,7 @@ if (typeof window !== 'undefined') {
             clearTimeout(_persistTimer)
             _persistTimer = null
             const { accounts } = useAccountStore.getState()
-            localforage.setItem(STORAGE_KEY, accounts).catch(() => {})
+            localforage.setItem(STORAGE_KEY, accounts).catch((e) => { if (import.meta.env.DEV) console.error('[accountStore] beforeunload persist failed:', e) })
         }
     })
 }
@@ -394,7 +394,7 @@ export interface AccountStore {
       removeLocalAddons: (accountId: string, transportUrls: string[]) => Promise<void>
       replaceTransportUrl: (oldUrl: string, newUrl: string, accountId?: string, freshManifest?: AddonDescriptor['manifest'], metadata?: AddonDescriptor['metadata']) => Promise<ReplaceTransportUrlResult>
       reinstallAddon: (accountId: string, transportUrl: string) => Promise<void>
-      reinstallAddons: (accountId: string, transportUrls: string[], concurrency?: number) => Promise<{ successCount: number; failCount: number }>
+      reinstallAddons: (accountId: string, transportUrls: string[], concurrency?: number, onProgress?: (current: number, total: number) => void) => Promise<{ successCount: number; failCount: number }>
       syncAutopilotRules: (accountId: string) => Promise<void>
       clearError: () => void
       reset: () => Promise<void>
@@ -1023,9 +1023,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return reinstallAddon(accountId, transportUrl)
       },
 
-      reinstallAddons: async (accountId: string, transportUrls: string[], concurrency?: number) => {
+      reinstallAddons: async (accountId: string, transportUrls: string[], concurrency?: number, onProgress?: (current: number, total: number) => void) => {
             const { reinstallAddons } = await import('./account/accountAddonOps')
-            return reinstallAddons(accountId, transportUrls, concurrency)
+            return reinstallAddons(accountId, transportUrls, concurrency, onProgress)
       },
 
       updateAddonSettings: async (

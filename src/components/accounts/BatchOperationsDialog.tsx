@@ -23,7 +23,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Eye, EyeOff, Globe, Gri
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
-import { Progress } from '@/components/ui/progress'
+import { OperationProgress } from '@/components/ui/operation-progress'
 
 
 interface BatchOperationsDialogProps {
@@ -1733,36 +1733,27 @@ export function BatchOperationsDialog({
     }
   }
 
-  const progressPercent = progress?.total ? Math.min(100, Math.round((progress.current / progress.total) * 100)) : 0
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 lg:px-6">
       {progress && progress.status !== 'complete' && (
-        <div className="rounded-2xl border border-primary/20 bg-primary/10 p-3 animate-in fade-in slide-in-from-top-2">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="flex items-center gap-2 text-sm font-medium text-primary">
-                <Loader2 className={cn("h-4 w-4", progress.status === 'running' && "animate-spin")} />
-                {progress.status === 'cancelled'
-                  ? 'Operation cancelled'
-                  : progress.status === 'cancelling'
-                    ? 'Cancelling after current account...'
-                    : 'Bulk operation in progress'}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                {progress.accountName
-                  ? `Processing ${progress.accountName}`
-                  : `${progress.current} of ${progress.total} account${progress.total !== 1 ? 's' : ''} processed`}
-              </p>
-            </div>
-            <span className="shrink-0 text-xs font-semibold tabular-nums text-primary">
-              {Math.min(progress.current, progress.total)} / {progress.total}
-            </span>
-          </div>
-          <Progress value={progressPercent} shimmer={progress.status === 'running'} className="h-2 bg-background/70" />
+        <div className="space-y-1">
+          <OperationProgress
+            status={progress.status}
+            current={progress.current}
+            total={progress.total}
+            label={progress.status === 'cancelled'
+              ? 'Operation cancelled'
+              : progress.status === 'cancelling'
+                ? 'Cancelling after current account...'
+                : 'Bulk operation in progress'}
+            detail={progress.accountName
+              ? `Processing ${progress.accountName}`
+              : `${progress.current} of ${progress.total} account${progress.total !== 1 ? 's' : ''} processed`}
+            variant="card"
+          />
           {progress.status !== 'cancelled' && (
-            <p className="mt-2 text-[11px] text-muted-foreground">
+            <p className="px-1 text-[11px] text-muted-foreground">
               Cancel stops before the next account; the account currently being processed will finish safely.
             </p>
           )}

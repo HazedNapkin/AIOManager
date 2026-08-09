@@ -187,7 +187,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   }, [sortBy, showAdult, selectedCategories, compact, viewMode])
 
   useEffect(() => {
-    return () => { try { localStorage.setItem(LAST_VISIT_KEY, String(Date.now())) } catch { /* quota */ } }
+    return () => { try { localStorage.setItem(LAST_VISIT_KEY, String(Date.now())) } catch {} }
   }, [])
 
   useEffect(() => {

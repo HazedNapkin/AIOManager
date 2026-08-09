@@ -1,4 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import { toast } from '@/hooks/use-toast'
+import { ACCOUNT_CONTEXT_BULK_OP } from '@/lib/account-contexts'
 import { getAddons, updateAddons, fetchAddonManifest } from '@/api/addons'
 import { identifyAddon } from '@/lib/addon-identifier'
 import { mergeAddons, removeAddons } from '@/lib/addon-merger'
@@ -23,6 +25,18 @@ import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
 import { getStremioAuthKey } from '@/lib/account-compat'
+
+function isStremioPushEnabled(account: Account | undefined | null): boolean {
+    if (!account) return true
+    const conn = account.connections?.find(c => c.platform === 'stremio')
+    return !conn || conn.enabled !== false
+}
+
+async function shouldPushToStremio(accountId: string): Promise<boolean> {
+    const { useAccountStore } = await import('../accountStore')
+    const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+    return isStremioPushEnabled(account)
+}
 import { reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace, briefAddons } from '@/lib/trace'
 import { cloneAddonsWithMode } from '@/lib/clone-mode'
@@ -236,10 +250,10 @@ export async function applySavedAddonToAccount(
       true
     )
 
-    await updateAddons(authKey, updatedAddons, accountId)
+    if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
     trace('deploy.apply', 'pushed', { savedAddonId, accountId, count: updatedAddons.length })
     const { pushToConnections } = await import('../account/accountAddonOps')
-    pushToConnections(accountId).catch(() => {})
+    pushToConnections(accountId).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
 
     const library = { ...useAddonStore.getState().library }
     library[savedAddonId] = { ...savedAddon, lastUsed: new Date() }
@@ -295,9 +309,9 @@ export async function applyTagToAccount(
       true
     )
 
-    await updateAddons(authKey, updatedAddons, accountId)
+    if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
     const { pushToConnections } = await import('../account/accountAddonOps')
-    pushToConnections(accountId).catch(() => {})
+    pushToConnections(accountId).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
 
     const library = { ...useAddonStore.getState().library }
     savedAddons.forEach((savedAddon) => {
@@ -401,7 +415,7 @@ export async function bulkApplySavedAddons(
           }
         } else {
           trace('deploy', 'stremio-push', { accountId, pushing: updatedAddons.length, addons: briefAddons(updatedAddons) })
-          await updateAddons(authKey, updatedAddons, accountId)
+          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
           const state = useAccountStore.getState()
           const stremioAccount = state.accounts.find(a => a.id === accountId)
           if (stremioAccount) {
@@ -410,7 +424,7 @@ export async function bulkApplySavedAddons(
             persistAccounts(useAccountStore.getState().accounts)
           }
           const { pushToConnections } = await import('../account/accountAddonOps')
-          pushToConnections(accountId, { addons: updatedAddons }).catch(() => {})
+          pushToConnections(accountId, { addons: updatedAddons }).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
           // Refresh account.addons through the metadata-preserving passive merge so the deploy
           // surfaces promptly without the deploy path overwriting local flags.
           const { scheduleSyncAccount } = await import('../account/accountSync')
@@ -594,7 +608,7 @@ export async function bulkRemoveAddons(
         }
 
         if (hasRemoteRemoval) {
-          await updateAddons(authKey, updatedAddons, accountId, { previousCollection: currentAddons, allowCollectionShrink: true })
+            if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, ACCOUNT_CONTEXT_BULK_OP, { previousCollection: currentAddons, allowCollectionShrink: true })
         }
 
         if (hasLocalRemoval || hasRemoteRemoval) {
@@ -772,9 +786,7 @@ export async function bulkReinstallAddons(
           try {
             const m = await fetchAddonManifest(url, 'Bulk-Pre-Fetch', true)
             if (m) setCachedManifest(url, m.manifest)
-          } catch {
-            /* best-effort pre-fetch; missing manifests are fetched on demand later */
-          }
+          } catch {}
         }
       )
     }
@@ -910,25 +922,27 @@ export async function bulkReinstallAddons(
 
         if (needsRemotePush && accountAuthKey) {
           if (import.meta.env.DEV) console.log(`[Bulk] Pushing batched updates for account ${accountId} (${updateResults.length} addons)`)
-          await updateAddons(authKey, targetCollection, accountId)
+          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, targetCollection, accountId)
         }
 
         const { pushToConnections } = await import('../account/accountAddonOps')
-        pushToConnections(accountId).catch(() => {})
+        pushToConnections(accountId).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
 
         await useAddonStore.getState().syncAccountState(accountId, accountAuthKey, targetCollection)
 
         if (updateResults.length > 0) {
+          const targetByUrl = new Map(targetCollection.map(a => [normalizeAddonUrl(a.transportUrl), a]))
+          const updatedByUrl = new Map(
+            updateResults.map(r => {
+              const descriptor = targetByUrl.get(normalizeAddonUrl(r.addonId))
+              return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
+            }).filter((e): e is [string, AddonDescriptor] => e !== null)
+          )
+
           const { useAccountStore: acctStore } = await import('@/store/accountStore')
           const accountStore = acctStore.getState()
           const account = accountStore.accounts.find(a => a.id === accountId)
           if (account) {
-            const updatedByUrl = new Map(
-              updateResults.map(r => {
-                const descriptor = targetCollection.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId))
-                return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
-              }).filter((e): e is [string, AddonDescriptor] => e !== null)
-            )
             const patchedAddons = account.addons.map(addon => {
               const updated = updatedByUrl.get(normalizeAddonUrl(addon.transportUrl))
               if (!updated) return addon
@@ -960,9 +974,10 @@ export async function bulkReinstallAddons(
           const accountStore = useAccountStore.getState()
           const account = accountStore.accounts.find(a => a.id === accountId)
           if (account?.profiles?.length) {
+            const targetByUrl = new Map(targetCollection.map(a => [normalizeAddonUrl(a.transportUrl), a]))
             const updatedByUrl = new Map(
               updateResults.map(r => {
-                const descriptor = targetCollection.find(a => normalizeAddonUrl(a.transportUrl) === normalizeAddonUrl(r.addonId))
+                const descriptor = targetByUrl.get(normalizeAddonUrl(r.addonId))
                 return descriptor ? [normalizeAddonUrl(r.addonId), descriptor] : null
               }).filter((e): e is [string, AddonDescriptor] => e !== null)
             )
@@ -1155,7 +1170,7 @@ export async function bulkInstallFromUrls(
             pushToConnections(accountId).catch(err => { if (import.meta.env.DEV) console.error('Failed to push to connections:', err) })
           }
         } else {
-          await updateAddons(authKey, dedupedAddons, accountId)
+          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, dedupedAddons, accountId)
           const state = useAccountStore.getState()
           const stremioAccount = state.accounts.find(a => a.id === accountId)
           if (stremioAccount) {
@@ -1164,7 +1179,7 @@ export async function bulkInstallFromUrls(
             persistAccounts(useAccountStore.getState().accounts)
           }
           const { pushToConnections } = await import('../account/accountAddonOps')
-          pushToConnections(accountId, { addons: dedupedAddons }).catch(() => {})
+          pushToConnections(accountId, { addons: dedupedAddons }).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
           const { scheduleSyncAccount } = await import('../account/accountSync')
           scheduleSyncAccount(accountId)
         }

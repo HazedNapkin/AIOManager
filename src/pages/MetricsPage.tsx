@@ -31,7 +31,6 @@ import {
     Sun,
     Coffee,
     LayoutGrid,
-    RefreshCw,
 } from 'lucide-react'
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
@@ -47,7 +46,7 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Progress } from '@/components/ui/progress'
+import { OperationProgress } from '@/components/ui/operation-progress'
 import { ActivityDetailModal, type DetailItem } from '@/components/activity/ActivityDetailModal'
 import { ActivityHeatmap, ActivitySparkline, WatchFunnel, ContentDonut, FranchiseBars, VelocityChart, WeekComparison, ContributionGraph, SessionDepth, WeeklyRhythm, ComebackRate, DropOffPoint } from '@/components/metrics'
 
@@ -281,35 +280,18 @@ export function MetricsPage() {
                     </ToolbarShell>
 
                     {(cacheLoading || isLoading) && (
-                        <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
-                            <div className="flex items-center gap-3">
-                                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-                                    <RefreshCw className="h-4 w-4 text-primary animate-spin" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold">
-                                        {cacheLoading
-                                            ? (loadingProgress.current > 0 ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts` : 'Connecting...')
-                                            : 'Crunching numbers...'}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground">
-                                        {cacheLoading
-                                            ? (loadingProgress.current > 0 ? `${loadingProgress.total - loadingProgress.current} remaining` : 'Fetching watch history')
-                                            : 'Processing metrics data'}
-                                    </div>
-                                </div>
-                                {cacheLoading && loadingProgress.total > 0 && (
-                                    <span className="text-sm font-bold tabular-nums text-primary shrink-0">
-                                        {Math.round((loadingProgress.current / loadingProgress.total) * 100)}%
-                                    </span>
-                                )}
-                            </div>
-                            <Progress
-                                value={cacheLoading && loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 100}
-                                shimmer={!cacheLoading || loadingProgress.current === 0}
-                                className="h-1.5 bg-muted"
-                            />
-                        </div>
+                        <OperationProgress
+                            status="running"
+                            current={cacheLoading ? loadingProgress.current : 100}
+                            total={cacheLoading ? loadingProgress.total : 100}
+                            label={cacheLoading
+                                ? (loadingProgress.current > 0 ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts` : 'Connecting...')
+                                : 'Crunching numbers...'}
+                            detail={cacheLoading
+                                ? (loadingProgress.current > 0 ? `${loadingProgress.total - loadingProgress.current} remaining` : 'Fetching watch history')
+                                : 'Processing metrics data'}
+                            className="mt-2"
+                        />
                     )}
                 </div>
 

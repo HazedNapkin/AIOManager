@@ -18,6 +18,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ContentRail, ContentRailCard, ContentRailSkeleton } from '@/components/ui/content-rail'
 import { EmptyState } from '@/components/common/EmptyState'
 import type { ActivityItem } from '@/types/activity'
@@ -123,7 +124,15 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
     const [pmdbLastPublished, setPmdbLastPublished] = useState<number | null>(null)
 
     useEffect(() => {
-        checkPmdbKeyConfigured().then(setHasPmdbKey).catch(() => {})
+        let cancelled = false
+        const check = async (attempt: number) => {
+            const result = await checkPmdbKeyConfigured()
+            if (cancelled) return
+            if (result) { setHasPmdbKey(true); return }
+            if (attempt < 3) setTimeout(() => check(attempt + 1), 2000 * (attempt + 1))
+        }
+        check(0)
+        return () => { cancelled = true }
     }, [])
 
     useEffect(() => {
@@ -299,25 +308,39 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                         Refresh
                     </Button>
                     {hasEnoughHistory && hasPmdbKey && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setPmdbDialogOpen(true)}
-                            disabled={recsLoading}
-                            className="h-8 gap-1.5 text-xs font-medium"
-                            title={pmdbLastPublished !== null
-                                ? `Last published ${formatStaleAgo(pmdbLastPublished)}`
-                                : 'Publish rails to PMDB lists'}
-                        >
-                            <Upload className="h-3.5 w-3.5" />
-                            Publish to PMDB
-                            {pmdbLastPublished !== null && (
-                                <span className={cn(
-                                    'h-1.5 w-1.5 rounded-full',
-                                    Date.now() - pmdbLastPublished > 86400000 ? 'bg-amber-500' : 'bg-emerald-500'
-                                )} />
-                            )}
-                        </Button>
+                        <Tooltip content={pmdbLastPublished !== null
+                            ? `Last published ${formatStaleAgo(pmdbLastPublished)}`
+                            : 'Publish rails to PMDB lists'}>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPmdbDialogOpen(true)}
+                                disabled={recsLoading}
+                                className="h-8 gap-1.5 text-xs font-medium"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                Publish to PMDB
+                                {pmdbLastPublished !== null && (
+                                    <span className={cn(
+                                        'h-1.5 w-1.5 rounded-full',
+                                        Date.now() - pmdbLastPublished > 86400000 ? 'bg-amber-500' : 'bg-emerald-500'
+                                    )} />
+                                )}
+                            </Button>
+                        </Tooltip>
+                    )}
+                    {hasEnoughHistory && !hasPmdbKey && (
+                        <Tooltip content="Add a PMDB API key in Settings > Integrations to enable publishing">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled
+                                className="h-8 gap-1.5 text-xs font-medium opacity-50"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                Publish to PMDB
+                            </Button>
+                        </Tooltip>
                     )}
                     <Button
                         variant="outline"

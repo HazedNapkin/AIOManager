@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/use-toast'
 import { EmptyState } from '@/components/common/EmptyState'
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
+import { OperationProgress, type OperationStatus } from '@/components/ui/operation-progress'
 import { AnimatedRefreshIcon } from '@/components/ui/AnimatedIcons'
 import { checkAddonUpdates } from '@/api/addons'
 import { useAddonStore } from '@/store/addonStore'
@@ -40,29 +41,32 @@ export function AccountList() {
   useScrollRestoration('accounts')
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
   const { accounts, error, clearError, syncAllAccounts, removeAccount, loading } = useAccounts()
+  const loadingCount = useAccountStore(state => state.loadingAccounts.size)
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<{ status: OperationStatus; current: number; total: number; label: string; detail?: string }>({ status: 'idle', current: 0, total: 0, label: '' })
   const [refreshMenuOpen, setRefreshMenuOpen] = useState(false)
   const { toast } = useToast()
 
   const handleCheckAllAddonUpdates = async () => {
     if (checkingUpdates) return
     setCheckingUpdates(true)
-    try {
-      // Collect all addons across all accounts and deduplicate by transportUrl
-      // globally to avoid hitting the same addon server multiple times (429 bursts)
-      const seenUrls = new Set<string>()
-      const allAddons = accounts.flatMap(account => account.addons).filter(addon => {
-        if (seenUrls.has(addon.transportUrl)) return false
-        seenUrls.add(addon.transportUrl)
-        return true
-      })
+    const seenUrls = new Set<string>()
+    const allAddons = accounts.flatMap(account => account.addons).filter(addon => {
+      if (seenUrls.has(addon.transportUrl)) return false
+      seenUrls.add(addon.transportUrl)
+      return true
+    })
 
-      const updateInfoList = await checkAddonUpdates(allAddons, 'All-Accounts-Update-Check')
+    setUpdateProgress({ status: 'running', current: 0, total: allAddons.length, label: 'Checking for updates', detail: `Scanning ${allAddons.length} addons across ${accounts.length} accounts...` })
+    try {
+      const updateInfoList = await checkAddonUpdates(allAddons, 'All-Accounts-Update-Check', (current, total) => {
+        setUpdateProgress({ status: 'running', current, total, label: 'Checking for updates', detail: `${current} of ${total} addons checked` })
+      })
       const versions: Record<string, string> = {}
       const hints: Record<string, SavedAddonManifestChangeSummary> = {}
       updateInfoList.forEach((info) => {
@@ -75,8 +79,14 @@ export function AccountList() {
       })
       useAddonStore.getState().updateLatestVersions(versions)
       useAddonStore.getState().updateManifestChangeHints(hints)
+      const updatesCount = updateInfoList.filter((info) => info.hasUpdate).length
+      const desc = updatesCount > 0 ? `${updatesCount} addon${updatesCount !== 1 ? 's have' : ' has'} updates available` : 'All addons are up to date'
+      setUpdateProgress({ status: 'complete', current: allAddons.length, total: allAddons.length, label: 'Update check complete', detail: desc })
+      setTimeout(() => setUpdateProgress({ status: 'idle', current: 0, total: 0, label: '' }), 3000)
       toast({ title: 'Update Check Complete', description: 'All account addons have been checked for updates.' })
     } catch (err) {
+      setUpdateProgress({ status: 'error', current: 0, total: allAddons.length, label: 'Update check failed', detail: 'Failed to check for addon updates' })
+      setTimeout(() => setUpdateProgress({ status: 'idle', current: 0, total: 0, label: '' }), 5000)
       toast({ title: 'Update Check Failed', variant: 'destructive' })
     } finally {
       setCheckingUpdates(false)
@@ -502,6 +512,26 @@ export function AccountList() {
           )}
         </div>
       </ToolbarShell>
+
+      {loading && accounts.length > 0 && (
+        <OperationProgress
+          status="running"
+          current={Math.max(0, accounts.length - loadingCount)}
+          total={accounts.length}
+          label={`Syncing ${Math.max(0, accounts.length - loadingCount)} of ${accounts.length} accounts`}
+          detail={loadingCount > 0 ? `${loadingCount} ${loadingCount === 1 ? 'account' : 'accounts'} remaining` : 'Finishing up...'}
+          className="mt-2"
+        />
+      )}
+
+      <OperationProgress
+        status={updateProgress.status}
+        current={updateProgress.current}
+        total={updateProgress.total}
+        label={updateProgress.label}
+        detail={updateProgress.detail}
+        className="mt-2"
+      />
 
 
       <FloatingActionBar

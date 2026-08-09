@@ -1,5 +1,6 @@
 import type { CanonicalId, CanonicalItem } from '../api/metadata/types.ts'
 import type { TasteProfile } from './taste-profile.ts'
+import { mapConcurrent } from './concurrency.ts'
 
 export interface ScoredRecommendation extends CanonicalItem {
     score: number
@@ -255,10 +256,8 @@ function bayesianWeightedRating(
     return (v / (v + m)) * R + (m / (v + m)) * meanRating
 }
 
-function genreJaccard(a: string[] | undefined, b: string[] | undefined): number {
-    if (!a || !b || a.length === 0 || b.length === 0) return 0
-    const setA = new Set(a.map(g => g.toLowerCase()))
-    const setB = new Set(b.map(g => g.toLowerCase()))
+function genreJaccardSets(setA: Set<string>, setB: Set<string>): number {
+    if (setA.size === 0 || setB.size === 0) return 0
     let intersection = 0
     for (const g of setA) {
         if (setB.has(g)) intersection += 1
@@ -376,16 +375,19 @@ function mmrRerank(
     maxSize: number
 ): ScoredCandidate[] {
     if (items.length === 0) return []
+    const genreSets = new Map(items.map(s => [s, new Set((s.item.genres ?? []).map(g => g.toLowerCase()))]))
     const remaining = items.slice()
     const selected: ScoredCandidate[] = []
+    const selectedSets: Set<string>[] = []
     while (selected.length < maxSize && remaining.length > 0) {
         let bestIdx = 0
         let bestScore = -Infinity
         for (let i = 0; i < remaining.length; i++) {
             const relevance = lambda * remaining[i].score
             let maxSim = 0
-            for (const s of selected) {
-                const sim = genreJaccard(remaining[i].item.genres, s.item.genres)
+            const itemSet = genreSets.get(remaining[i])!
+            for (const sSet of selectedSets) {
+                const sim = genreJaccardSets(itemSet, sSet)
                 if (sim > maxSim) maxSim = sim
             }
             const mmrScore = relevance - (1 - lambda) * maxSim
@@ -395,7 +397,9 @@ function mmrRerank(
             }
         }
         selected.push(remaining[bestIdx])
-        remaining.splice(bestIdx, 1)
+        selectedSets.push(genreSets.get(remaining[bestIdx])!)
+        remaining[bestIdx] = remaining[remaining.length - 1]
+        remaining.pop()
     }
     return selected
 }
@@ -529,8 +533,8 @@ export async function buildRecommendations(
     let failedSeedCount = 0
     let firstError: string | null = null
 
-    for (const seed of topSeeds) {
-        if (signal?.aborted) break
+    await mapConcurrent(topSeeds, 6, async (seed) => {
+        if (signal?.aborted) return
         const seedCanonical = seedToCanonical(seed)
         const weight = weights.get(seed.itemId)?.sourceWeight ?? 0
         const collected: CanonicalItem[] = []
@@ -558,7 +562,7 @@ export async function buildRecommendations(
             }
         }
         perSeedCandidates.set(seed.itemId, collected)
-    }
+    })
 
     const filtered: CandidateAccumulator[] = []
     for (const c of candidateMap.values()) {

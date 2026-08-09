@@ -528,7 +528,7 @@ export function AIOMetadataSyncTab({
             const accountName = accountById.get(accountId)?.accountName ?? accountId
             try {
                 const { uuid, installUrl } = await createAIOMetadataUser(sourceBaseUrl, password, cloneAIOMetadataConfig(baseConfig), addonPassword || undefined)
-                try { await saveAIOMetadataPassword(sourceBaseUrl, uuid, password) } catch { /* non-critical */ }
+                try { await saveAIOMetadataPassword(sourceBaseUrl, uuid, password) } catch {}
                 try {
                     await installAddonToAccount(accountId, installUrl)
                     if (`${window.location.pathname}${window.location.search}` !== loc) navigate(loc, { replace: true })

@@ -1,6 +1,7 @@
 import { normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
+import { mapConcurrent } from '@/lib/concurrency'
 import type { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import type { CinemetaManifest } from '@/types/cinemeta'
@@ -46,7 +47,8 @@ export async function discoverFromConnections(account: Account, accountId: strin
 
     const discovered: DiscoveredEntry[] = []
 
-    for (const conn of connections) {
+    const workerResults = await mapConcurrent(connections, 3, async (conn) => {
+        const connDiscovered: DiscoveredEntry[] = []
         try {
             let rawAddons: Record<string, unknown>[] = []
 
@@ -62,27 +64,35 @@ export async function discoverFromConnections(account: Account, accountId: strin
             } else {
                 const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
                 const userId = conn.credentials?.userId || ''
-                if (!userId) { failedReadConnIds.add(conn.id); continue }
+                if (!userId) return { connId: conn.id, entries: connDiscovered, failed: true }
                 rawAddons = await realStreamDriverFor(conn).readAddons(token.accessToken, userId) as Record<string, unknown>[]
             }
 
             for (const raw of rawAddons || []) {
                 const entry = normalizeRawEntry(conn.platform, raw)
                 if (!entry) continue
-                const normalizedUrl = normalizeAddonUrl(entry.url)
-                if (existingUrls.has(normalizedUrl)) continue
-                discovered.push({
+                connDiscovered.push({
                     transportUrl: entry.url,
                     name: entry.name,
                     enabled: entry.enabled,
                     platform: conn.platform,
                     connectionId: conn.id,
                 })
-                existingUrls.add(normalizedUrl)
             }
+            return { connId: conn.id, entries: connDiscovered, failed: false }
         } catch (err) {
-            failedReadConnIds.add(conn.id)
             if (import.meta.env.DEV) console.warn(`[Discovery] read failed for ${conn.platform} (${conn.id}):`, err)
+            return { connId: conn.id, entries: connDiscovered, failed: true }
+        }
+    })
+
+    for (const result of workerResults) {
+        if (result.failed) failedReadConnIds.add(result.connId)
+        for (const entry of result.entries) {
+            const normalizedUrl = normalizeAddonUrl(entry.transportUrl)
+            if (existingUrls.has(normalizedUrl)) continue
+            discovered.push(entry)
+            existingUrls.add(normalizedUrl)
         }
     }
 

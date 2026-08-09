@@ -1,4 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import { apiFetch } from '@/lib/http-client'
 import { useState } from 'react'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -56,12 +57,9 @@ export function DangerZone() {
                     const { auth: syncAuth, serverUrl } = useSyncStore.getState()
                     if (syncAuth.isAuthenticated) {
                         const baseUrl = serverUrl || ''
-                        const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
-                        const { deriveSyncToken } = await import('@/lib/crypto')
-                        const syncToken = await deriveSyncToken(syncAuth.password)
-                        await fetch(`${apiPath}/autopilot/account/${accountId}`, {
+                        await apiFetch(`/autopilot/account/${accountId}`, {
                             method: 'DELETE',
-                            headers: { 'x-sync-password': syncToken, 'x-sync-user': syncAuth.id }
+                            baseUrl: baseUrl.startsWith('http') ? baseUrl : undefined,
                         })
                     }
                 } catch (e) {

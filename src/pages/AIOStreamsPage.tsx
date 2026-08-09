@@ -193,7 +193,7 @@ export function AIOStreamsPage() {
             const config = data.userData as Record<string, unknown>
             setSourceConfig(config)
             if (rememberPassword) {
-                try { await saveAIOStreamsPassword(baseUrl, uuid, password) } catch { /* non-critical */ }
+                try { await saveAIOStreamsPassword(baseUrl, uuid, password) } catch {}
             }
             setConnected(true)
         } catch (e: unknown) {

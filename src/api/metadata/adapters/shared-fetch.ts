@@ -1,4 +1,5 @@
 import { trace } from '@/lib/trace'
+import { getSyncAuthHeaders } from '@/lib/sync-auth'
 
 const DEV = import.meta.env?.DEV
 
@@ -8,16 +9,14 @@ function truncUrl(url: string, max = 90): string {
 
 export async function authedFetch(url: string, options?: RequestInit): Promise<Response> {
     const start = performance.now()
+    const authHeaders = await getSyncAuthHeaders()
+    const headers: Record<string, string> = {
+        ...authHeaders,
+        ...(options?.headers as Record<string, string>),
+    }
+    const fetchOptions = { ...options, headers }
     try {
-        const { useSyncStore } = await import('@/store/syncStore')
-        const { deriveSyncToken } = await import('@/lib/crypto')
-        const auth = useSyncStore.getState().auth
-        const headers: Record<string, string> = { ...(options?.headers as Record<string, string>) }
-        if (auth.isAuthenticated) {
-            headers['x-sync-user'] = auth.id
-            headers['x-sync-password'] = await deriveSyncToken(auth.password)
-        }
-        const res = await fetch(url, { ...options, headers })
+        const res = await fetch(url, fetchOptions)
         const durMs = Math.round(performance.now() - start)
         trace('fetch', res.ok ? 'ok' : 'fail', { url: truncUrl(url), method: options?.method || 'GET', status: res.status, durMs })
         if (DEV) {
@@ -32,7 +31,7 @@ export async function authedFetch(url: string, options?: RequestInit): Promise<R
         if (DEV) {
             if (errName !== 'AbortError') console.warn(`[fetch] ${durMs}ms ERR ${errName} ${truncUrl(url)}`)
         }
-        return fetch(url, options)
+        return fetch(url, fetchOptions)
     }
 }
 
@@ -66,9 +65,9 @@ export async function requireJson<T>(url: string, options?: RequestInit): Promis
     const res = await authedFetch(url, options)
     if (!res.ok) {
         const body = await res.text().catch(() => '')
-        const err = new Error(`Request failed: ${res.status} ${res.statusText} ${truncUrl(url)}`)
-        ;(err as any).status = res.status
-        ;(err as any).body = body
+        const err = new Error(`Request failed: ${res.status} ${res.statusText} ${truncUrl(url)}`) as Error & { status: number; body: string }
+        err.status = res.status
+        err.body = body
         throw err
     }
     return res.json() as Promise<T>

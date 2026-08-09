@@ -77,7 +77,7 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
                 const err: NuvioError = new Error(`Nuvio RPC ${fn} returned ${res.status}`)
                 err.status = res.status
                 err.isAuthError = res.status === 401
-                try { err.data = await res.json() } catch { /* body not JSON */ }
+                try { err.data = await res.json() } catch {}
                 if (res.status >= 500 && attempt < retries) { lastErr = err; await new Promise(r => setTimeout(r, 400 * (attempt + 1))); continue }
                 throw err
             }
@@ -93,7 +93,7 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
         if (/^\d+$/.test(stringId)) return parseInt(stringId, 10)
 
         let profiles: Array<Record<string, unknown>> = []
-        try { profiles = await rpc('sync_pull_profiles', {}, accessToken) } catch { /* default below */ }
+        try { profiles = await rpc('sync_pull_profiles', {}, accessToken) } catch {}
         if (Array.isArray(profiles) && stringId) {
             const match = profiles.find(p => p.id === stringId)
             if (match) {

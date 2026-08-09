@@ -607,7 +607,7 @@ export function AIOStreamsSyncTab({
             const accountName = account?.accountName ?? accountId
             try {
                 const result = await createAIOStreamsUser(sourceBaseUrl, targetPassword, cloneConfig(baseConfig))
-                try { await saveAIOStreamsPassword(sourceBaseUrl, result.uuid, targetPassword) } catch { /* non-critical */ }
+                try { await saveAIOStreamsPassword(sourceBaseUrl, result.uuid, targetPassword) } catch {}
 
                 const addonUrl = `${sourceBaseUrl}/stremio/${result.uuid}/${result.encryptedPassword}/manifest.json`
                 try {

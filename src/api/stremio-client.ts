@@ -5,6 +5,7 @@ import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
 import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 import { trace } from '@/lib/trace'
+import { ACCOUNT_CONTEXT_SYSTEM_CHECK } from '@/lib/account-contexts'
 
 async function getProxyAuthHeaders(): Promise<Record<string, string>> {
     const { auth } = useSyncStore.getState()
@@ -127,7 +128,7 @@ export class StremioClient {
       const data = await serverPost('/api/stremio-proxy', {
         type: 'GetUser',
         authKey,
-      }, { 'x-account-context': 'System Check' })
+      }, { 'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK })
 
       if (data?.error) {
         const e = data.error as Record<string, unknown>
@@ -147,7 +148,7 @@ export class StremioClient {
     }
   }
 
-  async getAddonCollection(authKey: string, accountContext: string = 'System Check', update: boolean = true): Promise<AddonDescriptor[]> {
+  async getAddonCollection(authKey: string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK, update: boolean = true): Promise<AddonDescriptor[]> {
     try {
       const start = Date.now()
       const fetchCollection = (shouldUpdate: boolean) => serverPost('/api/stremio-proxy', {
@@ -210,7 +211,7 @@ export class StremioClient {
     }
   }
 
-  async setAddonCollection(authKey: string, addons: AddonDescriptor[], accountContext: string = 'System Check', options: SetAddonCollectionOptions = {}): Promise<void> {
+  async setAddonCollection(authKey: string, addons: AddonDescriptor[], accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK, options: SetAddonCollectionOptions = {}): Promise<void> {
     try {
       const shouldVerifyShrink = !options.allowCollectionShrink
       const previousCollection = shouldVerifyShrink
@@ -264,7 +265,7 @@ export class StremioClient {
 
   private readonly DIRECT_FETCH_DOMAINS = ['v3-cinemeta.strem.io', 'cinemeta.strem.io', 'opensubtitles-v3.strem.io', 'www.strem.io', 'v3-channels.strem.io', '127.0.0.1', 'localhost']
 
-  async fetchAddonManifest(transportUrl: string, accountContext: string = 'System Check', force: boolean = false, retries = 2): Promise<AddonDescriptor> {
+  async fetchAddonManifest(transportUrl: string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK, force: boolean = false, retries = 2): Promise<AddonDescriptor> {
     let manifestUrl: string
     if (transportUrl.endsWith('/manifest.json') || transportUrl.includes('/manifest.json?')) {
       manifestUrl = transportUrl
@@ -347,7 +348,7 @@ export class StremioClient {
     }
   }
 
-  async getLibraryItems(authKey: string, accountContext: string = 'System Check'): Promise<LibraryItem[]> {
+  async getLibraryItems(authKey: string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<LibraryItem[]> {
     try {
       const start = Date.now()
       const data = await serverPost('/api/stremio-proxy', {
@@ -399,7 +400,7 @@ export class StremioClient {
     name: string
     type: string
     poster?: string
-  }, accountContext: string = 'System Check'): Promise<void> {
+  }, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<void> {
     try {
       const libraryItem = {
         _id: item.id,
@@ -432,7 +433,7 @@ export class StremioClient {
     }
   }
 
-  async pushLibraryItems(authKey: string, items: LibraryItem[], accountContext: string = 'System Check'): Promise<void> {
+  async pushLibraryItems(authKey: string, items: LibraryItem[], accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<void> {
     try {
       const BATCH_SIZE = 100
       for (let i = 0; i < items.length; i += BATCH_SIZE) {
@@ -465,7 +466,7 @@ export class StremioClient {
     }
   }
 
-  async removeLibraryItem(authKey: string, item: LibraryItem | string, accountContext: string = 'System Check'): Promise<void> {
+  async removeLibraryItem(authKey: string, item: LibraryItem | string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<void> {
     try {
       const fullItem = typeof item === 'string'
         ? { _id: item, removed: true, _mtime: new Date().toISOString() }

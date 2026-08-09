@@ -1,5 +1,6 @@
 import type { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
+import { ACCOUNT_CONTEXT_CLEAR_ALL } from './account-contexts.ts'
 
 
 export function getStremioConnection(account: Account) {
@@ -32,7 +33,7 @@ export function getAccountEmail(account: Account): string | undefined {
 }
 
 export async function pushAddonsToPlatform(account: Account, addons: AddonDescriptor[], accountId: string, options?: { allowCollectionShrink?: boolean; previousCollection?: AddonDescriptor[] }): Promise<void> {
-    const context = options?.allowCollectionShrink ? 'Clear All' : accountId
+    const context = options?.allowCollectionShrink ? ACCOUNT_CONTEXT_CLEAR_ALL : accountId
     const stremioKey = getStremioAuthKey(account)
     if (stremioKey) {
         const { getCachedAuthKey, getEncryptionKey } = await import('@/store/accountStore')

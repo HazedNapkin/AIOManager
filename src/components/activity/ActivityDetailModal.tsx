@@ -1,6 +1,4 @@
-import { useEffect, useState, useRef, useMemo, memo, useCallback } from 'react'
-import { createPortal } from 'react-dom'
-import localforage from 'localforage'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -9,55 +7,35 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
 import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
-import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, searchTmdbPerson, fetchSeasonEpisodes, fetchSeasonsList, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
+import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
 import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/watchlist'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
+import { apiGet } from '@/lib/http-client'
 import { cn, openStremioDetail } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useAccountStore } from '@/store/accountStore'
 import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
-import { AccountAvatar as AccountSwitcherAvatar, maskedDisplayName } from '@/components/common/AccountSwitcher'
+import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
-import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, MessageSquare, Tv, Sparkles, Languages, Building2, Plus, Check, Layers, X, Users, ZoomIn, Search } from 'lucide-react'
-import type { Account } from '@/types/account'
+import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, Tv, Sparkles, Languages, Building2, Layers, Users } from 'lucide-react'
+import { RatingBadge, type ProviderRating, type RatingSource } from '@/components/activity/detail/RatingBadge'
+import { CastInitials } from '@/components/activity/detail/CastInitials'
+import { LightboxViewer } from '@/components/activity/detail/LightboxViewer'
+import { ReviewsSection } from '@/components/activity/detail/ReviewsSection'
+import { WatchlistPicker } from '@/components/activity/detail/WatchlistPicker'
+import { FilmPosterCard } from '@/components/activity/detail/FilmPosterCard'
+import { CastSection } from '@/components/activity/detail/CastSection'
+import { SeasonBrowser } from '@/components/activity/detail/SeasonBrowser'
 import type { RailWatcher } from '@/components/ui/content-rail'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type RatingSource =
-    | 'imdb'
-    | 'tomatoes'
-    | 'popcorn'
-    | 'metacritic'
-    | 'trakt'
-    | 'letterboxd'
-    | 'pmdb'
-    | 'tmdb'
-    | 'simkl'
+export type { DetailItem } from '@/components/activity/detail/types'
+import type { DetailItem, TmdbFindResponse, TmdbPersonSearchResponse, TmdbPersonCreditsResponse, FilmographyItem } from '@/components/activity/detail/types'
 
-interface ProviderRating {
-    source: RatingSource
-    value: string
-    votes?: string
-}
-
-export interface DetailItem {
-    itemId: string
-    type: string
-    name?: string
-    poster?: string
-    genres?: string[]
-    firstWatched?: Date
-    season?: number
-    episode?: number
-    year?: number
-    voteAverage?: number
-    description?: string
-    backdrop?: string
-    accountId?: string
-}
+export type { FilmographyItem } from '@/components/activity/detail/types'
 
 interface ActivityDetailModalProps {
     open: boolean
@@ -81,144 +59,6 @@ const RATING_LABELS: Record<string, string> = {
     tmdb: 'TMDB Rating',
     pmdb: 'PublicMetaDB Rating',
 }
-
-// ── Rating Badge Component with Official Brand SVG Logos ─────────────────
-
-const RatingBadge = memo(function RatingBadge({ rating }: { rating: ProviderRating }) {
-    const { source, value } = rating
-
-    if (source === 'tomatoes') {
-        const numVal = parseInt(value, 10)
-        const isFresh = isNaN(numVal) || numVal >= 60
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                {isFresh ? (
-                    <svg viewBox="0 0 32 32" className="h-4 w-4 shrink-0 drop-shadow">
-                        <path d="M16 2C14.5 5 11.5 6 8.5 5.5C11 8.5 14 8.5 16 6.5C18 8.5 21 8.5 23.5 5.5C20.5 6 17.5 5 16 2Z" fill="#22C55E" />
-                        <circle cx="16" cy="18" r="11" fill="#FA320A" />
-                        <ellipse cx="13" cy="14" rx="2" ry="3" fill="#FF6B4A" opacity="0.6" />
-                    </svg>
-                ) : (
-                    <svg viewBox="0 0 32 32" className="h-4 w-4 shrink-0 drop-shadow">
-                        <path d="M16 6C12 7.5 8 5.5 5.5 11.5C3.5 17.5 7.5 24.5 14 26.5C20.5 28.5 26.5 24.5 26.5 18.5C26.5 12.5 22.5 10.5 16 6Z" fill="#68A040" />
-                        <circle cx="10" cy="15" r="1.5" fill="#4B772D" />
-                        <circle cx="20" cy="19" r="2" fill="#4B772D" />
-                    </svg>
-                )}
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'popcorn') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/35 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 32 32" className="h-4 w-4 shrink-0 drop-shadow">
-                    <circle cx="12" cy="9" r="3.5" fill="#FFE58F" />
-                    <circle cx="16" cy="7" r="4" fill="#FFF0B6" />
-                    <circle cx="20" cy="9" r="3.5" fill="#FFE58F" />
-                    <path d="M9 12L11 26H21L23 12H9Z" fill="#FA320A" />
-                    <path d="M13 12L14 26H16L15 12H13Z" fill="#FFFFFF" />
-                    <path d="M17 12L18 26H20L19 12H17Z" fill="#FFFFFF" />
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'metacritic') {
-        const score = parseInt(value, 10)
-        const bg = isNaN(score) || score >= 60 ? 'bg-emerald-500' : score >= 40 ? 'bg-amber-500' : 'bg-red-500'
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <span className={`flex h-4 w-4 items-center justify-center rounded-sm text-[10px] font-black text-black ${bg}`}>m</span>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'imdb') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 64 32" className="h-4 w-9 shrink-0 rounded-sm">
-                    <rect width="64" height="32" rx="4" fill="#F5C518" />
-                    <text x="32" y="22" fill="#000000" fontSize="20" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, Impact, sans-serif">IMDb</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'trakt') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-red-600/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 32 32" className="h-4 w-4 shrink-0 rounded-sm">
-                    <rect width="32" height="32" rx="6" fill="#ED1C24" />
-                    <path d="M8 9H24V13H18V24H14V13H8V9Z" fill="#FFFFFF" />
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'letterboxd') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 36 16" className="h-3.5 w-8 shrink-0">
-                    <circle cx="8" cy="8" r="6" fill="#00E054" />
-                    <circle cx="18" cy="8" r="6" fill="#40BCF4" />
-                    <circle cx="28" cy="8" r="6" fill="#FF8000" />
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'tmdb') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 40 20" className="h-3.5 w-7 shrink-0 rounded-sm">
-                    <rect width="40" height="20" rx="3" fill="#0D253F" />
-                    <text x="20" y="14" fill="#01B4E4" fontSize="11" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">TMDB</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'pmdb') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 40 20" className="h-3.5 w-8 shrink-0 rounded-sm">
-                    <rect width="40" height="20" rx="3" fill="#7C3AED" />
-                    <text x="20" y="14" fill="#FFFFFF" fontSize="10" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">PMDB</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'simkl') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-orange-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 40 20" className="h-3.5 w-8 shrink-0 rounded-sm">
-                    <rect width="40" height="20" rx="3" fill="#F97316" />
-                    <text x="20" y="14" fill="#FFFFFF" fontSize="9" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">SIMKL</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    return (
-        <Tooltip content={`${source} Rating`}>
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <Star className="h-3.5 w-3.5 fill-current text-blue-400" />
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        </Tooltip>
-    )
-})
 
 // ── Rating Fetchers ───────────────────────────────────────────────────────
 
@@ -420,85 +260,6 @@ function isStremioFriendlyType(type: string): boolean {
     return type === 'movie' || type === 'series'
 }
 
-const personPhotoCache = new Map<string, string | null>()
-const PERSON_PHOTO_CACHE_MAX = 1000
-function setPersonPhotoCache(key: string, value: string | null) {
-    personPhotoCache.set(key, value)
-    if (personPhotoCache.size > PERSON_PHOTO_CACHE_MAX) {
-        const oldest = personPhotoCache.keys().next().value
-        if (oldest !== undefined) personPhotoCache.delete(oldest)
-    }
-}
-const inFlightPhotos = new Map<string, Promise<string | null>>()
-
-const PHOTO_CACHE_KEY = 'aiom_person_photos'
-const PHOTO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
-let photoStoreLoaded = false
-
-async function ensurePhotoStoreLoaded(): Promise<void> {
-    if (photoStoreLoaded) return
-    photoStoreLoaded = true
-    try {
-        const stored = await localforage.getItem<{ entries: Record<string, { url: string | null; ts: number }>; ts: number }>(PHOTO_CACHE_KEY)
-        if (stored && Date.now() - stored.ts < PHOTO_CACHE_TTL) {
-            for (const [name, entry] of Object.entries(stored.entries)) {
-                setPersonPhotoCache(name, entry.url)
-            }
-        }
-    } catch { }
-}
-
-let persistTimer: ReturnType<typeof setTimeout> | null = null
-
-function persistPhotoStore(): void {
-    try {
-        const entries: Record<string, { url: string | null; ts: number }> = {}
-        for (const [name, url] of personPhotoCache) {
-            entries[name] = { url, ts: Date.now() }
-        }
-        localforage.setItem(PHOTO_CACHE_KEY, { entries, ts: Date.now() })
-    } catch { }
-}
-
-function debouncedPersist(): void {
-    if (persistTimer) clearTimeout(persistTimer)
-    persistTimer = setTimeout(persistPhotoStore, 2000)
-}
-
-async function resolvePersonPhoto(name: string): Promise<string | null> {
-    const key = name.trim().toLowerCase()
-    if (!key) return null
-    if (personPhotoCache.has(key)) return personPhotoCache.get(key) ?? null
-    if (inFlightPhotos.has(key)) return inFlightPhotos.get(key)!
-    const promise = (async () => {
-        try {
-            const person = await searchTmdbPerson(name.trim())
-            const path = person?.profilePath
-            const url = path ? `https://image.tmdb.org/t/p/w185${path}` : null
-            setPersonPhotoCache(key, url)
-            return url
-        } catch {
-            setPersonPhotoCache(key, null)
-            return null
-        } finally {
-            inFlightPhotos.delete(key)
-        }
-    })()
-    inFlightPhotos.set(key, promise)
-    return promise
-}
-
-export interface FilmographyItem {
-    id: string
-    title: string
-    poster?: string
-    year?: number
-    type: 'movie' | 'series' | 'anime'
-    character?: string
-    job?: string
-    voteAverage?: number
-}
-
 export interface PersonDetails {
     name: string
     photo?: string
@@ -613,17 +374,17 @@ async function fetchPersonFilmography(
 
     // 1. Query TMDB search + person details with combined_credits via authenticated proxyFetch
     try {
-        const searchData = await proxyFetch<any>(`search/person?query=${encodeURIComponent(personName)}`)
+        const searchData = await proxyFetch<TmdbPersonSearchResponse>(`search/person?query=${encodeURIComponent(personName)}`)
         if (searchData && Array.isArray(searchData.results) && searchData.results.length > 0) {
             const searchPerson = searchData.results[0]
             const personId = searchPerson.id
 
-            const personData = await proxyFetch<any>(`person/${personId}?append_to_response=combined_credits`)
+            const personData = await proxyFetch<TmdbPersonCreditsResponse>(`person/${personId}?append_to_response=combined_credits`)
             if (personData) {
                 const photo = personData.profile_path ? `https://image.tmdb.org/t/p/w500${personData.profile_path}` : (searchPerson.profile_path ? `https://image.tmdb.org/t/p/w500${searchPerson.profile_path}` : undefined)
                 const creditsData = personData.combined_credits
-                const rawCast: any[] = Array.isArray(creditsData.cast) ? creditsData.cast : []
-                const rawCrew: any[] = Array.isArray(creditsData.crew) ? creditsData.crew : []
+                const rawCast: Record<string, unknown>[] = Array.isArray(creditsData?.cast) ? creditsData.cast : []
+                const rawCrew: Record<string, unknown>[] = Array.isArray(creditsData?.crew) ? creditsData.crew : []
 
                 const combined = [...rawCast, ...rawCrew]
                 const movieMap = new Map<string, FilmographyItem>()
@@ -631,15 +392,15 @@ async function fetchPersonFilmography(
                 const animeMap = new Map<string, FilmographyItem>()
 
                 for (const item of combined) {
-                    const title = item.title || item.name
+                    const title = (item.title as string) || (item.name as string)
                     if (!title) continue
-                    const date = item.release_date || item.first_air_date || ''
+                    const date = (item.release_date as string) || (item.first_air_date as string) || ''
                     const year = date ? parseInt(date.slice(0, 4), 10) : undefined
                     const isTv = item.media_type === 'tv'
-                    const genreIds = Array.isArray(item.genre_ids) ? item.genre_ids : []
-                    const origLang = item.original_language || ''
+                    const genreIds = Array.isArray(item.genre_ids) ? item.genre_ids as number[] : []
+                    const origLang = (item.original_language as string) || ''
                     const isAnimation = genreIds.includes(16)
-                    const isAnimeItem = isTv && isAnimation && (origLang === 'ja' || (Array.isArray(item.origin_country) && item.origin_country.includes('JP')))
+                    const isAnimeItem = isTv && isAnimation && (origLang === 'ja' || (Array.isArray(item.origin_country) && (item.origin_country as string[]).includes('JP')))
 
                     const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : undefined
                     const targetMap = !isTv ? movieMap : isAnimeItem ? animeMap : seriesMap
@@ -652,9 +413,9 @@ async function fetchPersonFilmography(
                             poster,
                             year,
                             type: !isTv ? 'movie' : isAnimeItem ? 'anime' : 'series',
-                            character: item.character,
-                            job: item.job || item.department,
-                            voteAverage: item.vote_average,
+                            character: item.character as string | undefined,
+                            job: (item.job as string) || (item.department as string),
+                            voteAverage: item.vote_average as number | undefined,
                         })
                     }
                 }
@@ -684,939 +445,6 @@ async function fetchPersonFilmography(
     } catch (e) { if (import.meta.env?.DEV) console.warn('[ActivityDetail] fetch failed:', e) }
 
     return ensureCurrentFilm({ person: { name: personName }, movies: [], series: [], anime: [] })
-}
-
-function getCastPhotoUrl(photo?: string): string | null {
-    if (!photo) return null
-    if (photo.startsWith('http')) return photo
-    return `https://image.tmdb.org/t/p/w500${photo.startsWith('/') ? '' : '/'}${photo}`
-}
-
-/** Initials avatar for cast members without a photo */
-const CastInitials = memo(function CastInitials({ name }: { name: string }) {
-    const initials = name
-        .split(' ')
-        .filter(Boolean)
-        .slice(0, 2)
-        .map(w => w[0].toUpperCase())
-        .join('')
-    return (
-        <div className="flex h-full w-full items-center justify-center bg-muted/90 text-sm font-bold text-foreground/70 transition-transform duration-300 group-hover:scale-105">
-            {initials}
-        </div>
-    )
-})
-
-// ── ReviewCard: expandable community review with source attribution ─────
-
-const ReviewCard = memo(function ReviewCard({ rv }: { rv: { author: string; content: string; rating?: number; avatar?: string } }) {
-    const [expanded, setExpanded] = useState(false)
-    const isLong = rv.content.length > 220
-    const displayText = !expanded && isLong ? rv.content.slice(0, 220) + '…' : rv.content
-
-    return (
-        <div className="flex flex-col justify-between rounded-2xl border border-border/40 bg-card/60 p-4 shadow-sm backdrop-blur-md space-y-2.5">
-            <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/40 bg-muted font-bold text-xs text-primary shadow">
-                    {rv.avatar ? (
-                        <img src={rv.avatar} alt={rv.author} className="h-full w-full object-cover" />
-                    ) : (
-                        rv.author.charAt(0).toUpperCase()
-                    )}
-                </div>
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <p className="truncate text-xs font-bold text-foreground">{rv.author}</p>
-                        <span className="rounded border border-[#01b4e4]/30 bg-[#0d253f]/60 px-1.5 py-0.2 text-[9px] font-black leading-none text-[#01b4e4]/80 uppercase tracking-wide">
-                            Via TMDB
-                        </span>
-                    </div>
-                    {rv.rating && (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-400">
-                            ★ {rv.rating}/10
-                        </span>
-                    )}
-                </div>
-            </div>
-            <div>
-                <p className="text-xs leading-relaxed text-muted-foreground/90 font-medium italic">
-                    "{displayText}"
-                </p>
-                {isLong && (
-                    <button
-                        type="button"
-                        onClick={() => setExpanded(e => !e)}
-                        className="mt-1.5 flex items-center gap-1 text-[10px] font-bold text-primary/80 hover:text-primary transition-colors"
-                    >
-                        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                        {expanded ? 'Show less' : 'Read more'}
-                    </button>
-                )}
-            </div>
-        </div>
-    )
-})
-
-const CastAvatar = memo(function CastAvatar({ person }: { person: { name: string; photo?: string } }) {
-    const photoUrl = getCastPhotoUrl(person.photo)
-
-    if (photoUrl) {
-        return (
-            <img
-                src={photoUrl}
-                alt={person.name}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                loading="lazy"
-                onError={() => { }}
-            />
-        )
-    }
-
-    return <CastInitials name={person.name} />
-})
-
-const WatcherBadges = memo(function WatcherBadges({ watchers }: { watchers: RailWatcher[] }) {
-    if (!watchers || watchers.length === 0) return null
-    return (
-        <div className="absolute bottom-2 right-2 z-10 flex items-center -space-x-1.5">
-            {watchers.slice(0, 3).map(w => (
-                <div key={w.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
-                    {w.avatar ? (
-                        <img src={w.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
-                    ) : w.emoji ? (
-                        <span className="text-[9px]">{w.emoji}</span>
-                    ) : (
-                        <span className="text-[8px] font-bold text-muted-foreground">{(w.name.charAt(0) || '?').toUpperCase()}</span>
-                    )}
-                </div>
-            ))}
-            {watchers.length > 3 && (
-                <div className="h-5 w-5 rounded-full border border-background bg-card shadow-sm flex items-center justify-center">
-                    <span className="text-[8px] font-bold text-muted-foreground">+{watchers.length - 3}</span>
-                </div>
-            )}
-        </div>
-    )
-})
-
-type CastSectionPerson = { name: string; character?: string; photo?: string }
-type CastSectionCrew = { name: string; role?: string; photo?: string }
-
-const CastSection = memo(function CastSection({
-    cast,
-    crew,
-    onPersonClick
-}: {
-    cast: CastSectionPerson[]
-    crew: CastSectionCrew[]
-    isLight: boolean
-    onPersonClick: (person: { name: string; photo?: string }, role: string) => void
-}) {
-    const scrollCastRef = useRef<HTMLDivElement>(null)
-    const scrollCrewRef = useRef<HTMLDivElement>(null)
-    const [resolvedCast, setResolvedCast] = useState<CastSectionPerson[]>(cast)
-    const [resolvedCrew, setResolvedCrew] = useState<CastSectionCrew[]>(crew)
-
-    useEffect(() => {
-        let active = true
-        setResolvedCast(cast)
-        setResolvedCrew(crew)
-
-        type Target = 'cast' | 'crew'
-        const pending: Array<{ idx: number; name: string; target: Target }> = []
-        for (let i = 0; i < cast.length; i++) {
-            const entry = cast[i]
-            if (entry && !entry.photo && entry.name) pending.push({ idx: i, name: entry.name, target: 'cast' })
-        }
-        for (let i = 0; i < crew.length; i++) {
-            const entry = crew[i]
-            if (entry && !entry.photo && entry.name) pending.push({ idx: i, name: entry.name, target: 'crew' })
-        }
-        if (pending.length === 0) return
-
-        const CONCURRENCY = 5
-        performance.mark('detail:cast:start')
-
-        const fetchPhotos = async () => {
-            await ensurePhotoStoreLoaded()
-            for (let i = 0; i < pending.length; i += CONCURRENCY) {
-                const batch = pending.slice(i, i + CONCURRENCY)
-                await Promise.all(batch.map(async (p) => {
-                    const photo = await resolvePersonPhoto(p.name)
-                    if (!photo || !active) return
-                    if (p.target === 'cast') {
-                        setResolvedCast(prev => {
-                            const next = [...prev]
-                            const existing = next[p.idx]
-                            if (existing) next[p.idx] = { ...existing, photo }
-                            return next
-                        })
-                    } else {
-                        setResolvedCrew(prev => {
-                            const next = [...prev]
-                            const existing = next[p.idx]
-                            if (existing) next[p.idx] = { ...existing, photo }
-                            return next
-                        })
-                    }
-                }))
-                if (active) debouncedPersist()
-            }
-            performance.mark('detail:cast:end')
-            performance.measure('detail:cast', 'detail:cast:start', 'detail:cast:end')
-        }
-
-        fetchPhotos()
-        return () => { active = false }
-    }, [cast, crew])
-
-    return (
-        <>
-            {resolvedCast.length > 0 && (
-                <div>
-                    <div className="mb-3 flex items-center justify-between">
-                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground/80">
-                            <User className="h-3.5 w-3.5 text-primary" />
-                            Cast
-                        </h3>
-                        <div className="flex items-center gap-1">
-                            <button
-                                type="button"
-                                onClick={() => scrollCastRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
-                                aria-label="Scroll cast left"
-                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
-                            >
-                                <ChevronLeft className="h-4 w-4" />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => scrollCastRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
-                                aria-label="Scroll cast right"
-                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
-                            >
-                                <ChevronRight className="h-4 w-4" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div ref={scrollCastRef} className="scrollbar-hide -mx-1 flex gap-4 overflow-x-auto px-1 pb-1 scroll-smooth">
-                        {resolvedCast.map((person, idx) => (
-                            <Tooltip key={`cast-${person.name}-${idx}`} content={`View ${person.name}'s filmography`}>
-                                <button
-                                    type="button"
-                                    onClick={() => onPersonClick(person, 'Actor')}
-                                    className="group flex w-16 shrink-0 flex-col items-center gap-1.5 focus:outline-none sm:w-20"
-                                >
-                                    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-border/40 bg-muted shadow-md transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg sm:h-20 sm:w-20">
-                                        <CastAvatar person={person} />
-                                    </div>
-                                    <div className="w-full text-center">
-                                        <p className="line-clamp-2 text-[11px] font-semibold leading-tight text-foreground/90 group-hover:text-primary">
-                                            {person.name}
-                                        </p>
-                                        {person.character && (
-                                            <p className="mt-0.5 line-clamp-1 text-[10px] leading-tight text-muted-foreground/70">
-                                                {person.character}
-                                            </p>
-                                        )}
-                                    </div>
-                                </button>
-                            </Tooltip>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {resolvedCrew.length > 0 && (
-                <div>
-                    <div className="mb-3 flex items-center justify-between">
-                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground/80">
-                            <Clapperboard className="h-3.5 w-3.5 text-primary" />
-                            Crew & Directors
-                        </h3>
-                        <div className="flex items-center gap-1">
-                            <button
-                                type="button"
-                                onClick={() => scrollCrewRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
-                                aria-label="Scroll crew left"
-                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
-                            >
-                                <ChevronLeft className="h-4 w-4" />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => scrollCrewRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
-                                aria-label="Scroll crew right"
-                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
-                            >
-                                <ChevronRight className="h-4 w-4" />
-                            </button>
-                        </div>
-                    </div>
-
-                    <div ref={scrollCrewRef} className="scrollbar-hide -mx-1 flex gap-4 overflow-x-auto px-1 pb-1 scroll-smooth">
-                        {resolvedCrew.map((person, idx) => (
-                            <Tooltip key={`crew-${person.name}-${idx}`} content={`View ${person.name}'s filmography`}>
-                                <button
-                                    type="button"
-                                    onClick={() => onPersonClick(person, person.role || 'Crew')}
-                                    className="group flex w-16 shrink-0 flex-col items-center gap-1.5 focus:outline-none sm:w-20"
-                                >
-                                    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-border/40 bg-muted shadow-md transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg sm:h-20 sm:w-20">
-                                        <CastAvatar person={person} />
-                                    </div>
-                                    <div className="w-full text-center">
-                                        <p className="line-clamp-2 text-[11px] font-semibold leading-tight text-foreground/90 group-hover:text-primary">
-                                            {person.name}
-                                        </p>
-                                        <p className="mt-0.5 line-clamp-1 text-[10px] font-bold text-primary/80 leading-tight">
-                                            {person.role || 'Crew'}
-                                        </p>
-                                    </div>
-                                </button>
-                            </Tooltip>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </>
-    )
-})
-
-// ── Component ─────────────────────────────────────────────────────────────
-
-interface SeasonBrowserProps {
-    seriesTmdbId: number | null
-    activeItem: DetailItem | null
-    isLight: boolean
-    loading: boolean
-}
-
-function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBrowserProps) {
-    const [seasons, setSeasons] = useState<SeasonInfo[]>([])
-    const [selectedSeason, setSelectedSeason] = useState<number | null>(null)
-    const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
-    const [episodesLoading, setEpisodesLoading] = useState(false)
-    const [expandedEpisode, setExpandedEpisode] = useState<number | null>(null)
-    const [cinemetaSeasons, setCinemetaSeasons] = useState<SeasonInfo[]>([])
-    const [cinemetaEpisodesBySeason, setCinemetaEpisodesBySeason] = useState<Map<number, EpisodeInfo[]>>(new Map())
-    const [tmdbSeasonsFailed, setTmdbSeasonsFailed] = useState(false)
-
-    useEffect(() => {
-        setSeasons([])
-        setSelectedSeason(null)
-        setEpisodes([])
-        setExpandedEpisode(null)
-    }, [activeItem])
-
-    useEffect(() => {
-        if (!seriesTmdbId) return
-        let active = true
-        setTmdbSeasonsFailed(false)
-        fetchSeasonsList(seriesTmdbId)
-            .then(list => {
-                if (!active) return
-                const filtered = list.filter(s => s.seasonNumber > 0)
-                if (filtered.length === 0) { setTmdbSeasonsFailed(true); return }
-                setSeasons(filtered)
-                const watched = activeItem?.season
-                const target = watched != null && filtered.some(s => s.seasonNumber === watched)
-                    ? watched
-                    : filtered[0].seasonNumber
-                setSelectedSeason(target)
-            })
-            .catch(() => { if (active) setTmdbSeasonsFailed(true) })
-        return () => { active = false }
-    }, [seriesTmdbId])
-
-    useEffect(() => {
-        if (!seriesTmdbId || selectedSeason === null) return
-        let active = true
-        const controller = new AbortController()
-        setEpisodesLoading(true)
-        setExpandedEpisode(null)
-        fetchSeasonEpisodes(seriesTmdbId, selectedSeason, controller.signal)
-            .then(eps => {
-                if (!active || controller.signal.aborted) return
-                setEpisodes(eps)
-                const watched = activeItem?.episode
-                if (watched != null && eps.some(e => e.episodeNumber === watched)) {
-                    setExpandedEpisode(watched)
-                }
-            })
-            .catch(() => { })
-            .finally(() => { if (active && !controller.signal.aborted) setEpisodesLoading(false) })
-        return () => { active = false; controller.abort() }
-    }, [seriesTmdbId, selectedSeason])
-
-    useEffect(() => {
-        setCinemetaSeasons([])
-        setCinemetaEpisodesBySeason(new Map())
-        if (!activeItem) return
-        if (seriesTmdbId && !tmdbSeasonsFailed) return
-        const isSeries = activeItem.type === 'series' || activeItem.type === 'anime' || activeItem.type === 'episode'
-        if (!isSeries) return
-        let active = true
-        const fetchCinemeta = (imdb: string) => {
-            fetch(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(imdb)}.json`)
-                .then(res => res.ok ? res.json() : null)
-                .then(data => {
-                    if (!active || !data?.meta?.videos) return
-                    const vids: Array<Record<string, unknown>> = data.meta.videos
-                    const bySeason = new Map<number, EpisodeInfo[]>()
-                    const seasonSet = new Set<number>()
-                    for (const v of vids) {
-                        const season = typeof v.season === 'number' ? v.season : 1
-                        const episode = typeof v.episode === 'number' ? v.episode : typeof v.number === 'number' ? v.number : 0
-                        if (season < 1 || episode < 1) continue
-                        seasonSet.add(season)
-                        const ep: EpisodeInfo = {
-                            episodeNumber: episode,
-                            name: String(v.name || v.title || `Episode ${episode}`),
-                            overview: typeof v.overview === 'string' ? v.overview : typeof v.description === 'string' ? v.description : undefined,
-                            airDate: typeof v.released === 'string' ? v.released : typeof v.firstAired === 'string' ? v.firstAired : undefined,
-                            still: typeof v.thumbnail === 'string' ? v.thumbnail : undefined,
-                        }
-                        const arr = bySeason.get(season) ?? []
-                        arr.push(ep)
-                        bySeason.set(season, arr)
-                    }
-                    for (const arr of bySeason.values()) arr.sort((a, b) => a.episodeNumber - b.episodeNumber)
-                    const seasonList: SeasonInfo[] = Array.from(seasonSet)
-                        .sort((a, b) => b - a)
-                        .map(sn => ({
-                            seasonNumber: sn,
-                            name: sn === 0 ? 'Specials' : `Season ${sn}`,
-                            episodeCount: bySeason.get(sn)?.length ?? 0,
-                        }))
-                    if (active && seasonList.length > 0) {
-                        setCinemetaSeasons(seasonList)
-                        setCinemetaEpisodesBySeason(bySeason)
-                    }
-                })
-                .catch(() => { })
-        }
-        const itemId = activeItem.itemId
-        if (itemId.startsWith('tt')) {
-            fetchCinemeta(itemId)
-        } else if (seriesTmdbId && tmdbSeasonsFailed) {
-            proxyFetch<{ imdb_id?: string }>(`tv/${seriesTmdbId}/external_ids`)
-                .then(ext => {
-                    if (!active) return
-                    if (ext?.imdb_id) {
-                        fetchCinemeta(ext.imdb_id)
-                    } else if (activeItem.name) {
-                        fetch(`https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(activeItem.name)}.json`)
-                            .then(r => r.ok ? r.json() : null)
-                            .then(data => {
-                                if (!active || !data?.metas?.[0]) return
-                                const match = data.metas.find((m: Record<string, unknown>) =>
-                                    m.type === 'series' &&
-                                    String(m.name || '').toLowerCase() === activeItem.name!.toLowerCase()
-                                ) || data.metas[0]
-                                if (match?.id && String(match.id).startsWith('tt')) {
-                                    fetchCinemeta(String(match.id))
-                                }
-                            })
-                            .catch(() => {})
-                    }
-                })
-                .catch(() => {})
-        }
-        return () => { active = false }
-    }, [seriesTmdbId, activeItem, tmdbSeasonsFailed])
-
-    useEffect(() => {
-        if ((seriesTmdbId && !tmdbSeasonsFailed) || cinemetaSeasons.length === 0 || selectedSeason !== null) return
-        const watched = activeItem?.season
-        const target = watched != null && cinemetaSeasons.some(s => s.seasonNumber === watched)
-            ? watched
-            : cinemetaSeasons[0].seasonNumber
-        setSelectedSeason(target)
-    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed])
-
-    if (loading || (seasons.length === 0 && cinemetaSeasons.length === 0)) return null
-
-    const activeSeasons = seasons.length > 0 ? seasons : cinemetaSeasons
-    const activeEpisodes = seriesTmdbId ? episodes : (cinemetaEpisodesBySeason.get(selectedSeason ?? -1) ?? [])
-    const isLoadingEps = seriesTmdbId ? episodesLoading : false
-
-    return (
-        <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-                <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground/80">
-                    <Tv className="h-3.5 w-3.5 text-primary" />
-                    Episodes
-                </h3>
-                {selectedSeason !== null && (() => {
-                    const s = activeSeasons.find(x => x.seasonNumber === selectedSeason)
-                    return s ? (
-                        <span className="text-[11px] font-medium text-muted-foreground/60">
-                            {s.episodeCount} episode{s.episodeCount === 1 ? '' : 's'}
-                            {s.airDate ? ` · ${s.airDate.slice(0, 4)}` : ''}
-                        </span>
-                    ) : null
-                })()}
-            </div>
-
-            <div className="scrollbar-hide -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-                {activeSeasons.map(s => {
-                    const isActive = s.seasonNumber === selectedSeason
-                    return (
-                        <button
-                            key={s.seasonNumber}
-                            type="button"
-                            onClick={() => setSelectedSeason(s.seasonNumber)}
-                            className={cn(
-                                'shrink-0 rounded-full px-4 py-2 text-xs font-bold transition-all active:scale-95',
-                                isActive
-                                    ? (isLight ? 'bg-primary text-primary-foreground shadow' : 'bg-white text-black shadow')
-                                    : (isLight ? 'bg-muted/50 text-muted-foreground hover:bg-muted' : 'bg-white/10 text-white/80 hover:bg-white/20')
-                            )}
-                        >
-                            {s.seasonNumber === 0 ? 'Specials' : `S${s.seasonNumber}`}
-                        </button>
-                    )
-                })}
-            </div>
-
-            <div className="space-y-1.5">
-                {isLoadingEps ? (
-                    [0, 1, 2, 3].map(i => (
-                        <div key={i} className="flex gap-3 rounded-xl border border-border/40 bg-muted/30 p-2.5">
-                            <Skeleton className="h-14 w-24 shrink-0 rounded-lg" />
-                            <div className="flex-1 space-y-1.5 py-1">
-                                <Skeleton className="h-3.5 w-3/4 rounded" />
-                                <Skeleton className="h-3 w-1/2 rounded" />
-                            </div>
-                        </div>
-                    ))
-                ) : activeEpisodes.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-muted-foreground/60">
-                        No episode data available for this season.
-                    </p>
-                ) : (
-                    activeEpisodes.map(ep => {
-                        const isWatched = activeItem?.season === selectedSeason && activeItem?.episode === ep.episodeNumber
-                        const isExpanded = expandedEpisode === ep.episodeNumber
-                        return (
-                            <button
-                                key={ep.episodeNumber}
-                                type="button"
-                                onClick={() => setExpandedEpisode(isExpanded ? null : ep.episodeNumber)}
-                                className={cn(
-                                    'group flex w-full gap-3 rounded-xl border p-2 text-left transition-all',
-                                    isWatched
-                                        ? 'border-primary/60 bg-primary/10 shadow-sm'
-                                        : 'border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40'
-                                )}
-                            >
-                                <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-lg bg-muted sm:h-16 sm:w-28">
-                                    {ep.still ? (
-                                        <img src={ep.still} alt="" loading="lazy" className="h-full w-full object-cover" />
-                                    ) : null}
-                                    <span className={cn(
-                                        'absolute left-1 top-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none',
-                                        isWatched
-                                            ? 'bg-primary text-primary-foreground'
-                                            : 'bg-black/70 text-white'
-                                    )}>
-                                        E{ep.episodeNumber}
-                                    </span>
-                                    {isWatched && (
-                                        <span className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                                            <Play className="h-2.5 w-2.5 fill-current" />
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <p className={cn(
-                                            'line-clamp-1 text-xs font-bold leading-tight sm:text-sm',
-                                            isWatched ? 'text-primary' : 'text-foreground/90'
-                                        )}>
-                                            {ep.name}
-                                        </p>
-                                        {isWatched && (
-                                            <span className="shrink-0 rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary">
-                                                Watched
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground/70">
-                                        {ep.airDate && (
-                                            <span className="inline-flex items-center gap-0.5">
-                                                <Calendar className="h-3 w-3" />
-                                                {ep.airDate}
-                                            </span>
-                                        )}
-                                        {ep.runtime ? (
-                                            <span className="inline-flex items-center gap-0.5">
-                                                <Clock className="h-3 w-3" />
-                                                {ep.runtime}m
-                                            </span>
-                                        ) : null}
-                                        {typeof ep.voteAverage === 'number' && ep.voteAverage > 0 && (
-                                            <span className="inline-flex items-center gap-0.5">
-                                                <Star className="h-3 w-3" />
-                                                {ep.voteAverage.toFixed(1)}
-                                            </span>
-                                        )}
-                                    </div>
-                                    {isExpanded && ep.overview && (
-                                        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                                            {ep.overview}
-                                        </p>
-                                    )}
-                                </div>
-                            </button>
-                        )
-                    })
-                )}
-            </div>
-        </div>
-    )
-}
-
-interface ReviewsSectionProps {
-    reviews: CinemetaReview[]
-}
-
-function ReviewsSection({ reviews }: ReviewsSectionProps) {
-    const [showAllReviews, setShowAllReviews] = useState(false)
-    const [selectedReviewSource, setSelectedReviewSource] = useState<'all' | 'TMDB' | 'Trakt'>('all')
-
-    if (!reviews || reviews.length === 0) return null
-
-    const filtered = reviews.filter(r => {
-        if (selectedReviewSource === 'all') return true
-        const src = r.source || (r.id?.startsWith('trakt') ? 'Trakt' : 'TMDB')
-        return src.toLowerCase() === selectedReviewSource.toLowerCase()
-    })
-    const displayList = showAllReviews ? filtered : filtered.slice(0, 4)
-    const traktCount = reviews.filter(r => r.source === 'Trakt' || r.id?.startsWith('trakt')).length
-    const tmdbCount = reviews.filter(r => r.source === 'TMDB' || !r.id?.startsWith('trakt')).length
-
-    return (
-        <div className="mt-6 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground/80">
-                    <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                    Audience Reviews & Discussions ({reviews.length})
-                </h3>
-
-                {/* Source Filter Sub-Tabs */}
-                <div className="flex items-center gap-1 rounded-full border border-border/40 bg-muted/40 p-0.5 text-[11px] font-bold">
-                    <button
-                        type="button"
-                        onClick={() => setSelectedReviewSource('all')}
-                        className={cn(
-                            'rounded-full px-2.5 py-0.5 transition-all',
-                            selectedReviewSource === 'all' ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground'
-                        )}
-                    >
-                        All ({reviews.length})
-                    </button>
-                    {traktCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setSelectedReviewSource('Trakt')}
-                            className={cn(
-                                'rounded-full px-2.5 py-0.5 transition-all',
-                                selectedReviewSource === 'Trakt' ? 'bg-red-600 text-white shadow' : 'text-muted-foreground hover:text-foreground'
-                            )}
-                        >
-                            Trakt ({traktCount})
-                        </button>
-                    )}
-                    {tmdbCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setSelectedReviewSource('TMDB')}
-                            className={cn(
-                                'rounded-full px-2.5 py-0.5 transition-all',
-                                selectedReviewSource === 'TMDB' ? 'bg-[#01b4e4] text-black shadow' : 'text-muted-foreground hover:text-foreground'
-                            )}
-                        >
-                            TMDB ({tmdbCount})
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                {displayList.map((rv, idx) => (
-                    <ReviewCard key={`rv-${rv.id || idx}`} rv={rv} />
-                ))}
-            </div>
-
-            {filtered.length > 4 && (
-                <div className="flex justify-center pt-2">
-                    <button
-                        type="button"
-                        onClick={() => setShowAllReviews(prev => !prev)}
-                        className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-6 py-2 text-xs font-bold text-primary shadow transition-all hover:bg-primary/20 hover:scale-105 active:scale-95"
-                    >
-                        {showAllReviews ? 'Show Fewer Reviews' : `Show All Reviews (${filtered.length})`}
-                    </button>
-                </div>
-            )}
-        </div>
-    )
-}
-
-interface LightboxViewerProps {
-    images: string[]
-    index: number | null
-    zoom: boolean
-    onClose: () => void
-    onNavigate: (index: number) => void
-    onToggleZoom: () => void
-}
-
-function LightboxViewer({ images, index, zoom, onClose, onNavigate, onToggleZoom }: LightboxViewerProps) {
-    if (index === null) return null
-    const src = images[index]
-    if (!src) return null
-
-    return (
-        <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm"
-            onClick={onClose}
-            onKeyDown={(e) => {
-                if (e.key === 'Escape') onClose()
-                if (e.key === 'ArrowLeft' && index > 0) onNavigate(index - 1)
-                if (e.key === 'ArrowRight' && index < images.length - 1) onNavigate(index + 1)
-            }}
-            tabIndex={-1}
-            autoFocus
-        >
-            <img
-                src={src}
-                alt=""
-                className={cn(
-                    'rounded-lg object-contain shadow-2xl transition-transform duration-200 cursor-pointer',
-                    zoom ? 'max-h-[100vh] max-w-[100vw] scale-150' : 'max-h-[90vh] max-w-[95vw]'
-                )}
-                onClick={(e) => { e.stopPropagation(); onToggleZoom() }}
-                draggable={false}
-            />
-            {index > 0 && (
-                <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onNavigate(index - 1) }}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
-                    aria-label="Previous image"
-                >
-                    <ChevronLeft className="h-6 w-6" />
-                </button>
-            )}
-            {index < images.length - 1 && (
-                <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onNavigate(index + 1) }}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
-                    aria-label="Next image"
-                >
-                    <ChevronRight className="h-6 w-6" />
-                </button>
-            )}
-            <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onToggleZoom() }}
-                className="absolute bottom-4 left-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
-                aria-label={zoom ? 'Zoom out' : 'Zoom in'}
-            >
-                <ZoomIn className="h-5 w-5" />
-            </button>
-            <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-medium text-white backdrop-blur-md">
-                {index + 1} / {images.length}
-            </span>
-            <button
-                type="button"
-                onClick={onClose}
-                className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
-                aria-label="Close"
-            >
-                <X className="h-5 w-5" />
-            </button>
-            <a
-                href={src}
-                download
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="absolute bottom-4 right-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
-                aria-label="Open original"
-            >
-                <ExternalLink className="h-5 w-5" />
-            </a>
-        </div>
-    )
-}
-
-// ── Component ─────────────────────────────────────────────────────────────
-
-function WatchlistPicker({
-    accounts,
-    watchlistTargets,
-    onToggle,
-    loading,
-}: {
-    accounts: Account[]
-    watchlistTargets: Set<string>
-    onToggle: (id: string) => void
-    loading: boolean
-}) {
-    const { isLight } = useTheme()
-    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
-    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
-    const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
-
-    const heroPrimaryBtn = isLight
-        ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-        : 'bg-white text-black hover:bg-white/90'
-    const heroGhostBtn = isLight
-        ? 'border border-border bg-card/80 text-foreground hover:bg-card'
-        : 'border border-white/20 bg-white/10 text-white hover:bg-white/20'
-
-    const [open, setOpen] = useState(false)
-    const [search, setSearch] = useState('')
-    const searchRef = useRef<HTMLInputElement>(null)
-    const containerRef = useRef<HTMLDivElement>(null)
-    const dropdownRef = useRef<HTMLDivElement>(null)
-    const buttonRef = useRef<HTMLButtonElement>(null)
-    const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
-
-    useEffect(() => {
-        if (open) {
-            setSearch('')
-            setTimeout(() => searchRef.current?.focus(), 0)
-            const updatePos = () => {
-                if (buttonRef.current) {
-                    const rect = buttonRef.current.getBoundingClientRect()
-                    const width = Math.max(rect.width, 280)
-                    const left = Math.min(rect.left, window.innerWidth - width - 8)
-                    setDropdownPos({ top: rect.bottom + 4, left: Math.max(8, left), width })
-                }
-            }
-            updatePos()
-            window.addEventListener('resize', updatePos)
-            window.addEventListener('scroll', updatePos, true)
-            return () => {
-                window.removeEventListener('resize', updatePos)
-                window.removeEventListener('scroll', updatePos, true)
-            }
-        } else {
-            setDropdownPos(null)
-        }
-    }, [open])
-
-    useEffect(() => {
-        const handler = (e: MouseEvent) => {
-            if (
-                containerRef.current && !containerRef.current.contains(e.target as Node) &&
-                (!dropdownRef.current || !dropdownRef.current.contains(e.target as Node))
-            ) {
-                setOpen(false)
-            }
-        }
-        if (open) document.addEventListener('mousedown', handler)
-        return () => document.removeEventListener('mousedown', handler)
-    }, [open])
-
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && open) setOpen(false)
-        }
-        if (open) document.addEventListener('keydown', handler)
-        return () => document.removeEventListener('keydown', handler)
-    }, [open])
-
-    const filtered = useMemo(() => {
-        if (!search.trim()) return accounts
-        const q = search.toLowerCase()
-        return accounts.filter(a =>
-            (a.name || '').toLowerCase().includes(q) ||
-            (a.email || '').toLowerCase().includes(q)
-        )
-    }, [accounts, search])
-
-    const hasUniversal = watchlistTargets.has('')
-    const hasAccounts = accounts.length > 0
-
-    const dropdown = open && dropdownPos ? createPortal(
-        <div
-            ref={dropdownRef}
-            style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 100 }}
-            className="bg-card border border-border/40 rounded-2xl shadow-lg overflow-hidden"
-        >
-            <div className="p-2 border-b border-border/40">
-                <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                    <input
-                        ref={searchRef}
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search accounts..."
-                        className="w-full h-8 pl-8 pr-3 text-xs bg-muted/30 border border-border/40 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary/30"
-                    />
-                </div>
-            </div>
-            <div className="max-h-80 overflow-y-auto p-1">
-                <button
-                    type="button"
-                    onClick={() => onToggle('')}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg transition-colors ${hasUniversal ? 'bg-primary/12 text-primary border border-primary/25' : 'border border-transparent hover:bg-muted/50'}`}
-                >
-                    <div className="w-6 h-6 rounded-full bg-muted/40 flex items-center justify-center shrink-0">
-                        <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                    </div>
-                    <span className="flex-1 text-left truncate font-semibold">Universal Watchlist</span>
-                    {hasUniversal && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                </button>
-                {hasAccounts && (
-                    <div className="my-1 border-t border-border/40" />
-                )}
-                {hasAccounts && filtered.length === 0 && (
-                    <div className="px-3 py-4 text-xs text-muted-foreground text-center">No accounts found</div>
-                )}
-                {filtered.map(acc => {
-                    const selected = watchlistTargets.has(acc.id)
-                    const maskedName = maskedDisplayName(acc.name, acc.email, privacyLevel)
-                    return (
-                        <button
-                            key={acc.id}
-                            type="button"
-                            onClick={() => onToggle(acc.id)}
-                            className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg transition-colors ${selected ? 'bg-primary/12 text-primary border border-primary/25' : 'border border-transparent hover:bg-muted/50'}`}
-                        >
-                            <AccountSwitcherAvatar account={acc} size="sm" />
-                            <span className="flex-1 text-left truncate">{maskedName || 'Unknown Account'}</span>
-                            {selected && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
-                        </button>
-                    )
-                })}
-            </div>
-        </div>,
-        document.body
-    ) : null
-
-    return (
-        <div ref={containerRef} className="relative inline-flex flex-1 sm:flex-none">
-            <button
-                ref={buttonRef}
-                type="button"
-                disabled={loading}
-                onClick={() => setOpen(!open)}
-                className={cn('inline-flex h-11 flex-1 justify-center items-center gap-2 rounded-full px-6 text-sm font-semibold backdrop-blur-md transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 sm:flex-none sm:w-auto sm:justify-start', watchlistTargets.size > 0 ? heroPrimaryBtn : heroGhostBtn)}
-            >
-                {watchlistTargets.size > 0 ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                {watchlistTargets.size > 0 ? 'In a Watchlist' : 'Watchlist'}
-            </button>
-            {dropdown}
-        </div>
-    )
 }
 
 export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetailModalProps) {
@@ -2061,7 +889,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             const cinemetaPromise = traceAsync('cinemeta', () => fetchCinemetaDetail(renderItem.itemId, renderItem.type))
 
             // Start TMDB lookup in parallel (with auth headers)
-            const tmdbEnrichPromise = proxyFetch<any>(
+            const tmdbEnrichPromise = proxyFetch<TmdbFindResponse>(
                 `find/${encodeURIComponent(renderItem.itemId)}?external_source=imdb_id`
             ).then(data => {
                 if (!data || !active) return
@@ -2103,9 +931,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 })
                 .catch(() => { })
 
-            fetch(`/api/metadata/comments?imdbId=${encodeURIComponent(renderItem.itemId)}&type=${encodeURIComponent(renderItem.type || '')}`)
-                .then(r => r.ok ? r.json() : [])
-                .then((serverComments: any[]) => {
+            apiGet<CinemetaReview[]>(`/metadata/comments?imdbId=${encodeURIComponent(renderItem.itemId)}&type=${encodeURIComponent(renderItem.type || '')}`)
+                .then(serverComments => {
                     if (!active || !Array.isArray(serverComments) || serverComments.length === 0) return
                     setMeta(prev => {
                         const base = prev ?? {} as CinemetaMeta
@@ -2408,48 +1235,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {currentEntry.movies.map((film, idx) => (
-                                                    <button
-                                                        type="button"
-                                                        key={`movie-${film.id}-${idx}`}
-                                                        onClick={() => handleSelectFilmFromFilmography(film)}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img
-                                                                    src={film.poster}
-                                                                    alt={film.title}
-                                                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                                    loading="lazy"
-                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
-                                                                />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-
-                                                            {film.year && (
-                                                                <span className="absolute right-2 top-2 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-sm">
-                                                                    {film.year}
-                                                                </span>
-                                                            )}
-
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-
-                                                        </div>
-
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                            {(film.character || film.job) && (
-                                                                <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-muted-foreground/70">
-                                                                    {film.character ? `as ${film.character}` : film.job}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`movie-${film.id}-${idx}`} film={film} watchers={watchersByItemId.get(film.id) ?? []} onClick={() => handleSelectFilmFromFilmography(film)} />
                                                 ))}
                                             </div>
                                         </div>
@@ -2464,48 +1250,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {currentEntry.series.map((film, idx) => (
-                                                    <button
-                                                        type="button"
-                                                        key={`series-${film.id}-${idx}`}
-                                                        onClick={() => handleSelectFilmFromFilmography(film)}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img
-                                                                    src={film.poster}
-                                                                    alt={film.title}
-                                                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                                    loading="lazy"
-                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
-                                                                />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-
-                                                            {film.year && (
-                                                                <span className="absolute right-2 top-2 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-sm">
-                                                                    {film.year}
-                                                                </span>
-                                                            )}
-
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-
-                                                        </div>
-
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                            {(film.character || film.job) && (
-                                                                <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-muted-foreground/70">
-                                                                    {film.character ? `as ${film.character}` : film.job}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`series-${film.id}-${idx}`} film={film} watchers={watchersByItemId.get(film.id) ?? []} onClick={() => handleSelectFilmFromFilmography(film)} />
                                                 ))}
                                             </div>
                                         </div>
@@ -2520,48 +1265,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {currentEntry.anime.map((film, idx) => (
-                                                    <button
-                                                        type="button"
-                                                        key={`anime-${film.id}-${idx}`}
-                                                        onClick={() => handleSelectFilmFromFilmography(film)}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img
-                                                                    src={film.poster}
-                                                                    alt={film.title}
-                                                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                                    loading="lazy"
-                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
-                                                                />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-
-                                                            {film.year && (
-                                                                <span className="absolute right-2 top-2 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-sm">
-                                                                    {film.year}
-                                                                </span>
-                                                            )}
-
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-
-                                                        </div>
-
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                            {(film.character || film.job) && (
-                                                                <p className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-muted-foreground/70">
-                                                                    {film.character ? `as ${film.character}` : film.job}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`anime-${film.id}-${idx}`} film={film} watchers={watchersByItemId.get(film.id) ?? []} onClick={() => handleSelectFilmFromFilmography(film)} />
                                                 ))}
                                             </div>
                                         </div>
@@ -2638,28 +1342,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {accountFilms.movies.map(film => (
-                                                    <button
-                                                        type="button"
-                                                        key={`acc-movie-${film.id}`}
-                                                        onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-                                                        </div>
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`acc-movie-${film.id}`} film={{ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' }} watchers={watchersByItemId.get(film.id) ?? []} showSubtitle={false} onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })} />
                                                 ))}
                                             </div>
                                         </div>
@@ -2673,28 +1356,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {accountFilms.series.map(film => (
-                                                    <button
-                                                        type="button"
-                                                        key={`acc-series-${film.id}`}
-                                                        onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-                                                        </div>
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`acc-series-${film.id}`} film={{ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' }} watchers={watchersByItemId.get(film.id) ?? []} showSubtitle={false} onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })} />
                                                 ))}
                                             </div>
                                         </div>
@@ -2708,28 +1370,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             </h3>
                                             <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
                                                 {accountFilms.anime.map(film => (
-                                                    <button
-                                                        type="button"
-                                                        key={`acc-anime-${film.id}`}
-                                                        onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })}
-                                                        className="group flex flex-col items-center text-center focus:outline-none"
-                                                    >
-                                                        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                            {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
-                                                            ) : (
-                                                                <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                    {film.title}
-                                                                </div>
-                                                            )}
-                                                            <WatcherBadges watchers={watchersByItemId.get(film.id) ?? []} />
-                                                        </div>
-                                                        <div className="mt-2 flex w-full flex-col items-center px-1 text-center">
-                                                            <p className="line-clamp-2 min-h-[2.25rem] flex items-center justify-center text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                                {film.title}
-                                                            </p>
-                                                        </div>
-                                                    </button>
+                                                    <FilmPosterCard key={`acc-anime-${film.id}`} film={{ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' }} watchers={watchersByItemId.get(film.id) ?? []} showSubtitle={false} onClick={() => handleSelectFilmFromFilmography({ id: film.id, title: film.title, poster: film.poster, type: film.type as 'movie' | 'series' | 'anime' })} />
                                                 ))}
                                             </div>
                                         </div>
@@ -3262,9 +1903,12 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
 
                                         <div ref={scrollRelatedRef} className="scrollbar-hide -mx-1 flex gap-4 overflow-x-auto px-1 pb-1 scroll-smooth">
                                             {meta.relatedList.map((rel, idx) => (
-                                                <button
-                                                    type="button"
+                                                <FilmPosterCard
                                                     key={`rel-${rel.id}-${idx}`}
+                                                    className="group flex w-32 shrink-0 flex-col items-center text-center focus:outline-none sm:w-36"
+                                                    film={{ id: rel.id.startsWith('tmdb:') ? rel.id : `tmdb:${rel.id}`, title: rel.title, poster: rel.poster, year: rel.year ? Number(rel.year) : undefined, type: (rel.type === 'series' || rel.type === 'anime') ? 'series' : 'movie', voteAverage: rel.voteAverage }}
+                                                    watchers={watchersByItemId.get(rel.id.startsWith('tmdb:') ? rel.id : `tmdb:${rel.id}`) ?? []}
+                                                    showSubtitle={false}
                                                     onClick={() => {
                                                         const newItem: DetailItem = {
                                                             itemId: rel.id.startsWith('tmdb:') ? rel.id : `tmdb:${rel.id}`,
@@ -3277,32 +1921,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                         setActiveItem(newItem)
                                                         setNavStack(prev => [...prev, { kind: 'item', item: newItem }])
                                                     }}
-                                                    className="group flex w-32 shrink-0 flex-col items-center text-center focus:outline-none sm:w-36"
-                                                >
-                                                    <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
-                                                        {rel.poster ? (
-                                                            <img
-                                                                src={rel.poster}
-                                                                alt={rel.title}
-                                                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                                loading="lazy"
-                                                            />
-                                                        ) : (
-                                                            <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
-                                                                {rel.title}
-                                                            </div>
-                                                        )}
-                                                        {rel.year && (
-                                                            <span className="absolute right-2 top-2 rounded-md bg-black/80 px-1.5 py-0.5 text-[10px] font-bold text-white shadow backdrop-blur-sm">
-                                                                {rel.year}
-                                                            </span>
-                                                        )}
-                                                        <WatcherBadges watchers={watchersByItemId.get(rel.id.startsWith('tmdb:') ? rel.id : `tmdb:${rel.id}`) ?? []} />
-                                                    </div>
-                                                    <p className="mt-2 line-clamp-2 text-xs font-bold leading-tight text-foreground group-hover:text-primary">
-                                                        {rel.title}
-                                                    </p>
-                                                </button>
+                                                />
                                             ))}
                                         </div>
                                     </div>

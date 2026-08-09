@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { ProviderHealth, ProviderState } from '@/types/provider'
 import { useVaultStore } from './vaultStore'
 import localforage from 'localforage'
+import { ACCOUNT_CONTEXT_SYSTEM_CHECK } from '@/lib/account-contexts'
 
 const PROVIDER_COOLDOWN = 12 * 60 * 60 * 1000 // debrid subscription expiry only moves day-to-day; 12h is plenty
 const CACHE_KEY = 'aio_provider_health'
@@ -159,7 +160,7 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
                     headers: {
                         ...proxyAuthHeaders,
                         Authorization: `Bearer ${key.value}`,
-                        'x-account-context': 'System Check'
+                        'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK
                     },
                 })
                 if (!res.ok) throw new Error(`Provider API returned ${res.status}`)
@@ -176,7 +177,7 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
                     headers: {
                         ...proxyAuthHeaders,
                         Authorization: `Bearer ${key.value}`,
-                        'x-account-context': 'System Check'
+                        'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK
                     },
                 })
                 if (!res.ok) throw new Error(`Provider API returned ${res.status}`)
@@ -192,7 +193,7 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
             } else if (key.provider === 'premiumize') {
                 const url = `${proxyUrl}${encodeURIComponent('https://www.premiumize.me/api/account/info')}?apikey=${key.value}`
                 const res = await fetch(url, {
-                    headers: { ...proxyAuthHeaders, 'x-account-context': 'System Check' }
+                    headers: { ...proxyAuthHeaders, 'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK }
                 })
                 if (!res.ok) throw new Error(`Provider API returned ${res.status}`)
                 const data = await res.json()
@@ -209,7 +210,7 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
                     headers: {
                         ...proxyAuthHeaders,
                         Authorization: `Bearer ${key.value}`,
-                        'x-account-context': 'System Check'
+                        'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK
                     }
                 })
                 if (!res.ok) throw new Error(`Provider API returned ${res.status}`)
@@ -226,7 +227,7 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
                     headers: {
                         ...proxyAuthHeaders,
                         Authorization: `Bearer ${key.value}`,
-                        'x-account-context': 'System Check'
+                        'x-account-context': ACCOUNT_CONTEXT_SYSTEM_CHECK
                     },
                 })
                 if (!res.ok) throw new Error(`Provider API returned ${res.status}`)

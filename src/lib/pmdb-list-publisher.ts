@@ -1,5 +1,6 @@
 import { getSyncAuthHeaders, invalidateSyncAuthCache } from '@/lib/sync-auth'
 import { proxyFetch } from '@/api/metadata/adapters/tmdb'
+import { loadImdbTmdbCache, saveImdbTmdbCache } from '@/lib/utils'
 
 export { invalidateSyncAuthCache as _invalidateAuthCache }
 
@@ -34,8 +35,8 @@ export interface PmdbListInfo {
 }
 
 const REGISTRY_KEY = 'aiomanager-pmdb-list-registry'
-const CONCURRENCY = 1
-const BATCH_DELAY_MS = 800
+const CONCURRENCY = 2
+const BATCH_DELAY_MS = 1200
 const RETRY_DELAY_MS = 2000
 const RAIL_DELAY_MS = 2000
 const LIST_ITEMS_PER_PAGE = 500
@@ -95,27 +96,41 @@ function itemHash(item: PmdbRailItem): string {
 async function pmdbGet(path: string): Promise<Record<string, unknown> | null> {
     try {
         const res = await fetch(`/api/metadata/pmdb/${path}`, { headers: await getSyncAuthHeaders() })
-        if (!res.ok) return null
+        if (!res.ok) {
+            if (import.meta.env?.DEV) console.warn(`[PMDB] GET ${path} failed: ${res.status}`)
+            return null
+        }
         const text = await res.text()
         if (!text) return null
         return JSON.parse(text) as Record<string, unknown>
-    } catch {
+    } catch (err) {
+        if (import.meta.env?.DEV) console.warn(`[PMDB] GET ${path} threw:`, err)
         return null
     }
 }
 
-async function pmdbPost(path: string, body?: unknown): Promise<Record<string, unknown> | null> {
+async function pmdbPost(path: string, body?: unknown, retries = 2): Promise<Record<string, unknown> | null> {
     try {
         const res = await fetch(`/api/metadata/pmdb/${path}`, {
             method: 'POST',
             headers: await getSyncAuthHeaders(),
             body: body !== undefined ? JSON.stringify(body) : undefined,
         })
-        if (!res.ok) return null
+        if (res.status === 429 && retries > 0) {
+            const retryAfter = Number(res.headers.get('retry-after')) || 3
+            await sleep(retryAfter * 1000)
+            return pmdbPost(path, body, retries - 1)
+        }
+        if (!res.ok) {
+            const errorText = await res.text().catch(() => '')
+            if (import.meta.env?.DEV) console.warn(`[PMDB] POST ${path} failed: ${res.status}`, errorText)
+            return null
+        }
         const text = await res.text()
         if (!text) return {}
         return JSON.parse(text) as Record<string, unknown>
-    } catch {
+    } catch (err) {
+        if (import.meta.env?.DEV) console.warn(`[PMDB] POST ${path} threw:`, err)
         return null
     }
 }
@@ -292,16 +307,27 @@ export async function publishRail(
     }
 
     const resolvedItems: PmdbRailItem[] = []
+    const imdbCache = loadImdbTmdbCache()
+    let cacheDirty = false
     for (const item of rail.items) {
         if (item.id.startsWith('tmdb:')) {
             resolvedItems.push(item)
         } else if (item.id.startsWith('tt')) {
-            const tmdbId = await resolveImdbToTmdb(item.id, item.type)
-            if (tmdbId) {
-                resolvedItems.push({ ...item, id: `tmdb:${tmdbId}` })
+            const cached = imdbCache[item.id]
+            if (cached) {
+                resolvedItems.push({ ...item, id: cached })
+            } else {
+                const tmdbId = await resolveImdbToTmdb(item.id, item.type)
+                if (tmdbId) {
+                    const tmdbKey = `tmdb:${tmdbId}`
+                    imdbCache[item.id] = tmdbKey
+                    cacheDirty = true
+                    resolvedItems.push({ ...item, id: tmdbKey })
+                }
             }
         }
     }
+    if (cacheDirty) saveImdbTmdbCache(imdbCache)
 
     const newItemHashes = new Set(resolvedItems.map(itemHash))
     const toAdd: PmdbRailItem[] = []

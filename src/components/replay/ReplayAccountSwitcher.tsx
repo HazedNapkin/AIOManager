@@ -54,7 +54,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
         name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)
 
     return (
-        <div ref={containerRef} style={{ position: 'relative' }} className="shrink-0 pointer-events-auto">
+        <div ref={containerRef} className="relative shrink-0 pointer-events-auto">
 
             <button
                 onClick={() => setOpen(v => !v)}

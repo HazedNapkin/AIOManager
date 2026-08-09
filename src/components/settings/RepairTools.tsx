@@ -109,7 +109,7 @@ export function RepairTools() {
         setRunning('reauth')
         setProgress({ done: 0, total: expired.length })
         for (const account of expired) {
-            try { await syncAccount(account.id) } catch { /* per-account, keep going */ }
+            try { await syncAccount(account.id) } catch {}
             setProgress(p => (p ? { ...p, done: p.done + 1 } : p))
         }
         const after = useAccountStore.getState().accounts
@@ -134,7 +134,7 @@ export function RepairTools() {
         setProgress({ done: 0, total: targets.length })
         const { refreshConnectionStates } = useConnectionStore.getState()
         for (const account of targets) {
-            try { await refreshConnectionStates(account.id) } catch { /* per-account, keep going */ }
+            try { await refreshConnectionStates(account.id) } catch {}
             setProgress(p => (p ? { ...p, done: p.done + 1 } : p))
         }
         setProgress(null)
@@ -176,7 +176,7 @@ export function RepairTools() {
                     const name = ad.manifest?.name || '?'
                     const ver = ad.manifest?.version || '?'
                     let host = '?'
-                    try { host = new URL(ad.transportUrl).host } catch { /* keep ? */ }
+                    try { host = new URL(ad.transportUrl).host } catch {}
                     L.push(`      * ${host} id=${id} "${name}" v${ver} ${ad.flags?.enabled === false ? 'disabled' : 'enabled'} url#${urlFingerprint(ad.transportUrl)}`)
                 }
             }

@@ -43,11 +43,11 @@ export function setCanonicalBases(entries: BaseMap): void {
         }
     }
     if (changed) {
-        try { localStorage.setItem(KEY, JSON.stringify(map)) } catch { /* ignore quota */ }
+        try { localStorage.setItem(KEY, JSON.stringify(map)) } catch {}
     }
 }
 
 /** Drop all bases (logout; the next login re-establishes them on first push). */
 export function clearCanonicalBases(): void {
-    try { localStorage.removeItem(KEY) } catch { /* ignore */ }
+    try { localStorage.removeItem(KEY) } catch {}
 }

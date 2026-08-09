@@ -1,96 +1,114 @@
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog'
-import { Command } from 'lucide-react'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { SquircleOverlay } from '@/components/ui/squircle-overlay'
+import { Keyboard, Command, Navigation, MousePointerClick } from 'lucide-react'
 
 interface KeybindingsHelpProps {
     isOpen: boolean
     onClose: () => void
 }
 
+const GROUPS = [
+    {
+        label: 'General',
+        icon: Command,
+        items: [
+            { keys: ['?'], desc: 'Show this help' },
+            { keys: ['Ctrl', 'K'], desc: 'Command palette' },
+            { keys: ['/'], desc: 'Search' },
+        ],
+    },
+    {
+        label: 'Navigation',
+        icon: Navigation,
+        items: [
+            { keys: ['G', 'A'], desc: 'Accounts' },
+            { keys: ['G', 'S'], desc: 'Saved Addons' },
+            { keys: ['G', 'H'], desc: 'Activity' },
+            { keys: ['G', 'M'], desc: 'Metrics' },
+            { keys: ['G', 'N'], desc: 'Notes' },
+            { keys: ['G', 'V'], desc: 'Vault' },
+            { keys: ['G', 'P'], desc: 'Settings' },
+            { keys: ['G', 'R'], desc: 'Replay' },
+            { keys: ['G', 'F'], desc: 'Docs' },
+        ],
+    },
+    {
+        label: 'Actions',
+        icon: MousePointerClick,
+        items: [
+            { keys: ['Ctrl', 'A'], desc: 'Select all' },
+            { keys: ['S'], desc: 'Save selected to library' },
+            { keys: ['Ctrl', 'N'], desc: 'New note' },
+            { keys: ['Esc'], desc: 'Close / deselect' },
+        ],
+    },
+    {
+        label: 'Note Editor',
+        icon: Keyboard,
+        items: [
+            { keys: ['Ctrl', 'B'], desc: 'Bold' },
+            { keys: ['Ctrl', 'I'], desc: 'Italic' },
+            { keys: ['Ctrl', 'Z'], desc: 'Undo' },
+            { keys: ['Ctrl', 'Y'], desc: 'Redo' },
+        ],
+    },
+]
+
 export function KeybindingsHelp({ isOpen, onClose }: KeybindingsHelpProps) {
-    const shortcuts = [
-        { key: '?', description: 'Show this help menu', group: 'General' },
-        { key: 'Ctrl/⌘ K', description: 'Open command palette', group: 'General' },
-        { key: 'g a', description: 'Go to Accounts', group: 'Navigation' },
-        { key: 'g s', description: 'Go to Saved Addons', group: 'Navigation' },
-        { key: 'g h', description: 'Go to Activity', group: 'Navigation' },
-        { key: 'g m', description: 'Go to Metrics', group: 'Navigation' },
-        { key: 'g n', description: 'Go to Notes', group: 'Navigation' },
-        { key: 'g p', description: 'Go to Settings', group: 'Navigation' },
-        { key: 'g v', description: 'Go to Key Vault', group: 'Navigation' },
-        { key: 'g f', description: 'Go to Kronorium docs', group: 'Navigation' },
-        { key: 'g r', description: 'Go to Replay', group: 'Navigation' },
-        { key: 'S', description: 'Save selected addons to library', group: 'Actions' },
-        { key: 'Ctrl+A', description: 'Select all addons', group: 'Actions' },
-        { key: 'Esc', description: 'Exit selection / close dialog', group: 'Actions' },
-        { key: 'Ctrl+N', description: 'New note (on Notes page)', group: 'Actions' },
-        { key: 'Ctrl+B', description: 'Bold text (in note editor)', group: 'Actions' },
-        { key: 'Ctrl+I', description: 'Italic text (in note editor)', group: 'Actions' },
-    ]
-
-    const general = shortcuts.filter(s => s.group === 'General')
-    const navigation = shortcuts.filter(s => s.group === 'Navigation')
-    const actions = shortcuts.filter(s => s.group === 'Actions')
-
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="sm:max-w-[425px] bg-background/95 backdrop-blur-md border-primary/20">
-                <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
-                        <Command className="h-5 w-5 text-primary" />
-                        Keyboard Shortcuts
-                    </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-6 py-4">
-                    <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-muted-foreground uppercase">General</h4>
-                        <div className="space-y-2">
-                            {general.map((s) => (
-                                <div key={s.key} className="flex items-center justify-between text-sm">
-                                    <span className="text-muted-foreground">{s.description}</span>
-                                    <div className="flex gap-1">
-                                        {s.key.split(' ').map((k) => (
-                                            <kbd key={k} className="px-2 py-1 bg-muted rounded border border-border/40 text-xs font-mono">{k}</kbd>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+            <DialogContent className="!gap-0 !p-0 overflow-hidden !max-w-md max-h-[85vh] shadow-[0_24px_64px_hsl(0_0%_0%/0.45)]" hideClose>
+                <DialogTitle className="sr-only">Keyboard Shortcuts</DialogTitle>
+
+                <div className="flex items-start gap-3 border-b border-border/40 bg-gradient-to-br from-card to-card/60 px-5 py-4">
+                    <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/35 bg-muted/25">
+                        <SquircleOverlay />
+                        <Keyboard className="relative z-10 h-4 w-4 text-muted-foreground" />
                     </div>
-                    <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-muted-foreground uppercase">Navigation</h4>
-                        <div className="space-y-3">
-                            {navigation.map((s) => (
-                                <div key={s.key} className="flex items-center justify-between text-sm">
-                                    <span className="text-muted-foreground">{s.description}</span>
-                                    <div className="flex gap-1">
-                                        {s.key.split(' ').map((k) => (
-                                            <kbd key={k} className="px-2 py-1 bg-muted rounded border border-border/40 text-xs font-mono">{k}</kbd>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                    <div className="flex-1">
+                        <h2 className="text-sm font-bold leading-tight">Keyboard Shortcuts</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">Press <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono text-[10px]">?</kbd> anywhere to reopen.</p>
                     </div>
-                    <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-muted-foreground uppercase">Actions</h4>
-                        <div className="space-y-3">
-                            {actions.map((s) => (
-                                <div key={s.key} className="flex items-center justify-between text-sm">
-                                    <span className="text-muted-foreground">{s.description}</span>
-                                    <div className="flex gap-1">
-                                        {s.key.split('+').map((k, i, arr) => (
-                                            <kbd key={i} className="px-2 py-1 bg-muted rounded border border-border/40 text-xs font-mono">{k}{i < arr.length - 1 ? ' +' : ''}</kbd>
-                                        ))}
-                                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Close"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/30 text-muted-foreground transition-all hover:bg-muted/60 hover:text-foreground active:scale-95"
+                    >
+                        <kbd className="text-[10px] font-mono">Esc</kbd>
+                    </button>
+                </div>
+
+                <div className="overflow-y-auto px-5 py-4 space-y-5">
+                    {GROUPS.map(group => {
+                        const Icon = group.icon
+                        return (
+                            <div key={group.label} className="space-y-2">
+                                <div className="flex items-center gap-1.5">
+                                    <Icon className="h-3 w-3 text-muted-foreground/60" />
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{group.label}</span>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
+                                <div className="space-y-1">
+                                    {group.items.map(item => (
+                                        <div key={item.desc} className="flex items-center justify-between gap-3 rounded-lg px-2 py-1 transition-colors hover:bg-muted/20">
+                                            <span className="text-xs text-muted-foreground">{item.desc}</span>
+                                            <div className="flex items-center gap-0.5 shrink-0">
+                                                {item.keys.map((k, i) => (
+                                                    <kbd key={i} className="rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground/70 min-w-[20px] text-center">
+                                                        {k}
+                                                    </kbd>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+
+                <div className="border-t border-border/30 bg-muted/15 px-5 py-3">
+                    <p className="text-[10px] text-center text-muted-foreground/50">Shortcuts work everywhere except text inputs.</p>
                 </div>
             </DialogContent>
         </Dialog>

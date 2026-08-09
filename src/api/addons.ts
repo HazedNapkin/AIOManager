@@ -362,7 +362,7 @@ function releaseDomainSlot(origin: string): void {
   }
 }
 
-export async function checkAddonUpdates(addons: AddonDescriptor[], accountContext: string = 'Update-Check'): Promise<AddonUpdateInfo[]> {
+export async function checkAddonUpdates(addons: AddonDescriptor[], accountContext: string = 'Update-Check', onProgress?: (current: number, total: number) => void): Promise<AddonUpdateInfo[]> {
   const checkableAddons = addons.filter((addon) => !addon.flags?.official)
 
   if (import.meta.env.DEV) console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
@@ -438,6 +438,7 @@ export async function checkAddonUpdates(addons: AddonDescriptor[], accountContex
 
     const batchResults = await Promise.all(batchPromises)
     results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
+    if (onProgress) onProgress(Math.min(i + batchSize, checkableAddons.length), checkableAddons.length)
   }
 
   if (import.meta.env.DEV) console.log(`[Update Check] Complete: ${results.length} checked`)
@@ -452,7 +453,8 @@ export async function checkSavedAddonUpdates(
     installUrl: string
     manifest: AddonManifest
   }[],
-  accountContext: string = 'Library-Update-Check'
+  accountContext: string = 'Library-Update-Check',
+  onProgress?: (current: number, total: number) => void
 ): Promise<AddonUpdateInfo[]> {
   if (import.meta.env.DEV) console.log(`[Update Check] Checking ${savedAddons.length} saved addons with Domain+ID deduplication (v3)...`)
 
@@ -535,6 +537,7 @@ export async function checkSavedAddonUpdates(
 
     const batchResults = await Promise.all(batchPromises)
     results.push(...(batchResults.filter(Boolean) as AddonUpdateInfo[]))
+    if (onProgress) onProgress(Math.min(i + batchSize, savedAddons.length), savedAddons.length)
   }
 
   if (import.meta.env.DEV) console.log(`[Update Check] Complete: ${results.length} checked`)

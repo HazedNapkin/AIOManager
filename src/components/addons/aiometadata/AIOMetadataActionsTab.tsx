@@ -88,7 +88,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
             const config = prefillConfig ? sanitizeAIOMetadataConfigForCreate(sourceConfig) : {}
             const result = await createAIOMetadataUser(activeBaseUrl, password, config, addonPwd)
             setCreateResult(result)
-            try { await saveAIOMetadataPassword(activeBaseUrl, result.uuid, password) } catch { /* non-critical */ }
+            try { await saveAIOMetadataPassword(activeBaseUrl, result.uuid, password) } catch {}
             toast({ title: 'User created', description: `UUID: ${result.uuid.slice(0, 8)}…` })
         } catch (e: unknown) {
             setCreateError(e instanceof Error ? e.message : 'Failed to create user')
@@ -152,7 +152,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
             const accountName = acc?.name || acc?.email || accountId
             try {
                 const result = await createAIOMetadataUser(activeBaseUrl, password, JSON.parse(JSON.stringify(config)), addonPwd)
-                try { await saveAIOMetadataPassword(activeBaseUrl, result.uuid, password) } catch { /* non-critical */ }
+                try { await saveAIOMetadataPassword(activeBaseUrl, result.uuid, password) } catch {}
                 try {
                     await installAddonToAccount(accountId, result.installUrl)
                     if (`${window.location.pathname}${window.location.search}` !== sourceLocation) navigate(sourceLocation, { replace: true })

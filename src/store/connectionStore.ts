@@ -78,7 +78,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 authHeader: connection.driverConfig.authHeader,
                 enabled: connection.enabled,
             }
-            storeConnectionCredential(accountId, connection.id, bundle, 'hydra').catch(() => {})
+            storeConnectionCredential(accountId, connection.id, bundle, 'hydra').catch(() => {
+                toast({ variant: 'destructive', title: 'Connection credential save failed', description: 'The connection will work until page reload.' })
+            })
         }
 
         if (connection.platform === 'nuvio' && connection.credentials?.accessToken) {
@@ -91,7 +93,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 baseUrl: connection.credentials?.baseUrl || null,
                 publishableKey: connection.credentials?.publishableKey || null,
             }
-            await storeConnectionCredential(accountId, connection.id, bundle, 'nuvio').catch(() => {})
+            await storeConnectionCredential(accountId, connection.id, bundle, 'nuvio').catch(() => {
+                toast({ variant: 'destructive', title: 'Connection credential save failed', description: 'The connection will work until page reload.' })
+            })
         }
 
         if (connection.platform === 'realstream' && connection.credentials?.accessToken) {
@@ -104,7 +108,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 email: connection.credentials.email || null,
                 password: connection.credentials.password || null,
             }
-            await storeConnectionCredential(accountId, connection.id, bundle, 'realstream').catch(() => {})
+            await storeConnectionCredential(accountId, connection.id, bundle, 'realstream').catch(() => {
+                toast({ variant: 'destructive', title: 'Connection credential save failed', description: 'The connection will work until page reload.' })
+            })
         }
 
         let duplicateFound = false
@@ -218,7 +224,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                         }))
                     }
                 }
-            } catch { /* best-effort: sync still runs below */ }
+            } catch {}
             import('./account/accountSync').then(({ scheduleSyncAccount }) => {
                 scheduleSyncAccount(accountId)
             })
@@ -254,6 +260,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                     [accountId]: states,
                 },
             }))
-        } catch { /* best-effort refresh; stale states are acceptable */ }
+        } catch {}
     },
 }))

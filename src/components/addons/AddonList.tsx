@@ -3,6 +3,7 @@ import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import { checkAddonUpdates } from '@/api/addons'
 import { HealthStatus } from '@/lib/addon-health'
 import { Button } from '@/components/ui/button'
+import { OperationProgress, type OperationStatus } from '@/components/ui/operation-progress'
 import { useToast } from '@/hooks/use-toast'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
@@ -345,6 +346,7 @@ export function AddonList({ accountId }: AddonListProps) {
   }, [account, syncAccount, toast])
 
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [refreshProgress, setRefreshProgress] = useState<{ status: OperationStatus; current: number; total: number; label: string; detail?: string }>({ status: 'idle', current: 0, total: 0, label: '' })
   const [healthStatus, setHealthStatus] = useState<Record<string, HealthStatus>>({})
   const latestVersions = useAddonStore((state) => state.latestVersions)
   const manifestChangeHints = useAddonStore((state) => state.manifestChangeHints)
@@ -487,13 +489,29 @@ export function AddonList({ accountId }: AddonListProps) {
     if (!account) return
 
     setCheckingUpdates(true)
+
+    const platforms: string[] = []
+    if (getStremioAuthKey(account)) platforms.push('Stremio')
+    for (const conn of account.connections || []) {
+        if (!conn.enabled) continue
+        if (conn.platform === 'nuvio' && !platforms.includes('Nuvio')) platforms.push('Nuvio')
+        else if (conn.platform === 'realstream' && !platforms.includes('RealStream')) platforms.push('RealStream')
+        else if ((conn.connectionType === 'hydra-outbound' || conn.platform === 'hydra') && !platforms.includes('Hydra')) platforms.push('Hydra')
+    }
+    const platformText = platforms.length > 0 ? platforms.join(', ') : 'Stremio'
+
+    setRefreshProgress({ status: 'running', current: 0, total: 3, label: 'Syncing addon list', detail: `Pulling from ${platformText}...` })
     try {
       await syncAccount(accountId, true)
+      setRefreshProgress({ status: 'running', current: 1, total: 3, label: 'Syncing server state', detail: 'Checking failover rules and connection health...' })
 
       await pullServerState()
       await checkRules()
+      setRefreshProgress({ status: 'running', current: 2, total: 3, label: 'Checking for updates', detail: `Scanning ${addons.length} addons...` })
 
-      const updateInfoList = await checkAddonUpdates(addons, accountId)
+      const updateInfoList = await checkAddonUpdates(addons, accountId, (current, total) => {
+        setRefreshProgress(prev => ({ ...prev, current: 2 + (current / total), total: 3, label: 'Checking for updates', detail: `${current} of ${total} addons checked` }))
+      })
       const versions: Record<string, string> = {}
       const health: Record<string, HealthStatus> = {}
       const hints: Record<string, SavedAddonManifestChangeSummary> = {}
@@ -528,7 +546,11 @@ export function AddonList({ accountId }: AddonListProps) {
         title: 'Refresh Complete',
         description,
       })
+      setRefreshProgress({ status: 'complete', current: 3, total: 3, label: 'Refresh complete', detail: description })
+      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 3000)
     } catch (error) {
+      setRefreshProgress({ status: 'error', current: 0, total: 0, label: 'Refresh failed', detail: 'Failed to refresh addons' })
+      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 5000)
       toast({
         title: 'Refresh Failed',
         description: 'Failed to refresh addons',
@@ -808,20 +830,25 @@ export function AddonList({ accountId }: AddonListProps) {
     }
 
     setUpdatingAll(true)
+    setRefreshProgress({ status: 'running', current: 0, total: addonsToUpdate.length, label: 'Updating addons', detail: `Reinstalling ${addonsToUpdate.length} addon${addonsToUpdate.length !== 1 ? 's' : ''}...` })
     try {
 
       const { successCount } = await useAccountStore.getState().reinstallAddons(
         accountId,
         addonsToUpdate.map(item => item.url),
-        ADDON_REINSTALL_CONCURRENCY
+        ADDON_REINSTALL_CONCURRENCY,
+        (current, total) => setRefreshProgress(prev => ({ ...prev, current, total, detail: `${current} of ${total} addons updated` }))
       )
 
-
+      setRefreshProgress({ status: 'complete', current: addonsToUpdate.length, total: addonsToUpdate.length, label: 'Updates complete', detail: `Successfully updated ${successCount} of ${addonsToUpdate.length}` })
+      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 3000)
       toast({
         title: 'Updates Complete',
         description: `Successfully updated ${successCount} of ${addonsToUpdate.length} addon${addonsToUpdate.length !== 1 ? 's' : ''}`,
       })
     } catch (error) {
+      setRefreshProgress({ status: 'error', current: 0, total: addonsToUpdate.length, label: 'Update failed', detail: 'Failed to update addons' })
+      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 5000)
       toast({
         title: 'Update Failed',
         description: 'Failed to update addons',
@@ -1335,6 +1362,14 @@ export function AddonList({ accountId }: AddonListProps) {
               )}
             </div>
           </ToolbarShell>
+
+          <OperationProgress
+            status={refreshProgress.status}
+            current={refreshProgress.current}
+            total={refreshProgress.total}
+            label={refreshProgress.label}
+            detail={refreshProgress.detail}
+          />
 
           {addons.length === 0 ? (
             <EmptyState

@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
+import { OperationProgress } from '@/components/ui/operation-progress'
 import { CheckCircle2, AlertCircle, Loader2, Upload, Clock, XCircle } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
@@ -68,7 +69,7 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
         () => Object.values(railStatuses).reduce((s, info) => s + (info.processed || 0), 0),
         [railStatuses]
     )
-    const overallPct = overallTotal > 0 ? Math.round((overallProcessed / overallTotal) * 100) : 0
+  
 
     const handlePublish = useCallback(async () => {
         if (publishing) return
@@ -286,14 +287,14 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
                 )}
 
                 {publishing && overallTotal > 0 && (
-                    <div className="space-y-1.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5">
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="font-medium text-foreground">Overall Progress</span>
-                            <span className="text-muted-foreground tabular-nums">
-                                {overallProcessed} / {overallTotal} items ({overallPct}%)
-                            </span>
-                        </div>
-                        <Progress value={overallPct} className="h-2" />
+                    <div className="px-1">
+                        <OperationProgress
+                            status="running"
+                            current={overallProcessed}
+                            total={overallTotal}
+                            label="Overall Progress"
+                            variant="bare"
+                        />
                     </div>
                 )}
 

@@ -188,6 +188,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 export function buildTasteProfile(accountId: string, items: ActivityItem[], externalRatings?: ExternalRating[]): TasteProfile {
   const own = items.filter(it => it.accountId === accountId)
+  const ownByItemId = new Map(own.map(it => [it.itemId, it]))
   const aggregated = aggregateAccountItems(own)
 
   if (externalRatings && externalRatings.length > 0) {
@@ -234,7 +235,7 @@ export function buildTasteProfile(accountId: string, items: ActivityItem[], exte
   let movieEngagement = 0
   let seriesEngagement = 0
   for (const a of aggregated) {
-    const sample = own.find(it => it.itemId === a.itemId)
+    const sample = ownByItemId.get(a.itemId)
     if (sample) {
       const year = extractYear(sample)
       if (year !== undefined) {
@@ -269,7 +270,7 @@ export function buildTasteProfile(accountId: string, items: ActivityItem[], exte
   const castAccum = new Map<string, { name: string; id?: number; count: number }>()
   const directorAccum = new Map<string, { name: string; id?: number; count: number }>()
   for (const a of aggregated) {
-    const sample = own.find(it => it.itemId === a.itemId)
+    const sample = ownByItemId.get(a.itemId)
     if (!sample) continue
     const enriched = sample as ActivityItem & {
       cast?: Array<{ name?: string; id?: number }>

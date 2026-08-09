@@ -456,6 +456,7 @@ export async function syncAllAccounts(silent = false) {
             } finally {
                 resolveMutex()
                 syncMutexes.delete(account.id)
+                clearAccountLoading(account.id)
             }
         }
 

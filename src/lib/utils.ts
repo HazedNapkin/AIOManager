@@ -474,9 +474,17 @@ export function formatStaleAgo(ts: number): string {
 }
 
 const IMDB_TMDB_CACHE_KEY = 'aiomanager-imdb-tmdb-cache'
+const IMDB_TMDB_CACHE_TS_KEY = 'aiomanager-imdb-tmdb-cache-ts'
+const IMDB_TMDB_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
 
 export function loadImdbTmdbCache(): Record<string, string> {
     try {
+        const ts = Number(localStorage.getItem(IMDB_TMDB_CACHE_TS_KEY) || 0)
+        if (ts && Date.now() - ts > IMDB_TMDB_CACHE_TTL) {
+            localStorage.removeItem(IMDB_TMDB_CACHE_KEY)
+            localStorage.removeItem(IMDB_TMDB_CACHE_TS_KEY)
+            return {}
+        }
         return JSON.parse(localStorage.getItem(IMDB_TMDB_CACHE_KEY) || '{}') as Record<string, string>
     } catch {
         return {}
@@ -486,5 +494,6 @@ export function loadImdbTmdbCache(): Record<string, string> {
 export function saveImdbTmdbCache(cache: Record<string, string>): void {
     try {
         localStorage.setItem(IMDB_TMDB_CACHE_KEY, JSON.stringify(cache))
+        localStorage.setItem(IMDB_TMDB_CACHE_TS_KEY, String(Date.now()))
     } catch {}
 }

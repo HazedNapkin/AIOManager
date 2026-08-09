@@ -12,7 +12,9 @@ export async function getSyncAuthHeaders(): Promise<Record<string, string>> {
             headers['x-sync-password'] = await deriveSyncToken(auth.password)
         }
     } catch {}
-    _cachedHeaders = headers
+    if (headers['x-sync-user']) {
+        _cachedHeaders = headers
+    }
     return { ...headers }
 }
 

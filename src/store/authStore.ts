@@ -134,7 +134,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         useSyncStore.setState({ auth: { ...auth, password: '' } })
       }
     })
-    try { sessionStorage.removeItem('aioman-sync-password') } catch { /* noop */ }
+    try { sessionStorage.removeItem('aioman-sync-password') } catch {}
     set({
       encryptionKey: null,
       isLocked: true,

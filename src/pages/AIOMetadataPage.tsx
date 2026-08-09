@@ -129,7 +129,7 @@ export function AIOMetadataPage() {
             const config = await fetchAIOMetadataConfig(baseUrl, uuid, password, addonPassword || undefined)
             setSourceConfig(config)
             if (rememberPassword) {
-                try { await saveAIOMetadataPassword(baseUrl, uuid, password) } catch { /* non-critical */ }
+                try { await saveAIOMetadataPassword(baseUrl, uuid, password) } catch {}
             }
             setConnected(true)
         } catch (e: unknown) {

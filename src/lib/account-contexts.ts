@@ -1,0 +1,10 @@
+export const ACCOUNT_CONTEXT_PROFILE_SWAP = 'Profile Swap'
+export const ACCOUNT_CONTEXT_BULK_OP = 'Bulk Op'
+export const ACCOUNT_CONTEXT_CLEAR_ALL = 'Clear All'
+export const ACCOUNT_CONTEXT_SYSTEM_CHECK = 'System Check'
+
+export const ALLOWED_SHRINK_CONTEXTS = new Set([
+    ACCOUNT_CONTEXT_PROFILE_SWAP,
+    ACCOUNT_CONTEXT_BULK_OP,
+    ACCOUNT_CONTEXT_CLEAR_ALL,
+])

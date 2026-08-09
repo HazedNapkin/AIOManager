@@ -6,7 +6,6 @@ import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { ContentRail, ContentRailCard, ContentRailSkeleton } from '@/components/ui/content-rail'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { SearchDialog } from '@/components/search/SearchDialog'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -15,6 +14,8 @@ import { useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/st
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import { cn, maskNameLevel, formatStaleAgo, loadImdbTmdbCache, saveImdbTmdbCache } from '@/lib/utils'
+import { Tooltip } from '@/components/ui/tooltip'
+import { OperationProgress } from '@/components/ui/operation-progress'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityDetailModal, type DetailItem } from '@/components/activity/ActivityDetailModal'
 import { buildTasteProfile, computeHouseholdPopularity, type TasteProfile } from '@/lib/taste-profile'
@@ -27,6 +28,7 @@ import {
     type BuildRecommendationsResult,
 } from '@/lib/recommendation-engine'
 import { tmdbAdapter, proxyFetch, fetchTmdbDetailsAsMeta } from '@/api/metadata/adapters/tmdb'
+import type { TmdbFindResponse } from '@/components/activity/detail/types'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PublishToPmdbDialog } from '@/components/for-you/PublishToPmdbDialog'
 import { checkPmdbKeyConfigured, getLastPublishTime } from '@/lib/pmdb-list-publisher'
@@ -86,7 +88,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                 if (active && res.meta.background) setFetchedBackdrop(res.meta.background)
             }).catch(() => {})
         } else if (isImdb && item.itemId) {
-            proxyFetch<any>(`find/${encodeURIComponent(item.itemId)}?external_source=imdb_id`).then(data => {
+            proxyFetch<TmdbFindResponse>(`find/${encodeURIComponent(item.itemId)}?external_source=imdb_id`).then(data => {
                 const result = data?.movie_results?.[0] || data?.tv_results?.[0]
                 if (result?.id) {
                     const mediaType = data?.movie_results?.[0] ? 'movie' : 'tv'
@@ -291,7 +293,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         const totalWeight = allProfiles.reduce((s, p) => s + Math.max(p.totalItems, 1), 0)
         const mergedGenres: Record<string, { weight: number; count: number; avgRating: number }> = {}
         const mergedEras: Record<string, number> = {}
-        let mergedTypes = { movie: 0, series: 0 }
+        const mergedTypes = { movie: 0, series: 0 }
         for (const p of allProfiles) {
             const w = Math.max(p.totalItems, 1) / totalWeight
             for (const [genre, data] of Object.entries(p.genres)) {
@@ -551,7 +553,15 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     const [pmdbLastPublished, setPmdbLastPublished] = useState<number | null>(null)
 
     useEffect(() => {
-        checkPmdbKeyConfigured().then(setHasPmdbKey).catch(() => {})
+        let cancelled = false
+        const check = async (attempt: number) => {
+            const result = await checkPmdbKeyConfigured()
+            if (cancelled) return
+            if (result) { setHasPmdbKey(true); return }
+            if (attempt < 3) setTimeout(() => check(attempt + 1), 2000 * (attempt + 1))
+        }
+        check(0)
+        return () => { cancelled = true }
     }, [])
 
     useEffect(() => {
@@ -659,37 +669,39 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         Refresh
                     </Button>
                     {hasHistory && hasPmdbKey && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setPmdbDialogOpen(true)}
-                            disabled={recsLoading}
-                            className="h-8 gap-1.5 text-xs font-medium"
-                            title={pmdbLastPublished !== null
-                                ? `Last published ${formatStaleAgo(pmdbLastPublished)}`
-                                : 'Publish rails to PMDB lists'}
-                        >
-                            <Upload className="h-3.5 w-3.5" />
-                            Publish to PMDB
-                            {pmdbLastPublished !== null && (
-                                <span className={cn(
-                                    'h-1.5 w-1.5 rounded-full',
-                                    Date.now() - pmdbLastPublished > 86400000 ? 'bg-amber-500' : 'bg-emerald-500'
-                                )} />
-                            )}
-                        </Button>
+                        <Tooltip content={pmdbLastPublished !== null
+                            ? `Last published ${formatStaleAgo(pmdbLastPublished)}`
+                            : 'Publish rails to PMDB lists'}>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPmdbDialogOpen(true)}
+                                disabled={recsLoading}
+                                className="h-8 gap-1.5 text-xs font-medium"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                Publish to PMDB
+                                {pmdbLastPublished !== null && (
+                                    <span className={cn(
+                                        'h-1.5 w-1.5 rounded-full',
+                                        Date.now() - pmdbLastPublished > 86400000 ? 'bg-amber-500' : 'bg-emerald-500'
+                                    )} />
+                                )}
+                            </Button>
+                        </Tooltip>
                     )}
                     {hasHistory && !hasPmdbKey && (
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            disabled
-                            className="h-8 gap-1.5 text-xs font-medium opacity-50"
-                            title="Add a PMDB API key in Settings > Integrations to enable publishing"
-                        >
-                            <Upload className="h-3.5 w-3.5" />
-                            Publish to PMDB
-                        </Button>
+                        <Tooltip content="Add a PMDB API key in Settings > Integrations to enable publishing">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled
+                                className="h-8 gap-1.5 text-xs font-medium opacity-50"
+                            >
+                                <Upload className="h-3.5 w-3.5" />
+                                Publish to PMDB
+                            </Button>
+                        </Tooltip>
                     )}
                     <Button
                         variant="outline"
@@ -713,22 +725,13 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             </ToolbarShell>
 
             {showBuildingSkeleton && (
-                <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-                            <Sparkles className="h-4 w-4 text-primary animate-pulse" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold">
-                                Building Your Recommendations
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                                Analyzing watch history and taste profile
-                            </div>
-                        </div>
-                    </div>
-                    <Progress shimmer className="h-1.5 bg-muted" />
-                </div>
+                <OperationProgress
+                    status="running"
+                    current={0}
+                    total={0}
+                    label="Building Your Recommendations"
+                    detail="Analyzing watch history and taste profile"
+                />
             )}
 
             {subTab === 'accounts' ? (

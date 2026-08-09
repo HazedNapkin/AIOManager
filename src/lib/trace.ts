@@ -41,17 +41,13 @@ const send = (entries: TraceEntry[]) => {
   const json = JSON.stringify({ entries })
   try {
     if (navigator.sendBeacon && navigator.sendBeacon('/api/debug/trace', new Blob([json], { type: 'application/json' }))) return
-  } catch {
-    /* fall through to XHR */
-  }
+  } catch {}
   try {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/debug/trace', true)
     xhr.setRequestHeader('Content-Type', 'application/json')
     xhr.send(json)
-  } catch {
-    /* never throw from a trace */
-  }
+  } catch {}
 }
 
 const flush = () => {
@@ -108,8 +104,8 @@ const dump = (): string => {
 
 if (typeof window !== 'undefined') {
   (window as unknown as { aiomanTrace?: unknown }).aiomanTrace = {
-    on: () => { try { localStorage.setItem('aiomanTrace', '1') } catch { /* ignore */ } },
-    off: () => { try { localStorage.removeItem('aiomanTrace') } catch { /* ignore */ } },
+    on: () => { try { localStorage.setItem('aiomanTrace', '1') } catch {} },
+    off: () => { try { localStorage.removeItem('aiomanTrace') } catch {} },
     status: isOn,
     dump,
     clear: () => { head = 0; size = 0 },

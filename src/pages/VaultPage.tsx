@@ -404,7 +404,7 @@ export function VaultPage() {
         try {
             if (sessionStorage.getItem('aio-vault-expiry-toast-shown') === '1') return
             sessionStorage.setItem('aio-vault-expiry-toast-shown', '1')
-        } catch { /* sessionStorage may be unavailable in private mode */ }
+        } catch {}
         const n = expiringKeys.length
         toast({
             variant: 'warning',

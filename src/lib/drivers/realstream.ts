@@ -116,7 +116,7 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
         })
         if (!res.ok) {
             let data: RsRecord | null = null
-            try { data = await res.json() } catch { /* body not JSON */ }
+            try { data = await res.json() } catch {}
             const fieldErrors = data?.data && typeof data.data === 'object'
                 ? Object.entries(data.data as Record<string, { message?: string; code?: string }>).map(([f, v]) => `${f} (${v?.message || v?.code || 'invalid'})`).join(', ')
                 : ''

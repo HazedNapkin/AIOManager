@@ -110,7 +110,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
             setCreateResult(result)
             try {
                 await saveAIOStreamsPassword(activeBaseUrl, result.uuid, password)
-            } catch { /* non-critical */ }
+            } catch {}
             toast({ title: 'User created', description: `UUID: ${result.uuid.slice(0, 8)}…` })
         } catch (e: unknown) {
             setCreateError(e instanceof Error ? e.message : 'Failed to create user')
@@ -124,8 +124,8 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
         setDeleting(true)
         try {
             await deleteAIOStreamsUser(baseUrl, uuid, deletePassword)
-            try { await removeAIOStreamsPassword(baseUrl, uuid) } catch { /* non-critical */ }
-            try { await useAccountStore.getState().removeAddonFromAccount(accountId, transportUrl) } catch { /* non-critical */ }
+            try { await removeAIOStreamsPassword(baseUrl, uuid) } catch {}
+            try { await useAccountStore.getState().removeAddonFromAccount(accountId, transportUrl) } catch {}
             toast({ title: 'User deleted', description: 'The AIOStreams user, vault entry, and addon have been removed.' })
             onClose()
         } catch (e: unknown) {
@@ -208,7 +208,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                 const result = await createAIOStreamsUser(activeBaseUrl, password, JSON.parse(JSON.stringify(config)))
                 try {
                     await saveAIOStreamsPassword(activeBaseUrl, result.uuid, password)
-                } catch { /* non-critical */ }
+                } catch {}
 
                 const addonUrl = `${activeBaseUrl}/stremio/${result.uuid}/${result.encryptedPassword}/manifest.json`
                 try {

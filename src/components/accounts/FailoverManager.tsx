@@ -52,6 +52,7 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { CSS } from '@dnd-kit/utilities'
 import { identifyAddon } from "@/lib/addon-identifier"
 import { toast } from "@/hooks/use-toast"
+import { apiFetch } from "@/lib/http-client"
 import { formatDistanceToNow } from "date-fns"
 import { checkAddonHealth } from "@/lib/addon-health"
 import { Input } from "@/components/ui/input"
@@ -74,27 +75,13 @@ async function testWebhook(
         const { useSyncStore } = await import('@/store/syncStore')
         const { serverUrl } = useSyncStore.getState()
         const baseUrl = serverUrl || ''
-        const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
 
-        const { deriveSyncToken } = await import('@/lib/crypto')
-        const syncPassword = useSyncStore.getState().auth.password
-        const { auth } = useSyncStore.getState()
-        const syncToken = await deriveSyncToken(syncPassword)
-
-        const res = await fetch(`${apiPath}/autopilot/test-webhook`, {
+        const result = await apiFetch('/autopilot/test-webhook', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-sync-password': syncToken,
-                'x-sync-user': auth.id
-            },
-            body: JSON.stringify({
-                webhookUrl: url,
-                accountName,
-                accountId
-            })
+            baseUrl: baseUrl.startsWith('http') ? baseUrl : undefined,
+            body: { webhookUrl: url, accountName, accountId },
         })
-        if (!res.ok) throw new Error(`Server returned ${res.status}`)
+        if (!result.ok) throw new Error(result.error || `Server returned ${result.status}`)
         toastFn({ title: 'Test Sent', description: 'Check your notification channel.' })
     } catch (err) {
         toastFn({ title: 'Test Failed', description: 'Invalid URL or server error.', variant: 'destructive' })
@@ -556,26 +543,17 @@ export function FailoverManager({
             const { useSyncStore } = await import('@/store/syncStore')
             const { serverUrl } = useSyncStore.getState()
             const baseUrl = serverUrl || ''
-            const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
-            const { deriveSyncToken } = await import('@/lib/crypto')
-            const syncPassword = useSyncStore.getState().auth.password
-            const { auth } = useSyncStore.getState()
-            const syncToken = await deriveSyncToken(syncPassword)
-            const res = await fetch(`${apiPath}/autopilot/test-url`, {
+            const result = await apiFetch<{ ok?: boolean; status?: number; error?: string }>('/autopilot/test-url', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-sync-password': syncToken,
-                    'x-sync-user': auth.id
-                },
-                body: JSON.stringify({ url })
+                baseUrl: baseUrl.startsWith('http') ? baseUrl : undefined,
+                body: { url },
             })
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) {
-                setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: data.error || `Server error (${res.status})` } }))
+            if (!result.ok) {
+                setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: result.error || `Server error (${result.status})` } }))
                 return
             }
-            setUrlTestResults(prev => ({ ...prev, [index]: { status: data.ok ? 'ok' : 'fail', code: data.status, error: data.error } }))
+            const data = result.data
+            setUrlTestResults(prev => ({ ...prev, [index]: { status: data?.ok ? 'ok' : 'fail', code: data?.status, error: data?.error } }))
         } catch {
             setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: 'Request failed' } }))
         }

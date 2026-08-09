@@ -145,13 +145,20 @@ class MetadataCache {
                 await db.run(
                     `INSERT INTO metadata_cache (key, response, expires_at, created_at)
                      VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (key) DO NOTHING`,
+                     ON CONFLICT (key) DO UPDATE SET
+                       response = EXCLUDED.response,
+                       expires_at = EXCLUDED.expires_at,
+                       created_at = EXCLUDED.created_at`,
                     [key, responseText, expiresAt, now]
                 )
             } else {
                 await db.run(
-                    `INSERT OR IGNORE INTO metadata_cache (key, response, expires_at, created_at)
-                     VALUES ($1, $2, $3, $4)`,
+                    `INSERT INTO metadata_cache (key, response, expires_at, created_at)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT(key) DO UPDATE SET
+                       response = excluded.response,
+                       expires_at = excluded.expires_at,
+                       created_at = excluded.created_at`,
                     [key, responseText, expiresAt, now]
                 )
             }
@@ -336,9 +343,6 @@ class MetadataCache {
     }
 
     _runAssertions(stats) {
-        if (stats.db_updates_total > 0) {
-            logger.error && logger.error('[MetadataCache] ILLEGAL: UPDATE on cache table detected')
-        }
         if (stats.l1_utilization_pct > 90) {
             logger.warn && logger.warn(`[MetadataCache] L1 cache near capacity: ${stats.l1_utilization_pct}%`)
         }

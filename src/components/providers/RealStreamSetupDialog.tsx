@@ -87,7 +87,7 @@ export function RealStreamSetupDialog({ open, onOpenChange, onComplete }: RealSt
         if (!tokens) return
         try {
             await onComplete(tokens, email, password)
-        } catch { /* onComplete surfaces its own errors; closing regardless */ }
+        } catch {}
         handleClose(false)
     }
 

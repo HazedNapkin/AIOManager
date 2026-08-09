@@ -169,7 +169,7 @@ function RecursiveEditor({
                     <Textarea
                         value={JSON.stringify(value, null, 2)}
                         onChange={(e) => {
-                            try { onChange(JSON.parse(e.target.value)) } catch { /* invalid JSON input, ignore */ }
+                            try { onChange(JSON.parse(e.target.value)) } catch {}
                         }}
                         className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />
@@ -298,7 +298,7 @@ function RecursiveEditor({
                     <Textarea
                         value={JSON.stringify(value, null, 2)}
                         onChange={(e) => {
-                            try { onChange(JSON.parse(e.target.value)) } catch { /* invalid JSON input, ignore */ }
+                            try { onChange(JSON.parse(e.target.value)) } catch {}
                         }}
                         className="font-mono text-xs min-h-[100px] bg-muted/5"
                     />

@@ -308,7 +308,7 @@ export function registerMetadataProxyRoutes(fastify) {
     fastify.decorate('metadataCache', metadataCache)
 
     const PMDB_BASE = 'https://publicmetadb.com/api/external'
-    const RATE_LIMIT_PMDB = { max: 120, timeWindow: '1 minute' }
+    const RATE_LIMIT_PMDB = { max: 300, timeWindow: '1 minute' }
 
     const auxCache = new Map()
     const AUX_CACHE_TTL_STABLE = 24 * 60 * 60 * 1000
@@ -373,7 +373,7 @@ export function registerMetadataProxyRoutes(fastify) {
         try {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 15000)
-            if (request.socket?.destroyed) {
+            if (request.socket && !request.socket.destroyed) {
                 request.socket.on('close', () => controller.abort())
             }
             const response = await fetch(url, {
@@ -425,7 +425,7 @@ export function registerMetadataProxyRoutes(fastify) {
         try {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 15000)
-            if (request.socket?.destroyed) {
+            if (request.socket && !request.socket.destroyed) {
                 request.socket.on('close', () => controller.abort())
             }
             const fetchOptions = {

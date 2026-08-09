@@ -303,7 +303,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     const setTheme = useCallback((newTheme: Theme) => {
         setThemeState(newTheme)
-        try { localStorage.setItem(STORAGE_KEY, newTheme) } catch { /* storage unavailable */ }
+        try { localStorage.setItem(STORAGE_KEY, newTheme) } catch {}
         triggerSync()
     }, [])
 

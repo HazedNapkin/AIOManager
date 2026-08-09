@@ -29,7 +29,7 @@ export async function mergeAddons(
       if (fresh?.manifest?.id && fresh?.manifest?.name && fresh?.manifest?.version) {
         setCachedManifest(installUrl, fresh.manifest)
       }
-    } catch { /* fall back to stored manifest */ }
+    } catch {}
   })
 
   for (const savedAddon of savedAddons) {

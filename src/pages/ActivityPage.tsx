@@ -24,7 +24,7 @@ import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getC
 import type { Account } from '@/types/account'
 
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
-import { Grid, List, Search, Check, X, PlayCircle, RefreshCw } from 'lucide-react'
+import { Grid, List, Search, Check, X, PlayCircle } from 'lucide-react'
 import { AnimatedRefreshIcon, AnimatedTrashIcon } from '@/components/ui/AnimatedIcons'
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
@@ -43,7 +43,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
-import { Progress } from '@/components/ui/progress'
+import { OperationProgress } from '@/components/ui/operation-progress'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Poster } from '@/components/common/Poster'
@@ -419,7 +419,7 @@ export function ActivityPage() {
 
     const handleViewModeChange = useCallback((mode: 'grid' | 'list') => {
         setViewMode(mode)
-        try { localStorage.setItem('activity-view-mode', mode) } catch { /* storage unavailable */ }
+        try { localStorage.setItem('activity-view-mode', mode) } catch {}
         triggerSync()
     }, [])
 
@@ -576,7 +576,6 @@ export function ActivityPage() {
 
     const isSelecting = selectedItems.size > 0 || isBulkMode
     const isLoading = loading || isRefreshingFromCloud
-    const loadingPercent = loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 0
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -658,7 +657,7 @@ export function ActivityPage() {
 
                     <Select value={timeFilter} onValueChange={(val) => {
                         setTimeFilter(val)
-                        try { localStorage.setItem('activity-time-filter', val) } catch { /* storage unavailable */ }
+                        try { localStorage.setItem('activity-time-filter', val) } catch {}
                         triggerSync()
                     }}>
                         <SelectTrigger className="h-8 w-full sm:w-[120px] text-xs font-medium">
@@ -679,7 +678,7 @@ export function ActivityPage() {
                             value={customStartDate}
                             onChange={(e) => {
                                 setCustomStartDate(e.target.value)
-                                try { localStorage.setItem('activity-since-date', e.target.value) } catch { /* storage unavailable */ }
+                                try { localStorage.setItem('activity-since-date', e.target.value) } catch {}
                                 triggerSync()
                             }}
                             className="col-span-full h-8 w-full sm:w-[150px] text-xs font-medium"
@@ -751,35 +750,18 @@ export function ActivityPage() {
                 </div>
             </ToolbarShell>
             {isLoading && (
-                <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
-                    <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-                            <RefreshCw className="h-4 w-4 text-primary animate-spin" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold">
-                                {loadingProgress.current > 0
-                                    ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts`
-                                    : 'Connecting...'}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                                {loadingProgress.current > 0
-                                    ? `${loadingProgress.total - loadingProgress.current} remaining`
-                                    : 'Fetching watch history'}
-                            </div>
-                        </div>
-                        {loadingProgress.total > 0 && (
-                            <span className="text-sm font-bold tabular-nums text-primary shrink-0">
-                                {Math.round(loadingPercent)}%
-                            </span>
-                        )}
-                    </div>
-                    <Progress
-                        value={loadingPercent}
-                        shimmer={loadingProgress.current === 0}
-                        className="h-1.5 bg-muted"
-                    />
-                </div>
+                <OperationProgress
+                    status="running"
+                    current={loadingProgress.current}
+                    total={loadingProgress.total}
+                    label={loadingProgress.current > 0
+                        ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts`
+                        : 'Connecting...'}
+                    detail={loadingProgress.current > 0
+                        ? `${loadingProgress.total - loadingProgress.current} remaining`
+                        : 'Fetching watch history'}
+                    className="mt-2"
+                />
             )}
 
             {/* Continue Watching Rail */}

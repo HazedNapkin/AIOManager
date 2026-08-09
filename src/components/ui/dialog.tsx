@@ -96,8 +96,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
     <DialogContext.Provider value={{ onOpenChange, titleId }}>
       <div 
         ref={dialogRef}
-        className="fixed inset-0 z-50" 
-        style={{ overflow: 'hidden' }}
+        className="fixed inset-0 z-50 overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

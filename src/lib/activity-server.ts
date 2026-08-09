@@ -118,16 +118,17 @@ export async function pushCredentialsToServer(): Promise<number> {
 
     const { useAccountStore, getCachedAuthKey, getStremioAuthKey } = await import('@/store/accountStore')
     const accounts = useAccountStore.getState().accounts
-    const authKeys: { accountId: string; accountName: string; authKey: string }[] = []
 
-    for (const a of accounts) {
+    const authKeyResults = await Promise.all(accounts.map(async a => {
         const stremioKey = getStremioAuthKey(a)
-        if (!stremioKey) continue
+        if (!stremioKey) return null
         try {
             const plainKey = await getCachedAuthKey(stremioKey, encryptionKey)
-            if (plainKey) authKeys.push({ accountId: a.id, accountName: a.name, authKey: plainKey })
-        } catch { continue }
-    }
+            if (plainKey) return { accountId: a.id, accountName: a.name, authKey: plainKey }
+        } catch { return null }
+        return null
+    }))
+    const authKeys = authKeyResults.filter((r): r is { accountId: string; accountName: string; authKey: string } => r !== null)
 
     if (authKeys.length === 0) return 0
 

@@ -13,6 +13,7 @@ import { useAuthStore } from '@/store/authStore'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { clearLocalAuthSecrets, restoreLocalAuthSecrets } from '@/lib/crypto'
+import { apiGet } from '@/lib/http-client'
 
 import { CopyButton } from '@/components/ui/copy-button'
 import { useConfetti } from '@/components/ui/confetti'
@@ -67,11 +68,10 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const passwordError = loginError ? /password|decrypt/i.test(loginError) && !sessionRestoreError : false
 
     useEffect(() => {
-        fetch('/api/config')
-            .then(res => res.json())
+        apiGet<{ customHtml?: string; registrationsClosed?: boolean }>('/config')
             .then(data => {
-                if (data.customHtml) setCustomHtml(data.customHtml)
-                setRegistrationsClosed(Boolean(data.registrationsClosed))
+                if (data?.customHtml) setCustomHtml(data.customHtml)
+                setRegistrationsClosed(Boolean(data?.registrationsClosed))
             })
             .catch(() => {})
     }, [])

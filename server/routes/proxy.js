@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { AIOSTREAMS_USER_API_THROTTLE_MS, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
 import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
@@ -1201,7 +1201,8 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const { url, name, logo } = request.body || {}
         if (!url || typeof url !== 'string') { reply.status(400); return { error: 'Missing url' } }
         if (!(await isSafeUrlResolved(url))) { reply.status(403); return { error: 'Unsafe URL' } }
-        const payload = JSON.stringify({ url, name: name || '', logo: logo || '' })
+        const PROXY_TOKEN_TTL = 90 * 24 * 60 * 60 * 1000
+        const payload = JSON.stringify({ url, name: name || '', logo: logo || '', exp: Date.now() + PROXY_TOKEN_TTL })
         const encoded = Buffer.from(payload, 'utf-8').toString('base64url')
         const sig = await proxyHmac(encoded)
         return { token: `${encoded}.${sig}` }
@@ -1218,20 +1219,29 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const encoded = token.slice(0, dotIdx)
         const sig = token.slice(dotIdx + 1)
         const expectedSig = await proxyHmac(encoded)
-        if (sig !== expectedSig) {
+        const sigBuf = Buffer.from(sig)
+        const expBuf = Buffer.from(expectedSig)
+        if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
             reply.status(403); return { error: 'Invalid Token Signature' }
         }
 
         let targetDomain = 'unknown'
         let originalUrl = ''
+        let tokenExp = 0
         try {
             const config = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8'))
             targetDomain = new URL(config.url).origin
             originalUrl = config.url
+            tokenExp = typeof config.exp === 'number' ? config.exp : 0
         } catch (e) {
             fastify.log.warn({ category: 'Proxy' }, `Failed to decode token: ${e.message}`)
             reply.status(400);
             return { error: 'Invalid Token' }
+        }
+
+        if (tokenExp > 0 && Date.now() > tokenExp) {
+            reply.status(403);
+            return { error: 'Token Expired' }
         }
 
         if (!(await isSafeUrlResolved(originalUrl))) {
