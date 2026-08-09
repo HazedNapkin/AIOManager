@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
+import { ACCOUNT_CONTEXT_ALL_ACCOUNTS_UPDATE } from '@/lib/account-contexts'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
@@ -64,7 +65,7 @@ export function AccountList() {
 
     setUpdateProgress({ status: 'running', current: 0, total: allAddons.length, label: 'Checking for updates', detail: `Scanning ${allAddons.length} addons across ${accounts.length} accounts...` })
     try {
-      const updateInfoList = await checkAddonUpdates(allAddons, 'All-Accounts-Update-Check', (current, total) => {
+            const updateInfoList = await checkAddonUpdates(allAddons, ACCOUNT_CONTEXT_ALL_ACCOUNTS_UPDATE, (current, total) => {
         setUpdateProgress({ status: 'running', current, total, label: 'Checking for updates', detail: `${current} of ${total} addons checked` })
       })
       const versions: Record<string, string> = {}
@@ -115,6 +116,7 @@ export function AccountList() {
   const handleUpdateAll = async () => {
     if (updatingAll) return
     setUpdatingAll(true)
+    setUpdateProgress({ status: 'running', current: 0, total: 0, label: 'Updating addons', detail: 'Collecting addons to update...' })
     try {
       const updatableUrls = new Set<string>()
       const accountsWithUpdates: { id: string; authKey: string }[] = []
@@ -135,17 +137,25 @@ export function AccountList() {
         return
       }
 
+      setUpdateProgress({ status: 'running', current: 0, total: accountsWithUpdates.length, label: 'Updating addons', detail: `Reinstalling across ${accountsWithUpdates.length} account${accountsWithUpdates.length !== 1 ? 's' : ''}...` })
+
       const result = await useAddonStore.getState().bulkReinstallAddons(
         Array.from(updatableUrls),
         accountsWithUpdates,
-        true
+        true,
+        (current, total) => setUpdateProgress({ status: 'running', current, total, label: 'Updating addons', detail: `${current} of ${total} accounts processed` })
       )
+
+      setUpdateProgress({ status: 'complete', current: accountsWithUpdates.length, total: accountsWithUpdates.length, label: 'Updates complete', detail: `Updated ${result.success} account${result.success !== 1 ? 's' : ''}` })
+      setTimeout(() => setUpdateProgress({ status: 'idle', current: 0, total: 0, label: '' }), 3000)
 
       toast({
         title: 'Updates Complete',
         description: `Updated ${result.success} account${result.success !== 1 ? 's' : ''}${result.failed > 0 ? ` (${result.failed} failed)` : ''}`,
       })
     } catch (err) {
+      setUpdateProgress({ status: 'error', current: 0, total: 0, label: 'Update failed', detail: 'Failed to update addons' })
+      setTimeout(() => setUpdateProgress({ status: 'idle', current: 0, total: 0, label: '' }), 5000)
       toast({ title: 'Update Failed', variant: 'destructive' })
     } finally {
       setUpdatingAll(false)

@@ -327,7 +327,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       if (mergedMetadata?.customName) {
         const hostName = getHostnameIdentifier(localAddon.transportUrl)
         if (hostName && mergedMetadata.customName === hostName) {
-          const { customName, ...rest } = mergedMetadata
+          const { customName: _cn, ...rest } = mergedMetadata
           mergedMetadata = rest
         }
       }

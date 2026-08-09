@@ -1,4 +1,5 @@
 import { checkSavedAddonUpdates } from '@/api/addons'
+import { ACCOUNT_CONTEXT_LIBRARY_UPDATE } from '@/lib/account-contexts'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -249,7 +250,7 @@ export function SavedAddonLibrary() {
     try {
       await useAddonStore.getState().checkAllHealth()
 
-      const updateInfoList = await checkSavedAddonUpdates(savedAddons, 'Library-Update-Check', (current, total) => {
+      const updateInfoList = await checkSavedAddonUpdates(savedAddons, ACCOUNT_CONTEXT_LIBRARY_UPDATE, (current, total) => {
         setCheckProgress({ current, total })
       })
       const versions: Record<string, string> = {}

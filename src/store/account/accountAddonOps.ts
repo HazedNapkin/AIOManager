@@ -951,7 +951,7 @@ export async function updateAddonSettings(
                     newAddon.manifest = settings.manifest
                     newAddon.catalogOverrides = undefined
                     if (newAddon.metadata) {
-                        const { customName, customLogo, customDescription, ...restMeta } = newAddon.metadata
+                        const { customName: _cn, customLogo: _cl, customDescription: _cd, ...restMeta } = newAddon.metadata
                         newAddon.metadata = restMeta as typeof newAddon.metadata
                     }
                     if (newAddon.metadata?.cinemetaConfig) {

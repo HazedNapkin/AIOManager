@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, AlertCircle, RefreshCw } from 'lucide-react'
+import { XCircle, AlertCircle, RefreshCw } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 
@@ -41,15 +41,13 @@ export function OperationProgress({
         <div className="flex items-center gap-3">
             <div className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl',
-                status === 'error' ? 'bg-destructive/10' : status === 'complete' ? 'bg-emerald-500/10' : 'bg-primary/10',
+                status === 'error' ? 'bg-destructive/10' : 'bg-primary/10',
             )}>
                 {isRunning
                     ? <RefreshCw className="h-4 w-4 text-primary animate-spin" />
-                    : status === 'complete'
-                        ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                        : status === 'error'
-                            ? <AlertCircle className="h-4 w-4 text-destructive" />
-                            : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                    : status === 'error'
+                        ? <AlertCircle className="h-4 w-4 text-destructive" />
+                        : <XCircle className="h-4 w-4 text-muted-foreground" />}
             </div>
             <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold">
@@ -61,7 +59,7 @@ export function OperationProgress({
             </div>
             {showPercent && total > 0 && (
                 <span className="shrink-0 text-sm font-bold tabular-nums text-primary">
-                    {isRunning && !detail ? `${current} / ${total}` : `${percent}%`}
+                    {percent}%
                 </span>
             )}
         </div>
@@ -86,7 +84,6 @@ export function OperationProgress({
         <div className={cn(
             'rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3',
             status === 'error' && 'border-destructive/30',
-            status === 'complete' && 'border-emerald-500/30',
             className,
         )}>
             {inner}

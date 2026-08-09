@@ -173,7 +173,8 @@ export interface AddonStore {
   bulkReinstallAddons: (
     addonIds: string[],
     accountIds: Array<{ id: string; authKey: string }>,
-    allowProtected?: boolean
+    allowProtected?: boolean,
+    onProgress?: (current: number, total: number) => void
   ) => Promise<BulkResult>
   bulkInstallFromUrls: (
     urls: string[],
@@ -815,8 +816,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     return bulkRemoveByTag(tag, accountIds, allowProtected)
   },
 
-  bulkReinstallAddons: async (addonIds, accountIds, allowProtected?) => {
-    return bulkReinstallAddons(addonIds, accountIds, allowProtected)
+      bulkReinstallAddons: async (addonIds, accountIds, allowProtected?, onProgress?) => {
+            return bulkReinstallAddons(addonIds, accountIds, allowProtected, onProgress)
   },
 
   bulkInstallFromUrls: async (urls, accountIds, allowProtected?) => {

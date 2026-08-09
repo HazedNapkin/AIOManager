@@ -146,9 +146,10 @@ class MetadataCache {
                     `INSERT INTO metadata_cache (key, response, expires_at, created_at)
                      VALUES ($1, $2, $3, $4)
                      ON CONFLICT (key) DO UPDATE SET
-                       response = EXCLUDED.response,
                        expires_at = EXCLUDED.expires_at,
-                       created_at = EXCLUDED.created_at`,
+                       created_at = EXCLUDED.created_at,
+                       response = CASE WHEN metadata_cache.response IS DISTINCT FROM EXCLUDED.response
+                         THEN EXCLUDED.response ELSE metadata_cache.response END`,
                     [key, responseText, expiresAt, now]
                 )
             } else {
@@ -156,9 +157,10 @@ class MetadataCache {
                     `INSERT INTO metadata_cache (key, response, expires_at, created_at)
                      VALUES ($1, $2, $3, $4)
                      ON CONFLICT(key) DO UPDATE SET
-                       response = excluded.response,
                        expires_at = excluded.expires_at,
-                       created_at = excluded.created_at`,
+                       created_at = excluded.created_at,
+                       response = CASE WHEN response IS NOT excluded.response
+                         THEN excluded.response ELSE response END`,
                     [key, responseText, expiresAt, now]
                 )
             }

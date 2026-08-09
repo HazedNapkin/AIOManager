@@ -68,8 +68,6 @@ function hasPoorVisibleContent(image: HTMLImageElement) {
     throw error
   }
   let visiblePixels = 0
-  let brightPixels = 0
-  let luminanceTotal = 0
   let minX = SAMPLE_SIZE
   let minY = SAMPLE_SIZE
   let maxX = -1
@@ -81,14 +79,7 @@ function hasPoorVisibleContent(image: HTMLImageElement) {
       const alpha = data[index + 3]
       if (alpha < 24) continue
 
-      const red = data[index]
-      const green = data[index + 1]
-      const blue = data[index + 2]
-      const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
-
       visiblePixels += 1
-      luminanceTotal += luminance
-      if (luminance > 48) brightPixels += 1
 
       minX = Math.min(minX, x)
       minY = Math.min(minY, y)

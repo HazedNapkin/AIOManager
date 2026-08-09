@@ -764,7 +764,8 @@ export async function bulkReplaceUrl(
 export async function bulkReinstallAddons(
   addonIds: string[],
   accountIds: Array<{ id: string; authKey: string }>,
-  allowProtected = false
+  allowProtected = false,
+  onProgress?: (current: number, total: number) => void
 ): Promise<BulkResult> {
   const m = await import('../addonStore') as typeof import('../addonStore')
   const useAddonStore: StoreRef = m.useAddonStore
@@ -791,6 +792,7 @@ export async function bulkReinstallAddons(
       )
     }
 
+    let completedAccounts = 0
     const workerResults = await mapConcurrent(accountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async ({ id: accountId, authKey: accountAuthKey }) => {
       try {
         const { useAccountStore } = await import('@/store/accountStore')
@@ -1031,6 +1033,9 @@ export async function bulkReinstallAddons(
           failed: 1,
           error: { accountId, error: error instanceof Error ? error.message : 'Unknown error' },
         }
+      } finally {
+        completedAccounts++
+        if (onProgress) onProgress(completedAccounts, accountIds.length)
       }
     })
 

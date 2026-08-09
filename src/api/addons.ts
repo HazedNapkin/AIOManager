@@ -8,6 +8,7 @@ import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 import { dedupeAddonsByTransportUrl, getAddonUrlKey } from '@/lib/addon-dedupe'
 import { compareManifestShape } from '@/lib/addon-manifest-diff'
 import { shouldBlockShrink } from '@/lib/shrink-guard'
+import { ACCOUNT_CONTEXT_UPDATE_CHECK, ACCOUNT_CONTEXT_LIBRARY_UPDATE } from '@/lib/account-contexts'
 import { trace, briefAddons } from '@/lib/trace'
 import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 
@@ -362,7 +363,7 @@ function releaseDomainSlot(origin: string): void {
   }
 }
 
-export async function checkAddonUpdates(addons: AddonDescriptor[], accountContext: string = 'Update-Check', onProgress?: (current: number, total: number) => void): Promise<AddonUpdateInfo[]> {
+export async function checkAddonUpdates(addons: AddonDescriptor[],   accountContext: string = ACCOUNT_CONTEXT_UPDATE_CHECK, onProgress?: (current: number, total: number) => void): Promise<AddonUpdateInfo[]> {
   const checkableAddons = addons.filter((addon) => !addon.flags?.official)
 
   if (import.meta.env.DEV) console.log(`[Update Check] Checking ${checkableAddons.length} addons in batches with robust domain caching...`)
@@ -453,7 +454,7 @@ export async function checkSavedAddonUpdates(
     installUrl: string
     manifest: AddonManifest
   }[],
-  accountContext: string = 'Library-Update-Check',
+  accountContext: string = ACCOUNT_CONTEXT_LIBRARY_UPDATE,
   onProgress?: (current: number, total: number) => void
 ): Promise<AddonUpdateInfo[]> {
   if (import.meta.env.DEV) console.log(`[Update Check] Checking ${savedAddons.length} saved addons with Domain+ID deduplication (v3)...`)
