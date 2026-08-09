@@ -20,6 +20,7 @@ export interface CanonicalItem {
   backdrop?: string;
   description?: string;
   genres?: string[];
+  genreIds?: number[];
   runtime?: number;
   trailerYouTubeId?: string;
   voteAverage?: number;

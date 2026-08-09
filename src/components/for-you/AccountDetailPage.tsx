@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Sparkles, Users, Link as LinkIcon, Copy, Check, Bookmark, LayoutGrid } from 'lucide-react'
+import { ArrowLeft, Sparkles, Users, Link as LinkIcon, Copy, Check, Bookmark, LayoutGrid, RefreshCw, Download } from 'lucide-react'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { historyEntryToActivityItem, sanitizePosterUrl } from '@/lib/activity-utils'
 import { buildTasteProfile, findSimilarAccounts, type TasteProfile } from '@/lib/taste-profile'
@@ -53,7 +53,7 @@ const MAX_PER_SEED_RAILS = 5
 const MAX_SIMILAR_ACCOUNT_ITEMS = 20
 const MAX_SEEDS = 15
 const PER_SEED_PREFIX = 'Because you watched'
-const PUBLISH_THROTTLE_MS = 6 * 60 * 60 * 1000
+const PUBLISH_THROTTLE_MS = 5 * 60 * 1000
 
 function railTitleToCatalogType(title: string): string | null {
     const lower = title.toLowerCase()
@@ -236,6 +236,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
     const [rails, setRails] = useState<RankedRail[]>([])
     const [recsLoading, setRecsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [reloadKey, setReloadKey] = useState(0)
     const hasRailsRef = useRef(false)
     const lastPublishedRef = useRef(0)
     const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
@@ -282,6 +283,57 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
         setTimeout(() => setCopied(false), 2000)
     }, [])
 
+    const [installing, setInstalling] = useState(false)
+    const handleInstallCatalog = useCallback(async () => {
+        if (!accountId) return
+        setInstalling(true)
+        try {
+            const rawUrl = await getAccountCatalogUrl(accountId, accountName)
+            if (!rawUrl) {
+                toast({ variant: 'destructive', title: 'Could not generate catalog URL' })
+                return
+            }
+            const url = rawUrl.replace(/^https?:\/\/[^/]+/, window.location.origin)
+            const store = useAccountStore.getState()
+            const account = store.accounts.find(a => a.id === accountId)
+            if (!account) throw new Error('Account not found')
+            const existing = account.addons.find(a => a.transportUrl === url || a.manifest?.id?.startsWith('com.aiomanager'))
+            if (existing) {
+                toast({ title: 'Already installed', description: `Recommendations addon is already on ${accountName || 'this account'}` })
+                return
+            }
+            const fakeManifest = {
+                id: `com.aiomanager.account.${accountId}`,
+                version: '1.0.0',
+                name: `${accountName || 'Account'} Recommendations`,
+                description: `Personalized recommendations powered by AIOManager for ${accountName || 'this account'}`,
+                logo: `${window.location.origin}/logo.png`,
+                resources: ['catalog'],
+                types: ['movie', 'series'],
+                catalogs: [],
+            }
+            const newAddon = {
+                transportUrl: url,
+                transportName: 'AIOManager Catalog',
+                manifest: fakeManifest,
+                flags: { enabled: true },
+                metadata: { lastUpdated: Date.now() },
+            }
+            const allAccounts = useAccountStore.getState().accounts
+            const updatedAccounts = allAccounts.map(a =>
+                a.id === accountId ? { ...a, addons: [...a.addons, newAddon] } : a
+            )
+            useAccountStore.setState({ accounts: updatedAccounts })
+            const { persistAccounts } = await import('@/store/accountStore')
+            await persistAccounts(updatedAccounts)
+            toast({ title: 'Installed', description: `Recommendations addon added to ${accountName || 'this account'}` })
+        } catch (err) {
+            toast({ variant: 'destructive', title: 'Install failed', description: err instanceof Error ? err.message : 'Unknown error' })
+        } finally {
+            setInstalling(false)
+        }
+    }, [accountId, accountName])
+
     const [watchlistItems, setWatchlistItems] = useState<Array<{ itemId: string; type: string; name?: string; poster?: string; addedAt?: number }>>([])
 
     const refreshWatchlist = useCallback(() => {
@@ -318,6 +370,8 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
         d: discoveryPrefs.dismissedItems,
         l: discoveryPrefs.lovedItems,
     })
+
+    useEffect(() => { lastPublishedRef.current = 0 }, [filterKey])
 
     useEffect(() => {
         if (accountActivity.length < MIN_ITEMS_FOR_RECS) {
@@ -390,7 +444,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                         if (!catalogType) continue
                         for (const item of rail.items) {
                             const id = item.id.imdb ?? (typeof item.id.tmdb === 'number' ? `tmdb:${item.id.tmdb}` : item.id.slug)
-                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime'))
+                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime')) || (item.genreIds?.includes(16))
                             const effectiveType = isAnime && catalogType === 'recommended_series' ? 'recommended_anime' : catalogType
                             let itemMap = itemsByCatalogType.get(effectiveType)
                             if (!itemMap) {
@@ -431,7 +485,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
             cancelled = true
             ctrl.abort()
         }
-    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, filterKey])
+    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, filterKey, reloadKey])
 
     const visibleRails = useMemo(
         () => rails.filter(rail => {
@@ -531,11 +585,31 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                     <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => setReloadKey(k => k + 1)}
+                        disabled={recsLoading}
+                        className="h-8 gap-1.5 text-xs font-medium"
+                    >
+                        <RefreshCw className={recsLoading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+                        Refresh
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => setCatalogOpen(true)}
                         className="h-8 gap-1.5 text-xs font-medium"
                     >
                         <LayoutGrid className="h-3.5 w-3.5" />
                         Shelves
+                    </Button>
+                    <Button
+                        variant="subtle"
+                        size="sm"
+                        onClick={handleInstallCatalog}
+                        disabled={installing}
+                        className="h-8 gap-1.5 text-xs font-medium"
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                        {installing ? 'Installing...' : 'Install'}
                     </Button>
                     <Button
                         variant="subtle"

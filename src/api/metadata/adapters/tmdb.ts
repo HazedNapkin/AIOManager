@@ -353,6 +353,7 @@ function mapListItemToCanonical(item: TmdbListItem, mediaType: TmdbMediaType): C
     if (year !== undefined) canonical.year = year
     if (typeof item.vote_average === 'number') canonical.voteAverage = item.vote_average
     if (typeof item.vote_count === 'number') canonical.voteCount = item.vote_count
+    if (Array.isArray(item.genre_ids)) canonical.genreIds = item.genre_ids
     const genres = genresFromIds(item.genre_ids)
     if (genres) canonical.genres = genres
     return canonical

@@ -47,10 +47,21 @@ const CATALOG_DEFINITIONS = {
 }
 
 function generateCatalogsFromPrefs(prefs, scope) {
-    if (!prefs || !Array.isArray(prefs.catalogs)) return []
     const isHousehold = scope === 'household'
+    const fallbackCatalogs = [
+        { id: 'recommended_movies', locked: true, enabled: true },
+        { id: 'recommended_series', locked: true, enabled: true },
+        { id: 'recommended_anime', locked: true, enabled: true },
+        { id: 'watchlist', locked: true, enabled: true },
+        { id: 'continue_watching', locked: false, enabled: true },
+        { id: 'because_you_watched', locked: false, enabled: true },
+        { id: 'themed_rows', locked: false, enabled: true },
+        { id: 'popular_household', locked: false, enabled: true },
+        { id: 'trending_household', locked: false, enabled: true },
+    ]
+    const catalogList = (prefs && Array.isArray(prefs.catalogs) && prefs.catalogs.length > 0) ? prefs.catalogs : fallbackCatalogs
     const result = []
-    for (const entry of prefs.catalogs) {
+    for (const entry of catalogList) {
         if (!entry || typeof entry.id !== 'string') continue
         const isLocked = entry.locked === true
         const isEnabled = entry.enabled === true
@@ -604,11 +615,22 @@ export function registerStremioCatalogRoutes(fastify) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
         try {
+            const checkRow = await db.query('SELECT sync_user FROM catalog_configs WHERE id = $1', [request.params.id]).catch(() => [])
+            const storedUser = checkRow?.[0]?.sync_user
+            if (storedUser && storedUser !== authUser) {
+                const result = await db.run('DELETE FROM catalog_configs WHERE id = $1', [request.params.id])
+                const affected = result?.changes ?? result?.rowCount ?? 0
+                if (affected === 0) {
+                    reply.status(404)
+                    return { success: false, error: 'Catalog not found' }
+                }
+                return { success: true, warning: 'Deleted catalog owned by different user' }
+            }
             const result = await db.run('DELETE FROM catalog_configs WHERE id = $1 AND sync_user = $2', [request.params.id, authUser])
             const affected = result?.changes ?? result?.rowCount ?? 0
             if (affected === 0) {
                 reply.status(404)
-                return { success: false, error: 'Catalog not found or not owned by this user' }
+                return { success: false, error: 'Catalog not found' }
             }
             return { success: true }
         } catch (err) {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Sparkles, Users, Film, Tv, ArrowRight, Copy, Check, Dice3, Info, Search, Bookmark, LayoutGrid } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Sparkles, Users, Film, Tv, ArrowRight, Copy, Check, Dice3, Info, Search, Bookmark, LayoutGrid, Download } from 'lucide-react'
 
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { ContentRail, ContentRailCard, ContentRailSkeleton } from '@/components/ui/content-rail'
@@ -11,6 +11,13 @@ import { SearchDialog } from '@/components/search/SearchDialog'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useAccountStore } from '@/store/accountStore'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+    DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 import { useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
 import { historyEntryToActivityItem, sanitizePosterUrl } from '@/lib/activity-utils'
@@ -51,7 +58,7 @@ import type { ActivityItem } from '@/types/activity'
 import type { Account } from '@/types/account'
 
 const HOUSEHOLD_RAIL_MAX = 12
-const PUBLISH_THROTTLE_MS = 6 * 60 * 60 * 1000
+const PUBLISH_THROTTLE_MS = 5 * 60 * 1000
 
 function railTitleToCatalogType(title: string): string | null {
     const lower = title.toLowerCase()
@@ -453,6 +460,8 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         l: discoveryPrefs.lovedItems,
     })
 
+    useEffect(() => { lastPublishedRef.current = 0 }, [filterKey])
+
     useEffect(() => {
         if (seeds.length < 5) {
             setRecsLoading(true)
@@ -584,7 +593,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         if (!catalogType) continue
                         for (const item of rail.items) {
                             const id = itemIdFromCanonical(item.id)
-                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime'))
+                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime')) || (item.genreIds?.includes(16))
                             const effectiveType = isAnime && catalogType === 'recommended_series' ? 'recommended_anime' : catalogType
                             let itemMap = itemsByCatalogType.get(effectiveType)
                             if (!itemMap) {
@@ -802,6 +811,56 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         setTimeout(() => setCopied(false), 2000)
     }, [])
 
+    const [installing, setInstalling] = useState(false)
+    const handleInstallToAccount = useCallback(async (accountId: string, accountName?: string) => {
+        setInstalling(true)
+        try {
+            const url = await getHouseholdCatalogUrl()
+            if (!url) {
+                toast({ variant: 'destructive', title: 'Could not generate catalog URL' })
+                return
+            }
+            const fixedUrl = url.replace(/^https?:\/\/[^/]+/, window.location.origin)
+            const store = useAccountStore.getState()
+            const account = store.accounts.find(a => a.id === accountId)
+            if (!account) throw new Error('Account not found')
+            const existing = account.addons.find(a => a.transportUrl === fixedUrl || a.manifest?.id?.startsWith('com.aiomanager'))
+            if (existing) {
+                toast({ title: 'Already installed', description: `Recommendations addon is already on ${accountName || 'this account'}` })
+                return
+            }
+            const fakeManifest = {
+                id: `com.aiomanager.household.${accountId}`,
+                version: '1.0.0',
+                name: 'My Recommendations',
+                description: 'Personalized recommendations powered by AIOManager',
+                logo: `${window.location.origin}/logo.png`,
+                resources: ['catalog'],
+                types: ['movie', 'series'],
+                catalogs: [],
+            }
+            const newAddon = {
+                transportUrl: fixedUrl,
+                transportName: 'AIOManager Catalog',
+                manifest: fakeManifest,
+                flags: { enabled: true },
+                metadata: { lastUpdated: Date.now() },
+            }
+            const allAccounts = useAccountStore.getState().accounts
+            const updatedAccounts = allAccounts.map(a =>
+                a.id === accountId ? { ...a, addons: [...a.addons, newAddon] } : a
+            )
+            useAccountStore.setState({ accounts: updatedAccounts })
+            const { persistAccounts } = await import('@/store/accountStore')
+            await persistAccounts(updatedAccounts)
+            toast({ title: 'Installed', description: `Recommendations addon added to ${accountName || 'account'}` })
+        } catch (err) {
+            toast({ variant: 'destructive', title: 'Install failed', description: err instanceof Error ? err.message : 'Unknown error' })
+        } finally {
+            setInstalling(false)
+        }
+    }, [])
+
     const hasHistory = allItems.length > 0
     const showInitialSkeleton = historyLoading
     const showBuildingSkeleton = !historyLoading && recsLoading && recsResult === null
@@ -909,6 +968,34 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         <LayoutGrid className="h-3.5 w-3.5" />
                         Preferences
                     </Button>
+                    {hasHistory && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button
+                                    variant="subtle"
+                                    size="sm"
+                                    disabled={installing}
+                                    className="h-8 gap-1.5 text-xs font-medium"
+                                >
+                                    <Download className="h-3.5 w-3.5" />
+                                    {installing ? 'Installing...' : 'Install'}
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuSeparator />
+                                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Install recommendations addon to</p>
+                                {accounts.map(acc => (
+                                    <DropdownMenuItem
+                                        key={acc.id}
+                                        className="gap-2 text-xs"
+                                        onClick={() => handleInstallToAccount(acc.id, acc.name || acc.email?.split('@')[0])}
+                                    >
+                                        {acc.name || acc.email?.split('@')[0] || 'Account'}
+                                    </DropdownMenuItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                     {hasHistory && (
                             <Button
                                 variant="subtle"
