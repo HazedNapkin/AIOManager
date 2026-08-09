@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { StatusChip } from '@/components/ui/status-chip'
 import { Progress } from '@/components/ui/progress'
 import { CopyButton } from '@/components/ui/copy-button'
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import {
     fetchAIOStreamsUser,
@@ -1344,12 +1345,14 @@ export function AIOStreamsSyncTab({
                                                         <span className="min-w-0 flex-1 truncate font-medium">{result.accountName}</span>
                                                         <span className="truncate">{result.status === 'created' ? `Created ${result.uuid?.slice(0, 8)}...` : result.error}</span>
                                                         {result.installUrl && (
-                                                            <div className="flex items-center gap-1" title="Install URLs include the encrypted AIOStreams password. Only share with trusted Stremio accounts.">
+                                                            <Tooltip content="Install URLs include the encrypted AIOStreams password. Only share with trusted Stremio accounts.">
+                                                            <div className="flex items-center gap-1">
                                                                 <AlertTriangle className="h-3 w-3 text-warning" />
                                                                 <CopyButton value={result.installUrl} variant="ghost" aria-label={`Copy credentialed install URL for ${result.accountName}`}>
                                                                     <span className="ml-1 text-xs font-medium">Copy URL</span>
                                                                 </CopyButton>
                                                             </div>
+                                                            </Tooltip>
                                                         )}
                                                     </div>
                                                 ))}
@@ -1586,9 +1589,13 @@ export function AIOStreamsSyncTab({
                                                         <span className="truncate">{sectionDef?.label ?? formatPreviewSection(entry.section)}</span>
                                                     </span>
                                                     <span className="text-muted-foreground/30">{'->'}</span>
-                                                    <span className="truncate text-right text-muted-foreground" title={`${entry.targetSummary} to ${entry.sourceSummary}`}>
-                                                        {entry.targetSummary} to {entry.sourceSummary}
-                                                    </span>
+                                                    <Tooltip content={`${entry.targetSummary} to ${entry.sourceSummary}`}>
+                                                      <TooltipTrigger asChild>
+                                                        <span className="truncate text-right text-muted-foreground">
+                                                          {entry.targetSummary} to {entry.sourceSummary}
+                                                        </span>
+                                                      </TooltipTrigger>
+                                                    </Tooltip>
                                                 </div>
                                             )
                                         })}
@@ -1672,7 +1679,11 @@ export function AIOStreamsSyncTab({
                                     {result.restored ? 'Restored' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
                                 </StatusChip>
                                 {result.status === 'failed' && result.error && (
-                                    <span className="max-w-[180px] truncate text-destructive" title={result.error}>{result.error}</span>
+                                    <Tooltip content={result.error}>
+                                      <TooltipTrigger asChild>
+                                        <span className="max-w-[180px] truncate text-destructive">{result.error}</span>
+                                      </TooltipTrigger>
+                                    </Tooltip>
                                 )}
                                 {result.status === 'changed' && result.rollbackConfig && !result.restored && (
                                     <Button

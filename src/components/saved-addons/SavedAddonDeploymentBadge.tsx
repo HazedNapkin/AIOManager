@@ -44,7 +44,7 @@ export function SavedAddonDeploymentBadge({
               key={account.id}
               className="flex h-4 w-4 items-center justify-center rounded-full border border-background bg-background text-xs leading-none shadow-sm"
             >
-              {account.emoji ? account.emoji : <User className="h-2.5 w-2.5 text-muted-foreground" />}
+              {account.emoji ? account.emoji : account.avatar ? <img src={account.avatar} alt="" className="h-full w-full rounded-full object-cover" /> : <User className="h-2.5 w-2.5 text-muted-foreground" />}
             </span>
           ))}
         </span>

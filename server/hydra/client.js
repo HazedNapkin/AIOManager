@@ -1,4 +1,5 @@
 import { isSafeUrlResolved } from '../utils/ssrf.js'
+import { resilientFetch } from '../utils/api-resilience.js'
 
 const DEFAULT_TIMEOUT = 15000
 const HEALTH_TIMEOUT = 8000
@@ -23,19 +24,21 @@ export async function createHydraClient(config) {
     }
 
     return {
+        capabilities: ['addons'],
+
         async status() {
-            const r = await fetch(`${base}/hydra/status`, {
+            const r = await resilientFetch(`${base}/hydra/status`, {
                 headers: makeHeaders(),
-                signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+                timeout: DEFAULT_TIMEOUT,
             })
             if (!r.ok) throw new Error(`Hydra status failed: ${r.status}`)
             return r.json()
         },
 
         async readAddons() {
-            const r = await fetch(`${base}/hydra/addons`, {
+            const r = await resilientFetch(`${base}/hydra/addons`, {
                 headers: makeHeaders(),
-                signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+                timeout: DEFAULT_TIMEOUT,
             })
             if (!r.ok) throw new Error(`Hydra readAddons failed: ${r.status}`)
             const body = await r.json()
@@ -43,11 +46,11 @@ export async function createHydraClient(config) {
         },
 
         async writeAddons(addons) {
-            const r = await fetch(`${base}/hydra/addons`, {
+            const r = await resilientFetch(`${base}/hydra/addons`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', ...makeHeaders() },
                 body: JSON.stringify({ addons }),
-                signal: AbortSignal.timeout(DEFAULT_TIMEOUT),
+                timeout: DEFAULT_TIMEOUT,
             })
             if (!r.ok) throw new Error(`Hydra writeAddons failed: ${r.status}`)
             return r.json()
@@ -55,9 +58,9 @@ export async function createHydraClient(config) {
 
         async healthCheck(addonUrl) {
             const encoded = encodeURIComponent(addonUrl)
-            const r = await fetch(`${base}/hydra/addons/${encoded}/health`, {
+            const r = await resilientFetch(`${base}/hydra/addons/${encoded}/health`, {
                 headers: makeHeaders(),
-                signal: AbortSignal.timeout(HEALTH_TIMEOUT),
+                timeout: HEALTH_TIMEOUT,
             })
             return r.ok
         },

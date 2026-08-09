@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
     Dialog,
     DialogContent,
@@ -243,7 +244,9 @@ export function AddonMetadataDialog({
                                 className="mt-1 bg-background/45"
                             />
                         ) : (
-                            <p className="break-all line-clamp-2" title={addon.transportUrl}>URL: {isPrivacyModeEnabled ? '********' : addon.transportUrl}</p>
+                            <Tooltip content={addon.transportUrl}>
+                                <p className="break-all line-clamp-2">URL: {isPrivacyModeEnabled ? '********' : addon.transportUrl}</p>
+                            </Tooltip>
                         )}
                         <p>Status: {addon.flags?.protected ? 'Protected' : 'Standard'}</p>
                     </div>

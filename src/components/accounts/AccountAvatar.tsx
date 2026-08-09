@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Account } from '@/types/account'
@@ -6,7 +7,7 @@ import { cn } from '@/lib/utils'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 interface AccountAvatarProps {
-    account: Pick<Account, 'name' | 'email' | 'emoji' | 'status'>
+    account: Pick<Account, 'name' | 'email' | 'emoji' | 'avatar' | 'status'>
     size?: Size
     showStatus?: boolean
     pulse?: boolean
@@ -45,16 +46,32 @@ export function AccountAvatar({
     const shouldShowStatus = showStatus ?? !!status
     const isPulsing = pulse ?? status === 'active'
 
+    const [avatarFailed, setAvatarFailed] = useState(false)
+    useEffect(() => { setAvatarFailed(false) }, [account.avatar])
+    const showAvatar = !!account.avatar && !avatarFailed
+
     return (
         <div className={cn('relative shrink-0 flex items-center justify-center', dim.box, className)}>
             <SquircleOverlay />
-            <span className={cn('relative z-10 leading-none', dim.emoji)}>
-                {account.emoji ? account.emoji : (
-                    <span className={cn('font-bold text-muted-foreground', dim.letter)}>
-                        {initial}
-                    </span>
-                )}
-            </span>
+            {showAvatar ? (
+                <img
+                    src={account.avatar}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => setAvatarFailed(true)}
+                    className="absolute inset-0 h-full w-full object-cover z-10"
+                    style={{ filter: 'url(#squircle)' }}
+                />
+            ) : (
+                <span className={cn('relative z-10 leading-none', dim.emoji)}>
+                    {account.emoji ? account.emoji : (
+                        <span className={cn('font-bold text-muted-foreground', dim.letter)}>
+                            {initial}
+                        </span>
+                    )}
+                </span>
+            )}
             {shouldShowStatus && status && (
                 <Tooltip content={STATUS_TEXT[status] || status} side="top">
                     <span

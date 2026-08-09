@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
 import { ActivityItem } from '@/types/activity'
-import { getLocalDayKey, getEpisodeIdentity } from '@/lib/activity-utils'
+import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail } from '@/lib/activity-utils'
 
 /**
  * A unified watch history entry combining the richness of WatchEvents
@@ -59,6 +59,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     const liveItems = useLibraryCache(s => s.items)
     const loading = useLibraryCache(s => s.loading)
     const accounts = useAccountStore(s => s.accounts)
+    const [genreMap, setGenreMap] = useState<Map<string, string[]>>(new Map())
 
     const eventsKey = `${events.length}:${events.length > 0 ? events[0].id : ''}`
 
@@ -211,6 +212,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 isFromEventLog: true,
                 source: event.source || live?.source || 'stremio',
                 backfill: event.backfill,
+                genres: genreMap.get(event.itemId),
                 liveProgress: live?.progress,
                 liveWatched: live?.watched,
                 liveEpisode: live?.uniqueItemId,
@@ -295,6 +297,27 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         }
         const dedupedList = Array.from(finalDedup.values())
 
+        const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
+        const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
+
+        const bestNamesByItemId = new Map<string, { name: string; poster?: string }>()
+        for (const entry of dedupedList) {
+            if (isBadName((entry.name || '').trim())) continue
+            const existing = bestNamesByItemId.get(entry.itemId)
+            if (!existing || entry.name.length > existing.name.length) {
+                bestNamesByItemId.set(entry.itemId, { name: entry.name, poster: entry.poster || undefined })
+            }
+        }
+
+        const enrichedHistory = bestNamesByItemId.size > 0
+            ? dedupedList.map(entry => {
+                if (!isBadName((entry.name || '').trim())) return entry
+                const best = bestNamesByItemId.get(entry.itemId)
+                if (!best) return entry
+                return { ...entry, name: best.name, poster: entry.poster || best.poster || entry.poster }
+            })
+            : dedupedList
+
         const inProgress = (accountId
             ? liveItems.filter(i => i.accountId === accountId)
             : liveItems
@@ -302,12 +325,56 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
 
         return {
-            history: dedupedList,
+            history: enrichedHistory,
             inProgress,
             hasEventLog: events.length > 0,
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [eventsKey, liveItems, accounts, accountId])
+    }, [eventsKey, liveItems, accounts, accountId, genreMap])
+
+    useEffect(() => {
+        if (!events || events.length === 0) return
+        const seen = new Set<string>()
+        const typeByItemId = new Map<string, string | undefined>()
+        for (const e of events) {
+            const id = e.itemId
+            if (id && id.startsWith('tt') && !seen.has(id)) {
+                seen.add(id)
+                typeByItemId.set(id, e.type)
+            }
+        }
+        const needsGenres = [...seen].filter(id => !genreMap.has(id))
+        if (needsGenres.length === 0) return
+        let cancelled = false
+        const BATCH = 5
+        const results = new Map<string, string[]>()
+        const failed = new Set<string>()
+        ;(async () => {
+            if (import.meta.env?.DEV) console.log('[GenreResolve] processing', needsGenres.length, 'items,', seen.size, 'tt items found')
+            for (let i = 0; i < needsGenres.length; i += BATCH) {
+                if (cancelled) return
+                const batch = needsGenres.slice(i, i + BATCH)
+                await Promise.all(batch.map(async id => {
+                    const meta = await fetchCinemetaDetail(id, typeByItemId.get(id))
+                    if (meta && typeof meta.genre === 'string' && meta.genre.trim()) {
+                        const genres = meta.genre.split(',').map(g => g.trim()).filter(Boolean)
+                        if (genres.length > 0) results.set(id, genres)
+                        else failed.add(id)
+                    } else {
+                        failed.add(id)
+                    }
+                }))
+            }
+            if (!cancelled) {
+                if (import.meta.env?.DEV) console.log('[GenreResolve] resolved', results.size, 'failed', failed.size, 'of', needsGenres.length)
+                const merged = new Map(genreMap)
+                for (const [id, g] of results) merged.set(id, g)
+                for (const id of failed) if (!merged.has(id)) merged.set(id, [])
+                setGenreMap(merged)
+            }
+        })()
+        return () => { cancelled = true }
+    }, [events, genreMap])
 
     return { history, inProgress, hasEventLog, loading }
 }

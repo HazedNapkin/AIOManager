@@ -142,7 +142,7 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
           willChange: 'transform, opacity',
         }}
         className={cn(
-          'absolute z-50 min-w-[8rem] overflow-hidden rounded-md border border-border/40 bg-card p-1 text-card-foreground shadow-lg',
+          'absolute z-50 min-w-[8rem] overflow-hidden rounded-2xl border border-border/40 bg-card p-1 text-card-foreground shadow-lg',
           'transition-[transform,opacity,box-shadow] duration-150 ease-out origin-top',
           visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-1',
           align === 'end' && 'right-0',
@@ -178,8 +178,8 @@ const DropdownMenuItem = React.forwardRef<HTMLButtonElement, DropdownMenuItemPro
         ref={ref}
         type="button"
         className={cn(
-          'relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors',
-          'hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground',
+          'relative flex w-full cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none transition-colors',
+          'hover:bg-muted/50 hover:text-foreground focus:bg-muted/50 focus:text-foreground',
           destructive &&
           'text-destructive hover:text-destructive hover:bg-destructive/10',
           className

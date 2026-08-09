@@ -86,7 +86,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
 
     return (
         <div
-            className="relative flex flex-wrap gap-2 p-2 border rounded-md bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ring-offset-background"
+            className="relative flex flex-wrap gap-2 p-2 border border-border/40 rounded-xl bg-muted/30 focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring"
             onFocus={() => setIsFocused(true)}
             onBlur={handleContainerBlur}
         >

@@ -1,3 +1,4 @@
+const STALE_MAX = 500
 const inflight = new Map<string, Promise<unknown>>()
 const staleValues = new Map<string, { value: unknown; ts: number }>()
 
@@ -10,6 +11,10 @@ export function deduped<T>(key: string, fn: () => Promise<T>, opts?: { onStale?:
     const promise = fn().then(
         (result) => {
             if (opts?.onStale && opts.staleTtlMs) {
+                if (staleValues.size >= STALE_MAX) {
+                    const oldest = staleValues.keys().next().value
+                    if (oldest) staleValues.delete(oldest)
+                }
                 staleValues.set(key, { value: result, ts: Date.now() })
             }
             inflight.delete(key)

@@ -76,6 +76,7 @@ export interface SnapshotItem {
     video_id: string
     overallTimeWatched: number
     timeWatched: number
+    timeOffset: number
     duration?: number
     season?: number
     episode?: number

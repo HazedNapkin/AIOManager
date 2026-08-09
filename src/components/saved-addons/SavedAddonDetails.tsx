@@ -204,7 +204,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
             <div className="flex gap-2">
               <textarea
                 id="edit-description"
-                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex min-h-[80px] w-full rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 value={formData.customDescription}
                 onChange={(e) => setFormData((prev) => ({ ...prev, customDescription: e.target.value }))}
                 placeholder={savedAddon.manifest.description}

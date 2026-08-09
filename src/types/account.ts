@@ -25,6 +25,7 @@ export interface Account {
   status: AccountStatus
   accentColor?: string
   emoji?: string
+  avatar?: string
   note?: string
   hideLastWatched?: boolean
   hideAddonPreview?: boolean

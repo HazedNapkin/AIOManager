@@ -261,8 +261,8 @@ export function BulkSaveDialog({
 
     return (
         <Dialog open={open} onOpenChange={(_val) => !saving && handleClose()}>
-            <DialogContent className="max-h-[92vh] max-w-3xl gap-0 overflow-hidden p-0">
-                <DialogHeader className="p-5 pb-2 pr-14 sm:pr-5">
+            <DialogContent className="max-h-[92vh] max-w-3xl gap-0 overflow-hidden p-0 flex flex-col">
+                <DialogHeader className="p-5 pb-2 pr-14 sm:pr-5 shrink-0">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0 space-y-1">
                             <DialogTitle className="text-2xl tracking-tight">{title || 'Save Addons to Library'}</DialogTitle>
@@ -441,7 +441,7 @@ export function BulkSaveDialog({
                     </aside>
                 </div>
 
-                <DialogFooter className="grid grid-cols-2 gap-3 px-5 pb-5 pt-2">
+                <DialogFooter className="grid grid-cols-2 gap-3 px-5 pb-5 pt-2 shrink-0">
                     <Button variant="subtle" onClick={handleClose} disabled={saving}>
                         Cancel
                     </Button>

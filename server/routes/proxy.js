@@ -269,8 +269,9 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         // cached or served cross-user. Bypass the cache entirely when Authorization is present;
         // public manifests still cache and stay shareable.
         const hasUpstreamAuth = Boolean(request.headers['authorization'])
+        const skipCache = request.query.nocache === '1'
 
-        if (!hasUpstreamAuth) {
+        if (!hasUpstreamAuth && !skipCache) {
             const cached = manifestCache.get(url)
             if (cached && Date.now() - cached.ts < MANIFEST_CACHE_TTL) {
                 if (cached.contentType) reply.type(cached.contentType)
@@ -355,7 +356,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                         manifestCache.delete(oldestKey)
                     }
                 }
-                if (!hasUpstreamAuth) {
+                if (!hasUpstreamAuth && !skipCache) {
                     manifestCache.set(url, { buffer, contentType: contentType || null, ts: Date.now() })
                 }
 

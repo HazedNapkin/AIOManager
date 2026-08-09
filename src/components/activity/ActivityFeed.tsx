@@ -21,6 +21,7 @@ interface ActivityFeedProps {
     todayTrend?: 'up' | 'down'
     onToggleSelect?: (id: string | string[]) => void
     onDelete?: (id: string | string[], removeFromLibrary: boolean) => void
+    onOpenDetail?: (item: ActivityItem) => void
     selectedItems?: Set<string>
     isBulkMode?: boolean
 }
@@ -32,6 +33,7 @@ export function ActivityFeed({
     todayTrend = 'up',
     onToggleSelect,
     onDelete,
+    onOpenDetail,
     selectedItems,
     isBulkMode = false,
 }: ActivityFeedProps) {
@@ -78,7 +80,7 @@ export function ActivityFeed({
 
     const groupedHistory = useMemo(() => {
         const dates: string[] = []
-        const groups: Record<string, ActivityItem[]> = {}
+        const itemsByDate: Record<string, ActivityItem[]> = {}
 
         const sortedHistory = [...filteredHistory].sort((a, b) => {
             const ta = new Date(a.timestamp).getTime()
@@ -90,13 +92,12 @@ export function ActivityFeed({
             const date = new Date(item.timestamp)
             const dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
 
-            if (!groups[dateStr]) {
-                groups[dateStr] = []
+            if (!itemsByDate[dateStr]) {
+                itemsByDate[dateStr] = []
                 dates.push(dateStr)
             }
 
-            // Activity is an event log: each episode/watch should remain visible.
-            groups[dateStr].push(item)
+            itemsByDate[dateStr].push(item)
         })
 
         return dates.map(date => {
@@ -107,8 +108,9 @@ export function ActivityFeed({
                     dateId = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
                 }
             }
-            const items = groups[date]
-            return { date, dateId, items, watchCount: items.length }
+            const items = itemsByDate[date]
+            const watchCount = items.length
+            return { date, dateId, items, watchCount }
         })
     }, [filteredHistory])
 
@@ -227,6 +229,7 @@ export function ActivityFeed({
                                     isBulkMode={isBulkMode}
                                     onToggleSelect={onToggleSelect}
                                     onDelete={onDelete}
+                                    onOpenDetail={onOpenDetail}
                                 />
                             ))}
                         </div>

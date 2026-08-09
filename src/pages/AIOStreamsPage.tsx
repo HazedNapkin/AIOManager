@@ -275,10 +275,10 @@ export function AIOStreamsPage() {
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 gap-2 px-2.5 text-muted-foreground hover:text-foreground"
+                    className="mt-0.5 h-8 shrink-0 gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground"
                     onClick={() => navigate(`/account/${accountId}`)}
                 >
-                    <ArrowLeft className="w-4 h-4" />
+                    <ArrowLeft className="h-4 w-4" />
                     Back
                 </Button>
             </ToolbarShell>
@@ -343,8 +343,10 @@ export function AIOStreamsPage() {
                                                 </StatusChip>
                                             </Tooltip>
                                             <StatusChip variant="muted" icon={<Users className="w-3 h-3" />} className="rounded-lg max-w-[14rem] sm:max-w-[18rem]">
-                                                <span className="truncate">
-                                                    {account.emoji ? `${account.emoji} ` : ''}{accountLabel}
+                                                <span className="truncate flex items-center gap-1">
+                                                    {account.emoji && <span>{account.emoji}</span>}
+                                                    {!account.emoji && account.avatar && <img src={account.avatar} alt="" className="h-3 w-3 rounded-full object-cover shrink-0" />}
+                                                    {accountLabel}
                                                 </span>
                                             </StatusChip>
                                         </div>
@@ -358,7 +360,7 @@ export function AIOStreamsPage() {
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                     <Button
-                                        variant="ghost"
+                    variant="outline"
                                         className="gap-2 text-muted-foreground h-9"
                                         onClick={handleRefresh}
                                         disabled={loading}

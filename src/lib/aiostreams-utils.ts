@@ -443,12 +443,20 @@ export async function migrateAIOStreamsVaultNames(): Promise<void> {
     }
 }
 
-export function getStoredAIOStreamsPassword(baseUrl: string, uuid: string): string |null {
+export function getStoredAIOStreamsPassword(baseUrl: string, uuid: string): string | null {
     const { keys, isLocked } = useVaultStore.getState()
     if (isLocked) return null
     const lookupName = vaultEntryName(baseUrl, uuid)
     const entry = keys.find(k => k.provider === 'aiostreams' && k.name === lookupName)
-    return entry?.value ?? null
+    if (entry?.value) return entry.value
+    const host = baseUrl.replace(/^https?:\/\//, '')
+    const candidates = keys.filter(k =>
+        k.provider === 'aiostreams' &&
+        k.name.startsWith(`AIOStreams · ${host} ·`) &&
+        k.name !== lookupName
+    )
+    if (candidates.length === 1) return candidates[0].value ?? null
+    return null
 }
 
 export async function saveAIOStreamsPassword(baseUrl: string, uuid: string, password: string): Promise<void> {

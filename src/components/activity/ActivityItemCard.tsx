@@ -31,6 +31,7 @@ interface ActivityItemCardProps {
     isBulkMode: boolean
     onToggleSelect?: (id: string | string[]) => void
     onDelete?: (id: string | string[], removeFromLibrary: boolean) => void
+    onOpenDetail?: (item: ActivityItem) => void
 }
 
 export const ActivityItemCard = memo(({
@@ -39,7 +40,8 @@ export const ActivityItemCard = memo(({
     isSelected,
     isBulkMode,
     onToggleSelect,
-    onDelete
+    onDelete,
+    onOpenDetail
 }: ActivityItemCardProps) => {
     const { isLight } = useTheme()
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
@@ -71,8 +73,12 @@ export const ActivityItemCard = memo(({
     }
 
     const handleClick = () => {
-        if (isBulkMode || isSelected) { // If bulk mode OR passing selection, toggle
+        if (isBulkMode || isSelected) {
             onToggleSelect?.(item.id)
+            return
+        }
+        if (onOpenDetail) {
+            onOpenDetail(item)
         } else {
             openStremioDetail(item.type, item.itemId)
         }

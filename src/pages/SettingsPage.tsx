@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { maskNameLevel, maskUrlLevel, maskProfileLevel } from '@/lib/utils'
+import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
@@ -51,6 +53,7 @@ import { ThemeSection } from '@/components/settings/ThemeSection'
 import { DangerZone } from '@/components/settings/DangerZone'
 import { InstallAppCard } from '@/components/settings/InstallAppCard'
 import { RepairTools } from '@/components/settings/RepairTools'
+import { IntegrationsSection } from '@/components/settings/IntegrationsSection'
 
 type ImportPreview = {
     fileName: string
@@ -349,8 +352,8 @@ export function SettingsPage() {
         const file = e.target.files?.[0]
         if (!file) return
 
-        if (file.size > 10 * 1024 * 1024) {
-            toast({ variant: 'destructive', title: 'File Too Large', description: 'Import file must be under 10MB.' })
+        if (file.size > 100 * 1024 * 1024) {
+            toast({ variant: 'destructive', title: 'File Too Large', description: 'Import file must be under 100MB.' })
             resetFileInput()
             return
         }
@@ -362,12 +365,31 @@ export function SettingsPage() {
         }
 
         try {
-            const text = await file.text()
+            let text = await file.text()
             let data: Record<string, unknown>
             try {
                 data = JSON.parse(text) as Record<string, unknown>
             } catch {
                 throw new Error('Invalid JSON format for import')
+            }
+
+            if (isSyncioExport(data)) {
+                const { accounts: syncioAccounts, skipped } = parseSyncioExport(data)
+                if (syncioAccounts.length === 0) {
+                    throw new Error('No accounts with auth keys found in Syncio export')
+                }
+                data = {
+                    accounts: syncioAccounts.map(a => ({
+                        type: 'stremio',
+                        authKey: a.authKey,
+                        email: a.email,
+                        name: a.name,
+                    }))
+                }
+                text = JSON.stringify(data)
+                if (skipped > 0) {
+                    toast({ title: 'Syncio export detected', description: `Importing ${syncioAccounts.length} accounts, ${skipped} skipped (no auth key).` })
+                }
             }
 
             const preview = buildImportPreview(data, file)
@@ -468,51 +490,61 @@ export function SettingsPage() {
                                         className="self-start sm:self-auto"
                                     />
                                 </div>
-                                {isPrivacyModeEnabled && (
-                                    <div className="flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4">
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                                                <p className="text-xs font-medium text-muted-foreground">Granular Privacy Controls</p>
-                                            </div>
-                                            <p className="text-[11px] text-muted-foreground/60">Live preview below each setting</p>
-                                        </div>
-                                        <div className="flex flex-col gap-4">
-                                            <div className="flex flex-col gap-2">
+                                <AnimatePresence initial={false}>
+                                    {isPrivacyModeEnabled && (
+                                        <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                                            className="overflow-hidden"
+                                        >
+                                            <div className="flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4 mt-2">
                                                 <div className="flex items-center justify-between">
-                                                    <span className="flex items-center gap-2 text-xs font-medium"><User className="h-3.5 w-3.5 text-muted-foreground" />Account Names</span>
-                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelNames === 0 ? 'Visible' : privacyLevelNames === 1 ? 'Light' : privacyLevelNames === 2 ? 'Strict' : 'Hidden'}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                                                        <p className="text-xs font-medium text-muted-foreground">Granular Privacy Controls</p>
+                                                    </div>
+                                                    <p className="text-[11px] text-muted-foreground/60">Live preview below each setting</p>
                                                 </div>
-                                                <PrivacyLevelSlider value={privacyLevelNames} onChange={(v) => setPrivacyOption('privacyLevelNames', v)} />
-                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
-                                                    Sonic's Account <span className="text-muted-foreground/30 mx-0.5">→</span> {maskNameLevel("Sonic's Account", privacyLevelNames)}
-                                                </p>
-                                            </div>
-                                            <div className="h-px bg-border/20" />
-                                            <div className="flex flex-col gap-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="flex items-center gap-2 text-xs font-medium"><Link className="h-3.5 w-3.5 text-muted-foreground" />Addon URLs</span>
-                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelUrls === 0 ? 'Visible' : privacyLevelUrls === 1 ? 'Light' : privacyLevelUrls === 2 ? 'Strict' : 'Hidden'}</span>
+                                                <div className="flex flex-col gap-4">
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="flex items-center gap-2 text-xs font-medium"><User className="h-3.5 w-3.5 text-muted-foreground" />Account Names</span>
+                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelNames === 0 ? 'Visible' : privacyLevelNames === 1 ? 'Light' : privacyLevelNames === 2 ? 'Strict' : 'Hidden'}</span>
+                                                        </div>
+                                                        <PrivacyLevelSlider value={privacyLevelNames} onChange={(v) => setPrivacyOption('privacyLevelNames', v)} />
+                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
+                                                            Sonic's Account <span className="text-muted-foreground/50 mx-1">→</span> {maskNameLevel("Sonic's Account", privacyLevelNames)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="h-px bg-border/20" />
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="flex items-center gap-2 text-xs font-medium"><Link className="h-3.5 w-3.5 text-muted-foreground" />Addon URLs</span>
+                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelUrls === 0 ? 'Visible' : privacyLevelUrls === 1 ? 'Light' : privacyLevelUrls === 2 ? 'Strict' : 'Hidden'}</span>
+                                                        </div>
+                                                        <PrivacyLevelSlider value={privacyLevelUrls} onChange={(v) => setPrivacyOption('privacyLevelUrls', v)} />
+                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
+                                                            {privacyLevelUrls === 0 ? 'metadata.aiostreams.io/stremio/abc' : maskUrlLevel('https://metadata.aiostreams.io/stremio/abc/manifest.json', privacyLevelUrls)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="h-px bg-border/20" />
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5 text-muted-foreground" />Profile Names</span>
+                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelProfiles === 0 ? 'Visible' : privacyLevelProfiles === 1 ? 'Light' : privacyLevelProfiles === 2 ? 'Strict' : 'Hidden'}</span>
+                                                        </div>
+                                                        <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
+                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
+                                                            Main Setup <span className="text-muted-foreground/50 mx-1">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <PrivacyLevelSlider value={privacyLevelUrls} onChange={(v) => setPrivacyOption('privacyLevelUrls', v)} />
-                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
-                                                    {privacyLevelUrls === 0 ? 'metadata.aiostreams.io/stremio/abc' : maskUrlLevel('https://metadata.aiostreams.io/stremio/abc/manifest.json', privacyLevelUrls)}
-                                                </p>
                                             </div>
-                                            <div className="h-px bg-border/20" />
-                                            <div className="flex flex-col gap-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5 text-muted-foreground" />Profile Names</span>
-                                                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelProfiles === 0 ? 'Visible' : privacyLevelProfiles === 1 ? 'Light' : privacyLevelProfiles === 2 ? 'Strict' : 'Hidden'}</span>
-                                                </div>
-                                                <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
-                                                <p className="text-[11px] text-muted-foreground/50 font-mono truncate">
-                                                    Main Setup <span className="text-muted-foreground/30 mx-0.5">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                             </div>
                         </div>
                     </TabsContent>
@@ -557,6 +589,9 @@ export function SettingsPage() {
                             onChange={handleFileChange}
                             className="hidden"
                         />
+
+                        {/* Metadata Integrations */}
+                        <IntegrationsSection />
 
                         {/* Active Sync Summary */}
                         <SyncSummarySection />

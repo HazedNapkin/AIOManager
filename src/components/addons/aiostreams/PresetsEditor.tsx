@@ -290,10 +290,10 @@ export function PresetsEditor({ value, onSave, onCancel, saving }: PresetsEditor
             </div>
 
             <div className="flex gap-2 pt-2 border-t border-border/20">
-                <Button onClick={onCancel} disabled={saving} variant="ghost" className="flex-1 h-8 text-xs gap-1.5 rounded-lg">
+                <Button onClick={onCancel} disabled={saving} variant="subtle" className="flex-1 h-8 text-xs gap-1.5 rounded-xl">
                     <X className="w-3.5 h-3.5" /> Cancel
                 </Button>
-                <Button onClick={handleSave} disabled={saving} className="flex-1 h-8 text-xs gap-1.5 rounded-lg">
+                <Button onClick={handleSave} disabled={saving} className="flex-1 h-8 text-xs gap-1.5 rounded-xl">
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save Changes
                 </Button>
             </div>

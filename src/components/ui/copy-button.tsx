@@ -32,10 +32,10 @@ const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
     }
 
     const variantClasses = {
-      ghost: 'p-1.5 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors',
-      outline: 'p-1.5 rounded-md border border-border/40 hover:bg-muted/40 text-muted-foreground hover:text-foreground transition-colors',
+      ghost: 'p-1.5 rounded-xl hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors',
+      outline: 'p-1.5 rounded-xl border border-border/40 hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors',
       inline: 'p-0.5 text-muted-foreground hover:text-foreground transition-colors',
-      subtle: 'p-1.5 rounded-md bg-muted/40 text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors border border-border/40',
+      subtle: 'p-1.5 rounded-xl bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors border border-border/30',
     }
 
     return (

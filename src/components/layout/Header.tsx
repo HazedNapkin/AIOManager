@@ -73,7 +73,7 @@ export function MobileBottomNav() {
   const isMoreActive = MORE_NAV.some(item => item.match(location.pathname))
 
   return (
-    <div className="md:hidden flex-shrink-0 relative z-50 bg-card/95 backdrop-blur-lg border-t border-border flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
+    <div className="md:hidden flex-shrink-0 relative z-50 bg-card/95 backdrop-blur-lg border-t border-border/40 flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
       {PRIMARY_NAV.map((item) => {
         const isActive = item.match(location.pathname)
         const Icon = item.icon

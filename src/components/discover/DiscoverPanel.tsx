@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertCircle, ArrowLeft, Clock, Flame, Heart, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
@@ -391,7 +392,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     const eligible = trending.filter((a) => !isTorrentio(a))
     const withBg = eligible.filter((a) => a.manifest?.background)
     const pool = withBg.length >= 3 ? withBg : eligible
-    return pool.slice(0, 10)
+    if (pool.length <= 10) return pool
+    const dayOffset = Math.floor(Date.now() / 86400000) % pool.length
+    const rotated = [...pool.slice(dayOffset), ...pool.slice(0, dayOffset)]
+    return rotated.slice(0, 10)
   }, [trending])
   const featuredIds = useMemo(() => new Set(featuredList.map((a) => a.uuid)), [featuredList])
   const trendingRow = useMemo(
@@ -536,12 +540,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     <div className="flex flex-col gap-5">
       <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)}>
         <TabsList>
-          <TabsTrigger value="store" className="h-8 px-4 text-xs">
-            Browse
-          </TabsTrigger>
-          <TabsTrigger value="deck" className="h-8 px-4 text-xs">
-            Deck
-          </TabsTrigger>
+          <TabsTrigger value="store">Browse</TabsTrigger>
+          <TabsTrigger value="deck">Deck</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -616,6 +616,8 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
               onDeploy={openDeploy}
               deployedCount={deployedCount}
               accountTotal={accountTotal}
+              hasAIOStreams={aioStreamsInstances.length > 0}
+              onInjectAIOStreams={aioStreamsInstances.length > 0 ? openInject : undefined}
             />
           )}
 
@@ -704,10 +706,12 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
       {gridMode && (
         <>
           {forceGrid && !isFiltering && (
-            <Button variant="ghost" size="sm" className="h-8 w-fit gap-2 px-2.5 text-muted-foreground hover:text-foreground" onClick={backToStore}>
-              <ArrowLeft className="w-4 h-4" />
-              Back to Discover
-            </Button>
+            <ToolbarShell className="w-fit max-w-full p-2" contentClassName="gap-2">
+              <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground" onClick={backToStore}>
+                <ArrowLeft className="h-4 w-4" />
+                Back to Discover
+              </Button>
+            </ToolbarShell>
           )}
 
           {error && (
@@ -790,6 +794,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         onConfigure={handleConfigure}
         onInjectAIOStreams={aioStreamsInstances.length > 0 ? openInject : undefined}
         hasAIOStreams={aioStreamsInstances.length > 0}
+        onOpenAddon={openDetail}
       />
 
       <DiscoverSaveDialog

@@ -161,6 +161,7 @@ export function AccountPickerDialog({
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2">
                                                 {account.emoji && <span className="text-base shrink-0">{account.emoji}</span>}
+                                                {!account.emoji && account.avatar && <img src={account.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />}
                                                 <p className="text-sm font-medium truncate">{account.name}</p>
                                             </div>
                                             <p className="text-xs text-muted-foreground truncate">{getAccountEmail(account)}</p>

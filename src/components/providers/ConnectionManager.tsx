@@ -93,7 +93,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
             platform,
             connectionType: 'native',
             enabled: true,
-            status: 'active',
+            status: 'error',
             credentials: {},
             capabilities: platform === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons'],
         })
@@ -351,31 +351,37 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                         {PLATFORM_REGISTRY
                             .filter(p => p.available)
                             .filter(p => p.connectionType !== 'hydra-outbound')
-                            .filter(p => {
-                                if (p.connectionType === 'native') {
-                                    return !resolvedConnections.some(c => c.platform === p.id)
-                                }
-                                return true
+                            .map(p => {
+                                const isAlreadyConnected = p.connectionType === 'native' && resolvedConnections.some(c => c.platform === p.id)
+                                return { platform: p, isAlreadyConnected }
                             })
-                            .map(p => (
+                            .map(({ platform: p, isAlreadyConnected }) => (
                                 <button
                                     key={p.id}
-                                    className="group/card flex flex-col gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/95 hover:shadow-md"
-                                    onClick={() => handlePlatformClick(p.id)}
+                                    disabled={isAlreadyConnected}
+                                    className={`group/card flex flex-col gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 ${isAlreadyConnected ? 'opacity-50 cursor-not-allowed' : 'hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/95 hover:shadow-md'}`}
+                                    onClick={() => !isAlreadyConnected && handlePlatformClick(p.id)}
                                 >
                                     <div className="flex items-center gap-3">
                                         <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-muted/60 ring-1 ring-border/40 transition-colors group-hover/card:bg-background">
                                             <PlatformLogo platform={p.id} className="h-9 w-9" />
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <p className="text-sm font-semibold">{p.name}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-sm font-semibold">{p.name}</p>
+                                                {isAlreadyConnected && (
+                                                    <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">Connected</span>
+                                                )}
+                                            </div>
                                             <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
                                         </div>
                                     </div>
-                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
-                                        Connect
-                                        <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5" />
-                                    </span>
+                                    {!isAlreadyConnected && (
+                                        <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+                                            Connect
+                                            <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover/card:translate-x-0.5" />
+                                        </span>
+                                    )}
                                 </button>
                             ))}
 

@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusChip } from '@/components/ui/status-chip'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Trash2, ArrowLeft, MoreVertical, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff } from 'lucide-react'
 import { useState } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
@@ -269,7 +270,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         <SectionShell title="Nuvio credentials" description="Re-authenticate to refresh your session tokens.">
             <div className="flex items-center justify-end">
                 <Button
-                    variant="outline"
+                    variant="subtle"
                     size="sm"
                     className="h-8 shrink-0 gap-1.5 text-xs"
                     onClick={handleTest}
@@ -399,7 +400,7 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
         <SectionShell title="RealStream credentials" description="Re-authenticate to refresh your session tokens.">
             <div className="flex items-center justify-end">
                 <Button
-                    variant="outline"
+                    variant="subtle"
                     size="sm"
                     className="h-8 shrink-0 gap-1.5 text-xs"
                     onClick={handleTest}
@@ -525,7 +526,7 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
         <SectionShell title="Hydra API key" description="Update the API key used to push to this outbound server.">
             <div className="flex items-center justify-end">
                 <Button
-                    variant="outline"
+                    variant="subtle"
                     size="sm"
                     className="h-8 shrink-0 gap-1.5 text-xs"
                     onClick={handleTest}
@@ -622,11 +623,13 @@ export function ConnectionEditPanel({
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="h-8 shrink-0 gap-2 rounded-lg bg-background/80 px-2.5 font-medium shadow-sm" onClick={onBack}>
-                    <ArrowLeft className="w-4 h-4" />
+            <ToolbarShell className="w-fit max-w-full p-2" contentClassName="gap-2">
+                <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground" onClick={onBack}>
+                    <ArrowLeft className="h-4 w-4" />
                     Connections
                 </Button>
+            </ToolbarShell>
+            <div className="flex items-center gap-2">
                 <div className="flex-1" />
                 {confirmRemove ? (
                     <div className="flex items-center gap-1.5">
@@ -675,7 +678,7 @@ export function ConnectionEditPanel({
                                 <p className="text-xs text-muted-foreground">Verify the Stremio auth key is valid and reachable.</p>
                             </div>
                             <Button
-                                variant="outline"
+                                variant="subtle"
                                 size="sm"
                                 className="h-8 shrink-0 gap-1.5 text-xs"
                                 onClick={handleTestConnection}

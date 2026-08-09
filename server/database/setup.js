@@ -377,6 +377,164 @@ export async function initializeDatabase(fastify) {
         last_seen_at: 'ALTER TABLE hydra_subscribers ADD COLUMN last_seen_at BIGINT',
     }, ['id'])
 
+    const metadataKeysCreateDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS metadata_keys (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            encrypted_key TEXT NOT NULL,
+            key_format TEXT DEFAULT 'unknown',
+            created_at BIGINT NOT NULL,
+            updated_at BIGINT NOT NULL,
+            UNIQUE(user_id, provider)
+          );`
+        : `CREATE TABLE IF NOT EXISTS metadata_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            encrypted_key TEXT NOT NULL,
+            key_format TEXT DEFAULT 'unknown',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(user_id, provider)
+          );`
+
+    await ensureTable('metadata_keys', metadataKeysCreateDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_metadata_keys_user ON metadata_keys (user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_metadata_keys_user_provider ON metadata_keys (user_id, provider)`,
+    ], ['user_id', 'provider', 'encrypted_key', 'created_at', 'updated_at'], {
+        user_id: `ALTER TABLE metadata_keys ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`,
+        provider: `ALTER TABLE metadata_keys ADD COLUMN provider TEXT NOT NULL DEFAULT ''`,
+        encrypted_key: `ALTER TABLE metadata_keys ADD COLUMN encrypted_key TEXT NOT NULL DEFAULT ''`,
+        key_format: `ALTER TABLE metadata_keys ADD COLUMN key_format TEXT DEFAULT 'unknown'`,
+        created_at: `ALTER TABLE metadata_keys ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
+        updated_at: `ALTER TABLE metadata_keys ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
+    }, [])
+
+    const metadataCacheCreateDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS metadata_cache (
+            key TEXT PRIMARY KEY,
+            response TEXT NOT NULL,
+            expires_at BIGINT NOT NULL,
+            created_at BIGINT NOT NULL
+          );`
+        : `CREATE TABLE IF NOT EXISTS metadata_cache (
+            key TEXT PRIMARY KEY,
+            response TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+          );`
+
+    await ensureTable('metadata_cache', metadataCacheCreateDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_metadata_cache_expires ON metadata_cache (expires_at)`,
+    ], ['key', 'response', 'expires_at', 'created_at'], {
+        key: `ALTER TABLE metadata_cache ADD COLUMN key TEXT NOT NULL DEFAULT ''`,
+        response: `ALTER TABLE metadata_cache ADD COLUMN response TEXT NOT NULL DEFAULT ''`,
+        expires_at: `ALTER TABLE metadata_cache ADD COLUMN expires_at BIGINT NOT NULL DEFAULT 0`,
+        created_at: `ALTER TABLE metadata_cache ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['key'])
+
+    const stremioCatalogCreateDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS stremio_catalog (
+            user_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            poster TEXT,
+            watchers INTEGER DEFAULT 1,
+            last_watched BIGINT NOT NULL,
+            created_at BIGINT NOT NULL,
+            UNIQUE(user_id, item_id)
+        );`
+        : `CREATE TABLE IF NOT EXISTS stremio_catalog (
+            user_id TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            poster TEXT,
+            watchers INTEGER DEFAULT 1,
+            last_watched INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE(user_id, item_id)
+        );`
+    await ensureTable('stremio_catalog', stremioCatalogCreateDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_stremio_catalog_user ON stremio_catalog (user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_stremio_catalog_user_type ON stremio_catalog (user_id, type)`,
+    ], ['user_id', 'item_id', 'type', 'name', 'poster', 'watchers', 'last_watched', 'created_at'], {
+        user_id: `ALTER TABLE stremio_catalog ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`,
+        item_id: `ALTER TABLE stremio_catalog ADD COLUMN item_id TEXT NOT NULL DEFAULT ''`,
+        type: `ALTER TABLE stremio_catalog ADD COLUMN type TEXT NOT NULL DEFAULT 'movie'`,
+        name: `ALTER TABLE stremio_catalog ADD COLUMN name TEXT NOT NULL DEFAULT ''`,
+        poster: `ALTER TABLE stremio_catalog ADD COLUMN poster TEXT`,
+        watchers: `ALTER TABLE stremio_catalog ADD COLUMN watchers INTEGER DEFAULT 1`,
+        last_watched: `ALTER TABLE stremio_catalog ADD COLUMN last_watched BIGINT NOT NULL DEFAULT 0`,
+        created_at: `ALTER TABLE stremio_catalog ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['user_id', 'item_id'])
+
+    const catalogConfigsDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS catalog_configs (
+            id TEXT NOT NULL,
+            sync_user TEXT NOT NULL,
+            catalog_name TEXT NOT NULL,
+            catalog_type TEXT NOT NULL DEFAULT 'movie',
+            filters TEXT NOT NULL DEFAULT '{}',
+            created_at BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, sync_user)
+        );`
+        : `CREATE TABLE IF NOT EXISTS catalog_configs (
+            id TEXT NOT NULL,
+            sync_user TEXT NOT NULL,
+            catalog_name TEXT NOT NULL,
+            catalog_type TEXT NOT NULL DEFAULT 'movie',
+            filters TEXT NOT NULL DEFAULT '{}',
+            created_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (id, sync_user)
+        );`
+    await ensureTable('catalog_configs', catalogConfigsDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_catalog_configs_user ON catalog_configs (sync_user)`,
+    ], ['id', 'sync_user', 'catalog_name', 'catalog_type', 'filters', 'created_at'], {
+        id: `ALTER TABLE catalog_configs ADD COLUMN id TEXT NOT NULL DEFAULT ''`,
+        sync_user: `ALTER TABLE catalog_configs ADD COLUMN sync_user TEXT NOT NULL DEFAULT ''`,
+        catalog_name: `ALTER TABLE catalog_configs ADD COLUMN catalog_name TEXT NOT NULL DEFAULT ''`,
+        catalog_type: `ALTER TABLE catalog_configs ADD COLUMN catalog_type TEXT NOT NULL DEFAULT 'movie'`,
+        filters: `ALTER TABLE catalog_configs ADD COLUMN filters TEXT NOT NULL DEFAULT '{}'`,
+        created_at: `ALTER TABLE catalog_configs ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['id', 'sync_user'])
+
+    const watchlistDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS watchlist_items (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL DEFAULT 'movie',
+            item_name TEXT,
+            poster TEXT,
+            added_at BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id, item_id)
+        );`
+        : `CREATE TABLE IF NOT EXISTS watchlist_items (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL DEFAULT 'movie',
+            item_name TEXT,
+            poster TEXT,
+            added_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id, item_id)
+        );`
+    await ensureTable('watchlist_items', watchlistDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist_items (sync_user)`,
+        `CREATE INDEX IF NOT EXISTS idx_watchlist_user_account ON watchlist_items (sync_user, account_id)`,
+    ], ['sync_user', 'item_id', 'item_type', 'item_name', 'poster', 'added_at'], {
+        sync_user: `ALTER TABLE watchlist_items ADD COLUMN sync_user TEXT NOT NULL DEFAULT ''`,
+        account_id: `ALTER TABLE watchlist_items ADD COLUMN account_id TEXT NOT NULL DEFAULT '__household__'`,
+        item_id: `ALTER TABLE watchlist_items ADD COLUMN item_id TEXT NOT NULL DEFAULT ''`,
+        item_type: `ALTER TABLE watchlist_items ADD COLUMN item_type TEXT NOT NULL DEFAULT 'movie'`,
+        item_name: `ALTER TABLE watchlist_items ADD COLUMN item_name TEXT`,
+        poster: `ALTER TABLE watchlist_items ADD COLUMN poster TEXT`,
+        added_at: `ALTER TABLE watchlist_items ADD COLUMN added_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['sync_user', 'account_id', 'item_id'])
+
     try {
         if (db.type === 'postgres') {
             try { await db.run(`ALTER TABLE autopilot_rules ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1`) } catch (e) { if (!String(e?.message).includes('already exists')) fastify.log.warn({ category: 'Database' }, `PG migration is_active: ${e?.message}`) }
@@ -611,6 +769,58 @@ export async function initializeDatabase(fastify) {
     } catch (migrationErr) {
         fastify.log.warn({ category: 'Database' }, `Migration warning: ${migrationErr.message}`)
     }
+
+    const recCacheCreateDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS recommendation_cache (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            catalog_type TEXT NOT NULL,
+            items TEXT NOT NULL DEFAULT '[]',
+            updated_at BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id, catalog_type)
+        );`
+        : `CREATE TABLE IF NOT EXISTS recommendation_cache (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            catalog_type TEXT NOT NULL,
+            items TEXT NOT NULL DEFAULT '[]',
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id, catalog_type)
+        );`
+    await ensureTable('recommendation_cache', recCacheCreateDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_rec_cache_user ON recommendation_cache (sync_user)`,
+        `CREATE INDEX IF NOT EXISTS idx_rec_cache_user_account ON recommendation_cache (sync_user, account_id)`,
+    ], ['sync_user', 'catalog_type', 'items', 'updated_at'], {
+        sync_user: `ALTER TABLE recommendation_cache ADD COLUMN sync_user TEXT NOT NULL DEFAULT ''`,
+        account_id: `ALTER TABLE recommendation_cache ADD COLUMN account_id TEXT NOT NULL DEFAULT '__household__'`,
+        catalog_type: `ALTER TABLE recommendation_cache ADD COLUMN catalog_type TEXT NOT NULL DEFAULT ''`,
+        items: `ALTER TABLE recommendation_cache ADD COLUMN items TEXT NOT NULL DEFAULT '[]'`,
+        updated_at: `ALTER TABLE recommendation_cache ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['sync_user', 'catalog_type'])
+
+    const discoveryPrefsDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS discovery_prefs (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            prefs_json TEXT NOT NULL DEFAULT '{}',
+            updated_at BIGINT NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id)
+        );`
+        : `CREATE TABLE IF NOT EXISTS discovery_prefs (
+            sync_user TEXT NOT NULL,
+            account_id TEXT NOT NULL DEFAULT '__household__',
+            prefs_json TEXT NOT NULL DEFAULT '{}',
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (sync_user, account_id)
+        );`
+    await ensureTable('discovery_prefs', discoveryPrefsDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_discovery_prefs_user ON discovery_prefs (sync_user)`,
+    ], ['sync_user', 'account_id', 'prefs_json', 'updated_at'], {
+        sync_user: `ALTER TABLE discovery_prefs ADD COLUMN sync_user TEXT NOT NULL DEFAULT ''`,
+        account_id: `ALTER TABLE discovery_prefs ADD COLUMN account_id TEXT NOT NULL DEFAULT '__household__'`,
+        prefs_json: `ALTER TABLE discovery_prefs ADD COLUMN prefs_json TEXT NOT NULL DEFAULT '{}'`,
+        updated_at: `ALTER TABLE discovery_prefs ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['sync_user', 'account_id'])
 
     try {
         const MIGRATION_KEY = 'migration:activity_season_clamp_v1'

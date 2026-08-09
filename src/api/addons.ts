@@ -294,7 +294,6 @@ export async function reinstallAddon(
       ...newAddonDescriptor,
       flags: { ...existingAddon.flags, ...newAddonDescriptor.flags },
       metadata: { ...existingAddon.metadata },
-      catalogOverrides: existingAddon.catalogOverrides,
     }
 
     // 4. Update the addons array for the caller (but do NOT push to Stremio yet)

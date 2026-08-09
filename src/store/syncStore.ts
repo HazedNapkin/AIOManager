@@ -489,15 +489,12 @@ export const useSyncStore = create<SyncState>()(
                             decision = 'Seed Cloud (local data exists, cloud is empty)'
                             await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             setTimeout(() => get().syncToRemote(true), 1500)
-                        } else if (isLocalNewer && hasLocalData) {
-                            decision = 'Push Local (local is newer)'
-                            setTimeout(() => get().syncToRemote(true), 1500)
                         } else if (hasRemoteData) {
                             if (isRemoteNewer) {
                                 decision = 'Adopt Remote (cloud is newer, replace local)'
                                 await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'mirror', preUnlockEncryptionKey)
                             } else {
-                                decision = 'Merge (equal timestamps)'
+                                decision = 'Merge (equal or local-newer timestamps)'
                                 await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             }
                         }
@@ -809,9 +806,9 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     const payloadBytes = new TextEncoder().encode(stringifiedState).length
-                    if (payloadBytes > 12 * 1024 * 1024) {
+                    if (payloadBytes > 100 * 1024 * 1024) {
                         const mb = (payloadBytes / 1024 / 1024).toFixed(1)
-                        console.error(`[Sync] Payload is ${mb}MB - exceeds safe threshold (12MB). Aborting push.`)
+                        console.error(`[Sync] Payload is ${mb}MB - exceeds safe threshold (100MB). Aborting push.`)
                         throw new Error(`Sync payload too large (${mb}MB). Remove some accounts or data.`)
                     }
 

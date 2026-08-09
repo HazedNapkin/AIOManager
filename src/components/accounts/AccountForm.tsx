@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   Smile,
   MoreVertical,
+  X,
   type LucideIcon
 } from 'lucide-react'
 import { useEffect, useState, useRef } from 'react'
@@ -95,6 +96,7 @@ export function AccountForm() {
   const [accentColor, setAccentColor] = useState<string | undefined>(undefined)
   const [emoji, setEmoji] = useState('')
   const [emojiSearch, setEmojiSearch] = useState('')
+  const [avatar, setAvatar] = useState('')
   const [hideLastWatched, setHideLastWatched] = useState(false)
   const [hideAddonPreview, setHideAddonPreview] = useState(false)
   const [hidePlatformLogos, setHidePlatformLogos] = useState(false)
@@ -138,6 +140,7 @@ export function AccountForm() {
       }
       setAccentColor(editingAccount.accentColor)
       setEmoji(editingAccount.emoji || '')
+      setAvatar(editingAccount.avatar || '')
       setHideLastWatched(editingAccount.hideLastWatched ?? false)
       setHideAddonPreview(editingAccount.hideAddonPreview ?? false)
       setHidePlatformLogos(editingAccount.hidePlatformLogos ?? false)
@@ -150,6 +153,7 @@ export function AccountForm() {
       setPassword('')
       setAccentColor(undefined)
       setEmoji('')
+      setAvatar('')
       setHideLastWatched(false)
     }
   }, [editingAccount, isOpen])
@@ -222,6 +226,7 @@ export function AccountForm() {
             password: oauthPassword,
             accentColor: accentColor === 'none' ? undefined : accentColor,
             emoji: emoji.trim() || undefined,
+            avatar: avatar || undefined,
             hideLastWatched,
             hideAddonPreview,
             hidePlatformLogos,
@@ -233,6 +238,7 @@ export function AccountForm() {
             name.trim() || resolvedEmail,
             accentColor === 'none' ? undefined : accentColor,
             emoji.trim() || undefined,
+            avatar || undefined,
             'login'
           )
         }
@@ -243,6 +249,7 @@ export function AccountForm() {
             authKey: oauthAuthKey,
             accentColor: accentColor === 'none' ? undefined : accentColor,
             emoji: emoji.trim() || undefined,
+            avatar: avatar || undefined,
             hideLastWatched,
             hideAddonPreview,
             hidePlatformLogos,
@@ -252,7 +259,8 @@ export function AccountForm() {
             oauthAuthKey,
             name.trim() || oauthEmail || 'Account',
             accentColor === 'none' ? undefined : accentColor,
-            emoji.trim() || undefined
+            emoji.trim() || undefined,
+            avatar || undefined
           )
         }
       }
@@ -293,7 +301,7 @@ export function AccountForm() {
     }
     setError('')
     try {
-      await addLocalAccount(name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+      await addLocalAccount(name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
       handleClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create account')
@@ -311,7 +319,7 @@ export function AccountForm() {
     const isFirstConnection = !createdAccountId
     try {
       if (isFirstConnection) {
-        accountId = await addLocalAccount(name.trim() || 'Nuvio Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        accountId = await addLocalAccount(name.trim() || 'Nuvio Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
         setCreatedAccountId(accountId)
       } else {
         accountId = createdAccountId
@@ -359,7 +367,7 @@ export function AccountForm() {
     const isFirstConnection = !createdAccountId
     try {
       if (isFirstConnection) {
-        accountId = await addLocalAccount(name.trim() || 'RealStream Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        accountId = await addLocalAccount(name.trim() || 'RealStream Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
         setCreatedAccountId(accountId)
       } else {
         accountId = createdAccountId
@@ -398,7 +406,7 @@ export function AccountForm() {
     const isFirstConnection = !createdAccountId
     try {
       if (isFirstConnection) {
-        accountId = await addLocalAccount(name.trim() || config.name, accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+        accountId = await addLocalAccount(name.trim() || config.name, accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
         setCreatedAccountId(accountId)
       } else {
         accountId = createdAccountId
@@ -480,6 +488,7 @@ export function AccountForm() {
           password: mode === 'credentials' && password.trim() ? password : undefined,
           accentColor: accentColor === 'none' ? undefined : accentColor,
           emoji: emoji.trim() || undefined,
+          avatar: avatar || undefined,
           hideLastWatched,
           hideAddonPreview,
           hidePlatformLogos,
@@ -490,13 +499,13 @@ export function AccountForm() {
             setError('Auth key is required')
             return
           }
-          await addAccountByAuthKey(authKey.trim(), name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined)
+          await addAccountByAuthKey(authKey.trim(), name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
         } else if (mode === 'credentials') {
           if (!email.trim() || !password.trim()) {
             setError('Email and password are required')
             return
           }
-          await addAccountByCredentials(email.trim(), password, name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, authIntent)
+          await addAccountByCredentials(email.trim(), password, name.trim(), accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined, authIntent)
         }
       }
       if (editingAccount) {
@@ -633,15 +642,15 @@ export function AccountForm() {
                         <h4 className="text-xs font-semibold text-primary/60 mb-3 px-1">{group}</h4>
                         <div className="grid grid-cols-6 gap-2">
                           {filtered.map((e) => (
-                            <button
-                              key={e.char}
-                              type="button"
-                              onClick={() => setEmoji(e.char)}
-                              className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-115 hover:bg-primary/20 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
-                              title={e.keywords[0]}
-                            >
-                              {e.char}
-                            </button>
+                            <Tooltip key={e.char} content={e.keywords[0]}>
+                              <button
+                                type="button"
+                                onClick={() => setEmoji(e.char)}
+                                className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-115 hover:bg-primary/20 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
+                              >
+                                {e.char}
+                              </button>
+                            </Tooltip>
                           ))}
                         </div>
                       </div>
@@ -661,6 +670,39 @@ export function AccountForm() {
           >
             Clear
           </Button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div>
+          <Label className="text-xs font-medium text-muted-foreground uppercase">Avatar URL</Label>
+          <p className="text-xs text-muted-foreground mt-1">Direct image link (https://...). Overrides emoji when set. Syncs across devices.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative h-10 w-10 rounded-lg border border-border/40 bg-muted/30 overflow-hidden flex items-center justify-center shrink-0">
+            <AccountAvatar account={{ name: name || 'Account', email, emoji, avatar: avatar || undefined, status: 'active' }} size="sm" showStatus={false} />
+          </div>
+          <input
+            type="url"
+            value={avatar}
+            onChange={(e) => setAvatar(e.target.value)}
+            placeholder="https://example.com/avatar.png"
+            className="flex h-10 w-full rounded-md border border-border/50 bg-background/50 px-3 py-2 text-sm transition-[border,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {avatar && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={() => setAvatar('')}
+              aria-label="Clear avatar URL"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1148,7 +1190,7 @@ export function AccountForm() {
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="relative shrink-0">
-                          <AccountAvatar account={{ name: displayName, email, emoji, status: 'active' }} size="lg" showStatus={false} />
+                          <AccountAvatar account={{ name: displayName, email, emoji, avatar, status: 'active' }} size="lg" showStatus={false} />
                           {hasAccent && (
                             <span
                               className="pointer-events-none absolute inset-0 rounded-xl"
@@ -1258,15 +1300,15 @@ export function AccountForm() {
                               <h4 className="text-xs font-semibold text-primary/60 mb-3 px-1">{group}</h4>
                               <div className="grid grid-cols-6 gap-2">
                                 {filtered.map((e) => (
-                                  <button
-                                    key={e.char}
-                                    type="button"
-                                    onClick={() => setEmoji(e.char)}
-                                    className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-115 hover:bg-primary/20 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
-                                    title={e.keywords[0]}
-                                  >
-                                    {e.char}
-                                  </button>
+                                  <Tooltip key={e.char} content={e.keywords[0]}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEmoji(e.char)}
+                                      className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-115 hover:bg-primary/20 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
+                                    >
+                                      {e.char}
+                                    </button>
+                                  </Tooltip>
                                 ))}
                               </div>
                             </div>
@@ -1286,6 +1328,39 @@ export function AccountForm() {
                 >
                   Clear
                 </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs font-medium text-muted-foreground uppercase">Avatar URL</Label>
+                <p className="text-xs text-muted-foreground mt-1">Direct image link (https://...). Overrides emoji when set. Syncs across devices.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative h-10 w-10 rounded-lg border border-border/40 bg-muted/30 overflow-hidden flex items-center justify-center shrink-0">
+                  <AccountAvatar account={{ name: name || 'Account', email, emoji, avatar: avatar || undefined, status: 'active' }} size="sm" showStatus={false} />
+                </div>
+                <input
+                  type="url"
+                  value={avatar}
+                  onChange={(e) => setAvatar(e.target.value)}
+                  placeholder="https://example.com/avatar.png"
+                  className="flex h-10 w-full rounded-md border border-border/50 bg-background/50 px-3 py-2 text-sm transition-[border,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {avatar && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => setAvatar('')}
+                    aria-label="Clear avatar URL"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             </div>
 

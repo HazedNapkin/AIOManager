@@ -98,6 +98,7 @@ let _lastWorkerRun: number = 0
 let _isPulling = false
 let _adaptiveIntervalMs = 60000
 let _stableCheckCount = 0
+const _pendingRuleUpdates = new Set<string>()
 const BASE_INTERVAL_MS = 60000
 const MAX_INTERVAL_MS = 600000
 const STABLE_THRESHOLD = 3
@@ -193,7 +194,10 @@ const reconcileAccountAddonsWithActiveRule = async (rule: FailoverRule) => {
 const scheduleNextPoll = () => {
     if (automationInterval) window.clearTimeout(automationInterval)
     const state = useFailoverStore.getState()
-    if (!state.isMonitoring) return
+    if (!state.isMonitoring) {
+        automationInterval = window.setTimeout(scheduleNextPoll, 60000)
+        return
+    }
     if (state.rules.length === 0) {
         automationInterval = window.setTimeout(scheduleNextPoll, 300000)
         return
@@ -204,7 +208,10 @@ const scheduleNextPoll = () => {
             return
         }
         const currentState = useFailoverStore.getState()
-        if (!currentState.isMonitoring) return
+        if (!currentState.isMonitoring) {
+            scheduleNextPoll()
+            return
+        }
 
         const hadActiveUrlBefore = new Map(currentState.rules.map(r => [r.id, r.activeUrl]))
         await currentState.pulse()
@@ -560,6 +567,12 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 }
                 set({ webhook })
             }
+
+            const finalRules = get().rules
+            if (finalRules.length > 0 && !get().isMonitoring && !automationInterval) {
+                if (import.meta.env.DEV) console.log(`[Failover] Auto-starting monitoring for ${finalRules.length} rules`)
+                get().startAutomation()
+            }
         } catch (error) {
             if (import.meta.env.DEV) console.error('Failed to load failover rules:', error)
         }
@@ -706,7 +719,12 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 },
                 body: JSON.stringify({ accountIds })
             })
-            if (!resp.ok) return
+            if (!resp.ok) {
+                if (import.meta.env?.DEV) console.warn(`[Failover] pullServerState failed: ${resp.status} ${resp.statusText}`)
+                _adaptiveIntervalMs = BASE_INTERVAL_MS
+                _stableCheckCount = 0
+                return
+            }
             const respData = (await resp.json()) as Record<string, unknown>
             const batchedStates = (respData?.states || {}) as Record<string, Record<string, unknown>[]>
             const serverHeartbeat = respData?.lastWorkerRun as string | undefined
@@ -727,7 +745,10 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                     const ruleIndex = updatedRules.findIndex(r => r.id === (serverRule.id as string))
                     if (ruleIndex !== -1) {
                         const localRule = updatedRules[ruleIndex]
-                        const nextPriorityChain = Array.isArray(serverRule.priorityChain) ? (serverRule.priorityChain as string[]) : localRule.priorityChain
+                        const isPendingUpdate = _pendingRuleUpdates.has(localRule.id)
+                        const nextPriorityChain = isPendingUpdate
+                            ? localRule.priorityChain
+                            : (Array.isArray(serverRule.priorityChain) ? (serverRule.priorityChain as string[]) : localRule.priorityChain)
                         const nextActiveUrl = (serverRule.activeUrl as string) || localRule.activeUrl || nextPriorityChain?.[0]
                         const normNextActive = normalizeAddonUrl(nextActiveUrl || '')
                         const normLocalActive = normalizeAddonUrl(localRule.activeUrl || '')
@@ -850,13 +871,20 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
     },
 
     updateRule: async (ruleId, updates) => {
-        const rules = get().rules.map(r => r.id === ruleId ? { ...r, ...updates } : r)
-        set({ rules })
-        await localforage.setItem(STORAGE_KEY, rules)
-        const rule = rules.find(r => r.id === ruleId)
-        if (rule) {
-            const reconciled = await reconcileAccountAddonsWithActiveRule(rule)
-            if (!reconciled) await syncRuleToServer(rule)
+        _pendingRuleUpdates.add(ruleId)
+        const timeoutId = setTimeout(() => _pendingRuleUpdates.delete(ruleId), 10000)
+        try {
+            const rules = get().rules.map(r => r.id === ruleId ? { ...r, ...updates } : r)
+            set({ rules })
+            await localforage.setItem(STORAGE_KEY, rules)
+            const rule = rules.find(r => r.id === ruleId)
+            if (rule) {
+                const reconciled = await reconcileAccountAddonsWithActiveRule(rule)
+                if (!reconciled) await syncRuleToServer(rule)
+            }
+        } finally {
+            clearTimeout(timeoutId)
+            _pendingRuleUpdates.delete(ruleId)
         }
         triggerSync()
     },

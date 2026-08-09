@@ -2,6 +2,7 @@ import { checkSavedAddonUpdates } from '@/api/addons'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
@@ -28,7 +29,6 @@ import { BulkEditDialog } from './BulkEditDialog'
 import { AccountPickerDialog } from '../accounts/AccountPickerDialog'
 import { BulkUrlReplaceDialog } from './BulkUrlReplaceDialog'
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
-import { Tooltip } from '@/components/ui/tooltip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { StatusChip } from '@/components/ui/status-chip'
@@ -496,33 +496,40 @@ export function SavedAddonLibrary() {
             <TabsTrigger value="library" className="h-8 px-4 text-xs">
               Library
             </TabsTrigger>
-            <TabsTrigger value="discover" className="h-8 px-4 text-xs" title="Browse community addons from stremio-addons.net.">
-              <Compass className="h-3.5 w-3.5" />
-              Discover
-            </TabsTrigger>
-            <TabsTrigger
-              value="sync"
-              className="h-8 px-4 text-xs"
-              title="Track which library addons are synced to installed accounts."
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              Sync
-              {syncOverviewData.length > 0 && (
-                <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
-              )}
-            </TabsTrigger>
+            <Tooltip content="Browse community addons from stremio-addons.net.">
+              <TooltipTrigger asChild>
+                <TabsTrigger value="discover" className="h-8 px-4 text-xs">
+                  <Compass className="h-3.5 w-3.5" />
+                  Discover
+                </TabsTrigger>
+              </TooltipTrigger>
+            </Tooltip>
+            <Tooltip content="Track which library addons are synced to installed accounts.">
+              <TooltipTrigger asChild>
+                <TabsTrigger
+                  value="sync"
+                  className="h-8 px-4 text-xs"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Sync
+                  {syncOverviewData.length > 0 && (
+                    <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
+                  )}
+                </TabsTrigger>
+              </TooltipTrigger>
+            </Tooltip>
           </TabsList>
         </Tabs>
 
         {libraryTab === 'library' && (
           <div className="flex flex-wrap items-center gap-2 min-w-0">
             {selectedProfileId && (
-              <Tooltip content="All Addons">
-                <Button variant="outline" size="sm" onClick={() => setSelectedProfileId(null)} className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground shrink-0">
+              <ToolbarShell className="w-fit max-w-full p-2" contentClassName="gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setSelectedProfileId(null)} className="h-8 shrink-0 gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground">
                   <ArrowLeft className="h-4 w-4" />
                   All Addons
                 </Button>
-              </Tooltip>
+              </ToolbarShell>
             )}
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight truncate">
               {selectedProfileId
@@ -747,12 +754,14 @@ export function SavedAddonLibrary() {
                 onOpenAddDialog={handleOpenAddDialog}
                 onToggleMobileFilters={() => setShowMobileFilters(v => !v)}
               />
-              {updatesCount > 0 && (
-                <div className="flex items-start gap-2 text-xs text-muted-foreground -mt-2">
-                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-                  <p>Version numbers are informational; updating isn't required for an addon to keep working. It just re-fetches the latest manifest.</p>
-                </div>
-              )}
+              <div className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                <p>
+                  <span className="font-medium text-foreground/80">Version numbers are informational.</span>{' '}
+                  An addon keeps working whether or not you update; updating just re-fetches the latest manifest. It's
+                  only worth doing when an addon's capabilities actually change, which is flagged separately as a manifest change.
+                </p>
+              </div>
             </div>
           )}
 

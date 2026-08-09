@@ -6,7 +6,7 @@ import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { useUIStore } from '@/store/uiStore'
 
-function maskedDisplayName(name: string, email: string | undefined, privacyLevel: number): string {
+export function maskedDisplayName(name: string, email: string | undefined, privacyLevel: number): string {
     if (name && !name.includes('@')) return maskNameLevel(name, privacyLevel)
     const emailStr = name && name.includes('@') ? name : (email || '')
     return maskEmailLevel(emailStr, privacyLevel) || name || email || ''
@@ -17,6 +17,7 @@ interface Account {
     name: string
     email?: string
     emoji?: string
+    avatar?: string
 }
 
 interface PaginationModeProps {
@@ -42,21 +43,36 @@ interface FilterModeProps {
 
 type AccountSwitcherProps = PaginationModeProps | FilterModeProps
 
-const OUTLINE_BTN = "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-xs font-medium h-8 px-3 border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+const OUTLINE_BTN = "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl text-xs font-medium h-8 px-3 border border-border/40 bg-muted/30 shadow-sm hover:bg-muted/50 hover:text-foreground transition-colors"
 
-function AccountAvatar({ account, size = 'sm' }: { account: Account; size?: 'sm' | 'md' }) {
+export function AccountAvatar({ account, size = 'sm' }: { account: Account; size?: 'sm' | 'md' }) {
     const dim = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6'
     const fontSize = size === 'sm' ? 'text-xs' : 'text-xs'
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
     const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
     const initial = account.emoji || (maskedDisplayName(account.name, account.email, privacyLevel)[0] || '?').toUpperCase()
+    const [avatarFailed, setAvatarFailed] = useState(false)
+    useEffect(() => { setAvatarFailed(false) }, [account.avatar])
+    const showAvatar = !!account.avatar && !avatarFailed
     return (
         <div className={`relative ${dim} shrink-0 flex items-center justify-center`}>
             <SquircleOverlay />
-            <span className={`relative z-10 ${fontSize} font-bold text-muted-foreground`}>
-                {initial}
-            </span>
+            {showAvatar ? (
+                <img
+                    src={account.avatar}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => setAvatarFailed(true)}
+                    className="absolute inset-0 h-full w-full object-cover z-10"
+                    style={{ filter: 'url(#squircle)' }}
+                />
+            ) : (
+                <span className={`relative z-10 ${fontSize} font-bold text-muted-foreground`}>
+                    {initial}
+                </span>
+            )}
         </div>
     )
 }

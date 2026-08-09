@@ -337,9 +337,11 @@ export function InstallSavedAddonDialog({
                           textClassName="text-sm"
                         />
                         <div className="min-w-0 flex-1">
-                          <h4 className="truncate font-semibold leading-tight tracking-tight" title={addon.name}>
-                            {addon.name}
-                          </h4>
+                          <Tooltip content={addon.name}>
+                            <h4 className="truncate font-semibold leading-tight tracking-tight">
+                              {addon.name}
+                            </h4>
+                          </Tooltip>
                           <p className="mt-1 truncate text-xs text-muted-foreground">
                             v{addon.manifest.version}
                           </p>

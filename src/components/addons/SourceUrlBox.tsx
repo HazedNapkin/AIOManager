@@ -151,7 +151,7 @@ export function SourceUrlBox({
                 if (event.key === 'Escape') resetEdit()
                 if (event.key === 'Enter') handleReplace(false)
               }}
-              className="h-8 min-w-0 flex-1 font-mono text-xs"
+              className="h-8 min-w-0 flex-1 border-border/30 bg-transparent px-2 py-1 font-mono text-xs"
               autoFocus
             />
             <div className="flex shrink-0 items-center gap-1">

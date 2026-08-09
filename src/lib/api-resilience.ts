@@ -54,7 +54,18 @@ export async function resilientFetch(
 
             if (response.status === 429 && attempt < retries) {
                 const retryAfter = response.headers.get('Retry-After');
-                const delay = retryAfter ? parseInt(retryAfter) * 1000 : retryDelay * Math.pow(2, attempt);
+                let delay = retryDelay * Math.pow(2, attempt);
+                if (retryAfter) {
+                    const asSeconds = parseInt(retryAfter, 10);
+                    if (Number.isFinite(asSeconds) && asSeconds > 0) {
+                        delay = Math.min(asSeconds * 1000, 8000);
+                    } else {
+                        const asDate = Date.parse(retryAfter);
+                        if (Number.isFinite(asDate)) {
+                            delay = Math.min(Math.max(0, asDate - Date.now()), 8000);
+                        }
+                    }
+                }
                 if (import.meta.env.DEV) console.warn(`[API] 429 Too Many Requests. Retrying in ${delay}ms...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
                 continue;
@@ -70,6 +81,10 @@ export async function resilientFetch(
         } catch (err) {
             clearTimeout(id);
             lastError = err instanceof Error ? err : new Error(String(err));
+
+            if (lastError.name === 'AbortError' && fetchOptions.signal?.aborted) {
+                return new Response(null, { status: 499, statusText: 'Client Closed Request' })
+            }
 
             if (attempt < retries && isIdempotent) {
                 const isTimeout = lastError.name === 'AbortError';

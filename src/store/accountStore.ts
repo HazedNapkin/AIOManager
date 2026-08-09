@@ -335,9 +335,9 @@ export interface AccountStore {
 
       initialize: () => Promise<void>
       updateLatestVersions: (versions: Record<string, string>) => void
-      addAccountByAuthKey: (authKey: string, name: string, accentColor?: string, emoji?: string) => Promise<void>
-      addAccountByCredentials: (email: string, password: string, name: string, accentColor?: string, emoji?: string, intent?: 'login' | 'signup') => Promise<void>
-      addLocalAccount: (name: string, accentColor?: string, emoji?: string) => Promise<string>
+      addAccountByAuthKey: (authKey: string, name: string, accentColor?: string, emoji?: string, avatar?: string) => Promise<void>
+      addAccountByCredentials: (email: string, password: string, name: string, accentColor?: string, emoji?: string, avatar?: string, intent?: 'login' | 'signup') => Promise<void>
+      addLocalAccount: (name: string, accentColor?: string, emoji?: string, avatar?: string) => Promise<string>
       removeAccount: (id: string) => Promise<void>
       syncAccount: (id: string, forceRefresh?: boolean) => Promise<void>
       syncAllAccounts: (silent?: boolean) => Promise<void>
@@ -352,7 +352,7 @@ export interface AccountStore {
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
             id: string,
-            data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
+            data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
       ) => Promise<void>
       updateAccountNote: (accountId: string, note: string) => Promise<void>
       toggleAddonProtection: (
@@ -531,7 +531,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             updateLatestVersionsCoordinator(versions)
       },
 
-      addAccountByAuthKey: async (authKey: string, name: string, accentColor?: string, emoji?: string) => {
+      addAccountByAuthKey: async (authKey: string, name: string, accentColor?: string, emoji?: string, avatar?: string) => {
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             const start = Date.now()
@@ -584,6 +584,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         status: 'active',
                         accentColor,
                         emoji,
+                        avatar,
                         profiles: [],
                         apiKey: safeUUID(),
                         connections: [{
@@ -625,7 +626,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             }
       },
 
-      addAccountByCredentials: async (email: string, password: string, name: string, accentColor?: string, emoji?: string, intent: 'login' | 'signup' = 'login') => {
+      addAccountByCredentials: async (email: string, password: string, name: string, accentColor?: string, emoji?: string, avatar?: string, intent: 'login' | 'signup' = 'login') => {
             if (_registrationInProgress) throw new Error('Registration already in progress')
             _registrationInProgress = true
             const opId = '__add_account__'
@@ -683,6 +684,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         status: 'active',
                         accentColor,
                         emoji,
+                        avatar,
                         profiles: [],
                         apiKey: safeUUID(),
                         connections: [{
@@ -726,7 +728,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
              }
         },
 
-      addLocalAccount: async (name: string, accentColor?: string, emoji?: string) => {
+      addLocalAccount: async (name: string, accentColor?: string, emoji?: string, avatar?: string) => {
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             trace('account', 'add.start', { method: 'local' })
@@ -741,6 +743,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         status: 'active',
                         accentColor,
                         emoji,
+                        avatar,
                         profiles: [],
                         apiKey: safeUUID(),
                   }
@@ -909,7 +912,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return importAccounts(json, isSilent, mode, localDecryptionKey)
       },
 
-      updateAccount: async (id: string, data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {
+      updateAccount: async (id: string, data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {
             // The re-auth branch awaits (login + getAddons) then writes a snapshot taken before the
             // await, which would clobber any addon op that landed meanwhile. Hold the per-account
             // mutex so this serializes with addon writes instead of racing them.
@@ -926,6 +929,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         name: data.name,
                         accentColor: data.accentColor,
                         emoji: data.emoji,
+                        avatar: 'avatar' in data ? data.avatar : account.avatar,
                         note: data.note || undefined,
                         hideLastWatched: data.hideLastWatched ?? false,
                         hideAddonPreview: data.hideAddonPreview ?? false,

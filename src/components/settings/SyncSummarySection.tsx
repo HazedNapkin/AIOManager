@@ -38,13 +38,15 @@ export function SyncSummarySection() {
                             <p className="text-xs text-muted-foreground">Saved addons that mirror into installed account addons.</p>
                         </div>
                     </div>
-                    <button
-                        className="inline-flex h-8 items-center justify-center gap-1 rounded-xl border border-border/40 bg-background/60 px-3 text-xs font-semibold uppercase text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary sm:self-auto"
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1.5 text-xs font-semibold shrink-0 self-start sm:self-auto"
                         onClick={() => navigate('/saved-addons?tab=sync')}
                     >
-                        Manage
+                        <span>Manage</span>
                         <ChevronRight className="h-3 w-3" />
-                    </button>
+                    </Button>
                 </div>
 
                 <div className="grid gap-2">

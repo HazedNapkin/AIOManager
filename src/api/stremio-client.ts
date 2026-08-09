@@ -286,7 +286,7 @@ export class StremioClient {
 
     const fetchUrl = shouldFetchDirectly
       ? manifestUrl
-      : `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}&cb=${interval}`
+      : `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}&cb=${interval}${force ? '&nocache=1' : ''}`
 
     try {
       if (import.meta.env.DEV) console.log(

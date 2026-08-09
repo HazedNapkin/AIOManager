@@ -131,10 +131,10 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
             )}
 
             <div className="flex gap-2 pt-2 border-t border-border/20">
-                <Button onClick={onCancel} variant="ghost" className="flex-1 h-8 text-xs gap-1.5 rounded-lg">
+                <Button onClick={onCancel} variant="subtle" className="flex-1 h-8 text-xs gap-1.5 rounded-xl">
                     <X className="w-3.5 h-3.5" /> Cancel
                 </Button>
-                <Button onClick={handleSave} className="flex-1 h-8 text-xs gap-1.5 rounded-lg">
+                <Button onClick={handleSave} className="flex-1 h-8 text-xs gap-1.5 rounded-xl">
                     <Check className="w-3.5 h-3.5" /> Apply
                 </Button>
             </div>

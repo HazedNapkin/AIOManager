@@ -1,0 +1,279 @@
+import db from '../db.js'
+import { encrypt, decrypt } from '../crypto.js'
+import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
+import { verifyAuth } from '../auth.js'
+import { isSafeUrlResolved } from '../utils/ssrf.js'
+import { maskContext } from '../utils/log-helpers.js'
+
+const SUPPORTED_PROVIDERS = new Set([
+    'tmdb', 'anilist', 'tvdb', 'mal', 'mdblist', 'simkl', 'trakt', 'pmdb'
+])
+
+const PROVIDER_KEY_ALIASES = {
+    themoviedb: 'tmdb',
+    'the-moviedb': 'tmdb',
+    themoviedb_org: 'tmdb',
+    myanimelist: 'mal',
+    'myanimelist.net': 'mal',
+    'anilist.co': 'anilist',
+    'tvdb.com': 'tvdb',
+    thetvdb: 'tvdb',
+    'publicmetadb': 'pmdb',
+    'publicmetadb.com': 'pmdb',
+    publicmeta: 'pmdb',
+    'ratingposterdb': 'rpdb',
+    'ratingposterdb.com': 'rpdb',
+    'fanart.tv': 'fanart',
+    'mdblist.com': 'mdblist',
+}
+
+function normalizeProvider(raw) {
+    if (typeof raw !== 'string') return null
+    const lower = raw.trim().toLowerCase()
+    if (!lower) return null
+    const aliased = PROVIDER_KEY_ALIASES[lower] || lower
+    if (!SUPPORTED_PROVIDERS.has(aliased)) return null
+    return aliased
+}
+
+function detectKeyFormat(key) {
+    if (typeof key !== 'string' || !key) return 'unknown'
+    if (/^[0-9a-fA-F]{32}$/.test(key)) return 'v3'
+    if (key.startsWith('eyJ')) return 'v4'
+    return 'unknown'
+}
+
+function isValidKeyValue(key) {
+    return typeof key === 'string' && key.trim().length > 0 && key.length <= 4096
+}
+
+async function upsertMetadataKey(userId, provider, encryptedKey, keyFormat, now) {
+    await db.run(
+        `INSERT INTO metadata_keys (user_id, provider, encrypted_key, key_format, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (user_id, provider) DO UPDATE SET
+            encrypted_key = excluded.encrypted_key,
+            key_format = excluded.key_format,
+            updated_at = excluded.updated_at`,
+        [userId, provider, encryptedKey, keyFormat, now, now]
+    )
+}
+
+export function registerMetadataKeysRoutes(fastify) {
+    fastify.post('/api/metadata-keys', {
+        bodyLimit: 1024 * 16,
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['provider', 'key'],
+                properties: {
+                    provider: { type: 'string' },
+                    key: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const { provider: rawProvider, key: rawKey } = request.body || {}
+        const provider = normalizeProvider(rawProvider)
+        if (!provider) {
+            reply.status(400); return { error: 'Unsupported provider' }
+        }
+        if (!isValidKeyValue(rawKey)) {
+            reply.status(400); return { error: 'Invalid key' }
+        }
+
+        const key = rawKey.trim()
+        const keyFormat = detectKeyFormat(key)
+        const now = Date.now()
+
+        try {
+            await upsertMetadataKey(authUser, provider, encrypt(key, PRIMARY_KEY), keyFormat, now)
+        } catch (err) {
+            fastify.log.error({ category: 'MetadataKeys' }, `Save failed for provider ${provider}: ${err.message}`)
+            reply.status(500); return { error: 'Failed to save key' }
+        }
+
+        fastify.log.info({ category: 'MetadataKeys' }, `Stored ${provider} (${keyFormat}) key for user ${maskContext(authUser)}.`)
+        return { success: true, provider, keyFormat }
+    })
+
+    fastify.get('/api/metadata-keys', {
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        try {
+            const rows = await db.query(
+                'SELECT provider, key_format, updated_at FROM metadata_keys WHERE user_id = $1 ORDER BY provider ASC',
+                [authUser]
+            )
+            const providers = (rows || []).map(row => ({
+                provider: row.provider,
+                keyFormat: row.key_format || 'unknown',
+                updatedAt: Number(row.updated_at) || 0
+            }))
+            return { providers }
+        } catch (err) {
+            fastify.log.error({ category: 'MetadataKeys' }, `List failed: ${err.message}`)
+            reply.status(500); return { error: 'Failed to list keys' }
+        }
+    })
+
+    fastify.delete('/api/metadata-keys/:provider', {
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const provider = normalizeProvider(request.params.provider)
+        if (!provider) {
+            reply.status(400); return { error: 'Unsupported provider' }
+        }
+
+        try {
+            await db.run(
+                'DELETE FROM metadata_keys WHERE user_id = $1 AND provider = $2',
+                [authUser, provider]
+            )
+        } catch (err) {
+            fastify.log.error({ category: 'MetadataKeys' }, `Delete failed for provider ${provider}: ${err.message}`)
+            reply.status(500); return { error: 'Failed to delete key' }
+        }
+
+        return { success: true }
+    })
+
+    fastify.get('/api/metadata-keys/:provider/value', {
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const provider = normalizeProvider(request.params.provider)
+        if (!provider) {
+            reply.status(400); return { error: 'Unsupported provider' }
+        }
+
+        try {
+            const row = await db.get(
+                'SELECT encrypted_key FROM metadata_keys WHERE user_id = $1 AND provider = $2',
+                [authUser, provider]
+            )
+            if (!row?.encrypted_key) {
+                reply.status(404); return { error: 'Key not found' }
+            }
+            const plaintext = decrypt(row.encrypted_key, FALLBACK_KEYS)
+            if (!plaintext) {
+                reply.status(500); return { error: 'Failed to decrypt key' }
+            }
+            return { provider, key: plaintext }
+        } catch (err) {
+            fastify.log.error({ category: 'MetadataKeys' }, `Get value failed for provider ${provider}: ${err.message}`)
+            reply.status(500); return { error: 'Failed to get key' }
+        }
+    })
+
+    fastify.post('/api/metadata-keys/import-aiometadata', {
+        bodyLimit: 1024 * 16,
+        config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['aiometadataUrl', 'uuid', 'password'],
+                properties: {
+                    aiometadataUrl: { type: 'string' },
+                    uuid: { type: 'string' },
+                    password: { type: 'string' },
+                    addonPassword: { type: 'string' }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const { aiometadataUrl: rawUrl, uuid: rawUuid, password, addonPassword } = request.body || {}
+        const baseUrl = typeof rawUrl === 'string' ? rawUrl.trim().replace(/\/+$/, '') : ''
+        const uuid = typeof rawUuid === 'string' ? rawUuid.trim() : ''
+        if (!baseUrl || !uuid || typeof password !== 'string' || password.length === 0) {
+            reply.status(400); return { error: 'aiometadataUrl, uuid and password are required' }
+        }
+
+        const targetUrl = `${baseUrl}/api/config/load/${encodeURIComponent(uuid)}`
+        if (!(await isSafeUrlResolved(targetUrl))) {
+            reply.status(400); return { error: 'Invalid AIOMetadata URL' }
+        }
+
+        let configJson
+        try {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 15000)
+            let response
+            try {
+                response = await fetch(targetUrl, {
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ password, addonPassword: addonPassword || undefined })
+                })
+            } finally {
+                clearTimeout(timeout)
+            }
+            if (!response) {
+                reply.status(502); return { error: 'Could not reach AIOMetadata instance' }
+            }
+            if (response.status >= 300 && response.status < 400) {
+                reply.status(502); return { error: 'Could not reach AIOMetadata instance' }
+            }
+            if (response.status === 401 || response.status === 403) {
+                reply.status(401); return { error: 'AIOMetadata authentication failed' }
+            }
+            if (response.status >= 400) {
+                reply.status(502); return { error: 'Could not reach AIOMetadata instance' }
+            }
+            try {
+                configJson = await response.json()
+            } catch {
+                reply.status(502); return { error: 'Could not reach AIOMetadata instance' }
+            }
+        } catch (err) {
+            const aborted = err && err.name === 'AbortError'
+            fastify.log.warn({ category: 'MetadataKeys' }, `AIOMetadata import fetch failed: ${aborted ? 'timeout' : err.message}`)
+            reply.status(502); return { error: 'Could not reach AIOMetadata instance' }
+        }
+
+        const configRoot = (configJson && typeof configJson === 'object')
+            ? (configJson.config && typeof configJson.config === 'object' ? configJson.config : configJson)
+            : null
+        const apiKeys = configRoot && typeof configRoot.apiKeys === 'object' ? configRoot.apiKeys : null
+        if (!apiKeys) {
+            return { imported: [] }
+        }
+
+        const imported = []
+        const now = Date.now()
+        for (const [rawProvider, rawValue] of Object.entries(apiKeys)) {
+            const provider = normalizeProvider(rawProvider)
+            if (!provider) continue
+            const keyStr = typeof rawValue === 'string'
+                ? rawValue.trim()
+                : (rawValue == null ? '' : String(rawValue).trim())
+            if (!isValidKeyValue(keyStr)) continue
+            const keyFormat = detectKeyFormat(keyStr)
+            try {
+                await upsertMetadataKey(authUser, provider, encrypt(keyStr, PRIMARY_KEY), keyFormat, now)
+                imported.push({ provider, keyFormat })
+            } catch (err) {
+                fastify.log.warn({ category: 'MetadataKeys' }, `Import save failed for provider ${provider}: ${err.message}`)
+            }
+        }
+
+        fastify.log.info({ category: 'MetadataKeys' }, `Imported ${imported.length} metadata key(s) for user ${maskContext(authUser)} from AIOMetadata.`)
+        return { imported }
+    })
+}

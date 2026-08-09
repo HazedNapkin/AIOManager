@@ -113,7 +113,7 @@ export async function absorbConnectionAddons(account: Account, accountId: string
     const { isCinemetaAddon, detectAllPatches, applyCinemetaConfiguration } = await import('@/lib/cinemeta-utils')
 
     const newDescriptors: AddonDescriptor[] = await Promise.all(discovered.map(async (d) => {
-        const base = { transportUrl: d.transportUrl, flags: { enabled: true }, metadata: { lastUpdated: Date.now() } }
+        const base = { transportUrl: d.transportUrl, flags: { enabled: d.enabled }, metadata: { lastUpdated: Date.now() } }
         try {
             const { manifest } = await fetchAddonManifest(d.transportUrl, accountId)
             let repaired = sanitizeAddonManifest(manifest, d.transportUrl)

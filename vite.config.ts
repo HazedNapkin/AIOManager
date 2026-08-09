@@ -75,6 +75,11 @@ export default defineConfig({
                 target: 'http://127.0.0.1:16100',
                 changeOrigin: true,
                 secure: false,
+            },
+            '/addon': {
+                target: 'http://127.0.0.1:16100',
+                changeOrigin: true,
+                secure: false,
             }
         }
     }

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { motion } from 'framer-motion'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -140,9 +141,41 @@ export function RealStreamSetupDialog({ open, onOpenChange, onComplete }: RealSt
                 <div className="min-h-[200px]">
                     {step === 'login' && (
                         <div className="space-y-4 mt-2">
-                            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1">
-                                <button type="button" onClick={() => { setMode('login'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors', mode === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
-                                <button type="button" onClick={() => { setMode('signup'); setError(null) }} className={cn('h-8 rounded-lg text-xs font-semibold transition-colors', mode === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
+                            <div className="grid grid-cols-2 gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40">
+                                <button
+                                    type="button"
+                                    onClick={() => { setMode('login'); setError(null) }}
+                                    className={cn(
+                                        'relative h-8 rounded-lg text-xs font-semibold transition-colors z-10',
+                                        mode === 'login' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                                    )}
+                                >
+                                    {mode === 'login' && (
+                                        <motion.div
+                                            layoutId="rs-mode-active"
+                                            className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
+                                            transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                                        />
+                                    )}
+                                    Sign In
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setMode('signup'); setError(null) }}
+                                    className={cn(
+                                        'relative h-8 rounded-lg text-xs font-semibold transition-colors z-10',
+                                        mode === 'signup' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                                    )}
+                                >
+                                    {mode === 'signup' && (
+                                        <motion.div
+                                            layoutId="rs-mode-active"
+                                            className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
+                                            transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                                        />
+                                    )}
+                                    Create Account
+                                </button>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="realstream-email">Email</Label>

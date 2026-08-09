@@ -6,6 +6,8 @@
 // once a token has fully expired the user must re-authenticate.
 const DEFAULT_BASE_URL = 'https://realbase.fortheweak.cloud'
 
+import { resilientFetch } from '../utils/api-resilience.js'
+
 const AUTH_PATH = '/api/collections/users/auth-with-password'
 const REFRESH_PATH = '/api/collections/users/auth-refresh'
 const ADDONS_PATH = '/api/collections/addons/records'
@@ -109,9 +111,10 @@ export function createRealStreamDriver(options = {}) {
     })
 
     const request = async (method, path, accessToken, body) => {
-        const res = await fetch(`${baseUrl}${path}`, {
+        const res = await resilientFetch(`${baseUrl}${path}`, {
             method,
             headers: makeHeaders(accessToken),
+            timeout: 15000,
             ...(body !== undefined ? { body: JSON.stringify(body) } : {})
         })
         if (!res.ok) {
@@ -148,11 +151,12 @@ export function createRealStreamDriver(options = {}) {
         capabilities: ['addons'],
 
         async authenticate(email, password) {
-            const res = await fetch(`${baseUrl}${AUTH_PATH}`, {
+            const res = await resilientFetch(`${baseUrl}${AUTH_PATH}`, {
                 method: 'POST',
                 headers: makeHeaders(null),
                 body: JSON.stringify({ identity: email, password }),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                timeout: AUTH_TIMEOUT_MS,
+                retries: 0
             })
             if (!res.ok) {
                 const err = new Error(`RealStream auth failed: ${res.status}`)
@@ -165,11 +169,12 @@ export function createRealStreamDriver(options = {}) {
         },
 
         async register(email, password, name) {
-            const res = await fetch(`${baseUrl}/api/collections/users/records`, {
+            const res = await resilientFetch(`${baseUrl}/api/collections/users/records`, {
                 method: 'POST',
                 headers: makeHeaders(null),
                 body: JSON.stringify({ email, password, passwordConfirm: password, name: name || email.split('@')[0] }),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                timeout: AUTH_TIMEOUT_MS,
+                retries: 0
             })
             if (!res.ok) {
                 let data = null
@@ -190,10 +195,11 @@ export function createRealStreamDriver(options = {}) {
         // PocketBase extends the current token; it does NOT use a separate refresh token, so
         // the still-valid access token is what's passed in. A 401/403 here means re-login.
         async refreshAccessToken(accessToken) {
-            const res = await fetch(`${baseUrl}${REFRESH_PATH}`, {
+            const res = await resilientFetch(`${baseUrl}${REFRESH_PATH}`, {
                 method: 'POST',
                 headers: makeHeaders(accessToken),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                timeout: AUTH_TIMEOUT_MS,
+                retries: 0
             })
             if (!res.ok) {
                 const err = new Error(`RealStream token refresh failed: ${res.status}`)

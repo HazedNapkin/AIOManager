@@ -686,8 +686,10 @@ export async function reinstallAddon(accountId: string, transportUrl: string) {
             if (normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl)) {
                 return {
                     ...addon,
+                    catalogOverrides: undefined,
                     manifest: getEffectiveManifest({
                         ...addon,
+                        catalogOverrides: undefined,
                         manifest: updatedAddon?.manifest || addon.manifest
                     }),
                     metadata: { ...addon.metadata, lastUpdated: Date.now() }

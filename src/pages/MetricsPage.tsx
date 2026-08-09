@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton, StatCardSkeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
+import { ContentRail, ContentRailCard } from '@/components/ui/content-rail'
 import { MetricsEmptyState } from '@/components/common/PageEmptyStates'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { CHART_PALETTE } from '@/lib/chart-colors'
@@ -23,8 +24,6 @@ import {
     Crown,
     Ghost,
     Users,
-    ChevronLeft,
-    ChevronRight,
     PlayCircle,
     Moon,
     Zap,
@@ -32,11 +31,12 @@ import {
     Sun,
     Coffee,
     LayoutGrid,
+    RefreshCw,
 } from 'lucide-react'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { cn, maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { useUIStore } from '@/store/uiStore'
 import { Poster } from '@/components/common/Poster'
@@ -47,6 +47,8 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Tooltip } from '@/components/ui/tooltip'
+import { Progress } from '@/components/ui/progress'
+import { ActivityDetailModal, type DetailItem } from '@/components/activity/ActivityDetailModal'
 import { ActivityHeatmap, ActivitySparkline, WatchFunnel, ContentDonut, FranchiseBars, VelocityChart, WeekComparison, ContributionGraph, SessionDepth, WeeklyRhythm, ComebackRate, DropOffPoint } from '@/components/metrics'
 
 const PERSONA_DESCRIPTIONS: Record<string, string> = {
@@ -94,6 +96,30 @@ function formatEpisodeLabel(item: { season?: number; episode?: number }) {
     return item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
 }
 
+function WatcherBadges({ accounts: watchAccs, maskName }: { accounts: Account[]; maskName?: (name: string) => string }) {
+    if (!watchAccs || watchAccs.length === 0) return null
+    return (
+        <div className="absolute bottom-2 right-2 z-10 flex items-center -space-x-1.5">
+            {watchAccs.slice(0, 3).map(acc => (
+                <div key={acc.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
+                    {acc.avatar ? (
+                        <img src={acc.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : acc.emoji ? (
+                        <span className="text-[9px]">{acc.emoji}</span>
+                    ) : (
+                        <span className="text-[8px] font-bold text-muted-foreground">{((maskName ? maskName(acc.name || '?') : (acc.name || '?'))[0] || '?').toUpperCase()}</span>
+                    )}
+                </div>
+            ))}
+            {watchAccs.length > 3 && (
+                <div className="h-5 w-5 rounded-full border border-background bg-card shadow-sm flex items-center justify-center">
+                    <span className="text-[8px] font-bold text-muted-foreground">+{watchAccs.length - 3}</span>
+                </div>
+            )}
+        </div>
+    )
+}
+
 export function MetricsPage() {
     useDocumentTitle('Metrics')
     const navigate = useNavigate()
@@ -107,6 +133,12 @@ export function MetricsPage() {
 
     const [selectedAccountId, setSelectedAccountId] = useState<string>('all')
     const [selectedPeriod, setSelectedPeriod] = useState<MetricPeriodId>('all')
+    const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
+
+    const openDetail = useCallback((type?: string, itemId?: string, name?: string, poster?: string) => {
+        if (!itemId) return
+        setDetailItem({ itemId, type: type || 'movie', name, poster })
+    }, [])
 
     const activeAccounts = useMemo(() => {
         const activeAccountIds = new Set(history.map(h => h.accountId))
@@ -128,6 +160,22 @@ export function MetricsPage() {
             return Number.isFinite(time) && time >= cutoff
         })
     }, [accountFilteredHistory, selectedPeriod])
+
+    const watchersByItemId = useMemo(() => {
+        const map = new Map<string, Account[]>()
+        for (const item of filteredHistory) {
+            if (!item.itemId) continue
+            const acc = accounts.find(a => a.id === item.accountId)
+            if (!acc) continue
+            const list = map.get(item.itemId)
+            if (list) {
+                if (!list.some(a => a.id === acc.id)) list.push(acc)
+            } else {
+                map.set(item.itemId, [acc])
+            }
+        }
+        return map
+    }, [filteredHistory, accounts])
 
     const { results: stats, isComputing: workerLoading } = useMetricsWorker(filteredHistory)
 
@@ -170,7 +218,7 @@ export function MetricsPage() {
                                     onSelect={setSelectedAccountId}
                                     allLabel="All Users"
                                     placeholder="Search users..."
-                                    buttonClassName="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-input bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                                    buttonClassName="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border/40 bg-muted/30 px-3 text-xs font-medium shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
                                 />
                             )}
 
@@ -192,14 +240,6 @@ export function MetricsPage() {
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0 sm:ml-auto">
-                            {(cacheLoading || isLoading) && (
-                                <StatusChip variant="primary" icon={<Activity />}>
-                                    {cacheLoading
-                                        ? (loadingProgress.current > 0 ? `Synced ${loadingProgress.current} of ${loadingProgress.total}` : 'Connecting...')
-                                        : 'Crunching numbers...'}
-                                </StatusChip>
-                            )}
-                            
                             <Button
                                 size="sm"
                                 onClick={() => navigate('/replay')}
@@ -240,11 +280,34 @@ export function MetricsPage() {
                         </div>
                     </ToolbarShell>
 
-                    {cacheLoading && (
-                        <div className="relative h-1 w-full bg-muted overflow-hidden rounded-full">
-                            <div
-                                className="h-full bg-primary transition-[transform,opacity,box-shadow] duration-300 rounded-full"
-                                style={{ width: `${loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 0}%` }}
+                    {(cacheLoading || isLoading) && (
+                        <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
+                                    <RefreshCw className="h-4 w-4 text-primary animate-spin" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-semibold">
+                                        {cacheLoading
+                                            ? (loadingProgress.current > 0 ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts` : 'Connecting...')
+                                            : 'Crunching numbers...'}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {cacheLoading
+                                            ? (loadingProgress.current > 0 ? `${loadingProgress.total - loadingProgress.current} remaining` : 'Fetching watch history')
+                                            : 'Processing metrics data'}
+                                    </div>
+                                </div>
+                                {cacheLoading && loadingProgress.total > 0 && (
+                                    <span className="text-sm font-bold tabular-nums text-primary shrink-0">
+                                        {Math.round((loadingProgress.current / loadingProgress.total) * 100)}%
+                                    </span>
+                                )}
+                            </div>
+                            <Progress
+                                value={cacheLoading && loadingProgress.total > 0 ? (loadingProgress.current / loadingProgress.total) * 100 : 100}
+                                shimmer={!cacheLoading || loadingProgress.current === 0}
+                                className="h-1.5 bg-muted"
                             />
                         </div>
                     )}
@@ -350,63 +413,27 @@ export function MetricsPage() {
                     </Card>
 
                     {/* TRENDING NOW */}
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm group/trending">
-                        <div className="flex items-center justify-between">
-                            <div className="min-w-0">
-                                <h2 className="text-sm font-semibold">Trending Now</h2>
-                                <p className="text-xs text-muted-foreground">Titles clustering across the last 14 days.</p>
-                            </div>
-                            <div className="flex gap-2">
-                                <Button
-                                    variant="outline" size="icon" className="h-8 w-8 rounded-full opacity-70 hover:opacity-100 disabled:opacity-20"
-                                    onClick={() => document.getElementById('trending-scroll')?.scrollBy({ left: -300, behavior: 'smooth' })}
-                                    aria-label="Scroll left"
-                                >
-                                    <ChevronLeft className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                    variant="outline" size="icon" className="h-8 w-8 rounded-full opacity-70 hover:opacity-100 disabled:opacity-20"
-                                    onClick={() => document.getElementById('trending-scroll')?.scrollBy({ left: 300, behavior: 'smooth' })}
-                                    aria-label="Scroll right"
-                                >
-                                    <ChevronRight className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </div>
-
-                        <div id="trending-scroll" className="w-full overflow-x-auto pt-3 pb-1 scrollbar-hide scroll-smooth">
-                            {stats.topTrending?.length > 0 ? (
-                                <div className="flex gap-4">
-                                    {stats.topTrending?.map((item, i: number) => (
-                                        <div
-                                            key={item.id}
-                                            onClick={() => {
-                                                openStremioDetail(item.type, item.itemId || item.id)
-                                            }}
-                                            className="content-auto-poster relative w-32 h-48 md:w-36 md:h-56 shrink-0 rounded-2xl overflow-hidden border border-border/40 shadow-sm group cursor-pointer transition-transform hover:-translate-y-1"
-                                        >
-                                            <div className="absolute top-2 left-2 z-10 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">#{i + 1}</div>
-                                            <Poster
-                                                src={item.poster}
-                                                itemId={item.itemId || item.id}
-                                                itemType={item.type}
-                                                className="w-full h-full object-cover"
-                                            />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                                                <div className="text-white text-sm font-bold truncate">{item.name}</div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <EmptyState
-                                    icon={<Flame className="h-6 w-6" />}
-                                    title="No trending activity"
-                                    description="Watch a few episodes or movies and they’ll cluster here as your trending titles."
+                    <ContentRail title="Trending Now" subtitle="Titles clustering across the last 14 days.">
+                        {stats.topTrending?.length > 0 ? (
+                            stats.topTrending.map((item, i) => (
+                                <ContentRailCard
+                                    key={item.id}
+                                    rank={i + 1}
+                                    poster={item.poster}
+                                    title={item.name}
+                                    itemId={item.itemId || item.id}
+                                    itemType={item.type}
+                                    onClick={() => openDetail(item.type, item.itemId || item.id)}
                                 />
-                            )}
-                        </div>
-                    </div>
+                            ))
+                        ) : (
+                            <EmptyState
+                                icon={<Flame className="h-6 w-6" />}
+                                title="No trending activity"
+                                description="Watch a few episodes or movies and they’ll cluster here as your trending titles."
+                            />
+                        )}
+                    </ContentRail>
 
                     {/* BINGE MASTERY HIGHLIGHT */}
                     <div>
@@ -434,7 +461,7 @@ export function MetricsPage() {
                                             <div
                                                 key={item.id}
                                                 onClick={() => {
-                                                    openStremioDetail(item.type, item.itemId || item.id)
+                                                    openDetail(item.type, item.itemId || item.id)
                                                 }}
                                                 className="content-auto-poster relative w-16 h-24 rounded-xl border-2 border-background overflow-hidden shadow-lg transition-transform hover:-translate-y-2 cursor-pointer"
                                                 style={{ zIndex: 5 - i }}
@@ -647,7 +674,7 @@ export function MetricsPage() {
                                     const relativeTime = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : daysAgo < 7 ? `${daysAgo} days ago` : daysAgo < 30 ? `${Math.floor(daysAgo / 7)} weeks ago` : daysAgo < 365 ? `${Math.floor(daysAgo / 30)} months ago` : `${Math.floor(daysAgo / 365)}y ago`
                                     return (
                                     <motion.div
-                                        onClick={() => openStremioDetail(fw.item.type, fw.item.itemId)}
+                                        onClick={() => openDetail(fw.item.type, fw.item.itemId)}
                                         className="group relative flex cursor-pointer items-stretch gap-0 overflow-hidden rounded-2xl border border-border/35 bg-muted/15"
                                         initial={{ opacity: 0, y: 8 }}
                                         animate={{ opacity: 1, y: 0 }}
@@ -840,7 +867,7 @@ export function MetricsPage() {
                                                             <div
                                                                 key={h.id}
                                                                 onClick={() => {
-                                                                    openStremioDetail(h.type, h.itemId)
+                                                                    openDetail(h.type, h.itemId)
                                                                 }}
                                                                 className="content-auto-poster flex-none w-20 sm:w-24 aspect-[2/3] relative group/poster transition-transform hover:-translate-y-1 cursor-pointer"
                                                             >
@@ -928,7 +955,7 @@ export function MetricsPage() {
                                 return (
                                     <div
                                         key={i}
-                                        onClick={() => openStremioDetail(c.item.type, c.item.itemId)}
+                                        onClick={() => openDetail(c.item.type, c.item.itemId)}
                                         className="content-auto-poster relative aspect-[2/3] group cursor-pointer overflow-hidden rounded-2xl border border-border/40 shadow-sm"
                                     >
                                         <div className="absolute top-2 left-2 z-20 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold uppercase text-white backdrop-blur-sm">
@@ -941,17 +968,27 @@ export function MetricsPage() {
                                             alt={c.item.name || ""}
                                             className="w-full h-full object-cover transition-transform group-hover:scale-105"
                                         />
-                                        <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent">
-                                            <div className="flex items-center gap-1.5 mb-1">
-                                                <div className="flex -space-x-1">
-                                                    {sharedAccs.slice(0, 5).map((acc) => (
-                                                        <div key={acc.id} className="w-4 h-4 rounded-full bg-muted/80 border border-black/30 flex items-center justify-center text-[7px] font-bold text-white">
-                                                            {(acc.emoji || maskAccountName(acc.name || '?')[0]).toUpperCase()}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <span className="text-xs font-bold text-primary">{c.accounts.length}</span>
+                                        {sharedAccs.length > 0 && (
+                                            <div className="absolute bottom-2 right-2 z-10 flex items-center -space-x-1.5">
+                                                {sharedAccs.slice(0, 3).map((acc) => (
+                                                    <div key={acc.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
+                                                        {acc.avatar ? (
+                                                            <img src={acc.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
+                                                        ) : acc.emoji ? (
+                                                            <span className="text-[9px]">{acc.emoji}</span>
+                                                        ) : (
+                                                            <span className="text-[8px] font-bold text-muted-foreground">{(maskAccountName(acc.name || '?')[0] || '?').toUpperCase()}</span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {sharedAccs.length > 3 && (
+                                                    <div className="h-5 w-5 rounded-full border border-background bg-card shadow-sm flex items-center justify-center">
+                                                        <span className="text-[8px] font-bold text-muted-foreground">+{sharedAccs.length - 3}</span>
+                                                    </div>
+                                                )}
                                             </div>
+                                        )}
+                                        <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/90 to-transparent">
                                             <div className="text-xs font-bold text-white truncate">{c.item.name}</div>
                                             {c.firstSeen && (
                                                 <div className="text-xs text-white/50 opacity-0 group-hover:opacity-100 transition-opacity mt-0.5">
@@ -972,8 +1009,10 @@ export function MetricsPage() {
                         </div>
                         {stats.topAllTime?.length > 0 ? (
                             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                {stats.topAllTime?.map((stat, i: number) => (
-                                    <div key={stat.item.id} onClick={() => openStremioDetail(stat.item.type, stat.item.itemId)} className="content-auto-poster group relative aspect-[2/3] rounded-2xl overflow-hidden border border-border/40 bg-muted shadow-sm cursor-pointer transition-transform hover:-translate-y-1">
+                                {stats.topAllTime?.map((stat, i: number) => {
+                                    const watchAccs = watchersByItemId.get(stat.item.itemId) ?? []
+                                    return (
+                                    <div key={stat.item.id} onClick={() => openDetail(stat.item.type, stat.item.itemId)} className="content-auto-poster group relative aspect-[2/3] rounded-2xl overflow-hidden border border-border/40 bg-muted shadow-sm cursor-pointer transition-transform hover:-translate-y-1">
                                         <Poster
                                             src={stat.item.poster}
                                             itemId={stat.item.itemId || stat.item.id}
@@ -981,12 +1020,14 @@ export function MetricsPage() {
                                             alt={stat.item.name || ""}
                                             className="w-full h-full object-cover"
                                         />
+                                        <WatcherBadges accounts={watchAccs} maskName={maskAccountName} />
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent flex flex-col justify-end p-4 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <div className="text-4xl font-bold text-white mb-1">#{i + 1}</div>
                                             <div className="text-xs font-medium text-white/80 uppercase">{stat.count} Plays</div>
                                         </div>
                                     </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                         ) : (
                             <EmptyState
@@ -1004,10 +1045,13 @@ export function MetricsPage() {
                             <StatusChip variant="muted">{stats.rareFinds?.length || 0} rare</StatusChip>
                         </div>
                         <div className="flex flex-wrap gap-4">
-                            {stats.rareFinds?.map((item) => (
+                            {stats.rareFinds?.map((item) => {
+                                const acc = accounts.find(a => a.id === item.accountId)
+                                const watchAccs = acc ? [acc] : []
+                                return (
                                 <div
                                     key={item.itemId}
-                                    onClick={() => openStremioDetail(item.type, item.itemId)}
+                                    onClick={() => openDetail(item.type, item.itemId)}
                                     className="content-auto-poster group relative w-28 aspect-[2/3] rounded-xl overflow-hidden border border-border/40 shadow-sm transition-transform hover:-translate-y-1 cursor-pointer"
                                 >
                                     <Poster
@@ -1017,6 +1061,7 @@ export function MetricsPage() {
                                         alt={item.name || ""}
                                         className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-[transform,opacity,box-shadow] duration-500"
                                     />
+                                    <WatcherBadges accounts={watchAccs} maskName={maskAccountName} />
                                     <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                                         <div className="text-xs font-medium text-white">{maskAccountName(item.accountName)}'s Choice</div>
                                     </div>
@@ -1024,7 +1069,8 @@ export function MetricsPage() {
                                         Rare
                                     </div>
                                 </div>
-                            ))}
+                                )
+                            })}
                             {stats.rareFinds?.length === 0 && (
                                 <div className="p-8 bg-muted/10 rounded-xl w-full text-center border-2 border-dashed border-border/40">
                                     <p className="text-sm font-semibold text-muted-foreground">No rare finds yet</p>
@@ -1151,6 +1197,12 @@ export function MetricsPage() {
                 </TabsContent >
                 </> )}
             </Tabs >
+
+            <ActivityDetailModal
+                open={!!detailItem}
+                onOpenChange={(open) => { if (!open) setDetailItem(null) }}
+                item={detailItem}
+            />
         </div >
     )
 }

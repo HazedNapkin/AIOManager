@@ -1,5 +1,10 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { ActivityFeed } from '@/components/activity/ActivityFeed'
+import { ActivityDetailModal } from '@/components/activity/ActivityDetailModal'
+import { ForYouPage } from '@/components/for-you/ForYouPage'
+import { AccountDetailPage } from '@/components/for-you/AccountDetailPage'
+import { ContentRail } from '@/components/ui/content-rail'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -15,18 +20,17 @@ import { useSyncStore } from '@/store/syncStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
-import { historyEntryToActivityItem, nuvioProgressKey } from '@/lib/activity-utils'
+import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getCachedCinemetaName } from '@/lib/activity-utils'
 import type { Account } from '@/types/account'
 
-import { FloatingActionBar, type FloatingActionItem } from '@/components/ui/floating-action-bar'
-import { Grid, List, Search, Check, X, PlayCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { FloatingActionBar } from '@/components/ui/floating-action-bar'
+import { Grid, List, Search, Check, X, PlayCircle, RefreshCw } from 'lucide-react'
 import { AnimatedRefreshIcon, AnimatedTrashIcon } from '@/components/ui/AnimatedIcons'
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
-import { useTheme } from '@/contexts/ThemeContext'
+import { cn, maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { SYNCED_SETTINGS_EVENT, type ActivitySettings } from '@/lib/synced-settings'
 import {
     AlertDialog,
@@ -42,7 +46,6 @@ import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Progress } from '@/components/ui/progress'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tooltip } from '@/components/ui/tooltip'
-import { StatusChip } from '@/components/ui/status-chip'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
 import { mapConcurrent } from '@/lib/concurrency'
@@ -88,7 +91,6 @@ async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): P
 
 export function ActivityPage() {
     useDocumentTitle('Activity')
-    const { isLight } = useTheme()
     const accounts = useAccountStore(s => s.accounts)
     const ensureLoaded = useLibraryCache(s => s.ensureLoaded)
     const loading = useLibraryCache(s => s.loading)
@@ -108,13 +110,99 @@ export function ActivityPage() {
 
     const { history: watchHistory, inProgress } = useWatchHistory()
 
+    const [activeView, setActiveView] = useState<'feed' | 'foryou'>('feed')
+    const [forYouAccountId, setForYouAccountId] = useState<string | null>(null)
+
+    const [resolvedNames, setResolvedNames] = useState<Map<string, { name: string; poster?: string; genres?: string[] }>>(new Map())
+
     // Convert to ActivityItem[] for existing feed components. Backfilled episodes (recovered from the
     // watched-bitfield) have no real per-episode time, so they are kept out of the chronological feed
     // -- they still power Replay totals/discoveries and the per-show "seen" state.
     const history: ActivityItem[] = useMemo(
-        () => watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill),
-        [watchHistory]
+        () => {
+            const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill)
+
+            const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
+            const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
+
+            const bestByItemId = new Map<string, { name: string; poster?: string; genres?: string[] }>()
+            for (const item of items) {
+                if (isBadName(item.name)) continue
+                const existing = bestByItemId.get(item.itemId)
+                if (!existing || item.name.length > existing.name.length) {
+                    bestByItemId.set(item.itemId, { name: item.name, poster: item.poster || undefined, genres: item.genres })
+                }
+            }
+
+            if (bestByItemId.size > 0) {
+                let enriched = 0
+                for (let i = 0; i < items.length; i++) {
+                    if (!isBadName(items[i].name)) continue
+                    const best = bestByItemId.get(items[i].itemId)
+                    if (best) {
+                        items[i] = {
+                            ...items[i],
+                            name: best.name,
+                            poster: items[i].poster || best.poster || items[i].poster,
+                            genres: items[i].genres || best.genres,
+                        }
+                        enriched++
+                    }
+                }
+                if (import.meta.env.DEV && enriched > 0) console.log('[ActivityPage] Cross-source name enrichment:', enriched, 'items')
+            }
+
+            if (resolvedNames.size > 0) {
+                for (let i = 0; i < items.length; i++) {
+                    if (!isBadName(items[i].name)) continue
+                    const resolved = resolvedNames.get(items[i].itemId)
+                    if (resolved) {
+                        items[i] = {
+                            ...items[i],
+                            name: resolved.name,
+                            poster: items[i].poster || resolved.poster || items[i].poster,
+                            genres: items[i].genres || resolved.genres,
+                        }
+                    }
+                }
+            }
+
+            return items
+        },
+        [watchHistory, resolvedNames]
     )
+
+    useEffect(() => {
+        const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
+        const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
+        const badIds = new Set<string>()
+        for (const item of history) {
+            if (isBadName(item.name) && item.itemId.startsWith('tt') && !resolvedNames.has(item.itemId)) {
+                badIds.add(item.itemId)
+            }
+        }
+        if (badIds.size === 0) return
+        let active = true
+        const resolutions = new Map<string, { name: string; poster?: string; genres?: string[] }>()
+        Promise.all(Array.from(badIds).slice(0, 10).map(async (itemId) => {
+            const meta = await fetchCinemetaDetail(itemId)
+            if (!meta?.name) return
+            const genres = meta.genre ? meta.genre.split(',').map((g: string) => g.trim()).filter(Boolean) : undefined
+            resolutions.set(itemId, {
+                name: meta.name,
+                poster: meta.poster || undefined,
+                genres: genres && genres.length > 0 ? genres : undefined,
+            })
+        })).then(() => {
+            if (!active || resolutions.size === 0) return
+            setResolvedNames(prev => {
+                const next = new Map(prev)
+                for (const [k, v] of resolutions) next.set(k, v)
+                return next
+            })
+        })
+        return () => { active = false }
+    }, [history, resolvedNames])
 
     // Map useLibraryCache functions to original names for UI compatibility
     const fetchActivity = useCallback(async (silent = false) => {
@@ -190,13 +278,8 @@ export function ActivityPage() {
     const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null)
     const [isDeletingPending, setIsDeletingPending] = useState(false)
     const [isBulkMode, setIsBulkMode] = useState(false)
+    const [detailItem, setDetailItem] = useState<ActivityItem | null>(null)
     const cloudRefreshAttemptedRef = useRef(false)
-    const continueWatchingRef = useRef<HTMLDivElement>(null)
-    const scrollRail = useCallback((dir: 'left' | 'right') => {
-        const el = continueWatchingRef.current
-        if (!el) return
-        el.scrollBy({ left: dir === 'right' ? 320 : -320, behavior: 'smooth' })
-    }, [])
 
     useEffect(() => {
         const handleSyncedSettings = (event: Event) => {
@@ -299,7 +382,15 @@ export function ActivityPage() {
 
             if (searchTerm.trim()) {
                 const searchLower = searchTerm.toLowerCase()
-                return item.name.toLowerCase().includes(searchLower)
+                const haystack = [
+                    item.name || '',
+                    item.itemId || '',
+                    item.source || '',
+                    getCachedCinemetaName(item.itemId) || '',
+                    item.season !== undefined ? `S${item.season}` : '',
+                    item.episode !== undefined ? `E${item.episode}` : '',
+                ].join(' ').toLowerCase()
+                return haystack.includes(searchLower)
             }
             return true
         })
@@ -364,6 +455,10 @@ export function ActivityPage() {
     const handleFeedDelete = useCallback((id: string | string[]) => {
         const ids = Array.isArray(id) ? id : [id]
         setPendingDeleteIds(ids)
+    }, [])
+
+    const handleOpenDetail = useCallback((item: ActivityItem) => {
+        setDetailItem(item)
     }, [])
 
     const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<boolean> => {
@@ -498,6 +593,25 @@ export function ActivityPage() {
 
     return (
         <div className="space-y-6 overflow-x-hidden">
+            <Tabs value={activeView} onValueChange={(v) => { setActiveView(v as 'feed' | 'foryou'); setForYouAccountId(null) }}>
+                <TabsList>
+                    <TabsTrigger value="feed" className="h-8 px-4 text-xs">
+                        Activity Feed
+                    </TabsTrigger>
+                    <TabsTrigger value="foryou" className="h-8 px-4 text-xs">
+                        For You
+                    </TabsTrigger>
+                </TabsList>
+            </Tabs>
+            {activeView === 'foryou' && forYouAccountId ? (
+                <AccountDetailPage
+                    accountId={forYouAccountId}
+                    onBack={() => setForYouAccountId(null)}
+                />
+            ) : activeView === 'foryou' ? (
+                <ForYouPage onAccountClick={(id) => setForYouAccountId(id)} />
+            ) : (
+            <>
             {/* Single unified toolbar */}
             <ToolbarShell contentClassName="gap-2 sm:gap-3">
                 {/* Search */}
@@ -522,14 +636,6 @@ export function ActivityPage() {
                     )}
                 </div>
 
-                {isLoading && (
-                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                        <StatusChip variant="primary">
-                            {loadingProgress.current > 0 ? `Synced ${loadingProgress.current} of ${loadingProgress.total}` : 'Connecting...'}
-                        </StatusChip>
-                    </div>
-                )}
-
                 {/* Filters - Left aligned to match search */}
                 <div className={cn(
                     "grid w-full gap-2 sm:flex sm:flex-1 sm:flex-wrap sm:items-center sm:min-w-0",
@@ -543,7 +649,7 @@ export function ActivityPage() {
                             onSelect={setUserFilter}
                             allLabel="All Users"
                             placeholder="Search users..."
-                            buttonClassName="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-input bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                            buttonClassName="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border/40 bg-muted/30 px-3 text-xs font-medium shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
                         />
                     )}
 
@@ -642,8 +748,34 @@ export function ActivityPage() {
                 </div>
             </ToolbarShell>
             {isLoading && (
-                <div className="-mt-4 h-1 overflow-hidden rounded-full bg-muted">
-                    <Progress value={loadingPercent} className="h-full bg-primary transition-[transform,opacity,box-shadow] duration-300" />
+                <div className="rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 shrink-0">
+                            <RefreshCw className="h-4 w-4 text-primary animate-spin" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold">
+                                {loadingProgress.current > 0
+                                    ? `Syncing ${loadingProgress.current} of ${loadingProgress.total} accounts`
+                                    : 'Connecting...'}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                                {loadingProgress.current > 0
+                                    ? `${loadingProgress.total - loadingProgress.current} remaining`
+                                    : 'Fetching watch history'}
+                            </div>
+                        </div>
+                        {loadingProgress.total > 0 && (
+                            <span className="text-sm font-bold tabular-nums text-primary shrink-0">
+                                {Math.round(loadingPercent)}%
+                            </span>
+                        )}
+                    </div>
+                    <Progress
+                        value={loadingPercent}
+                        shimmer={loadingProgress.current === 0}
+                        className="h-1.5 bg-muted"
+                    />
                 </div>
             )}
 
@@ -652,32 +784,12 @@ export function ActivityPage() {
               const filteredInProgress = userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter)
               if (filteredInProgress.length === 0 || searchTerm) return null
               return (
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                            <p className="text-sm font-semibold">Continue Watching</p>
-                            <p className="text-xs text-muted-foreground">Resume in-progress streams from the latest account sync.</p>
-                        </div>
-                        <StatusChip variant="muted" icon={<PlayCircle />}>
-                            {filteredInProgress.length} active
-                        </StatusChip>
-                    </div>
-                    <div className="relative group/rail">
-                        <button
-                            onClick={() => scrollRail('left')}
-                            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring -translate-x-3"
-                            aria-label="Scroll left"
-                        >
-                            <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                            onClick={() => scrollRail('right')}
-                            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 w-8 h-8 rounded-full bg-background/95 border border-border/40 shadow-md flex items-center justify-center opacity-0 group-hover/rail:opacity-100 transition-all hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring translate-x-3"
-                            aria-label="Scroll right"
-                        >
-                            <ChevronRight className="h-4 w-4" />
-                        </button>
-                        <div ref={continueWatchingRef} className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+                <ContentRail
+                    title="Continue Watching"
+                    subtitle="Resume in-progress streams from the latest account sync."
+                    count={filteredInProgress.length}
+                    countLabel="active"
+                >
                             {filteredInProgress.map((item, i) => {
                                 const account = accountById.get(item.accountId)
                                 return (
@@ -687,7 +799,7 @@ export function ActivityPage() {
                                         animate={{ opacity: 1, y: 0 }}
                                         transition={{ delay: i * 0.04, duration: 0.25, ease: 'easeOut' }}
                                         className="relative w-28 shrink-0 cursor-pointer group"
-                                        onClick={() => openStremioDetail(item.type, item.itemId)}
+                                        onClick={() => setDetailItem(item)}
                                     >
                                         <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                                             <Poster
@@ -700,28 +812,28 @@ export function ActivityPage() {
                                             />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
                                             {item.source && <PlatformSourceBadge source={item.source} className="top-1.5 right-1.5" />}
-                                            {/* Progress bar */}
                                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
-                                                <div className="h-full bg-primary transition-[transform,opacity,box-shadow]" style={{ width: `${item.progress}%` }} />
+                                                <div className="h-full bg-primary" style={{ width: `${item.progress}%` }} />
                                             </div>
-                                            {/* Hover play icon */}
                                             <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
                                                 <div className="rounded-full border border-white/25 bg-black/75 p-2 shadow-xl">
-                                                    <PlayCircle className={`h-7 w-7 text-white ${isLight ? 'drop-shadow-lg' : 'drop-shadow-sm'}`} />
+                                                    <PlayCircle className="h-7 w-7 text-white" />
                                                 </div>
                                             </div>
-                                            {/* Progress % */}
                                             <div className="absolute bottom-2 right-1.5">
                                                 <span className="rounded-full bg-black/75 px-1.5 py-0.5 text-xs font-bold tabular-nums text-white/90">
                                                     {Math.round(item.progress)}%
                                                 </span>
                                             </div>
-                                            {/* Account avatar top-left */}
                                             {account && (
-                                                <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-black/65">
-                                                    <span className="text-xs font-bold leading-none text-white">
-                                                        {account.emoji || (account.name || getAccountEmail(account) || '?')[0].toUpperCase()}
-                                                    </span>
+                                                <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-black/65 overflow-hidden">
+                                                    {account.emoji ? (
+                                                        <span className="text-xs font-bold leading-none text-white">{account.emoji}</span>
+                                                    ) : account.avatar ? (
+                                                        <img src={account.avatar} alt="" className="h-full w-full object-cover" />
+                                                    ) : (
+                                                        <span className="text-xs font-bold leading-none text-white">{(account.name || getAccountEmail(account) || '?')[0].toUpperCase()}</span>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -733,15 +845,14 @@ export function ActivityPage() {
                                             {account && (
                                                 <span className="truncate text-xs text-muted-foreground/60">{account.name && !account.name.includes('@')
                                                     ? maskNameLevel(account.name, privacyLevel)
-                                                    : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}</span>
+                                                    : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}
+                                                </span>
                                             )}
                                         </div>
                                     </motion.div>
                                 )
                             })}
-                        </div>
-                    </div>
-                </div>
+                </ContentRail>
               )
             })()}
 
@@ -761,6 +872,7 @@ export function ActivityPage() {
                     isBulkMode={isBulkMode}
                     onToggleSelect={handleFeedToggleSelect}
                     onDelete={handleFeedDelete}
+                    onOpenDetail={handleOpenDetail}
                 />
             )}
 
@@ -790,6 +902,12 @@ export function ActivityPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <ActivityDetailModal
+                open={detailItem !== null}
+                onOpenChange={(open) => { if (!open) setDetailItem(null) }}
+                item={detailItem}
+            />
 
             <ConfirmationDialog
                 open={pendingDeleteIds !== null}
@@ -835,9 +953,11 @@ export function ActivityPage() {
                         icon: <AnimatedTrashIcon className="h-4 w-4" />,
                         tooltip: 'Delete selected items',
                     },
-                ].filter(Boolean) as FloatingActionItem[]}
+                ]}
             />
 
+            </>
+            )}
         </div >
     )
 }

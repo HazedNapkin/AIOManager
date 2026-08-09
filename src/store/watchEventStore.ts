@@ -322,7 +322,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             if (item.removed && !prior) continue
 
             if (item.removed) {
-                setSnapshotItem(item._id, { mtime, video_id, overallTimeWatched: 0, timeWatched: 0, duration: 0 })
+                setSnapshotItem(item._id, { mtime, video_id, overallTimeWatched: 0, timeWatched: 0, timeOffset: 0, duration: 0 })
                 continue
             }
 
@@ -330,16 +330,21 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             // This gives retroactive history for the entire existing library on first run.
             if (!prior) {
                 if (!isActuallyWatched(item)) {
-                    setSnapshotItem(item._id, { mtime, video_id, overallTimeWatched: 0, timeWatched: 0, duration: 0 })
+                    setSnapshotItem(item._id, { mtime, video_id, overallTimeWatched: 0, timeWatched: 0, timeOffset: 0 })
                     continue
                 }
                 const isSeries = isSeriesItem(item)
                 const hasVideoId = !!(item.state?.video_id && item.state.video_id.trim() !== '')
                 if (!isSeries || hasVideoId) {
                     const ctimeDate = parseStremioDate(item._ctime)
-                    if (ctimeDate) {
-                        const ctimeTs = ctimeDate.getTime()
-                        const seedId = `${accountId}:${video_id}:${ctimeTs}`
+                    const lastWatchedDate = parseStremioDate(item.state?.lastWatched)
+                    const seedTs = Math.max(
+                        ctimeDate?.getTime() ?? 0,
+                        lastWatchedDate?.getTime() ?? 0,
+                        mtime
+                    )
+                    if (seedTs > 0) {
+                        const seedId = `${accountId}:${video_id}:${seedTs}`
                         if (!existingEventIds.has(seedId)) {
                             const { season, episode } = getSeasonEpisode(item)
                             newEvents.push({
@@ -347,7 +352,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                                 accountId,
                                 itemId: item._id,
                                 video_id,
-                                event_ts: ctimeTs,
+                                event_ts: seedTs,
                                 detected_ts: now,
                                 name: item.name || 'Unknown',
                                 type: item.type || 'other',
@@ -367,6 +372,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                     mtime, video_id,
                     overallTimeWatched: item.state?.overallTimeWatched || 0,
                     timeWatched: item.state?.timeWatched || 0,
+                    timeOffset: item.state?.timeOffset || 0,
                     duration: item.state?.duration || 0,
                     season: sanitizeSeason(seedSeason),
                     episode: seedEpisode,
@@ -446,6 +452,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                     mtime, video_id,
                     overallTimeWatched: item.state?.overallTimeWatched || 0,
                     timeWatched: item.state?.timeWatched || 0,
+                    timeOffset: item.state?.timeOffset || 0,
                     duration: item.state?.duration || 0,
                     season: currentSeason,
                     episode: currentEpisode,
@@ -503,10 +510,10 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             if (!decoded || decoded.watchedIndices.length === 0) { backfillProcessed.add(guardKey); if (backfillProcessed.size > 2000) backfillProcessed.clear(); continue }
             const videos = await fetchSeriesVideos(seriesId)
             if (!videos) continue // transient (meta fetch failed) -> retry on a later refresh
-            backfillProcessed.add(guardKey) // deterministic from here (resolved or fail-closed)
-            if (backfillProcessed.size > 2000) backfillProcessed.clear()
             const episodes = resolveWatchedEpisodes(decoded, videos)
-            if (!episodes) continue // fail-closed checksum did not pass
+            if (!episodes) continue // fail-closed checksum did not pass -> retry on a later refresh
+            backfillProcessed.add(guardKey)
+            if (backfillProcessed.size > 2000) backfillProcessed.clear()
 
             const ts = parseStremioDate(item.state?.lastWatched)?.getTime()
                 || parseStremioDate(item._mtime)?.getTime()
@@ -641,6 +648,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                         video_id: e.video_id || e.itemId,
                         overallTimeWatched: e.time_watched || 0,
                         timeWatched: e.time_watched || 0,
+                        timeOffset: e.time_watched_delta || 0,
                         duration: e.duration || 0,
                         season: e.season,
                         episode: e.episode,

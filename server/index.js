@@ -19,6 +19,11 @@ import { registerActivityRoutes } from './routes/activity.js'
 import { registerHydraRoutes } from './routes/hydra.js'
 import { createReconciler } from './providers/reconciler.js'
 import { registerProviderRoutes } from './routes/providers.js'
+import { registerMetadataKeysRoutes } from './routes/metadata-keys.js'
+import { registerMetadataProxyRoutes } from './routes/metadata-proxy.js'
+import { registerStremioCatalogRoutes } from './routes/stremio-catalog.js'
+import { registerTraktRoutes } from './routes/trakt.js'
+import { registerSimklRoutes } from './routes/simkl.js'
 import { traceClientBatch, traceEnabled } from './utils/trace.js'
 
 const fastify = Fastify({
@@ -53,6 +58,10 @@ await fastify.register(rateLimit, {
 
 await fastify.register(fastifyCompress, { global: true })
 
+fastify.addHook('onRequest', async (request) => {
+    request.startTime = Date.now()
+})
+
 fastify.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff')
     reply.header('X-Frame-Options', 'DENY')
@@ -62,7 +71,19 @@ fastify.addHook('onSend', async (request, reply) => {
     if (request.protocol === 'https') {
         reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     }
+    const start = request.startTime
+    if (typeof start === 'number') {
+        const timings = []
+        if (request.tmdbDuration) timings.push(`tmdb;dur=${Math.round(request.tmdbDuration)}`)
+        if (request.dbDuration) timings.push(`db;dur=${Math.round(request.dbDuration)}`)
+        timings.push(`total;dur=${Math.round(Date.now() - start)}`)
+        reply.header('Server-Timing', timings.join(', '))
+    }
 })
+
+registerStremioCatalogRoutes(fastify)
+registerTraktRoutes(fastify)
+registerSimklRoutes(fastify)
 
 if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {
@@ -205,6 +226,8 @@ const start = async () => {
         registerActivityRoutes(fastify, activityEngine)
         registerHydraRoutes(fastify, reconciler)
         registerProviderRoutes(fastify, reconciler)
+    registerMetadataKeysRoutes(fastify)
+    registerMetadataProxyRoutes(fastify)
 
         await fastify.listen({ port: PORT, host: '0.0.0.0' })
         fastify.log.info({ category: 'Server' }, `Listening on port ${PORT}`)

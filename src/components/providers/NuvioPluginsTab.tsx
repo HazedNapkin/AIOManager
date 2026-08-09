@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Plus, Trash2, RefreshCw, Loader2, Copy, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { toast } from '@/hooks/use-toast'
@@ -106,16 +107,17 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
                         {plugins.length}
                     </span>
                 )}
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => setCloneOpen(true)}
-                    disabled={loading || saving || dirty || baseline.length === 0}
-                    title={dirty ? 'Save changes before cloning' : 'Clone these plugins to other accounts'}
-                >
-                    <Copy className="h-3.5 w-3.5" /> Clone
-                </Button>
+                <Tooltip content={dirty ? 'Save changes before cloning' : 'Clone these plugins to other accounts'}>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setCloneOpen(true)}
+                        disabled={loading || saving || dirty || baseline.length === 0}
+                    >
+                        <Copy className="h-3.5 w-3.5" /> Clone
+                    </Button>
+                </Tooltip>
                 <Button
                     variant="ghost"
                     size="icon"

@@ -9,6 +9,7 @@ import { EMOJI_GROUPS } from '@/lib/emoji-data'
 import { ColorPicker } from '@/components/ui/color-picker'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
     Popover,
     PopoverContent,
@@ -696,10 +697,13 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                                                     <h4 className="text-xs font-semibold uppercase text-primary/60 mb-2.5 px-1">{group}</h4>
                                                                     <div className="grid grid-cols-6 gap-1.5">
                                                                         {filtered.map((e) => (
-                                                                            <button key={e.char} type="button" onClick={() => setEmoji(e.char)}
-                                                                                 className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-110 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
-                                                                                title={e.keywords[0]}>{e.char}
-                                                                            </button>
+                                                                            <Tooltip key={e.char} content={e.keywords[0]}>
+                                                                                <button type="button" onClick={() => setEmoji(e.char)}
+                                                                                     className={`h-10 w-10 flex items-center justify-center text-xl rounded-xl transition-[transform,opacity,box-shadow] duration-200 hover:scale-110 ${emoji === e.char ? `bg-primary/25 ring-2 ${isLight ? 'ring-primary' : 'ring-primary/50'} shadow-lg scale-110` : 'hover:bg-accent/40'}`}
+                                                                                >
+                                                                                    {e.char}
+                                                                                </button>
+                                                                            </Tooltip>
                                                                         ))}
                                                                     </div>
                                                                 </div>

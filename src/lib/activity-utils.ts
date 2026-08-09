@@ -3,6 +3,19 @@ import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 
+function sanitizePosterUrl(url: string | undefined): string | undefined {
+    if (!url || typeof url !== 'string') return url
+    try {
+        const parsed = new URL(url)
+        const fb = parsed.searchParams.get('fallback')
+        if (fb && fb.startsWith('http')) return fb
+        const alt = parsed.searchParams.get('url')
+        if (alt && alt.startsWith('http') && !alt.includes(parsed.hostname)) return alt
+        if (parsed.hostname.includes('micasa161') || parsed.hostname.includes('meta.micasa')) return undefined
+    } catch {}
+    return url
+}
+
 export function isActuallyWatched(item: LibraryItem): boolean {
     const s = item.state || {}
     if ((s.timesWatched ?? 0) > 0) return true
@@ -152,10 +165,7 @@ export function transformLibraryItemToActivityItem(
     }
 
     const progress = duration > 0 ? Math.min(100, Math.max(0, (timeOffset / duration) * 100)) : 0
-    // In-progress: at least 2 minutes watched OR 5% through, and under 90% complete.
-    // The 2-minute floor prevents accidental seek-to-0 artifacts from showing in Continue Watching.
-    const TWO_MINUTES_MS = 2 * 60 * 1000
-    const isInProgress = (timeOffset >= TWO_MINUTES_MS || progress >= 5) && progress < 90
+    const isInProgress = (timeOffset > 3000 || progress > 0.5) && progress < 95
     const accountColorIndex = accounts.indexOf(account) % 10
 
     return {
@@ -167,7 +177,7 @@ export function transformLibraryItemToActivityItem(
         uniqueItemId,
         name: item.name || 'Unknown Title',
         type: item.type || 'other',
-        poster: item.poster || '',
+        poster: sanitizePosterUrl(item.poster) || '',
         timestamp,
         firstWatched,
         duration,
@@ -202,28 +212,135 @@ interface NuvioProgressItem {
     last_watched?: number
 }
 
-const cinemetaCache = new Map<string, { name: string; poster: string; genres: string[]; fetchedAt: number }>()
-const CINEMETA_TTL = 24 * 60 * 60 * 1000
+export interface CinemetaCastMember {
+    name?: string
+    character?: string
+    photo?: string
+}
 
-async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string; genres: string[] }> {
+export interface CinemetaDirectorMember {
+    name?: string
+    photo?: string
+}
+
+export interface CinemetaCrewMember {
+    name: string
+    role: string
+    photo?: string
+}
+
+export interface CinemetaVideo {
+    key: string
+    name: string
+    type: string
+    official?: boolean
+}
+
+export interface CinemetaRelatedItem {
+    id: string
+    title: string
+    type: string
+    poster?: string
+    backdrop?: string
+    year?: string
+    voteAverage?: number
+}
+
+export interface CinemetaReview {
+    id?: string
+    author: string
+    avatar?: string
+    rating?: number
+    content: string
+    createdAt?: string
+    source?: string
+}
+
+export interface CinemetaMeta {
+    id?: string
+    type?: string
+    name?: string
+    poster?: string
+    background?: string
+    logo?: string
+    description?: string
+    genre?: string
+    runtime?: string
+    cast?: CinemetaCastMember[]
+    director?: Array<string | CinemetaDirectorMember> | string
+    crew?: CinemetaCrewMember[]
+    imdbRating?: string
+    released?: string
+    year?: string
+    trailers?: Array<{ source: string; type: string }>
+    videoList?: CinemetaVideo[]
+    relatedList?: CinemetaRelatedItem[]
+    reviewsList?: CinemetaReview[]
+    status?: string
+    originalLanguage?: string
+    productionCompanies?: string[]
+    networks?: string[]
+    certification?: string
+    keywords?: number[]
+    collection?: { id: number; name: string }
+    galleryBackdrops?: string[]
+    watchProviders?: Array<{ name: string; logo?: string }>
+    tmdbId?: number
+}
+
+interface CinemetaCacheEntry {
+    meta: CinemetaMeta | null
+    fetchedAt: number
+}
+
+const cinemetaCache = new Map<string, CinemetaCacheEntry>()
+const CINEMETA_TTL = 24 * 60 * 60 * 1000
+const CINEMETA_NULL_TTL = 5 * 60 * 1000
+
+function parseCinemetaGenres(meta: CinemetaMeta | undefined | null): string[] {
+    if (!meta || typeof meta.genre !== 'string' || !meta.genre.trim()) return []
+    return meta.genre.split(',').map(g => g.trim()).filter(Boolean)
+}
+
+export async function fetchCinemetaDetail(imdbId: string, type?: string): Promise<CinemetaMeta | null> {
+    if (!imdbId || !imdbId.startsWith('tt')) return null
     const cached = cinemetaCache.get(imdbId)
-    if (cached && Date.now() - cached.fetchedAt < CINEMETA_TTL) {
-        return { name: cached.name, poster: cached.poster, genres: cached.genres }
+    if (cached && Date.now() - cached.fetchedAt < (cached.meta ? CINEMETA_TTL : CINEMETA_NULL_TTL)) {
+        return cached.meta
     }
     try {
         const mediaType = type === 'movie' ? 'movie' : 'series'
-        const res = await fetch(`https://v3-cinemeta.strem.io/meta/${mediaType}/${imdbId}.json`, { signal: AbortSignal.timeout(5000) })
-        if (!res.ok) return { name: '', poster: '', genres: [] }
+        const res = await fetch(`https://v3-cinemeta.strem.io/meta/${mediaType}/${imdbId}.json`, { signal: AbortSignal.timeout(8000) })
+        if (!res.ok) {
+            if (import.meta.env?.DEV) console.warn(`[Cinemeta] ${res.status} for ${imdbId} (${mediaType})`)
+            cinemetaCache.set(imdbId, { meta: null, fetchedAt: Date.now() })
+            return null
+        }
         const data = await res.json()
-        const meta = data?.meta
-        const genres: string[] = typeof meta?.genre === 'string' && meta.genre.trim()
-            ? meta.genre.split(',').map((g: string) => g.trim()).filter(Boolean)
-            : []
-        const entry = { name: meta?.name || '', poster: meta?.poster || '', genres, fetchedAt: Date.now() }
-        cinemetaCache.set(imdbId, entry)
-        return { name: entry.name, poster: entry.poster, genres: entry.genres }
-    } catch {
-        return { name: '', poster: '', genres: [] }
+        const meta: CinemetaMeta | null = data?.meta ?? null
+        cinemetaCache.set(imdbId, { meta, fetchedAt: Date.now() })
+        return meta
+    } catch (e) {
+        if (import.meta.env?.DEV) console.warn(`[Cinemeta] fetch failed for ${imdbId}:`, e instanceof Error ? e.message : e)
+        return null
+    }
+}
+
+export function getCachedCinemetaName(imdbId: string): string | null {
+    if (!imdbId || !imdbId.startsWith('tt')) return null
+    const cached = cinemetaCache.get(imdbId)
+    if (!cached || !cached.meta) return null
+    if (Date.now() - cached.fetchedAt > CINEMETA_TTL) return null
+    return cached.meta.name?.trim() || null
+}
+
+async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string; genres: string[] }> {
+    const meta = await fetchCinemetaDetail(imdbId, type)
+    if (!meta) return { name: '', poster: '', genres: [] }
+    return {
+        name: meta.name || '',
+        poster: sanitizePosterUrl(meta.poster) || '',
+        genres: parseCinemetaGenres(meta),
     }
 }
 
@@ -254,18 +371,10 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
     const meta = accountActivityMeta(account, accounts)
     const watchedAt = Number(row.watched_at) || Date.now()
     let name = stripNuvioEpisodeTag(row.title || '', row.episode)
-    let poster = ''
-    let genres: string[] | undefined
-    if (!name.trim()) {
-        const resolved = await resolveCinemeta(row.content_id, row.content_type)
-        name = resolved.name
-        poster = resolved.poster
-        genres = resolved.genres.length > 0 ? resolved.genres : undefined
-    } else {
-        const resolved = await resolveCinemeta(row.content_id, row.content_type)
-        poster = resolved.poster
-        genres = resolved.genres.length > 0 ? resolved.genres : undefined
-    }
+    const resolved = await resolveCinemeta(row.content_id, row.content_type)
+    if (!name.trim()) name = resolved.name
+    const poster = resolved.poster
+    const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
         id: `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
@@ -298,18 +407,10 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const progress = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
     const lastWatched = Number(row.last_watched) || Date.now()
     let name = stripNuvioEpisodeTag(titleHint?.trim() || '', row.episode)
-    let poster = ''
-    let genres: string[] | undefined
-    if (!name) {
-        const resolved = await resolveCinemeta(row.content_id, row.content_type)
-        name = resolved.name
-        poster = resolved.poster
-        genres = resolved.genres.length > 0 ? resolved.genres : undefined
-    } else {
-        const resolved = await resolveCinemeta(row.content_id, row.content_type)
-        poster = resolved.poster
-        genres = resolved.genres.length > 0 ? resolved.genres : undefined
-    }
+    const resolved = await resolveCinemeta(row.content_id, row.content_type)
+    if (!name.trim()) name = resolved.name
+    const poster = resolved.poster
+    const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
         id: `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
@@ -342,7 +443,7 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         uniqueItemId: entry.video_id,
         name: entry.name,
         type: entry.type,
-        poster: entry.poster,
+        poster: sanitizePosterUrl(entry.poster) || '',
         timestamp: entry.timestamp,
         firstWatched: entry.firstWatched,
         duration: entry.duration,

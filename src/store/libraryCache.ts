@@ -358,6 +358,17 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                                 const oldMtime = get().lastMtimeByAccount[account.id]
                                 if (oldMtime && latestMtime === oldMtime && nuvioConns.length === 0) {
+                                    const { useWatchEventStore } = await import('@/store/watchEventStore')
+                                    await useWatchEventStore.getState().load()
+                                    const newEvents = useWatchEventStore.getState().diffAndRecord(
+                                        account.id, libraryItems, account, accounts
+                                    )
+                                    if (newEvents.length > 0) {
+                                        triggerSync()
+                                    }
+                                    useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
+                                        .then(backfilled => { if (backfilled > 0) triggerSync() })
+                                        .catch(e => { if (import.meta.env?.DEV) console.error(`[LibraryCache] bitfield backfill (mtime-skip) failed for ${account.name || account.id}:`, e) })
                                     const stale = staleByAccount.get(account.id) || []
                                     fetchedByAccount.set(account.id, stale)
                                     newMtimes[account.id] = latestMtime

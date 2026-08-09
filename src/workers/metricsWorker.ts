@@ -227,8 +227,6 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
             if (h.overallTimeWatched > prev) {
                 minutes = (h.overallTimeWatched - prev) / 60000
                 seriesWithOverall.set(h.itemId, h.overallTimeWatched)
-            } else {
-                minutes = 0
             }
         } else {
             minutes = (h.watched || 0) / 60000

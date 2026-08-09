@@ -3,6 +3,7 @@ import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, U
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { Poster } from '@/components/common/Poster'
@@ -113,12 +114,16 @@ function LibrarySection({ accountId, connection }: { accountId: string; connecti
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7">
                     {items.map((item, i) => (
                         <div key={`${item.content_id}-${i}`} className="group space-y-1.5">
-                            <div className="relative aspect-[2/3] overflow-hidden rounded-xl border border-border/40 bg-muted shadow-sm transition-[border-color,box-shadow] duration-200 group-hover:border-border/70 group-hover:shadow-md">
-                                <Poster src={item.poster} itemId={item.content_id} itemType={item.content_type} alt={item.name} />
+                            <div className="relative aspect-[2/3] overflow-hidden rounded-xl border border-border/40 bg-muted shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
+                                <Poster src={item.poster} itemId={item.content_id} itemType={item.content_type} alt={item.name} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
                             </div>
-                            <p className="truncate text-[11px] font-medium leading-tight" title={item.name || item.content_id}>
-                                {item.name || item.content_id}
-                            </p>
+                            <Tooltip content={item.name || item.content_id}>
+                              <TooltipTrigger asChild>
+                                <p className="truncate text-[11px] font-medium leading-tight">
+                                  {item.name || item.content_id}
+                                </p>
+                              </TooltipTrigger>
+                            </Tooltip>
                             {(item.release_info || item.imdb_rating) && (
                                 <p className="truncate text-xs text-muted-foreground">
                                     {[item.release_info, item.imdb_rating ? `★ ${item.imdb_rating}` : null].filter(Boolean).join(' · ')}

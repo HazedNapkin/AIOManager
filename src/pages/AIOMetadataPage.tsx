@@ -164,9 +164,9 @@ export function AIOMetadataPage() {
     return (
         <div className="w-full mx-auto py-6 px-4 md:px-8 lg:px-12 xl:px-16 space-y-4 max-w-[1800px]">
             <ToolbarShell className="w-fit max-w-full p-2" contentClassName="gap-2">
-                <Button variant="ghost" size="sm" className="h-8 gap-2 px-2.5 text-muted-foreground hover:text-foreground"
+                <Button variant="ghost" size="sm" className="mt-0.5 h-8 shrink-0 gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 hover:text-foreground"
                     onClick={() => navigate(`/account/${accountId}`)}>
-                    <ArrowLeft className="w-4 h-4" /> Back
+                    <ArrowLeft className="h-4 w-4" /> Back
                 </Button>
             </ToolbarShell>
 

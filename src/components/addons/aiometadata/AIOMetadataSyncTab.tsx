@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress'
 import { CopyButton } from '@/components/ui/copy-button'
 import { StatusChip } from '@/components/ui/status-chip'
 import { AddonIcon } from '@/components/ui/addon-icon'
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { EmptyState } from '@/components/common/EmptyState'
 import { SectionPreview } from '@/components/addons/aiostreams/SectionPreview'
 import { useToast } from '@/hooks/use-toast'
@@ -672,7 +673,11 @@ export function AIOMetadataSyncTab({
                                         <span className="min-w-0 flex-1 truncate font-medium">{account.accountName}</span>
                                         {result && (result.status === 'created'
                                             ? <CheckCircle2 className="w-4 h-4 text-success" />
-                                            : <span title={result.error} className="text-destructive">Failed</span>)}
+                                            : <Tooltip content={result.error}>
+                                                <TooltipTrigger asChild>
+                                                    <span className="text-destructive">Failed</span>
+                                                </TooltipTrigger>
+                                              </Tooltip>)}
                                     </label>
                                 )
                             })}
@@ -851,9 +856,13 @@ export function AIOMetadataSyncTab({
                                                     <span className="truncate">{entry.label}</span>
                                                 </span>
                                                 <span className="text-muted-foreground/30">{'->'}</span>
-                                                <span className="truncate text-right text-muted-foreground" title={`${entry.targetSummary} to ${entry.sourceSummary}`}>
-                                                    {entry.targetSummary} to {entry.sourceSummary}
-                                                </span>
+                                                <Tooltip content={`${entry.targetSummary} to ${entry.sourceSummary}`}>
+                                                  <TooltipTrigger asChild>
+                                                    <span className="truncate text-right text-muted-foreground">
+                                                      {entry.targetSummary} to {entry.sourceSummary}
+                                                    </span>
+                                                  </TooltipTrigger>
+                                                </Tooltip>
                                             </div>
                                         ))}
                                     </div>
@@ -909,7 +918,7 @@ export function AIOMetadataSyncTab({
                                 <StatusChip className="ml-auto" variant={result.status === 'failed' ? 'destructive' : result.status === 'skipped' ? 'muted' : 'success'}>
                                     {result.restored ? 'Restored' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
                                 </StatusChip>
-                                {result.status === 'failed' && result.error && <span className="max-w-[180px] truncate text-destructive" title={result.error}>{result.error}</span>}
+                                {result.status === 'failed' && result.error && <Tooltip content={result.error}><TooltipTrigger asChild><span className="max-w-[180px] truncate text-destructive">{result.error}</span></TooltipTrigger></Tooltip>}
                                 {result.status === 'changed' && result.rollbackConfig && !result.restored && (
                                     <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5"
                                         disabled={restoringUrls.has(result.target.transportUrl)} onClick={() => handleRestore(result)}>

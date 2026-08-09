@@ -86,7 +86,7 @@ export function AccountSection() {
                             {isSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                             Push to Cloud
                         </Button>
-                        <Button variant="outline" className="gap-2 bg-background/60" onClick={() => syncFromRemote()} disabled={isSyncing}>
+                        <Button variant="outline" className="gap-2" onClick={() => syncFromRemote()} disabled={isSyncing}>
                             {isSyncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                             Pull from Cloud
                         </Button>

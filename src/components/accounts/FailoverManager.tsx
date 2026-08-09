@@ -1251,9 +1251,11 @@ export function FailoverManager({
                                     <div key={rule.id} className="bg-card border border-border/40 rounded-2xl p-5 flex flex-col gap-5 shadow-sm min-w-0">
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="flex items-center gap-3 min-w-0 flex-1">
-                                                <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0" title={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
-                                                    {rule.name || `RULE ${rule.id.slice(0, 8)}`}
-                                                </div>
+                                                <Tooltip content={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
+                                                    <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0">
+                                                        {rule.name || `RULE ${rule.id.slice(0, 8)}`}
+                                                    </div>
+                                                </Tooltip>
                                                 {rule.cooldown_ms && (
                                                     <div className="flex items-center gap-1.5 font-mono text-xs font-semibold text-warning opacity-60">
                                                         <Activity className="w-3 h-3" />
@@ -1422,9 +1424,11 @@ export function FailoverManager({
                                                                     ) : result ? (
                                                                         <div className="flex items-center gap-1.5">
                                                                             {!result.healthy && result.error && (
-                                                                                <span className="text-xs text-foreground/60 truncate max-w-[120px]" title={result.error}>
-                                                                                    {result.error}
-                                                                                </span>
+                                                                                <Tooltip content={result.error}>
+                                                                                    <span className="text-xs text-foreground/60 truncate max-w-[120px]">
+                                                                                        {result.error}
+                                                                                    </span>
+                                                                                </Tooltip>
                                                                             )}
                                                                             <XCircle className="w-3 h-3 text-destructive" />
                                                                         </div>
@@ -1524,7 +1528,9 @@ const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active'
             {logo ? (
                 <img src={logo} alt="" className="h-4 w-4 rounded-sm object-contain" loading="lazy" />
             ) : null}
-            <span className="truncate max-w-[120px]" title={url}>{displayName}</span>
+            <Tooltip content={url}>
+            <span className="truncate max-w-[120px]">{displayName}</span>
+        </Tooltip>
         </span>
     )
 })

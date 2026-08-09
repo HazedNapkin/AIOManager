@@ -16,7 +16,6 @@ import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-
 import {
   ArrowUpCircle,
   Check,
-  Info,
   Layers,
   Link2,
   Link2Off,
@@ -117,15 +116,6 @@ export function LibrarySyncTab({
 
       {syncOverviewData.length > 0 && (
         <>
-          <div className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-            <p>
-              <span className="font-medium text-foreground/80">Version numbers are informational.</span>{' '}
-              An addon keeps working whether or not you update; updating just re-fetches the latest manifest. It's
-              only worth doing when an addon's capabilities actually change, which is flagged separately as a manifest change.
-            </p>
-          </div>
-
           <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1.5">
@@ -236,7 +226,7 @@ export function LibrarySyncTab({
                       {deployedAccounts.map(account => (
                         <div key={account.id} className="flex min-w-0 items-center gap-1.5 text-xs">
                           <span className="w-4 text-center leading-none shrink-0">
-                            {account.emoji ? account.emoji : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
+                            {account.emoji ? account.emoji : account.avatar ? <img src={account.avatar} alt="" className="h-full w-full rounded-full object-cover" /> : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
                           </span>
                            <span className="truncate font-medium text-foreground/75 flex-1">{account.name || getAccountEmail(account)}</span>
                            <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', isReadyToUpdate ? 'bg-warning' : 'bg-success')} />
@@ -333,7 +323,7 @@ export function LibrarySyncTab({
                     {deployedAccounts.map(account => (
                       <div key={account.id} className="flex items-center gap-1.5 text-xs min-w-0">
                         <span className="w-4 text-center leading-none shrink-0">
-                          {account.emoji ? account.emoji : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
+                          {account.emoji ? account.emoji : account.avatar ? <img src={account.avatar} alt="" className="h-full w-full rounded-full object-cover" /> : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
                         </span>
                          <span className="truncate font-medium text-foreground/75 flex-1">{account.name || getAccountEmail(account)}</span>
                        </div>
