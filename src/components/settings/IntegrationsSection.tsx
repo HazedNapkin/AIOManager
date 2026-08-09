@@ -56,11 +56,9 @@ type ProviderOption = {
 
 const PROVIDER_OPTIONS: ProviderOption[] = [
     { id: 'tmdb', label: 'TMDB', available: true, description: 'Recommendations, trailers, cast, posters', keyUrl: 'https://www.themoviedb.org/settings/api', color: '#01b4e3', abbr: 'M', logo: '/tmdb-logo.svg' },
-    { id: 'anilist', label: 'AniList', available: true, description: 'Anime recommendations, classification, metadata', keyUrl: 'https://anilist.co/api/', color: '#02a9ff', abbr: 'A', logo: '/anilist-logo.png' },
     { id: 'pmdb', label: 'PMDB', available: true, description: 'Community ratings, ID mappings, skip timestamps', keyUrl: 'https://publicmetadb.com/api-docs', color: '#7c3aed', abbr: 'P' },
     { id: 'mdblist', label: 'MDBList', available: true, description: 'Curated lists, cross-platform metadata', keyUrl: 'https://mdblist.com/preferences/', color: '#3D7ABD', abbr: 'M', logo: '/mdblist-logo.png' },
     { id: 'tvdb', label: 'TVDB', available: true, description: 'Series metadata, episode data, artwork', keyUrl: 'https://thetvdb.com/api-information/signup', color: '#1a6ede', abbr: 'TV', logo: '/tvdb-logo.svg' },
-    { id: 'mal', label: 'MAL', available: true, description: 'MyAnimeList - anime metadata and recommendations', keyUrl: 'https://myanimelist.net/apiconfig', color: '#2e51a2', abbr: 'M', logo: '/mal-logo.svg' },
 ]
 
 const CUSTOM_INSTANCE_ID = '__custom__'
@@ -624,7 +622,7 @@ export function IntegrationsSection() {
                             Import keys from AIOMetadata
                         </DialogTitle>
                         <DialogDescription>
-                            Pull your existing TMDB, TVDB, and MAL keys from an AIOMetadata instance. This is a one-time import; your password is used to fetch the keys and is then discarded.
+                            Pull your existing TMDB, TVDB, and PMDB keys from an AIOMetadata instance. This is a one-time import; your password is used to fetch the keys and is then discarded.
                         </DialogDescription>
                     </DialogHeader>
 

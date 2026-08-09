@@ -21,7 +21,8 @@ import { createReconciler } from './providers/reconciler.js'
 import { registerProviderRoutes } from './routes/providers.js'
 import { registerMetadataKeysRoutes } from './routes/metadata-keys.js'
 import { registerMetadataProxyRoutes } from './routes/metadata-proxy.js'
-import { registerStremioCatalogRoutes } from './routes/stremio-catalog.js'
+import { registerWatchlistRoutes } from './routes/watchlist.js'
+
 import { traceClientBatch, traceEnabled } from './utils/trace.js'
 
 const fastify = Fastify({
@@ -79,7 +80,7 @@ fastify.addHook('onSend', async (request, reply) => {
     }
 })
 
-registerStremioCatalogRoutes(fastify)
+registerWatchlistRoutes(fastify)
 
 fastify.get('/logo.png', async (_request, reply) => {
     const distLogo = `${distPath}/logo.png`

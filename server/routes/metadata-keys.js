@@ -6,23 +6,18 @@ import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { maskContext } from '../utils/log-helpers.js'
 
 const SUPPORTED_PROVIDERS = new Set([
-    'tmdb', 'anilist', 'tvdb', 'mal', 'mdblist', 'simkl', 'trakt', 'pmdb'
+    'tmdb', 'tvdb', 'mdblist', 'simkl', 'pmdb'
 ])
 
 const PROVIDER_KEY_ALIASES = {
     themoviedb: 'tmdb',
     'the-moviedb': 'tmdb',
     themoviedb_org: 'tmdb',
-    myanimelist: 'mal',
-    'myanimelist.net': 'mal',
-    'anilist.co': 'anilist',
     'tvdb.com': 'tvdb',
     thetvdb: 'tvdb',
     'publicmetadb': 'pmdb',
     'publicmetadb.com': 'pmdb',
     publicmeta: 'pmdb',
-    'ratingposterdb': 'rpdb',
-    'ratingposterdb.com': 'rpdb',
     'fanart.tv': 'fanart',
     'mdblist.com': 'mdblist',
 }
@@ -130,10 +125,11 @@ export function registerMetadataKeysRoutes(fastify) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
-        const provider = normalizeProvider(request.params.provider)
-        if (!provider) {
-            reply.status(400); return { error: 'Unsupported provider' }
+        const rawProvider = request.params.provider
+        if (typeof rawProvider !== 'string' || !/^[a-z0-9_-]+$/i.test(rawProvider)) {
+            reply.status(400); return { error: 'Invalid provider' }
         }
+        const provider = normalizeProvider(rawProvider) || rawProvider.toLowerCase()
 
         try {
             await db.run(

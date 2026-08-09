@@ -446,6 +446,7 @@ export function createReconciler(fastify) {
                             const url = normalizeUrl(p.transportUrl || p.url)
                             const canonicalManifest = canonicalManifestByUrl.get(url)
                             if (canonicalManifest === undefined) return false
+                            if (!p.manifest) return false
                             return manifestSignature(p.manifest) !== canonicalManifest
                         })
                         needsWrite = nameMismatch || manifestMismatch

@@ -199,7 +199,12 @@ interface TmdbListItem {
     vote_average?: number
     vote_count?: number
     genre_ids?: number[]
+    origin_country?: string[]
+    original_language?: string
 }
+
+const ANIME_LANGUAGES = new Set(['ja', 'ko', 'zh'])
+const ANIME_COUNTRIES = new Set(['JP', 'KR', 'CN'])
 
 interface TmdbPagedPayload {
     page?: number
@@ -245,19 +250,41 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
     }
 }
 
+const MAX_CONCURRENT_TMDB = 8
+let activeTmdb = 0
+const tmdbQueue: Array<() => void> = []
+
+function acquireTmdb(): Promise<void> {
+    if (activeTmdb < MAX_CONCURRENT_TMDB) { activeTmdb++; return Promise.resolve() }
+    return new Promise(resolve => { tmdbQueue.push(() => { activeTmdb++; resolve() }) })
+}
+
+function releaseTmdb() {
+    activeTmdb--
+    const next = tmdbQueue.shift()
+    if (next) next()
+}
+
 export async function proxyFetch<T>(path: string, signal?: AbortSignal): Promise<T | null> {
+    if (signal?.aborted) return null
+    await acquireTmdb()
+    if (signal?.aborted) { releaseTmdb(); return null }
     let response: Response
     try {
-        response = await fetch(`/api/metadata/tmdb/${path}`, {
+        const fetchPromise = fetch(`/api/metadata/tmdb/${path}`, {
             headers: await getAuthHeaders(),
             signal,
         })
+        fetchPromise.catch(() => {})
+        response = await fetchPromise
     } catch (err) {
         if (!(err instanceof DOMException && err.name === 'AbortError') && import.meta.env?.DEV) {
             console.error('[TMDB proxyFetch] network error:', path, err)
         }
+        releaseTmdb()
         return null
     }
+    releaseTmdb()
     if (!response.ok) {
         if (import.meta.env?.DEV) console.warn(`[TMDB proxyFetch] ${response.status} for ${path}`)
         return null
@@ -343,10 +370,16 @@ function mapDetailsToCanonical(data: TmdbDetailsPayload, mediaType: TmdbMediaTyp
 
 function mapListItemToCanonical(item: TmdbListItem, mediaType: TmdbMediaType): CanonicalItem {
     const releaseDate = item.release_date || item.first_air_date
+    const isAnime = mediaType === 'tv'
+        && item.genre_ids?.includes(16)
+        && (
+            (Array.isArray(item.origin_country) && item.origin_country.some(c => ANIME_COUNTRIES.has(c)))
+            || ANIME_LANGUAGES.has(item.original_language ?? '')
+        )
     const canonical: CanonicalItem = {
         id: { tmdb: item.id, slug: String(item.id) },
         title: item.title || item.name || 'Unknown',
-        type: mediaType === 'tv' ? 'series' : 'movie',
+        type: isAnime ? 'anime' : (mediaType === 'tv' ? 'series' : 'movie'),
     }
     if (item.poster_path) canonical.poster = `${TMDB_IMAGE_BASE}/w500${item.poster_path}`
     const year = extractYear(releaseDate)
@@ -410,10 +443,13 @@ async function* iterPaged(
     signal?: AbortSignal,
     maxPages = 1
 ): AsyncIterable<CanonicalItem> {
+    // Use '&' if basePath already contains a query string (e.g. discoverRich passes
+    // 'discover/movie?with_genres=28&sort_by=...'). Prevents malformed double-? URLs.
+    const sep = basePath.includes('?') ? '&' : '?'
     let page = 1
     while (page <= maxPages) {
         if (signal?.aborted) return
-        const payload = await proxyFetch<TmdbPagedPayload>(`${basePath}?page=${page}`, signal)
+        const payload = await proxyFetch<TmdbPagedPayload>(`${basePath}${sep}page=${page}`, signal)
         if (!payload) return
         const results = Array.isArray(payload.results) ? payload.results : []
         for (const item of results) {
@@ -517,6 +553,102 @@ export async function fetchTrendingBatch(
     } catch {}
     return items
 }
+
+/** Fetches trending/all/week — returns both movies and TV in one call. */
+export async function fetchTrendingAll(
+    signal?: AbortSignal,
+    maxItems = 40
+): Promise<{ movies: CanonicalItem[]; series: CanonicalItem[] }> {
+    const movies: CanonicalItem[] = []
+    const series: CanonicalItem[] = []
+    try {
+        const payload = await proxyFetch<TmdbPagedPayload>('trending/all/week?page=1', signal)
+        const results = Array.isArray(payload?.results) ? payload!.results : []
+        for (const item of results) {
+            if (!item || typeof item.id !== 'number') continue
+            const mediaType = (item as { media_type?: string }).media_type
+            if (mediaType === 'movie') {
+                if (movies.length < maxItems / 2) movies.push(mapListItemToCanonical(item, 'movie'))
+            } else if (mediaType === 'tv') {
+                if (series.length < maxItems / 2) series.push(mapListItemToCanonical(item, 'tv'))
+            }
+        }
+    } catch {}
+    return { movies, series }
+}
+
+/** Fetches movies currently in theaters (movie/now_playing). */
+export async function fetchNowPlaying(
+    signal?: AbortSignal,
+    maxItems = 20
+): Promise<CanonicalItem[]> {
+    const items: CanonicalItem[] = []
+    try {
+        for await (const item of iterPaged('movie/now_playing', 'movie', signal)) {
+            items.push(item)
+            if (items.length >= maxItems) break
+        }
+    } catch {}
+    return items
+}
+
+/** Fetches TV series airing new episodes in the next 7 days (tv/on_the_air). */
+export async function fetchOnTheAir(
+    signal?: AbortSignal,
+    maxItems = 20
+): Promise<CanonicalItem[]> {
+    const items: CanonicalItem[] = []
+    try {
+        for await (const item of iterPaged('tv/on_the_air', 'tv', signal)) {
+            items.push(item)
+            if (items.length >= maxItems) break
+        }
+    } catch {}
+    return items
+}
+
+/** Fetches all-time top-rated movies or series (Bayesian average). */
+export async function fetchTopRated(
+    mediaType: 'movie' | 'tv',
+    signal?: AbortSignal,
+    maxItems = 20
+): Promise<CanonicalItem[]> {
+    const items: CanonicalItem[] = []
+    try {
+        for await (const item of iterPaged(`${mediaType}/top_rated`, mediaType, signal)) {
+            items.push(item)
+            if (items.length >= maxItems) break
+        }
+    } catch {}
+    return items
+}
+
+/** Fetches all unwatched entries in a TMDB collection (franchise follow-through). */
+export async function fetchCollection(
+    collectionId: number,
+    signal?: AbortSignal
+): Promise<CanonicalItem[]> {
+    try {
+        const data = await proxyFetch<{
+            parts?: Array<{
+                id: number
+                title?: string
+                poster_path?: string | null
+                release_date?: string
+                vote_average?: number
+                vote_count?: number
+                genre_ids?: number[]
+            }>
+        }>(`collection/${collectionId}`, signal)
+        if (!data?.parts) return []
+        return data.parts
+            .filter(p => typeof p.id === 'number' && p.poster_path)
+            .map(p => mapListItemToCanonical(p, 'movie'))
+    } catch {
+        return []
+    }
+}
+
 
 export interface SeasonInfo {
     seasonNumber: number
@@ -671,7 +803,7 @@ export async function fetchTmdbDetailsAsMeta(
         aggregate_credits?: { cast?: TmdbCastMember[]; crew?: Array<TmdbCastMember & { job?: string; department?: string }> }
         recommendations?: TmdbPagedPayload
         similar?: TmdbPagedPayload
-        reviews?: { results?: Array<{ author?: string; author_details?: { avatar_path?: string | null; rating?: number }; content?: string; created_at?: string }> }
+        reviews?: { results?: Array<{ id?: string; author?: string; author_details?: { avatar_path?: string | null; rating?: number; username?: string }; content?: string; created_at?: string; url?: string }> }
         production_companies?: Array<{ name: string; logo_path?: string | null }>
         networks?: Array<{ name: string; logo_path?: string | null }>
         status?: string
@@ -681,6 +813,8 @@ export async function fetchTmdbDetailsAsMeta(
         translations?: { translations?: Array<{ iso_639_1?: string; data?: { overview?: string; tagline?: string } }> }
         external_ids?: { imdb_id?: string; tvdb_id?: number }
         belongs_to_collection?: { id: number; name?: string; poster_path?: string | null; backdrop_path?: string | null }
+        release_dates?: { results?: Array<{ iso_3166_1: string; release_dates?: Array<{ certification?: string }> }> }
+        content_ratings?: { results?: Array<{ iso_3166_1: string; rating?: string }> }
         'watch/providers'?: { results?: Record<string, { flatrate?: Array<{ provider_name?: string; logo_path?: string | null; provider_id?: number }>; free?: Array<{ provider_name?: string; logo_path?: string | null; provider_id?: number }> }> }
     }>(
         `${mediaType}/${tmdbId}?append_to_response=${appendParams}`,
@@ -689,14 +823,14 @@ export async function fetchTmdbDetailsAsMeta(
     if (!data) return { meta: {}, imdbId: null, trailerYouTubeId: null }
 
     let certification: string | undefined = undefined
-    if (mediaType === 'movie' && (data as Record<string, any>).release_dates?.results) {
-        const usRel = (data as Record<string, any>).release_dates.results.find((r: any) => r.iso_3166_1 === 'US')
+    if (mediaType === 'movie' && data.release_dates?.results) {
+        const usRel = data.release_dates.results.find((r) => r.iso_3166_1 === 'US')
         if (usRel && Array.isArray(usRel.release_dates)) {
-            const cert = usRel.release_dates.find((d: any) => d.certification && d.certification.trim())?.certification
+            const cert = usRel.release_dates.find((d) => d.certification && d.certification.trim())?.certification
             if (cert) certification = cert.trim()
         }
-    } else if (mediaType === 'tv' && (data as Record<string, any>).content_ratings?.results) {
-        const usRating = (data as Record<string, any>).content_ratings.results.find((r: any) => r.iso_3166_1 === 'US')
+    } else if (mediaType === 'tv' && data.content_ratings?.results) {
+        const usRating = data.content_ratings.results.find((r) => r.iso_3166_1 === 'US')
         if (usRating?.rating && usRating.rating.trim()) certification = usRating.rating.trim()
     }
 
@@ -792,10 +926,10 @@ export async function fetchTmdbDetailsAsMeta(
     const directors = Array.from(directorMap.values())
     const crewList = Array.from(crewMap.values()).slice(0, 30)
 
-    const rawVideos = Array.isArray((data as Record<string, any>).videos?.results) ? (data as Record<string, any>).videos.results : []
+    const rawVideos = Array.isArray(data.videos?.results) ? data.videos!.results : []
     const videoList = rawVideos
-        .filter((v: any) => v.site === 'YouTube' && v.key)
-        .map((v: any, idx: number) => {
+        .filter((v) => v.site === 'YouTube' && v.key)
+        .map((v, idx) => {
             const rawName = typeof v.name === 'string' ? v.name.trim() : ''
             const isRawHash = !rawName || rawName === v.key || /^[A-Za-z0-9_-]{10,14}$/.test(rawName)
             const cleanTitle = !isRawHash
@@ -813,8 +947,8 @@ export async function fetchTmdbDetailsAsMeta(
     const releaseDate = data.release_date || data.first_air_date
     const year = releaseDate ? releaseDate.slice(0, 4) : undefined
 
-    const rawReviews = Array.isArray((data as Record<string, any>).reviews?.results) ? (data as Record<string, any>).reviews.results : []
-    const reviewsList = rawReviews.slice(0, 15).map((rev: any) => ({
+    const rawReviews = Array.isArray(data.reviews?.results) ? data.reviews!.results : []
+    const reviewsList = rawReviews.slice(0, 15).map((rev) => ({
         id: rev.id,
         author: rev.author || rev.author_details?.username || 'TMDB Reviewer',
         avatar: rev.author_details?.avatar_path
@@ -905,13 +1039,13 @@ export async function fetchTmdbDetailsAsMeta(
         videoList: videoList.length > 0 ? videoList : undefined,
         relatedList: relatedList.length > 0 ? relatedList : undefined,
         reviewsList: reviewsList.length > 0 ? reviewsList : undefined,
-        status: (data as Record<string, any>).status,
-        originalLanguage: (data as Record<string, any>).original_language,
-        productionCompanies: Array.isArray((data as Record<string, any>).production_companies)
-            ? (data as Record<string, any>).production_companies.map((c: any) => c.name).filter(Boolean)
+        status: data.status,
+        originalLanguage: data.original_language,
+        productionCompanies: Array.isArray(data.production_companies)
+            ? data.production_companies.map((c) => c.name).filter(Boolean)
             : undefined,
-        networks: Array.isArray((data as Record<string, any>).networks)
-            ? (data as Record<string, any>).networks.map((n: any) => n.name).filter(Boolean)
+        networks: Array.isArray(data.networks)
+            ? data.networks.map((n) => n.name).filter(Boolean)
             : undefined,
         keywords: keywordIds.length > 0 ? keywordIds : undefined,
         collection,

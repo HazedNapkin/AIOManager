@@ -11,7 +11,7 @@ import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type C
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
 import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, searchTmdbPerson, fetchSeasonEpisodes, fetchSeasonsList, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
-import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/catalog-sync'
+import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/watchlist'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
 import { cn, openStremioDetail } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -35,8 +35,6 @@ export type RatingSource =
     | 'letterboxd'
     | 'pmdb'
     | 'tmdb'
-    | 'mal'
-    | 'anilist'
     | 'simkl'
 
 interface ProviderRating {
@@ -81,8 +79,6 @@ const RATING_LABELS: Record<string, string> = {
     trakt: 'Trakt Rating',
     letterboxd: 'Letterboxd Rating',
     tmdb: 'TMDB Rating',
-    mal: 'MyAnimeList Rating',
-    anilist: 'AniList Rating',
     pmdb: 'PublicMetaDB Rating',
 }
 
@@ -190,30 +186,6 @@ const RatingBadge = memo(function RatingBadge({ rating }: { rating: ProviderRati
         )
     }
 
-    if (source === 'mal') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-600/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 40 20" className="h-3.5 w-7 shrink-0 rounded-sm">
-                    <rect width="40" height="20" rx="3" fill="#2E51A2" />
-                    <text x="20" y="14" fill="#FFFFFF" fontSize="11" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">MAL</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
-    if (source === 'anilist') {
-        return (
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
-                <svg viewBox="0 0 40 20" className="h-3.5 w-8 shrink-0 rounded-sm">
-                    <rect width="40" height="20" rx="3" fill="#02A9FF" />
-                    <text x="20" y="14" fill="#FFFFFF" fontSize="10" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">AniList</text>
-                </svg>
-                <span className="tabular-nums font-black text-white">{value}</span>
-            </span>
-        )
-    }
-
     if (source === 'pmdb') {
         return (
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
@@ -300,7 +272,7 @@ async function getPmdbRatingFromImdb(
     }
 }
 
-async function fetchAdditionalRatings(imdbId: string, title?: string, type?: string): Promise<ProviderRating[]> {
+async function fetchAdditionalRatings(imdbId: string): Promise<ProviderRating[]> {
     const results: ProviderRating[] = []
     const has = (src: RatingSource) => results.some(x => x.source === src)
     const DEV = import.meta.env?.DEV
@@ -358,38 +330,17 @@ async function fetchAdditionalRatings(imdbId: string, title?: string, type?: str
         } catch (e) { if (DEV) console.warn('[trace] omdb: FAILED', e) }
     }
 
-    // 3. AniList — only for anime content
-    if (title && (type === 'anime')) {
-        try {
-            const query = `
-            query ($search: String) {
-              Media (search: $search, type: ANIME) {
-                averageScore
-                meanScore
-              }
-            }`
-            const aniRes = await fetch('https://graphql.anilist.co', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ query, variables: { search: title } }),
-            })
-            if (DEV) console.log('[trace] anilist: status=%d ok=%b', aniRes.status, aniRes.ok)
-            if (aniRes.ok) {
-                const aniData = await aniRes.json()
-                const score = aniData?.data?.Media?.averageScore || aniData?.data?.Media?.meanScore
-                if (typeof score === 'number' && score > 0) {
-                    results.push({ source: 'anilist', value: `${score}%` })
-                    results.push({ source: 'mal', value: (score / 10).toFixed(1) })
-                    if (DEV) console.log('[trace] anilist: +2 ratings (anilist, mal)')
-                }
-            }
-        } catch (e) { if (DEV) console.warn('[trace] anilist: FAILED', e) }
-    }
-
     if (DEV) console.log('[trace] fetchAdditionalRatings: total=%d sources=[%s]', results.length, results.map(r => r.source).join(', '))
     return results
 }
 
+const mergeProviderRatings = (prev: ProviderRating[], extra: ProviderRating[]): ProviderRating[] => {
+    const combined = [...prev]
+    for (const item of extra) {
+        if (!combined.some(x => x.source === item.source)) combined.push(item)
+    }
+    return combined
+}
 
 
 function getYear(meta: CinemetaMeta | null, item: DetailItem | null): string {
@@ -470,6 +421,14 @@ function isStremioFriendlyType(type: string): boolean {
 }
 
 const personPhotoCache = new Map<string, string | null>()
+const PERSON_PHOTO_CACHE_MAX = 1000
+function setPersonPhotoCache(key: string, value: string | null) {
+    personPhotoCache.set(key, value)
+    if (personPhotoCache.size > PERSON_PHOTO_CACHE_MAX) {
+        const oldest = personPhotoCache.keys().next().value
+        if (oldest !== undefined) personPhotoCache.delete(oldest)
+    }
+}
 const inFlightPhotos = new Map<string, Promise<string | null>>()
 
 const PHOTO_CACHE_KEY = 'aiom_person_photos'
@@ -483,7 +442,7 @@ async function ensurePhotoStoreLoaded(): Promise<void> {
         const stored = await localforage.getItem<{ entries: Record<string, { url: string | null; ts: number }>; ts: number }>(PHOTO_CACHE_KEY)
         if (stored && Date.now() - stored.ts < PHOTO_CACHE_TTL) {
             for (const [name, entry] of Object.entries(stored.entries)) {
-                personPhotoCache.set(name, entry.url)
+                setPersonPhotoCache(name, entry.url)
             }
         }
     } catch { }
@@ -516,10 +475,10 @@ async function resolvePersonPhoto(name: string): Promise<string | null> {
             const person = await searchTmdbPerson(name.trim())
             const path = person?.profilePath
             const url = path ? `https://image.tmdb.org/t/p/w185${path}` : null
-            personPhotoCache.set(key, url)
+            setPersonPhotoCache(key, url)
             return url
         } catch {
-            personPhotoCache.set(key, null)
+            setPersonPhotoCache(key, null)
             return null
         } finally {
             inFlightPhotos.delete(key)
@@ -1066,7 +1025,7 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
                     : filtered[0].seasonNumber
                 setSelectedSeason(target)
             })
-            .catch(() => { })
+            .catch(() => { if (active) setTmdbSeasonsFailed(true) })
         return () => { active = false }
     }, [seriesTmdbId])
 
@@ -1095,7 +1054,7 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
         setCinemetaEpisodesBySeason(new Map())
         if (!activeItem) return
         if (seriesTmdbId && !tmdbSeasonsFailed) return
-        const isSeries = activeItem.type === 'series' || activeItem.type === 'anime'
+        const isSeries = activeItem.type === 'series' || activeItem.type === 'anime' || activeItem.type === 'episode'
         if (!isSeries) return
         let active = true
         const fetchCinemeta = (imdb: string) => {
@@ -1142,8 +1101,27 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
             fetchCinemeta(itemId)
         } else if (seriesTmdbId && tmdbSeasonsFailed) {
             proxyFetch<{ imdb_id?: string }>(`tv/${seriesTmdbId}/external_ids`)
-                .then(ext => { if (active && ext?.imdb_id) fetchCinemeta(ext.imdb_id) })
-                .catch(() => { })
+                .then(ext => {
+                    if (!active) return
+                    if (ext?.imdb_id) {
+                        fetchCinemeta(ext.imdb_id)
+                    } else if (activeItem.name) {
+                        fetch(`https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(activeItem.name)}.json`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(data => {
+                                if (!active || !data?.metas?.[0]) return
+                                const match = data.metas.find((m: Record<string, unknown>) =>
+                                    m.type === 'series' &&
+                                    String(m.name || '').toLowerCase() === activeItem.name!.toLowerCase()
+                                ) || data.metas[0]
+                                if (match?.id && String(match.id).startsWith('tt')) {
+                                    fetchCinemeta(String(match.id))
+                                }
+                            })
+                            .catch(() => {})
+                    }
+                })
+                .catch(() => {})
         }
         return () => { active = false }
     }, [seriesTmdbId, activeItem, tmdbSeasonsFailed])
@@ -1928,6 +1906,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         setDescExpanded(false)
         setTrailer(null)
         setProviderRatings([])
+        setSeriesTmdbId(null)
 
         const ratings: ProviderRating[] = []
         const isImdbId = renderItem.itemId.startsWith('tt')
@@ -1992,18 +1971,10 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     .then(res => { if (active) setTrailer(res) })
                                     .catch(() => { })
                             }
-                            fetchAdditionalRatings(result.imdbId, renderItem.name, renderItem.type)
+                            fetchAdditionalRatings(result.imdbId)
                                 .then(extra => {
                                     if (active && extra.length > 0) {
-                                        setProviderRatings(prev => {
-                                            const combined = [...prev]
-                                            for (const item of extra) {
-                                                if (!combined.some(x => x.source === item.source)) {
-                                                    combined.push(item)
-                                                }
-                                            }
-                                            return combined
-                                        })
+                                        setProviderRatings(prev => mergeProviderRatings(prev, extra))
                                     }
                                 })
                                 .catch(() => { })
@@ -2028,21 +1999,53 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 resolveTrailerAsync({ imdbId: cinemetaId, type: renderItem.type, cinemetaMeta: cinemetaResult })
                                     .then(res => { if (active) setTrailer(res) })
                                     .catch(() => { })
-                                fetchAdditionalRatings(cinemetaId, renderItem.name, renderItem.type)
+                                fetchAdditionalRatings(cinemetaId)
                                     .then(extra => {
                                         if (active && extra.length > 0) {
-                                            setProviderRatings(prev => {
-                                                const combined = [...prev]
-                                                for (const item of extra) {
-                                                    if (!combined.some(x => x.source === item.source)) combined.push(item)
-                                                }
-                                                return combined
-                                            })
+                                            setProviderRatings(prev => mergeProviderRatings(prev, extra))
                                         }
                                     })
                                     .catch(() => { })
                             } else {
                                 if (active) setFailed(true)
+                            }
+                        } else if (renderItem.name) {
+                            const searchType = mediaType === 'tv' ? 'series' : 'movie'
+                            const searchRes = await fetch(
+                                `https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(renderItem.name)}.json`
+                            ).catch(() => null)
+                            if (!active) return
+                            if (!searchRes || !searchRes.ok) { setFailed(true); return }
+                            const searchData = await searchRes.json().catch(() => null)
+                            const metas: Array<{ id?: string; type?: string; name?: string }> = searchData?.metas ?? []
+                            const match = metas.find(m =>
+                                m.type === searchType &&
+                                String(m.name || '').toLowerCase() === renderItem.name!.toLowerCase()
+                            ) || metas.find(m => m.type === searchType) || metas[0]
+                            if (!active) return
+                            if (match?.id && String(match.id).startsWith('tt')) {
+                                const cinemetaResult = await traceAsync('cinemeta-search', () =>
+                                    fetchCinemetaDetail(String(match.id), renderItem.type)
+                                )
+                                if (!active) return
+                                if (cinemetaResult) {
+                                    setMeta(cinemetaResult)
+                                    setFailed(false)
+                                    resolveTrailerAsync({ imdbId: String(match.id), type: renderItem.type, cinemetaMeta: cinemetaResult })
+                                        .then(res => { if (active) setTrailer(res) })
+                                        .catch(() => { })
+                                    fetchAdditionalRatings(String(match.id))
+                                        .then(extra => {
+                                            if (active && extra.length > 0) {
+                                                setProviderRatings(prev => mergeProviderRatings(prev, extra))
+                                            }
+                                        })
+                                        .catch(() => { })
+                                } else {
+                                    setFailed(true)
+                                }
+                            } else {
+                                setFailed(true)
                             }
                         } else {
                             if (active) setFailed(true)
@@ -2092,7 +2095,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 })
                 .catch(() => { })
 
-            traceAsync('ratings', () => fetchAdditionalRatings(renderItem.itemId, renderItem.name, renderItem.type))
+            traceAsync('ratings', () => fetchAdditionalRatings(renderItem.itemId))
                 .then(extra => {
                     if (!active || extra.length === 0) return
                     ratings.push(...extra)
@@ -2166,10 +2169,6 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         return () => { active = false }
     }, [open, renderItem])
 
-    useEffect(() => {
-        setSeriesTmdbId(null)
-    }, [activeItem])
-
     const cast = useMemo(() => getCast(meta), [meta])
     const crew = useMemo(() => getCrew(meta), [meta])
 
@@ -2208,7 +2207,6 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     if (meta?.videoList || meta?.relatedList || meta?.reviewsList || meta?.crew) dataSources.push('TMDB')
     const hasTraktOrLetterboxd = providerRatings.some(r => r.source === 'trakt' || r.source === 'letterboxd')
     if (hasTraktOrLetterboxd) dataSources.push('MDBList')
-    if (providerRatings.some(r => r.source === 'mal' || r.source === 'anilist')) dataSources.push('AniList')
 
     const canCollapse = description.length > DESCRIPTION_COLLAPSE_LENGTH
 

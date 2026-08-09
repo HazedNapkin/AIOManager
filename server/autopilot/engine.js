@@ -373,7 +373,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             const a = collA[i];
             const b = collB[i];
             if (normalizeAddonUrl(a.transportUrl).toLowerCase() !== normalizeAddonUrl(b.transportUrl).toLowerCase()) return true;
-            if (a.flags?.enabled !== b.flags?.enabled) return true;
+            if ((a.flags?.enabled !== false) !== (b.flags?.enabled !== false)) return true;
 
             if (a.manifest?.version !== b.manifest?.version) return true;
             if (a.manifest?.name !== b.manifest?.name) return true;

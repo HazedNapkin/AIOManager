@@ -461,3 +461,30 @@ export function inlineFormat(text: string, options?: { wikilinks?: boolean }): s
   html = html.replace(/\[(.+?)\]\((.+?)\)/g, (_, t, url) => `<a href="${safeHref(url)}" class="text-primary underline underline-offset-2 hover:opacity-80" target="_blank" rel="noopener noreferrer">${t}</a>`)
   return html
 }
+
+export function formatStaleAgo(ts: number): string {
+    const diff = Date.now() - ts
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hours = Math.floor(mins / 60)
+    if (hours < 24) return `${hours}h ago`
+    const days = Math.floor(hours / 24)
+    return `${days}d ago`
+}
+
+const IMDB_TMDB_CACHE_KEY = 'aiomanager-imdb-tmdb-cache'
+
+export function loadImdbTmdbCache(): Record<string, string> {
+    try {
+        return JSON.parse(localStorage.getItem(IMDB_TMDB_CACHE_KEY) || '{}') as Record<string, string>
+    } catch {
+        return {}
+    }
+}
+
+export function saveImdbTmdbCache(cache: Record<string, string>): void {
+    try {
+        localStorage.setItem(IMDB_TMDB_CACHE_KEY, JSON.stringify(cache))
+    } catch {}
+}

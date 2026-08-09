@@ -107,7 +107,7 @@ const dump = (): string => {
 }
 
 if (typeof window !== 'undefined') {
-  ;(window as unknown as { aiomanTrace?: unknown }).aiomanTrace = {
+  (window as unknown as { aiomanTrace?: unknown }).aiomanTrace = {
     on: () => { try { localStorage.setItem('aiomanTrace', '1') } catch { /* ignore */ } },
     off: () => { try { localStorage.removeItem('aiomanTrace') } catch { /* ignore */ } },
     status: isOn,

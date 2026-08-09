@@ -5,8 +5,6 @@ export type ProviderCapability = 'recommendations' | 'similar' | 'details' | 'ep
 export interface CanonicalId {
   imdb?: string;
   tmdb?: number;
-  mal?: number;
-  anilist?: number;
   tvdb?: number;
   slug: string;
 }

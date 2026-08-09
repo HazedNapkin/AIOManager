@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Sparkles, Users, Film, Tv, ArrowRight, Copy, Check, Dice3, Info, Search, Bookmark, LayoutGrid, Download } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Sparkles, ArrowRight, Dice3, Info, Search, Bookmark, LayoutGrid, Upload } from 'lucide-react'
 
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { ContentRail, ContentRailCard, ContentRailSkeleton } from '@/components/ui/content-rail'
@@ -11,78 +11,31 @@ import { SearchDialog } from '@/components/search/SearchDialog'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useAccountStore } from '@/store/accountStore'
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-    DropdownMenuSeparator,
-} from '@/components/ui/dropdown-menu'
 import { useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
-import { historyEntryToActivityItem, sanitizePosterUrl } from '@/lib/activity-utils'
-import { cn, maskNameLevel } from '@/lib/utils'
+import { historyEntryToActivityItem } from '@/lib/activity-utils'
+import { cn, maskNameLevel, formatStaleAgo, loadImdbTmdbCache, saveImdbTmdbCache } from '@/lib/utils'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityDetailModal, type DetailItem } from '@/components/activity/ActivityDetailModal'
-import { buildTasteProfile, computeHouseholdPopularity, findSimilarAccounts, type TasteProfile } from '@/lib/taste-profile'
+import { buildTasteProfile, computeHouseholdPopularity, type TasteProfile } from '@/lib/taste-profile'
 import { useExternalRatings } from '@/lib/external-ratings-store'
-import { useExternalWatchlist } from '@/lib/external-watchlist-store'
-import { useRailSize, useCatalogs } from '@/lib/discovery-prefs-store'
+import { useRailSize } from '@/lib/discovery-prefs-store'
 import {
     buildRecommendations,
     buildColdStartRails,
-    buildThemedRails,
     type SeedItem,
     type BuildRecommendationsResult,
-    type RankedRail,
-    type ScoredRecommendation,
 } from '@/lib/recommendation-engine'
-import { tmdbAdapter, fetchTmdbDetailsAsMeta, proxyFetch } from '@/api/metadata/adapters/tmdb'
-import { anilistAdapter } from '@/api/metadata/adapters/anilist'
-import { malAdapter } from '@/api/metadata/adapters/mal'
-import { createMultiProviderAdapter } from '@/lib/recommendation-engine'
-import { getHouseholdCatalogUrl, getAllCatalogUrls, publishRecommendations, getWatchlist, type PublishRail } from '@/lib/catalog-sync'
-import { toast } from '@/hooks/use-toast'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { tmdbAdapter, proxyFetch, fetchTmdbDetailsAsMeta } from '@/api/metadata/adapters/tmdb'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-
-const multiAdapter = createMultiProviderAdapter(
-    [
-        { adapter: anilistAdapter, match: (seed) => seed.type === 'anime' },
-        { adapter: malAdapter, match: (seed) => seed.type === 'anime' },
-    ],
-    tmdbAdapter
-)
-import type { CanonicalId } from '@/api/metadata/types'
+import { PublishToPmdbDialog } from '@/components/for-you/PublishToPmdbDialog'
+import { checkPmdbKeyConfigured, getLastPublishTime } from '@/lib/pmdb-list-publisher'
+import { getWatchlist, type WatchlistItem } from '@/lib/watchlist'
+import { bucketize, bucketsToPmdbRails, itemIdFromCanonical, type BucketItem } from '@/lib/rail-buckets'
 import type { ActivityItem } from '@/types/activity'
 import type { Account } from '@/types/account'
 
 const HOUSEHOLD_RAIL_MAX = 12
-const PUBLISH_THROTTLE_MS = 5 * 60 * 1000
-
-function railTitleToCatalogType(title: string): string | null {
-    const lower = title.toLowerCase()
-    if (lower.startsWith('theme:')) return 'themed_rows'
-    if (lower.startsWith('because ')) return 'because_you_watched'
-    if (lower.includes('accounts like yours') || lower.includes('similar accounts')) return 'because_you_watched'
-    if (lower.startsWith('popular ')) return 'popular_household'
-    if (lower.includes('movie')) return 'recommended_movies'
-    if (lower.includes('series')) return 'recommended_series'
-    return null
-}
-
-function railCatalogId(title: string): string | null {
-    const lower = title.toLowerCase()
-    if (lower.startsWith('more from')) return 'because_you_watched'
-    if (lower.startsWith('because you watched') || lower.startsWith('more like')) return 'because_you_watched'
-    if (lower.includes('accounts like yours') || lower.includes('similar accounts')) return 'because_you_watched'
-    if (lower.startsWith('theme:')) return 'themed_rows'
-    if (lower.startsWith('trending ')) return 'trending_household'
-    if (lower.startsWith('popular ')) return 'popular_household'
-    if (lower.startsWith('recommended movies')) return 'recommended_movies'
-    if (lower.startsWith('recommended series')) return 'recommended_series'
-    return null
-}
 
 export interface ForYouPageProps {
     onAccountClick?: (accountId: string) => void
@@ -284,35 +237,10 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
     )
 }
 
-function recommendationIcon(title: string): ReactNode {
-    if (/movie/i.test(title)) return <Film className="h-4 w-4 text-primary" />
-    if (/series/i.test(title)) return <Tv className="h-4 w-4 text-primary" />
-    return <Sparkles className="h-4 w-4 text-primary" />
-}
-
-function itemIdFromCanonical(id: CanonicalId): string {
-    if (id.imdb) return id.imdb
-    if (typeof id.tmdb === 'number') return `tmdb:${id.tmdb}`
-    return id.slug
-}
-
-function makeCanonicalId(itemId: string): CanonicalId {
-    if (itemId.startsWith('tt')) return { imdb: itemId, slug: itemId }
-    const tmdbMatch = itemId.match(/^tmdb:(\d+)$/i)
-    if (tmdbMatch) return { tmdb: Number(tmdbMatch[1]), slug: itemId }
-    return { slug: itemId }
-}
-
 export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     useDocumentTitle('For You')
 
     const RAIL_MAX = useRailSize()
-    const catalogs = useCatalogs()
-    const enabledCatalogIds = useMemo(() => {
-        const s = new Set<string>()
-        for (const c of catalogs) if (c.enabled || c.locked) s.add(c.id)
-        return s
-    }, [catalogs])
     const accounts = useAccountStore(s => s.accounts)
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
@@ -345,23 +273,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         return m
     }, [allItems])
 
-    const watchersByItemId = useMemo(() => {
-        const map = new Map<string, Array<{ id: string; name: string; emoji?: string; avatar?: string }>>()
-        for (const h of watchHistory) {
-            const acc = accounts.find(a => a.id === h.accountId)
-            if (!acc) continue
-            const key = h.itemId
-            const existing = map.get(key) || []
-            if (!existing.some(a => a.id === acc.id)) {
-                existing.push({ id: acc.id, name: acc.name || 'Account', emoji: acc.emoji, avatar: acc.avatar })
-                map.set(key, existing)
-            }
-        }
-        return map
-    }, [watchHistory, accounts])
-
     const externalRatings = useExternalRatings()
-    const externalWatchlist = useExternalWatchlist()
 
     const profiles = useMemo(() => {
         const m = new Map<string, TasteProfile>()
@@ -372,34 +284,37 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         return m
     }, [itemsByAccount, externalRatings])
 
-    const householdGenres = useMemo(() => {
-        const merged: Record<string, { weight: number; count: number }> = {}
-        for (const profile of profiles.values()) {
-            for (const [genre, data] of Object.entries(profile.genres)) {
-                if (!merged[genre]) merged[genre] = { weight: 0, count: 0 }
-                merged[genre].weight += data.weight
-                merged[genre].count += data.count
-            }
-        }
-        return merged
-    }, [profiles])
-
-    const householdDominantType = useMemo(() => {
-        let movie = 0, series = 0
-        for (const profile of profiles.values()) {
-            movie += profile.types.movie
-            series += profile.types.series
-        }
-        return movie >= series ? 'movie' : 'tv'
-    }, [profiles])
-
-    const householdProfile = useMemo(() => {
+    const householdProfile = useMemo((): TasteProfile | undefined => {
         if (profiles.size === 0) return undefined
-        let best: TasteProfile | undefined
-        for (const p of profiles.values()) {
-            if (!best || p.totalItems > best.totalItems) best = p
+        const allProfiles = Array.from(profiles.values())
+        if (allProfiles.length === 1) return allProfiles[0]
+        const totalWeight = allProfiles.reduce((s, p) => s + Math.max(p.totalItems, 1), 0)
+        const mergedGenres: Record<string, { weight: number; count: number; avgRating: number }> = {}
+        const mergedEras: Record<string, number> = {}
+        let mergedTypes = { movie: 0, series: 0 }
+        for (const p of allProfiles) {
+            const w = Math.max(p.totalItems, 1) / totalWeight
+            for (const [genre, data] of Object.entries(p.genres)) {
+                if (!mergedGenres[genre]) mergedGenres[genre] = { weight: 0, count: 0, avgRating: 0 }
+                mergedGenres[genre].weight += data.weight * w
+                mergedGenres[genre].count += data.count
+                mergedGenres[genre].avgRating += data.avgRating * w
+            }
+            for (const [era, val] of Object.entries(p.eras ?? {})) {
+                mergedEras[era] = (mergedEras[era] ?? 0) + val * w
+            }
+            mergedTypes.movie += (p.types?.movie ?? 0) * w
+            mergedTypes.series += (p.types?.series ?? 0) * w
         }
-        return best
+        // Use the profile with most items as a structural base, then overlay merged fields
+        const base = allProfiles.reduce((a, b) => a.totalItems >= b.totalItems ? a : b)
+        return {
+            ...base,
+            genres: mergedGenres,
+            eras: mergedEras,
+            types: mergedTypes,
+            totalItems: allProfiles.reduce((sum, p) => sum + p.totalItems, 0),
+        }
     }, [profiles])
 
     const seeds = useMemo<SeedItem[]>(
@@ -414,19 +329,9 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 season: item.season,
                 episode: item.episode,
             }))
-            const existingIds = new Set(fromActivity.map(s => s.itemId))
-            const fromWatchlist = externalWatchlist
-                .filter(w => w.imdbId && !existingIds.has(w.imdbId))
-                .map(w => ({
-                    itemId: w.imdbId!,
-                    title: w.title,
-                    type: w.type,
-                    progress: 0.5,
-                    timestamp: Date.now(),
-                }))
-            return [...fromActivity, ...fromWatchlist]
+            return fromActivity
         },
-        [filteredItems, externalWatchlist]
+        [filteredItems]
     )
 
     const [recsResult, setRecsResult] = useState<BuildRecommendationsResult | null>(null)
@@ -434,20 +339,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     const [recsError, setRecsError] = useState<string | null>(null)
     const [reloadKey, setReloadKey] = useState(0)
     const hasResultsRef = useRef(false)
-    const lastPublishedRef = useRef(0)
-
-    const [watchlistItems, setWatchlistItems] = useState<Array<{ itemId: string; type: string; name?: string; poster?: string; addedAt?: number }>>([])
-
-    const refreshWatchlist = useCallback(() => {
-        getWatchlist().then(items => {
-            if (items.length > 0) setWatchlistItems(items.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)))
-            else setWatchlistItems([])
-        }).catch(() => setWatchlistItems([]))
-    }, [])
-
-    useEffect(() => {
-        refreshWatchlist()
-    }, [refreshWatchlist])
 
     const filterKey = JSON.stringify({
         o: discoveryPrefs.obscurity,
@@ -460,18 +351,14 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         l: discoveryPrefs.lovedItems,
     })
 
-    useEffect(() => { lastPublishedRef.current = 0 }, [filterKey])
-
     useEffect(() => {
         if (seeds.length < 5) {
             setRecsLoading(true)
             setRecsError(null)
             const ac = new AbortController()
             const coldStartWatched = new Set<string>()
-            try {
-                const cache = JSON.parse(localStorage.getItem('aiomanager-imdb-tmdb-cache') || '{}') as Record<string, string>
-                for (const v of Object.values(cache)) { if (v) coldStartWatched.add(v) }
-            } catch {}
+            const cache = loadImdbTmdbCache()
+            for (const v of Object.values(cache)) { if (v) coldStartWatched.add(v) }
             for (const s of seeds) { if (s.itemId.startsWith('tmdb:')) coldStartWatched.add(s.itemId) }
             buildColdStartRails(ac.signal, RAIL_MAX, coldStartWatched)
                 .then(rails => {
@@ -484,14 +371,12 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         }
         const ac = new AbortController()
         const hadResults = hasResultsRef.current
-        if (!hadResults) setRecsLoading(true)
+        setRecsLoading(true)
         setRecsError(null)
         performance.mark('foryou:recommend:start')
         ;(async () => {
             const watchedTmdbIds = new Set<string>()
-            const cacheKey = 'aiomanager-imdb-tmdb-cache'
-            let cache: Record<string, string> = {}
-            try { cache = JSON.parse(localStorage.getItem(cacheKey) || '{}') } catch {}
+            const cache = loadImdbTmdbCache()
             let cacheDirty = false
             const watchedIds = seeds.filter(s => s.progress > 30 && s.itemId?.startsWith('tt')).map(s => s.itemId).slice(0, 20)
             const needsResolve = watchedIds.filter(id => !cache[id])
@@ -511,31 +396,28 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 }))
                 if (i + BATCH < needsResolve.length) await new Promise(r => setTimeout(r, 200))
             }
-            if (cacheDirty) { try { localStorage.setItem(cacheKey, JSON.stringify(cache)) } catch {} }
+            if (cacheDirty) saveImdbTmdbCache(cache)
             for (const id of watchedIds) { if (cache[id]) watchedTmdbIds.add(cache[id]) }
             return watchedTmdbIds
         })().then(watchedTmdbIds =>
-            Promise.all([
-                buildRecommendations(seeds, multiAdapter, {
-                    signal: ac.signal,
-                    railSize: RAIL_MAX,
-                    filters: {
-                        obscurity: discoveryPrefs.obscurity,
-                        minRating: discoveryPrefs.minRating,
-                        eraRange: discoveryPrefs.eraRange,
-                        typeMix: discoveryPrefs.typeMix,
-                        genreBoosts: discoveryPrefs.genreBoosts,
-                        excludedGenres: discoveryPrefs.excludedGenres,
-                        dismissedItems: discoveryPrefs.dismissedItems,
-                        lovedItems: discoveryPrefs.lovedItems,
-                    },
-                    tasteProfile: householdProfile,
-                    watchedTmdbIds,
-                }),
-                buildThemedRails(householdGenres, householdDominantType, ac.signal, RAIL_MAX, watchedTmdbIds).catch(() => [] as RankedRail[]),
-            ])
+            buildRecommendations(seeds, tmdbAdapter, {
+                signal: ac.signal,
+                railSize: RAIL_MAX,
+                filters: {
+                    obscurity: discoveryPrefs.obscurity,
+                    minRating: discoveryPrefs.minRating,
+                    eraRange: discoveryPrefs.eraRange,
+                    typeMix: discoveryPrefs.typeMix,
+                    genreBoosts: discoveryPrefs.genreBoosts,
+                    excludedGenres: discoveryPrefs.excludedGenres,
+                    dismissedItems: discoveryPrefs.dismissedItems,
+                    lovedItems: discoveryPrefs.lovedItems,
+                },
+                tasteProfile: householdProfile,
+                watchedTmdbIds,
+            })
         )
-            .then(([result, themedRails]) => {
+            .then(result => {
                 if (ac.signal.aborted) return
                 const allSeedsFailed = result.rails.length === 0 && (result.failedSeedCount ?? 0) > 0
                 if (allSeedsFailed) {
@@ -543,175 +425,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     if (hadResults) return
                 }
                 hasResultsRef.current = true
-
-                const similarRails: RankedRail[] = []
-                if (householdProfile) {
-                    const otherProfiles = Array.from(profiles.values()).filter(p => p.accountId !== householdProfile.accountId)
-                    const similar = findSimilarAccounts(householdProfile, otherProfiles)
-                    if (similar.length > 0) {
-                        const householdWatched = new Set<string>()
-                        for (const it of allItems) householdWatched.add(it.itemId)
-                        const seen = new Set<string>()
-                        const items: ScoredRecommendation[] = []
-                        for (const sim of similar) {
-                            for (const top of sim.profile.topItems) {
-                                if (householdWatched.has(top.itemId)) continue
-                                if (seen.has(top.itemId)) continue
-                                seen.add(top.itemId)
-                                const meta = itemMetaById.get(top.itemId)
-                                items.push({
-                                    id: makeCanonicalId(top.itemId),
-                                    title: top.title,
-                                    type: top.type === 'movie' ? 'movie' : (top.type === 'anime' ? 'anime' : 'series'),
-                                    poster: meta?.poster,
-                                    genres: top.genres,
-                                    score: top.engagement * sim.similarity,
-                                    source: 'similar-accounts',
-                                    reason: 'Accounts Like Yours Also Watched',
-                                })
-                            }
-                        }
-                        if (items.length > 0) {
-                            similarRails.push({
-                                title: 'Accounts Like Yours Also Watched',
-                                source: 'similar-accounts',
-                                items: items.slice(0, RAIL_MAX),
-                            })
-                        }
-                    }
-                }
-
-                const allRails = [...result.rails, ...themedRails, ...similarRails]
-                setRecsResult({ ...result, rails: allRails })
-
-                const now = Date.now()
-                if (now - lastPublishedRef.current > PUBLISH_THROTTLE_MS && allRails.length > 0) {
-                    lastPublishedRef.current = now
-                    const itemsByCatalogType = new Map<string, Map<string, { id: string; type: string; name: string; poster?: string; score: number; reason: string }>>()
-                    for (const rail of allRails) {
-                        const catalogType = railTitleToCatalogType(rail.title)
-                        if (!catalogType) continue
-                        for (const item of rail.items) {
-                            const id = itemIdFromCanonical(item.id)
-                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime')) || (item.genreIds?.includes(16))
-                            const effectiveType = isAnime && catalogType === 'recommended_series' ? 'recommended_anime' : catalogType
-                            let itemMap = itemsByCatalogType.get(effectiveType)
-                            if (!itemMap) {
-                                itemMap = new Map()
-                                itemsByCatalogType.set(effectiveType, itemMap)
-                            }
-                            if (!itemMap.has(id)) {
-                                itemMap.set(id, {
-                                    id,
-                                    type: 'series',
-                                    name: item.title,
-                                    poster: sanitizePosterUrl(item.poster) || undefined,
-                                    score: item.score,
-                                    reason: rail.title,
-                                })
-                            }
-                        }
-                    }
-                    if (householdRail.length > 0) {
-                        let hhMap = itemsByCatalogType.get('popular_household')
-                        if (!hhMap) {
-                            hhMap = new Map()
-                            itemsByCatalogType.set('popular_household', hhMap)
-                        }
-                        for (const row of householdRail) {
-                            if (!hhMap.has(row.itemId)) {
-                                hhMap.set(row.itemId, {
-                                    id: row.itemId,
-                                    type: row.type === 'movie' ? 'movie' : 'series',
-                                    name: row.title,
-                                    poster: row.poster,
-                                    score: row.watchers,
-                                    reason: 'Popular Across Your Accounts',
-                                })
-                            }
-                        }
-                    }
-                    const railsToPublish = Array.from(itemsByCatalogType.entries()).map(([catalogType, itemMap]) => ({
-                        catalogType,
-                        scope: 'household' as const,
-                        items: Array.from(itemMap.values()),
-                    }))
-                    const allRailsToPublish: PublishRail[] = [...railsToPublish]
-
-                    for (const account of accounts) {
-                        try {
-                            const accountItems = itemsByAccount.get(account.id) ?? []
-                            if (accountItems.length < 3) continue
-                            const accountWatched = new Set<string>()
-                            for (const it of accountItems) accountWatched.add(it.itemId)
-                            const accountProfile = profiles.get(account.id)
-                            const genreWeights = accountProfile?.genres ?? {}
-                            const accByCatalogType = new Map<string, Map<string, { id: string; type: string; name: string; poster?: string; score: number; reason: string }>>()
-                            for (const rail of allRails) {
-                                const catalogType = railTitleToCatalogType(rail.title)
-                                if (!catalogType) continue
-                                let itemMap = accByCatalogType.get(catalogType)
-                                if (!itemMap) {
-                                    itemMap = new Map()
-                                    accByCatalogType.set(catalogType, itemMap)
-                                }
-                                for (const item of rail.items) {
-                                    const id = itemIdFromCanonical(item.id)
-                                    if (accountWatched.has(id)) continue
-                                    if (itemMap.has(id)) continue
-                                    let score = item.score
-                                    if (item.genres && item.genres.length > 0) {
-                                        let boost = 1
-                                        for (const g of item.genres.slice(0, 3)) {
-                                            const w = genreWeights[g]?.weight
-                                            if (typeof w === 'number' && w > 0) boost += w
-                                        }
-                                        score = item.score * boost
-                                    }
-                                    itemMap.set(id, {
-                                        id,
-                                        type: item.type === 'series' || item.type === 'anime' ? 'series' : 'movie',
-                                        name: item.title,
-                                        poster: item.poster,
-                                        score,
-                                        reason: rail.title,
-                                    })
-                                }
-                            }
-                            if (householdRail.length > 0) {
-                                let hhMap = accByCatalogType.get('popular_household')
-                                if (!hhMap) {
-                                    hhMap = new Map()
-                                    accByCatalogType.set('popular_household', hhMap)
-                                }
-                                for (const row of householdRail) {
-                                    if (accountWatched.has(row.itemId)) continue
-                                    if (hhMap.has(row.itemId)) continue
-                                    hhMap.set(row.itemId, {
-                                        id: row.itemId,
-                                        type: row.type === 'movie' ? 'movie' : 'series',
-                                        name: row.title,
-                                        poster: row.poster,
-                                        score: row.watchers,
-                                        reason: 'Popular Across Your Accounts',
-                                    })
-                                }
-                            }
-                            const accountRails = Array.from(accByCatalogType.entries()).map(([catalogType, itemMap]) => ({
-                                catalogType,
-                                scope: 'account' as const,
-                                accountId: account.id,
-                                items: Array.from(itemMap.values()).sort((a, b) => b.score - a.score).slice(0, RAIL_MAX),
-                            })).filter(r => r.items.length > 0)
-                            if (accountRails.length > 0) {
-                                allRailsToPublish.push(...accountRails)
-                            }
-                        } catch {}
-                    }
-                    if (allRailsToPublish.length > 0) {
-                        publishRecommendations(allRailsToPublish).catch(() => {})
-                    }
-                }
+                setRecsResult(result)
             })
             .catch(err => {
                 if (ac.signal.aborted || err?.name === 'AbortError') return
@@ -724,7 +438,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     setRecsLoading(false)
                 }
             })
-        return () => ac.abort()
+        return () => { try { ac.abort() } catch {} }
     }, [seeds, reloadKey, filterKey, RAIL_MAX])
 
     const itemMetaById = useMemo(() => {
@@ -764,6 +478,44 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         })
     }, [profiles, allItems, itemMetaById])
 
+    const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
+    const refreshWatchlist = useCallback(() => {
+        getWatchlist().then(items => {
+            if (items.length > 0) setWatchlistItems(items.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)))
+            else setWatchlistItems([])
+        }).catch(() => setWatchlistItems([]))
+    }, [])
+    useEffect(() => { refreshWatchlist() }, [refreshWatchlist])
+
+    const enrichedWatchlist = useMemo(() => {
+        if (!recsResult) return watchlistItems
+        const posterById = new Map<string, string>()
+        for (const rail of recsResult.rails) {
+            for (const item of rail.items) {
+                const id = itemIdFromCanonical(item.id)
+                if (item.poster) posterById.set(id, item.poster)
+            }
+        }
+        return watchlistItems.map(w => {
+            const poster = posterById.get(w.itemId)
+            return poster ? { ...w, poster } : w
+        })
+    }, [watchlistItems, recsResult])
+
+    const buckets = useMemo(() => {
+        if (!recsResult) return { movies: [] as BucketItem[], series: [] as BucketItem[], anime: [] as BucketItem[], watchlist: enrichedWatchlist }
+        const extraItems: BucketItem[] = householdRail.map(row => ({
+            id: row.itemId,
+            title: row.title,
+            type: row.type || 'series',
+            poster: row.poster,
+            genres: row.genres,
+        }))
+        return bucketize(recsResult.rails, enrichedWatchlist, extraItems)
+    }, [recsResult, householdRail, enrichedWatchlist])
+
+    const pmdbRails = useMemo(() => bucketsToPmdbRails(buckets, RAIL_MAX), [buckets, RAIL_MAX])
+
     const accountStats = useMemo(() => {
         const out: Array<{ account: Account; itemCount: number; topGenres: string[] }> = []
         for (const account of accounts) {
@@ -781,85 +533,28 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         return out
     }, [accounts, itemsByAccount, profiles])
 
-    const handleReload = useCallback(() => setReloadKey(k => k + 1), [])
+    const handleReload = useCallback(() => {
+        hasResultsRef.current = false
+        setRecsResult(null)
+        setRecsLoading(true)
+        setReloadKey(k => k + 1)
+    }, [])
 
-    const [urlOpen, setUrlOpen] = useState(false)
     const [searchOpen, setSearchOpen] = useState(false)
-    const [copied, setCopied] = useState(false)
     const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
-    const [allCatalogUrls, setAllCatalogUrls] = useState<{ household: string; accounts: Array<{ accountId: string; accountName?: string; url: string }> } | null>(null)
+    const [pmdbDialogOpen, setPmdbDialogOpen] = useState(false)
+    const [hasPmdbKey, setHasPmdbKey] = useState(false)
+    const [pmdbLastPublished, setPmdbLastPublished] = useState<number | null>(null)
 
-    const handleGetInstallUrl = useCallback(async () => {
-        const data = await getAllCatalogUrls()
-        if (data) {
-            setAllCatalogUrls(data)
-            setUrlOpen(true)
-        } else {
-            const url = await getHouseholdCatalogUrl()
-            if (url) {
-                setAllCatalogUrls({ household: url, accounts: [] })
-                setUrlOpen(true)
-            } else {
-                toast({ variant: 'destructive', title: 'Could not get catalog URLs' })
-            }
+    useEffect(() => {
+        checkPmdbKeyConfigured().then(setHasPmdbKey).catch(() => {})
+    }, [])
+
+    useEffect(() => {
+        if (!pmdbDialogOpen) {
+            setPmdbLastPublished(getLastPublishTime('household'))
         }
-    }, [])
-
-    const handleCopyUrl = useCallback((url: string) => {
-        navigator.clipboard.writeText(url).catch(() => {})
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-    }, [])
-
-    const [installing, setInstalling] = useState(false)
-    const handleInstallToAccount = useCallback(async (accountId: string, accountName?: string) => {
-        setInstalling(true)
-        try {
-            const url = await getHouseholdCatalogUrl()
-            if (!url) {
-                toast({ variant: 'destructive', title: 'Could not generate catalog URL' })
-                return
-            }
-            const fixedUrl = url.replace(/^https?:\/\/[^/]+/, window.location.origin)
-            const store = useAccountStore.getState()
-            const account = store.accounts.find(a => a.id === accountId)
-            if (!account) throw new Error('Account not found')
-            const existing = account.addons.find(a => a.transportUrl === fixedUrl || a.manifest?.id?.startsWith('com.aiomanager'))
-            if (existing) {
-                toast({ title: 'Already installed', description: `Recommendations addon is already on ${accountName || 'this account'}` })
-                return
-            }
-            const fakeManifest = {
-                id: `com.aiomanager.household.${accountId}`,
-                version: '1.0.0',
-                name: 'My Recommendations',
-                description: 'Personalized recommendations powered by AIOManager',
-                logo: `${window.location.origin}/logo.png`,
-                resources: ['catalog'],
-                types: ['movie', 'series'],
-                catalogs: [],
-            }
-            const newAddon = {
-                transportUrl: fixedUrl,
-                transportName: 'AIOManager Catalog',
-                manifest: fakeManifest,
-                flags: { enabled: true },
-                metadata: { lastUpdated: Date.now() },
-            }
-            const allAccounts = useAccountStore.getState().accounts
-            const updatedAccounts = allAccounts.map(a =>
-                a.id === accountId ? { ...a, addons: [...a.addons, newAddon] } : a
-            )
-            useAccountStore.setState({ accounts: updatedAccounts })
-            const { persistAccounts } = await import('@/store/accountStore')
-            await persistAccounts(updatedAccounts)
-            toast({ title: 'Installed', description: `Recommendations addon added to ${accountName || 'account'}` })
-        } catch (err) {
-            toast({ variant: 'destructive', title: 'Install failed', description: err instanceof Error ? err.message : 'Unknown error' })
-        } finally {
-            setInstalling(false)
-        }
-    }, [])
+    }, [pmdbDialogOpen])
 
     const hasHistory = allItems.length > 0
     const showInitialSkeleton = historyLoading
@@ -959,6 +654,27 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         <RefreshCw className={recsLoading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
                         Refresh
                     </Button>
+                    {hasHistory && hasPmdbKey && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPmdbDialogOpen(true)}
+                            disabled={recsLoading}
+                            className="h-8 gap-1.5 text-xs font-medium"
+                            title={pmdbLastPublished !== null
+                                ? `Last published ${formatStaleAgo(pmdbLastPublished)}`
+                                : 'Publish rails to PMDB lists'}
+                        >
+                            <Upload className="h-3.5 w-3.5" />
+                            Publish to PMDB
+                            {pmdbLastPublished !== null && (
+                                <span className={cn(
+                                    'h-1.5 w-1.5 rounded-full',
+                                    Date.now() - pmdbLastPublished > 86400000 ? 'bg-amber-500' : 'bg-emerald-500'
+                                )} />
+                            )}
+                        </Button>
+                    )}
                     <Button
                         variant="outline"
                         size="sm"
@@ -968,44 +684,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         <LayoutGrid className="h-3.5 w-3.5" />
                         Preferences
                     </Button>
-                    {hasHistory && (
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <Button
-                                    variant="subtle"
-                                    size="sm"
-                                    disabled={installing}
-                                    className="h-8 gap-1.5 text-xs font-medium"
-                                >
-                                    <Download className="h-3.5 w-3.5" />
-                                    {installing ? 'Installing...' : 'Install'}
-                                </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-56">
-                                <DropdownMenuSeparator />
-                                <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Install recommendations addon to</p>
-                                {accounts.map(acc => (
-                                    <DropdownMenuItem
-                                        key={acc.id}
-                                        className="gap-2 text-xs"
-                                        onClick={() => handleInstallToAccount(acc.id, acc.name || acc.email?.split('@')[0])}
-                                    >
-                                        {acc.name || acc.email?.split('@')[0] || 'Account'}
-                                    </DropdownMenuItem>
-                                ))}
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-                    )}
-                    {hasHistory && (
-                            <Button
-                                variant="subtle"
-                                size="sm"
-                                onClick={handleGetInstallUrl}
-                                className="h-8 gap-1.5 text-xs font-medium"
-                            >
-                                Catalog URLs
-                            </Button>
-                    )}
                     <Button
                         variant="outline"
                         size="sm"
@@ -1134,31 +812,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             )}
             </div>
 
-            {watchlistItems.length > 0 && enabledCatalogIds.has('watchlist') && (
-                <ContentRail
-                    title="Group Watchlist"
-                    icon={<Bookmark className="h-4 w-4" />}
-                >
-                    {watchlistItems.map((item, i) => (
-                        <ContentRailCard
-                            key={`wl-${item.itemId}`}
-                            title={item.name || 'Unknown'}
-                            poster={item.poster}
-                            itemId={item.itemId}
-                            itemType={item.type === 'movie' ? 'movie' : 'series'}
-                            watchers={watchersByItemId.get(item.itemId || '') || undefined}
-                            index={i}
-                            onClick={() => setDetailItem({
-                                itemId: item.itemId,
-                                type: item.type === 'movie' ? 'movie' : 'series',
-                                name: item.name || 'Unknown',
-                                poster: item.poster,
-                            })}
-                        />
-                    ))}
-                </ContentRail>
-            )}
-
             {(showInitialSkeleton || showBuildingSkeleton) && (
                 <div className="space-y-8">
                     <ContentRailSkeleton />
@@ -1183,94 +836,100 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     {showRails && (
                         <div className="space-y-8">
                             {(() => {
-                                const surfaced = new Set<string>()
+                                const hasAny = buckets.movies.length > 0 || buckets.series.length > 0 || buckets.anime.length > 0 || enrichedWatchlist.length > 0
+                                if (!hasAny) {
+                                    return (
+                                        <div className="rounded-2xl border border-border/40 bg-card/50 p-8 text-center">
+                                            <Sparkles className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
+                                            <p className="font-medium">No recommendations yet</p>
+                                            <p className="mt-1 text-sm text-muted-foreground">
+                                                Keep watching across your accounts and check back.
+                                            </p>
+                                        </div>
+                                    )
+                                }
+                                const makeClick = (item: BucketItem, type: string) => () => setDetailItem({
+                                    itemId: item.id,
+                                    type: type === 'series' || type === 'anime' ? 'series' : 'movie',
+                                    name: item.title,
+                                    poster: item.poster,
+                                    genres: item.genres,
+                                    year: item.year,
+                                    voteAverage: item.voteAverage,
+                                    backdrop: item.backdrop,
+                                })
                                 return (
                                     <>
-                                        {householdRail.length > 0 && enabledCatalogIds.has('popular_household') && (
-                                            <ContentRail
-                                                title="Popular Across Your Accounts"
-                                                subtitle="Most-loved titles across your household"
-                                                icon={<Users className="h-4 w-4" />}
-                                            >
-                                                {householdRail.map((row, i) => {
-                                                    surfaced.add(row.itemId)
-                                                    return (
-                                                        <ContentRailCard
-                                                            key={`hh-${row.itemId}`}
-                                                            title={row.title}
-                                                            poster={row.poster}
-                                                            itemId={row.itemId}
-                                                            itemType={row.type}
-                                                            subtitle={row.genres?.[0]}
-                                                            watchers={watchersByItemId.get(row.itemId || '') || undefined}
-                                                            index={i}
-                                                            onClick={() => setDetailItem({
-                                                                itemId: row.itemId,
-                                                                type: row.type || 'movie',
-                                                                name: row.title,
-                                                                poster: row.poster,
-                                                                genres: row.genres,
-                                                            })}
-                                                        />
-                                                    )
-                                                })}
+                                        {enrichedWatchlist.length > 0 && (
+                                            <ContentRail title="Watchlist" icon={<Bookmark className="h-4 w-4" />}>
+                                                {enrichedWatchlist.map((item, i) => (
+                                                    <ContentRailCard
+                                                        key={`wl-${item.itemId}`}
+                                                        title={item.name || 'Unknown'}
+                                                        poster={item.poster}
+                                                        itemId={item.itemId}
+                                                        itemType={item.type === 'movie' ? 'movie' : 'series'}
+                                                        index={i}
+                                                        onClick={() => setDetailItem({
+                                                            itemId: item.itemId,
+                                                            type: item.type === 'movie' ? 'movie' : 'series',
+                                                            name: item.name || 'Unknown',
+                                                            poster: item.poster,
+                                                        })}
+                                                    />
+                                                ))}
                                             </ContentRail>
                                         )}
 
-                                        {recsResult?.rails.filter(rail => {
-                                            const cid = railCatalogId(rail.title)
-                                            return cid === null || enabledCatalogIds.has(cid)
-                                        }).map((rail, railIdx) => {
-                                            const dedupedItems = rail.items.filter(item => {
-                                                const key = itemIdFromCanonical(item.id)
-                                                if (surfaced.has(key)) return false
-                                                surfaced.add(key)
-                                                return true
-                                            })
-                                            if (dedupedItems.length === 0) return null
-                                            return (
-                                                <ContentRail
-                                                    key={`rec-${railIdx}-${rail.title}`}
-                                                    title={rail.title}
-                                                    icon={recommendationIcon(rail.title)}
-                                                >
-                                                    {dedupedItems.map((item, i) => (
-                                                        <ContentRailCard
-                                                            key={`${railIdx}-${rail.title}-${item.id.slug}-${i}`}
-                                                            title={item.title}
-                                                            poster={item.poster}
-                                                            itemId={itemIdFromCanonical(item.id)}
-                                                            itemType={item.type === 'series' || item.type === 'anime' ? 'series' : item.type}
-                                                            subtitle={[item.year, item.genres?.[0]].filter(Boolean).join(' · ')}
-                                                            watchers={watchersByItemId.get(itemIdFromCanonical(item.id)) || undefined}
-                                                            index={i}
-                                                            onClick={() => {
-                                                                const id = itemIdFromCanonical(item.id)
-                                                                setDetailItem({
-                                                                    itemId: id,
-                                                                    type: item.type === 'series' || item.type === 'anime' ? 'series' : item.type,
-                                                                    name: item.title,
-                                                                    poster: item.poster,
-                                                                    genres: item.genres,
-                                                                    year: item.year,
-                                                                    voteAverage: item.voteAverage,
-                                                                    backdrop: item.backdrop,
-                                                                })
-                                                            }}
-                                                        />
-                                                    ))}
-                                                </ContentRail>
-                                            )
-                                        })}
+                                        {buckets.movies.length > 0 && (
+                                            <ContentRail title="Movies" subtitle="Recommended for your household">
+                                                {buckets.movies.map((item, i) => (
+                                                    <ContentRailCard
+                                                        key={`mv-${item.id}`}
+                                                        title={item.title}
+                                                        poster={item.poster}
+                                                        itemId={item.id}
+                                                        itemType="movie"
+                                                        subtitle={[item.year, item.genres?.[0]].filter(Boolean).join(' · ')}
+                                                        index={i}
+                                                        onClick={makeClick(item, 'movie')}
+                                                    />
+                                                ))}
+                                            </ContentRail>
+                                        )}
 
-                                        {recsResult !== null && recsResult.rails.length === 0 && householdRail.length === 0 && (
-                                            <div className="rounded-2xl border border-border/40 bg-card/50 p-8 text-center">
-                                                <Sparkles className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
-                                                <p className="font-medium">No recommendations yet</p>
-                                                <p className="mt-1 text-sm text-muted-foreground">
-                                                    Keep watching across your accounts and check back.
-                                                </p>
-                                            </div>
+                                        {buckets.series.length > 0 && (
+                                            <ContentRail title="Series" subtitle="Recommended for your household">
+                                                {buckets.series.map((item, i) => (
+                                                    <ContentRailCard
+                                                        key={`sr-${item.id}`}
+                                                        title={item.title}
+                                                        poster={item.poster}
+                                                        itemId={item.id}
+                                                        itemType="series"
+                                                        subtitle={[item.year, item.genres?.[0]].filter(Boolean).join(' · ')}
+                                                        index={i}
+                                                        onClick={makeClick(item, 'series')}
+                                                    />
+                                                ))}
+                                            </ContentRail>
+                                        )}
+
+                                        {buckets.anime.length > 0 && (
+                                            <ContentRail title="Anime" subtitle="Recommended for your household">
+                                                {buckets.anime.map((item, i) => (
+                                                    <ContentRailCard
+                                                        key={`an-${item.id}`}
+                                                        title={item.title}
+                                                        poster={item.poster}
+                                                        itemId={item.id}
+                                                        itemType="series"
+                                                        subtitle={[item.year, item.genres?.[0]].filter(Boolean).join(' · ')}
+                                                        index={i}
+                                                        onClick={makeClick(item, 'anime')}
+                                                    />
+                                                ))}
+                                            </ContentRail>
                                         )}
                                     </>
                                 )
@@ -1282,38 +941,13 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
 
             <DiscoveryPreferencesModal open={catalogOpen} onOpenChange={setCatalogOpen} />
 
-            <Dialog open={urlOpen} onOpenChange={setUrlOpen}>
-                <DialogContent className="sm:max-w-xl">
-                    <DialogHeader>
-                        <DialogTitle>Catalog Addon URLs</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-                        <p className="text-sm text-muted-foreground">
-                            Add these in AIOMetadata, AIOStreams, Stremio, Nuvio, or any compatible addon manager.
-                        </p>
-                        {allCatalogUrls && (
-                            <div className="space-y-2">
-                                <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
-                                    <span className="text-xs font-semibold text-primary shrink-0">All Accounts</span>
-                                    <code className="min-w-0 flex-1 break-all text-xs text-muted-foreground">{allCatalogUrls.household}</code>
-                                    <Button variant="ghost" size="sm" onClick={() => handleCopyUrl(allCatalogUrls.household)} className="h-7 shrink-0">
-                                        {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-                                    </Button>
-                                </div>
-                                {allCatalogUrls.accounts.filter((acc, i, arr) => acc.url !== allCatalogUrls.household && arr.findIndex(a => a.url === acc.url) === i).map((acc) => (
-                                    <div key={acc.accountId} className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
-                                        <span className="text-xs font-medium text-muted-foreground shrink-0 truncate max-w-[100px]">{acc.accountName || acc.accountId}</span>
-                                        <code className="min-w-0 flex-1 break-all text-xs text-muted-foreground">{acc.url}</code>
-                                        <Button variant="ghost" size="sm" onClick={() => handleCopyUrl(acc.url)} className="h-7 shrink-0">
-                                            <Copy className="h-3.5 w-3.5" />
-                                        </Button>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </DialogContent>
-            </Dialog>
+            <PublishToPmdbDialog
+                open={pmdbDialogOpen}
+                onOpenChange={setPmdbDialogOpen}
+                scope="household"
+                scopeLabel="Household"
+                rails={pmdbRails}
+            />
 
             <SearchDialog
                 open={searchOpen}

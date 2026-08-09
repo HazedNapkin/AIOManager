@@ -1,6 +1,4 @@
 import { useSyncExternalStore } from 'react'
-import { useSyncStore } from '@/store/syncStore'
-import { deriveSyncToken } from '@/lib/crypto'
 
 export interface CatalogConfig {
     id: string
@@ -12,7 +10,6 @@ export interface DiscoveryPrefs {
     railSize: number
     accountOverrides: Record<string, number>
     catalogs: CatalogConfig[]
-    accountCatalogOverrides: Record<string, Record<string, boolean>>
 }
 
 const STORAGE_KEY = 'aiomanager-discovery-prefs'
@@ -25,30 +22,19 @@ export const DEFAULT_CATALOGS: CatalogConfig[] = [
     { id: 'recommended_series', enabled: true, locked: true },
     { id: 'recommended_anime', enabled: true, locked: true },
     { id: 'watchlist', enabled: true, locked: true },
-    { id: 'continue_watching', enabled: true, locked: false },
-    { id: 'because_you_watched', enabled: true, locked: false },
-    { id: 'themed_rows', enabled: true, locked: false },
-    { id: 'popular_household', enabled: true, locked: false },
-    { id: 'trending_household', enabled: true, locked: false },
 ]
 
 export const CATALOG_LABELS: Record<string, string> = {
     recommended_movies: 'Recommended Movies',
     recommended_series: 'Recommended Series',
     recommended_anime: 'Recommended Anime',
-    continue_watching: 'Continue Watching',
     watchlist: 'My Watchlist',
-    because_you_watched: 'Because You Watched',
-    themed_rows: 'Themed For You',
-    popular_household: 'Popular in Household',
-    trending_household: 'Trending This Week',
 }
 
 const DEFAULT_PREFS: DiscoveryPrefs = {
     railSize: DEFAULT_RAIL_SIZE,
     accountOverrides: {},
     catalogs: DEFAULT_CATALOGS.map(c => ({ ...c })),
-    accountCatalogOverrides: {},
 }
 
 function clampRailSize(value: number): number {
@@ -56,22 +42,12 @@ function clampRailSize(value: number): number {
     return Math.min(MAX_RAIL_SIZE, Math.max(MIN_RAIL_SIZE, Math.round(value)))
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
-    const auth = useSyncStore.getState().auth
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (auth.isAuthenticated) {
-        headers['x-sync-user'] = auth.id
-        headers['x-sync-password'] = await deriveSyncToken(auth.password)
-    }
-    return headers
-}
-
 let cache: DiscoveryPrefs = {
     railSize: DEFAULT_PREFS.railSize,
     accountOverrides: { ...DEFAULT_PREFS.accountOverrides },
     catalogs: DEFAULT_CATALOGS.map(c => ({ ...c })),
-    accountCatalogOverrides: {},
 }
+let lastModifiedAt: number = 0
 const listeners = new Set<() => void>()
 
 function mergeCatalogs(stored: unknown): CatalogConfig[] {
@@ -99,96 +75,45 @@ function mergeCatalogs(stored: unknown): CatalogConfig[] {
     return merged
 }
 
+function parsePrefs(raw: Record<string, unknown>, railSizeFallback: number): DiscoveryPrefs {
+    const railSize = typeof raw.railSize === 'number'
+        ? clampRailSize(raw.railSize)
+        : railSizeFallback
+    const accountOverrides: Record<string, number> = {}
+    if (raw.accountOverrides && typeof raw.accountOverrides === 'object') {
+        for (const [key, val] of Object.entries(raw.accountOverrides)) {
+            if (typeof val === 'number') accountOverrides[key] = clampRailSize(val)
+        }
+    }
+    const catalogs = mergeCatalogs(raw.catalogs)
+    return { railSize, accountOverrides, catalogs }
+}
+
 function loadFromStorage() {
     try {
         const data = localStorage.getItem(STORAGE_KEY)
         if (!data) return
         const parsed = JSON.parse(data)
         if (parsed === null || typeof parsed !== 'object') return
-        const railSize = typeof parsed.railSize === 'number'
-            ? clampRailSize(parsed.railSize)
-            : DEFAULT_RAIL_SIZE
-        let accountOverrides: Record<string, number> = {}
-        if (parsed.accountOverrides && typeof parsed.accountOverrides === 'object') {
-            for (const [key, val] of Object.entries(parsed.accountOverrides)) {
-                if (typeof val === 'number') accountOverrides[key] = clampRailSize(val)
-            }
+        if (parsed.cache && typeof parsed.cache === 'object') {
+            cache = parsePrefs(parsed.cache as Record<string, unknown>, DEFAULT_RAIL_SIZE)
+            lastModifiedAt = typeof parsed.lastModifiedAt === 'number' ? parsed.lastModifiedAt : 0
+        } else {
+            cache = parsePrefs(parsed as Record<string, unknown>, DEFAULT_RAIL_SIZE)
+            lastModifiedAt = 0
         }
-        const catalogs = mergeCatalogs(parsed.catalogs)
-        let accountCatalogOverrides: Record<string, Record<string, boolean>> = {}
-        if (parsed.accountCatalogOverrides && typeof parsed.accountCatalogOverrides === 'object') {
-            for (const [accId, overrides] of Object.entries(parsed.accountCatalogOverrides)) {
-                if (overrides && typeof overrides === 'object') {
-                    const map: Record<string, boolean> = {}
-                    for (const [catId, enabled] of Object.entries(overrides as Record<string, unknown>)) {
-                        if (typeof enabled === 'boolean') map[catId] = enabled
-                    }
-                    if (Object.keys(map).length > 0) accountCatalogOverrides[accId] = map
-                }
-            }
-        }
-        cache = { railSize, accountOverrides, catalogs, accountCatalogOverrides }
     } catch {
     }
 }
 
 function persist() {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cache))
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ cache, lastModifiedAt }))
     } catch {
     }
-}
-
-async function syncFromServer(): Promise<void> {
-    try {
-        const res = await fetch('/api/catalog/prefs?scope=household', { headers: await authHeaders() })
-        if (!res.ok) return
-        const json = await res.json()
-        const serverPrefs = json?.prefs
-        if (!serverPrefs || typeof serverPrefs !== 'object') return
-        const railSize = typeof serverPrefs.railSize === 'number'
-            ? clampRailSize(serverPrefs.railSize)
-            : cache.railSize
-        let accountOverrides: Record<string, number> = {}
-        if (serverPrefs.accountOverrides && typeof serverPrefs.accountOverrides === 'object') {
-            for (const [key, val] of Object.entries(serverPrefs.accountOverrides)) {
-                if (typeof val === 'number') accountOverrides[key] = clampRailSize(val)
-            }
-        }
-        const catalogs = mergeCatalogs(serverPrefs.catalogs)
-        let accountCatalogOverrides: Record<string, Record<string, boolean>> = {}
-        if (serverPrefs.accountCatalogOverrides && typeof serverPrefs.accountCatalogOverrides === 'object') {
-            for (const [accId, overrides] of Object.entries(serverPrefs.accountCatalogOverrides)) {
-                if (overrides && typeof overrides === 'object') {
-                    const map: Record<string, boolean> = {}
-                    for (const [catId, enabled] of Object.entries(overrides as Record<string, unknown>)) {
-                        if (typeof enabled === 'boolean') map[catId] = enabled
-                    }
-                    if (Object.keys(map).length > 0) accountCatalogOverrides[accId] = map
-                }
-            }
-        }
-        const next: DiscoveryPrefs = { railSize, accountOverrides, catalogs, accountCatalogOverrides }
-        if (JSON.stringify(next) === JSON.stringify(cache)) return
-        cache = next
-        persist()
-        notify()
-    } catch {
-    }
-}
-
-function pushToServer(prefs: DiscoveryPrefs): void {
-    authHeaders()
-        .then(headers => fetch('/api/catalog/prefs', {
-            method: 'PUT',
-            headers,
-            body: JSON.stringify({ scope: 'household', prefs }),
-        }))
-        .catch(() => {})
 }
 
 loadFromStorage()
-void syncFromServer()
 
 function notify() {
     for (const fn of listeners) fn()
@@ -206,10 +131,11 @@ export function getDiscoveryPrefs(): DiscoveryPrefs {
 export function setRailSize(size: number): void {
     const next = clampRailSize(size)
     if (next === cache.railSize) return
+    lastModifiedAt = Date.now()
     cache = { ...cache, railSize: next }
     persist()
     notify()
-    pushToServer(cache)
+
 }
 
 export function setAccountRailSize(accountId: string, size: number | null): void {
@@ -223,63 +149,11 @@ export function setAccountRailSize(accountId: string, size: number | null): void
         if (overrides[accountId] === clamped) return
         overrides[accountId] = clamped
     }
+    lastModifiedAt = Date.now()
     cache = { ...cache, accountOverrides: overrides }
     persist()
     notify()
-}
 
-export function setCatalogEnabled(id: string, enabled: boolean, accountId?: string): void {
-    const idx = cache.catalogs.findIndex(c => c.id === id)
-    if (idx === -1) return
-    const current = cache.catalogs[idx]
-    if (current.locked) return
-    if (accountId) {
-        const accOverrides = { ...cache.accountCatalogOverrides }
-        const accMap = { ...(accOverrides[accountId] || {}) }
-        if (accMap[id] === enabled) return
-        accMap[id] = enabled
-        accOverrides[accountId] = accMap
-        cache = { ...cache, accountCatalogOverrides: accOverrides }
-        persist()
-        notify()
-        pushToServer(cache)
-    } else {
-        if (current.enabled === enabled) return
-        const catalogs = cache.catalogs.map((c, i) => i === idx ? { ...c, enabled } : c)
-        cache = { ...cache, catalogs }
-        persist()
-        notify()
-        pushToServer(cache)
-    }
-}
-
-export function resetAccountCatalogs(accountId: string): void {
-    if (!accountId || !cache.accountCatalogOverrides[accountId]) return
-    const accOverrides = { ...cache.accountCatalogOverrides }
-    delete accOverrides[accountId]
-    cache = { ...cache, accountCatalogOverrides: accOverrides }
-    persist()
-    notify()
-    pushToServer(cache)
-}
-
-export function moveCatalog(id: string, direction: 'up' | 'down'): void {
-    const idx = cache.catalogs.findIndex(c => c.id === id)
-    if (idx === -1) return
-    const current = cache.catalogs[idx]
-    if (current.locked) return
-    const target = direction === 'up' ? idx - 1 : idx + 1
-    if (target < 0 || target >= cache.catalogs.length) return
-    const neighbor = cache.catalogs[target]
-    if (neighbor.locked) return
-    const catalogs = [...cache.catalogs]
-    const tmp = catalogs[idx]
-    catalogs[idx] = catalogs[target]
-    catalogs[target] = tmp
-    cache = { ...cache, catalogs }
-    persist()
-    notify()
-    pushToServer(cache)
 }
 
 function getSnapshot(): DiscoveryPrefs {
@@ -294,22 +168,23 @@ export function useRailSize(accountId?: string): number {
     return prefs.railSize
 }
 
-export function useCatalogs(accountId?: string): CatalogConfig[] {
-    const prefs = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-    if (accountId && prefs.accountCatalogOverrides[accountId]) {
-        const accOverrides = prefs.accountCatalogOverrides[accountId]
-        return prefs.catalogs.map(c =>
-            !c.locked && accOverrides[c.id] !== undefined
-                ? { ...c, enabled: accOverrides[c.id] }
-                : c
-        )
-    }
-    return prefs.catalogs
+export function getLastModifiedAt(): number {
+    return lastModifiedAt
 }
 
-export function isCatalogEnabled(id: string): boolean {
-    const catalog = cache.catalogs.find(c => c.id === id)
-    if (!catalog) return true
-    if (catalog.locked) return true
-    return catalog.enabled
+export function _setLastModifiedForTest(ts: number): void {
+    lastModifiedAt = ts
+}
+
+export function _resetPrefsStoreForTest(): void {
+    cache = {
+        railSize: DEFAULT_PREFS.railSize,
+        accountOverrides: { ...DEFAULT_PREFS.accountOverrides },
+        catalogs: DEFAULT_CATALOGS.map(c => ({ ...c })),
+    }
+    lastModifiedAt = 0
+}
+
+export function _loadFromStorageForTest(): void {
+    loadFromStorage()
 }

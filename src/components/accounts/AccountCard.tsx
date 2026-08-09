@@ -18,7 +18,7 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
-import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play, Link } from 'lucide-react'
+import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
 import { STICKY_NOTE_MAX_LENGTH } from '@/lib/constants'
@@ -29,7 +29,6 @@ import { useToast } from '@/hooks/use-toast'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
-import { getAccountCatalogUrl } from '@/lib/catalog-sync'
 
 function HideableImage({ src, alt, className, fallback, style }: { src?: string; alt?: string; className?: string; fallback?: string; style?: React.CSSProperties }) {
   const [failed, setFailed] = useState(false)
@@ -447,22 +446,6 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RotateCw className={`h-4 w-4 shrink-0 text-primary ${loading ? 'animate-spin' : ''}`} />
                       Refresh Addons
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const url = await getAccountCatalogUrl(account.id, displayName)
-                        if (url) {
-                          navigator.clipboard.writeText(url)
-                          toast({ title: 'Catalog URL copied', description: `Add it to AIOMetadata, AIOStreams, or Stremio` })
-                        } else {
-                          toast({ variant: 'destructive', title: 'Could not get catalog URL' })
-                        }
-                      }}
-                      className="gap-2 cursor-pointer"
-                    >
-                      <Link className="h-4 w-4 shrink-0" />
-                      Copy Catalog URL
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={(e) => { e.stopPropagation(); onDelete?.(account.id); }}

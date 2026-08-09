@@ -672,6 +672,7 @@ export const useSyncStore = create<SyncState>()(
                 if (_syncBC) { _syncBC.close(); _syncBC = null }
                 clearPasswordFromSession()
                 import('@/lib/canonical-base').then(({ clearCanonicalBases }) => clearCanonicalBases()).catch(() => {})
+                import('@/lib/pmdb-list-publisher').then(({ _invalidateAuthCache }) => _invalidateAuthCache()).catch(() => {})
                 set({
                     auth: { id: '', password: '', name: '', isAuthenticated: false },
                     lastSyncedAt: null,

@@ -14,14 +14,6 @@ const DEFAULT_TTL_LONG_MS = 7 * 24 * 60 * 60 * 1000
 const RATE_LIMIT_PROXY = { max: 300, timeWindow: '1 minute' }
 const RATE_LIMIT_STATS = { max: 30, timeWindow: '1 minute' }
 
-const SHARED_TMDB_KEY = process.env.TMDB_API_KEY || process.env.TMDB_KEY || null
-const SHARED_TMDB_FORMAT = (() => {
-    if (!SHARED_TMDB_KEY) return null
-    if (SHARED_TMDB_KEY.startsWith('eyJ')) return 'v4'
-    if (/^[0-9a-fA-F]{32}$/.test(SHARED_TMDB_KEY)) return 'v3'
-    return 'v3'
-})()
-
 export function _redactKey(input) {
     if (input == null) return input
     if (typeof input === 'string') {
@@ -147,9 +139,6 @@ async function loadUserKey(userId, provider) {
             }
             return { key: plaintext, format, source: 'user' }
         }
-    }
-    if (SHARED_TMDB_KEY && SHARED_TMDB_FORMAT) {
-        return { key: SHARED_TMDB_KEY, format: SHARED_TMDB_FORMAT, source: 'shared' }
     }
     return null
 }
@@ -317,7 +306,7 @@ export function registerMetadataProxyRoutes(fastify) {
     fastify.decorate('metadataCache', metadataCache)
 
     const PMDB_BASE = 'https://publicmetadb.com/api/external'
-    const RATE_LIMIT_PMDB = { max: 60, timeWindow: '1 minute' }
+    const RATE_LIMIT_PMDB = { max: 120, timeWindow: '1 minute' }
 
     const auxCache = new Map()
     const AUX_CACHE_TTL_STABLE = 24 * 60 * 60 * 1000
@@ -371,7 +360,8 @@ export function registerMetadataProxyRoutes(fastify) {
             ? `${PMDB_BASE}/${cleanPath}?${queryString}`
             : `${PMDB_BASE}/${cleanPath}`
 
-        const cached = auxCacheGet(url)
+        const cacheKey = `${authUser}:${url}`
+        const cached = auxCacheGet(cacheKey)
         if (cached) {
             reply.header('Content-Type', 'application/json')
             reply.header('X-Cache', 'HIT')
@@ -397,7 +387,7 @@ export function registerMetadataProxyRoutes(fastify) {
                 reply.status(response.status)
                 return { error: `PMDB upstream error (${response.status})` }
             }
-            auxCacheSet(url, text)
+            auxCacheSet(`${authUser}:${url}`, text)
             reply.header('Content-Type', 'application/json')
             return text
         } catch (err) {
@@ -406,6 +396,71 @@ export function registerMetadataProxyRoutes(fastify) {
             return { error: 'PMDB request failed' }
         }
     })
+
+    async function pmdbMutate(request, reply, method) {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        let keyRecord
+        try { keyRecord = await loadUserKey(authUser, 'pmdb') } catch { reply.status(500); return { error: 'Key lookup failed' } }
+        if (!keyRecord) { reply.status(401); return { error: 'PMDB key not configured' } }
+
+        const wildcard = request.params['*'] || ''
+        const pathParts = String(wildcard).split('/').filter(Boolean)
+        if (pathParts.length === 0) { reply.status(400); return { error: 'Missing resource path' } }
+
+        const cleanPath = pathParts.map(encodeURIComponent).join('/')
+        const incomingQuery = request.query && typeof request.query === 'object' ? request.query : {}
+        const queryString = Object.keys(incomingQuery)
+            .filter(k => k && incomingQuery[k] !== undefined && incomingQuery[k] !== null)
+            .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(String(incomingQuery[k]))}`)
+            .join('&')
+
+        const url = queryString
+            ? `${PMDB_BASE}/${cleanPath}?${queryString}`
+            : `${PMDB_BASE}/${cleanPath}`
+
+        try {
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 15000)
+            if (request.socket?.destroyed) {
+                request.socket.on('close', () => controller.abort())
+            }
+            const fetchOptions = {
+                method,
+                headers: {
+                    Authorization: `Bearer ${keyRecord.key}`,
+                    Accept: 'application/json',
+                },
+                signal: controller.signal,
+            }
+            if (method !== 'DELETE' && request.body !== undefined && request.body !== null) {
+                fetchOptions.headers['Content-Type'] = 'application/json'
+                fetchOptions.body = typeof request.body === 'string' ? request.body : JSON.stringify(request.body)
+            }
+            const response = await fetch(url, fetchOptions)
+            clearTimeout(timeout)
+            const text = await response.text()
+            if (!response.ok) {
+                reply.status(response.status)
+                try { return JSON.parse(text) } catch { return { error: `PMDB upstream error (${response.status})` } }
+            }
+            reply.header('Content-Type', 'application/json')
+            return text || '{}'
+        } catch (err) {
+            const status = err?.name === 'AbortError' ? 504 : 502
+            reply.status(status)
+            return { error: 'PMDB request failed' }
+        }
+    }
+
+    fastify.post('/api/metadata/pmdb/*', {
+        config: { rateLimit: RATE_LIMIT_PMDB },
+    }, async (request, reply) => pmdbMutate(request, reply, 'POST'))
+
+    fastify.delete('/api/metadata/pmdb/*', {
+        config: { rateLimit: RATE_LIMIT_PMDB },
+    }, async (request, reply) => pmdbMutate(request, reply, 'DELETE'))
 
     const MDBLIST_BASE = 'https://mdblist.com/api'
     const TVDB_BASE = 'https://api4.thetvdb.com/v4'
@@ -506,41 +561,6 @@ export function registerMetadataProxyRoutes(fastify) {
         }
     })
 
-    fastify.get('/api/metadata/rpdb/poster/:id', {
-        config: { rateLimit: RATE_LIMIT_PROXY },
-    }, async (request, reply) => {
-        const authUser = await verifyAuth(request)
-        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
-
-        let keyRecord
-        try { keyRecord = await loadUserKey(authUser, 'rpdb') } catch { reply.status(500); return { error: 'Key lookup failed' } }
-        if (!keyRecord) { reply.status(404); return { error: 'RPDB key not configured' } }
-
-        const id = request.params.id
-        if (!id) { reply.status(400); return { error: 'Missing ID' } }
-
-        const cacheKey = `rpdb:${id}`
-        const cached = auxCacheGet(cacheKey)
-        if (cached) { reply.header('Content-Type', 'image/jpeg'); reply.header('X-Cache', 'HIT'); return cached }
-
-        try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const response = await fetch(`https://api.ratingposterdb.com/${keyRecord.key}/${id}-poster-default.jpg`, {
-                signal: controller.signal,
-            })
-            clearTimeout(timeout)
-            if (!response.ok) { reply.status(response.status); return { error: `RPDB error (${response.status})` } }
-            const buffer = Buffer.from(await response.arrayBuffer())
-            auxCacheSet(cacheKey, buffer)
-            reply.header('Content-Type', 'image/jpeg')
-            return buffer
-        } catch (err) {
-            reply.status(err?.name === 'AbortError' ? 504 : 502)
-            return { error: 'RPDB request failed' }
-        }
-    })
-
     const FANART_BASE = 'https://webservice.fanart.tv/v3'
 
     fastify.get('/api/metadata/fanart/*', {
@@ -580,9 +600,18 @@ export function registerMetadataProxyRoutes(fastify) {
     })
 
     // ── AUDIENCE REVIEWS & COMMENTS AGGREGATOR ENDPOINT ──────────────────────
-    fastify.get('/api/metadata/comments', async (request, reply) => {
+    fastify.get('/api/metadata/comments', {
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+
         const { imdbId, type, tmdbId } = request.query || {}
         if (!imdbId && !tmdbId) return []
+
+        let tmdbKeyRecord = null
+        if (authUser) {
+            try { tmdbKeyRecord = await loadUserKey(authUser, 'tmdb') } catch {}
+        }
 
         const cacheKey = `comments:${imdbId || tmdbId}:${type || 'movie'}`
         const cached = auxCacheGet(cacheKey)
@@ -594,44 +623,13 @@ export function registerMetadataProxyRoutes(fastify) {
         const comments = []
         const mediaPath = (type === 'series' || type === 'anime' || type === 'tv') ? 'shows' : 'movies'
 
-        // 1. Fetch Trakt Comments
-        if (imdbId && imdbId.startsWith('tt')) {
-            try {
-                const traktRes = await fetch(`https://api.trakt.tv/${mediaPath}/${imdbId}/comments/top`, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'trakt-api-version': '2',
-                        'trakt-api-key': 'd684a0d9b62649b5c777e4e08214300305ec7f7c46014e768b724599a03780a4',
-                    },
-                })
-                if (traktRes.ok) {
-                    const traktData = await traktRes.json()
-                    if (Array.isArray(traktData)) {
-                        for (const item of traktData.slice(0, 20)) {
-                            if (item.comment && item.comment.trim()) {
-                                comments.push({
-                                    id: `trakt-${item.id}`,
-                                    author: item.user?.username || item.user?.name || 'Trakt Reviewer',
-                                    avatar: item.user?.images?.avatar?.full || undefined,
-                                    rating: typeof item.user_rating === 'number' ? item.user_rating : undefined,
-                                    content: item.comment.trim(),
-                                    createdAt: item.created_at || '',
-                                    source: 'Trakt',
-                                })
-                            }
-                        }
-                    }
-                }
-            } catch (err) {}
-        }
-
-        // 2. Fetch TMDB Reviews
+        // Fetch TMDB Reviews
         const targetTmdbId = tmdbId || (imdbId && !imdbId.startsWith('tt') ? imdbId : null)
         let tmdbNumericId = targetTmdbId
 
-        if (!tmdbNumericId && imdbId && imdbId.startsWith('tt')) {
+        if (!tmdbNumericId && tmdbKeyRecord && imdbId && imdbId.startsWith('tt')) {
             try {
-                const findRes = await fetch(`https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=101be1fef6e5e8e3a24bcadfa455113d`)
+                const findRes = await fetch(`https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=${tmdbKeyRecord.key}`)
                 if (findRes.ok) {
                     const findData = await findRes.json()
                     const found = (findData.movie_results && findData.movie_results[0]) || (findData.tv_results && findData.tv_results[0])
@@ -640,10 +638,10 @@ export function registerMetadataProxyRoutes(fastify) {
             } catch (err) {}
         }
 
-        if (tmdbNumericId) {
+        if (tmdbNumericId && tmdbKeyRecord) {
             try {
                 const tmdbType = (type === 'series' || type === 'anime' || type === 'tv') ? 'tv' : 'movie'
-                const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbNumericId}/reviews?api_key=101be1fef6e5e8e3a24bcadfa455113d`)
+                const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbNumericId}/reviews?api_key=${tmdbKeyRecord.key}`)
                 if (tmdbRes.ok) {
                     const tmdbData = await tmdbRes.json()
                     if (Array.isArray(tmdbData.results)) {

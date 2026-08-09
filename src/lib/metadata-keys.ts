@@ -16,7 +16,7 @@ export interface SavedKeyInfo {
 
 async function authHeaders(): Promise<Record<string, string>> {
     const auth = useSyncStore.getState().auth
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const headers: Record<string, string> = {}
     if (auth.isAuthenticated) {
         headers['x-sync-user'] = auth.id
         headers['x-sync-password'] = await deriveSyncToken(auth.password)
@@ -53,7 +53,7 @@ export async function listMetadataKeys(): Promise<ConfiguredProvider[]> {
 export async function saveMetadataKey(provider: string, key: string): Promise<SavedKeyInfo> {
     const res = await fetch('/api/metadata-keys', {
         method: 'POST',
-        headers: await authHeaders(),
+        headers: { ...await authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, key }),
     })
     const json = await res.json()
@@ -100,7 +100,7 @@ export async function importFromAIOMetadata(payload: {
 }): Promise<AIOMetadataImportResult> {
     const res = await fetch('/api/metadata-keys/import-aiometadata', {
         method: 'POST',
-        headers: await authHeaders(),
+        headers: { ...await authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
     })
     const json = await res.json()

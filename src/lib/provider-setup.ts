@@ -16,14 +16,6 @@ export const PROVIDER_SETUP: Record<string, ProviderSetup> = {
             'Copy the value of the cookie named "ui" and paste it here.',
         ],
     },
-    trakt: {
-        intro: 'Trakt needs a Client ID at minimum; add an access token for profile details.',
-        steps: [
-            'Create an app at trakt.tv/oauth/applications.',
-            'Set the redirect URI to urn:ietf:wg:oauth:2.0:oob.',
-            'Paste the Client ID, or enter ClientID:AccessToken after authorizing the app.',
-        ],
-    },
     tmdb: {
         intro: 'Either credential works; the v4 token also surfaces your username.',
         steps: [
