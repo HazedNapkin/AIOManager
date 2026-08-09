@@ -81,6 +81,21 @@ fastify.addHook('onSend', async (request, reply) => {
 
 registerStremioCatalogRoutes(fastify)
 
+fastify.get('/logo.png', async (_request, reply) => {
+    const distLogo = `${distPath}/logo.png`
+    const publicLogo = `${distPath.replace(/\/dist$/, '')}/public/logo.png`
+    if (fs.existsSync(distLogo)) {
+        reply.type('image/png')
+        return reply.send(fs.createReadStream(distLogo))
+    }
+    if (fs.existsSync(publicLogo)) {
+        reply.type('image/png')
+        return reply.send(fs.createReadStream(publicLogo))
+    }
+    reply.status(404)
+    return { error: 'Logo not found' }
+})
+
 if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {
         root: distPath,

@@ -35,7 +35,10 @@ interface UpdateAddonOptions {
   previousCollection?: AddonDescriptor[]
 }
 
-export async function getAddons(authKey: string, accountContext: string = 'Unknown'): Promise<AddonDescriptor[]> {
+export async function getAddons(authKey: string, accountContext: string = 'Unknown', force: boolean = false): Promise<AddonDescriptor[]> {
+  if (force) {
+    addonCollectionCache.delete(authKey)
+  }
   const cached = addonCollectionCache.get(authKey)
   if (cached && Date.now() - cached.ts < COLLECTION_CACHE_TTL) {
     trace('getAddons', 'cache-hit', { accountId: accountContext, ageMs: Date.now() - cached.ts, count: cached.data.length, addons: briefAddons(cached.data) })
@@ -281,7 +284,7 @@ export async function reinstallAddon(
     throw new Error(`Cannot reach addon: ${error instanceof Error ? error.message : 'Unknown error'}. Aborting reinstall.`)
   })
   const collectionPromise = authKey
-    ? getAddons(authKey, accountContext).catch(() => [] as AddonDescriptor[])
+    ? getAddons(authKey, accountContext, true).catch(() => [] as AddonDescriptor[])
     : Promise.resolve([] as AddonDescriptor[])
   const [newAddonDescriptor, currentAddons] = await Promise.all([manifestPromise, collectionPromise])
   const addonIndex = currentAddons.findIndex((addon) => normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl))

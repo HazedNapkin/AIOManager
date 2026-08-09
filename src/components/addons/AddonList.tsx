@@ -305,7 +305,7 @@ export function AddonList({ accountId }: AddonListProps) {
       setIsSelectionMode(false)
       setSelectedAddonUrls(new Set())
       setShowDeleteConfirm(false)
-      await syncAccount(accountId)
+      await syncAccount(accountId, true)
     } catch (e) {
       const msg = (e as Error)?.message || ''
       if (msg.includes('Anti-wipe guard')) {
@@ -488,7 +488,7 @@ export function AddonList({ accountId }: AddonListProps) {
 
     setCheckingUpdates(true)
     try {
-      await syncAccount(accountId)
+      await syncAccount(accountId, true)
 
       await pullServerState()
       await checkRules()

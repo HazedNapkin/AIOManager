@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
 import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
-import { fetchTmdbDetailsAsMeta, proxyFetch, searchTmdbPerson, fetchSeasonEpisodes, fetchSeasonsList, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
+import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, searchTmdbPerson, fetchSeasonEpisodes, fetchSeasonsList, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
 import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/catalog-sync'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
@@ -2009,10 +2009,48 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 .catch(() => { })
                         }
                     } else {
-                        setFailed(true)
+                        throw new Error('TMDB returned empty')
                     }
                 })
-                .catch(() => { if (active) setFailed(true) })
+                .catch(async (err) => {
+                    if (!active) return
+                    if (import.meta.env.DEV) console.warn('[ActivityDetail] TMDB path failed, trying Cinemeta fallback:', err)
+
+                    try {
+                        const fallbackImdb = await fetchTmdbImdbId(tmdbId, mediaType).catch(() => null)
+                        const cinemetaId = fallbackImdb || null
+
+                        if (cinemetaId && cinemetaId.startsWith('tt')) {
+                            const cinemetaResult = await traceAsync('cinemeta-fallback', () => fetchCinemetaDetail(cinemetaId, renderItem.type))
+                            if (active && cinemetaResult) {
+                                setMeta(cinemetaResult)
+                                setFailed(false)
+                                resolveTrailerAsync({ imdbId: cinemetaId, type: renderItem.type, cinemetaMeta: cinemetaResult })
+                                    .then(res => { if (active) setTrailer(res) })
+                                    .catch(() => { })
+                                fetchAdditionalRatings(cinemetaId, renderItem.name, renderItem.type)
+                                    .then(extra => {
+                                        if (active && extra.length > 0) {
+                                            setProviderRatings(prev => {
+                                                const combined = [...prev]
+                                                for (const item of extra) {
+                                                    if (!combined.some(x => x.source === item.source)) combined.push(item)
+                                                }
+                                                return combined
+                                            })
+                                        }
+                                    })
+                                    .catch(() => { })
+                            } else {
+                                if (active) setFailed(true)
+                            }
+                        } else {
+                            if (active) setFailed(true)
+                        }
+                    } catch {
+                        if (active) setFailed(true)
+                    }
+                })
                 .finally(() => { if (active) { markMetaEnd(); setLoading(false) } })
 
         } else if (isImdbId) {

@@ -4,6 +4,7 @@ import localforage from 'localforage'
 import { create } from 'zustand'
 
 const STORAGE_KEY = 'aioman:profiles'
+const DELETED_KEY = 'aioman:deleted-profiles'
 
 interface ProfileState {
     profiles: Profile[]
@@ -88,6 +89,11 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         const updated = get().profiles.filter(p => p.id !== id)
         try {
             await localforage.setItem(STORAGE_KEY, updated)
+            const deleted = await localforage.getItem<string[]>(DELETED_KEY) || []
+            if (!deleted.includes(id)) {
+                deleted.push(id)
+                await localforage.setItem(DELETED_KEY, deleted)
+            }
         } catch (err) {
             if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist deleteProfile:', err)
             throw new Error('Failed to delete profile. Please try again.')
@@ -113,7 +119,12 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
 
     importProfiles: async (profilesToImport: Profile[]) => {
         const existingIds = new Set(get().profiles.map(p => p.id))
-        const newProfiles = profilesToImport.filter(p => !existingIds.has(p.id))
+        let deletedIds: string[] = []
+        try {
+            deletedIds = await localforage.getItem<string[]>(DELETED_KEY) || []
+        } catch {}
+        const deletedSet = new Set(deletedIds)
+        const newProfiles = profilesToImport.filter(p => !existingIds.has(p.id) && !deletedSet.has(p.id))
 
         if (newProfiles.length === 0) return
 

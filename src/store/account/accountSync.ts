@@ -259,7 +259,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
         let authKey = await getCachedAuthKey(accountAuthKey, encryptionKey)
         let remoteAddons: AddonDescriptor[]
         try {
-            remoteAddons = await getAddons(authKey, currentAccount.id)
+            remoteAddons = await getAddons(authKey, currentAccount.id, forceRefresh)
         } catch (error) {
             if (!isAuthError(error)) throw error
             const refreshed = await refreshAuthKeyFromStoredPassword(currentAccount, encryptionKey).catch((refreshError) => {
@@ -270,7 +270,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
             currentAccount = refreshed.account
             authKey = refreshed.authKey
             authKeyRefreshed = true
-            remoteAddons = await getAddons(authKey, currentAccount.id)
+            remoteAddons = await getAddons(authKey, currentAccount.id, forceRefresh)
         }
         stremioAuthKey = authKey
         trace('sync.core', 'read', { accountId: id, remote: remoteAddons.length })

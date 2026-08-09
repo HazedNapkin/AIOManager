@@ -13,7 +13,7 @@ import { deflateSync, strToU8 } from 'fflate'
 import { deriveSyncToken } from '@/lib/crypto'
 import { resilientFetch } from '@/lib/api-resilience'
 import { decompressSyncPayload } from '@/lib/utils'
-import { applySyncedSettings } from '@/lib/synced-settings'
+import { applySyncedSettings, readSyncedSettings } from '@/lib/synced-settings'
 import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { createSafeStorage } from './safe-storage'
 import { wipeAllData } from '@/lib/storage-reset'
@@ -796,6 +796,8 @@ export const useSyncStore = create<SyncState>()(
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
                         discoverPrefs: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-prefs') || '{}') } catch { return {} } })(),
+                        profiles: useProfileStore.getState().profiles,
+                        settings: readSyncedSettings(),
                     }
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')

@@ -34,37 +34,37 @@ async function getRecCacheItems(syncUser, accountId, catalogType) {
     }
 }
 
-const HOUSEHOLD_CATALOGS = [
-    { type: 'movie', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'series', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'movie', id: 'popular_household', name: 'Popular in Household' },
-    { type: 'series', id: 'popular_household', name: 'Popular in Household' },
-    { type: 'movie', id: 'trending_household', name: 'Trending This Week' },
-    { type: 'series', id: 'trending_household', name: 'Trending This Week' },
-    { type: 'movie', id: 'recommended_movies', name: 'Recommended Movies' },
-    { type: 'series', id: 'recommended_series', name: 'Recommended Series' },
-    { type: 'series', id: 'recommended_anime', name: 'Recommended Anime' },
-    { type: 'movie', id: 'because_you_watched', name: 'Because You Watched' },
-    { type: 'series', id: 'because_you_watched', name: 'Because You Watched' },
-    { type: 'movie', id: 'themed_rows', name: 'Themed For You' },
-    { type: 'series', id: 'themed_rows', name: 'Themed For You' },
-    { type: 'movie', id: 'watchlist', name: 'My Watchlist' },
-    { type: 'series', id: 'watchlist', name: 'My Watchlist' },
-]
+const CATALOG_DEFINITIONS = {
+    continue_watching: { name: 'Continue Watching', types: ['movie', 'series'] },
+    recommended_movies: { name: 'Recommended Movies', types: ['movie'] },
+    recommended_series: { name: 'Recommended Series', types: ['series'] },
+    recommended_anime: { name: 'Recommended Anime', types: ['series'] },
+    because_you_watched: { name: 'Because You Watched', types: ['movie', 'series'] },
+    themed_rows: { name: 'Themed For You', types: ['movie', 'series'] },
+    popular_household: { name: 'Popular in Household', types: ['movie', 'series'] },
+    trending_household: { name: 'Trending This Week', types: ['movie', 'series'] },
+    watchlist: { name: 'My Watchlist', types: ['movie', 'series'] },
+}
 
-const ACCOUNT_CATALOGS = [
-    { type: 'movie', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'series', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'movie', id: 'recommended_movies', name: 'Recommended Movies' },
-    { type: 'series', id: 'recommended_series', name: 'Recommended Series' },
-    { type: 'series', id: 'recommended_anime', name: 'Recommended Anime' },
-    { type: 'movie', id: 'because_you_watched', name: 'Because You Watched' },
-    { type: 'series', id: 'because_you_watched', name: 'Because You Watched' },
-    { type: 'movie', id: 'themed_rows', name: 'Themed For You' },
-    { type: 'series', id: 'themed_rows', name: 'Themed For You' },
-    { type: 'movie', id: 'watchlist', name: 'My Watchlist' },
-    { type: 'series', id: 'watchlist', name: 'My Watchlist' },
-]
+function generateCatalogsFromPrefs(prefs, scope) {
+    if (!prefs || !Array.isArray(prefs.catalogs)) return []
+    const isHousehold = scope === 'household'
+    const result = []
+    for (const entry of prefs.catalogs) {
+        if (!entry || typeof entry.id !== 'string') continue
+        const isLocked = entry.locked === true
+        const isEnabled = entry.enabled === true
+        if (!isLocked && !isEnabled) continue
+        const def = CATALOG_DEFINITIONS[entry.id]
+        if (!def) continue
+        const skipHouseholdOnly = !isHousehold && (entry.id === 'popular_household' || entry.id === 'trending_household')
+        if (skipHouseholdOnly) continue
+        for (const type of def.types) {
+            result.push({ type, id: entry.id, name: def.name })
+        }
+    }
+    return result
+}
 
 async function resolveToken(token) {
     const row = await db.get('SELECT value FROM kv_store WHERE key = $1', [`catalog_token:${token}`])
@@ -248,27 +248,6 @@ function buildDefaultPrefs(scope) {
     }
 }
 
-function filterCatalogsByPrefs(baseCatalogs, prefs) {
-    if (!prefs || !Array.isArray(prefs.catalogs)) return baseCatalogs
-    const enabledIds = new Set()
-    const orderMap = new Map()
-    prefs.catalogs.forEach((entry, idx) => {
-        if (!entry || typeof entry.id !== 'string') return
-        if (entry.locked === true || entry.enabled === true) {
-            if (!enabledIds.has(entry.id)) {
-                enabledIds.add(entry.id)
-                orderMap.set(entry.id, idx)
-            }
-        }
-    })
-    const filtered = baseCatalogs.filter(c => enabledIds.has(c.id))
-    return filtered.sort((a, b) => {
-        const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Number.MAX_SAFE_INTEGER
-        const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Number.MAX_SAFE_INTEGER
-        return ai - bi
-    })
-}
-
 export function registerStremioCatalogRoutes(fastify) {
     fastify.options('/addon/:token/*', async (_request, reply) => {
         corsHeaders(reply)
@@ -286,9 +265,8 @@ export function registerStremioCatalogRoutes(fastify) {
 
         const { sync_user, account_id, scope, account_name } = tokenData
         const baseUrl = `${request.protocol}://${request.hostname}`
-        const baseCatalogs = scope === 'household' ? HOUSEHOLD_CATALOGS : ACCOUNT_CATALOGS
         const prefs = await getDiscoveryPrefs(sync_user, scope === 'household' ? HOUSEHOLD_ACCOUNT_ID : (account_id || HOUSEHOLD_ACCOUNT_ID))
-        const effectiveCatalogs = prefs ? filterCatalogsByPrefs(baseCatalogs, prefs) : baseCatalogs
+        const effectiveCatalogs = generateCatalogsFromPrefs(prefs, scope)
 
         let customCatalogs = []
         try {
@@ -305,15 +283,15 @@ export function registerStremioCatalogRoutes(fastify) {
 
         const catalogs = [...effectiveCatalogs, ...customCatalogs]
         const name = scope === 'household'
-            ? 'AIOManager'
-            : `AIOManager - ${account_name || 'Account'}`
+            ? 'My Recommendations'
+            : `${account_name || 'Account'} Recommendations`
 
         return {
             id: `com.aiomanager.${scope}.${account_id || 'household'}`,
             version: '1.0.0',
             name,
             logo: `${baseUrl}/logo.png`,
-            description: `Personalized catalogs from AIOManager${scope === 'household' ? ' (all accounts)' : ''}`,
+            description: `Personalized recommendations powered by AIOManager${scope === 'household' ? '' : ` for ${account_name || 'this account'}`}`,
             resources: ['catalog'],
             types: ['movie', 'series'],
             catalogs,
@@ -626,10 +604,16 @@ export function registerStremioCatalogRoutes(fastify) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
         try {
-            await db.run('DELETE FROM catalog_configs WHERE id = $1 AND sync_user = $2', [request.params.id, authUser])
+            const result = await db.run('DELETE FROM catalog_configs WHERE id = $1 AND sync_user = $2', [request.params.id, authUser])
+            const affected = result?.changes ?? result?.rowCount ?? 0
+            if (affected === 0) {
+                reply.status(404)
+                return { success: false, error: 'Catalog not found or not owned by this user' }
+            }
             return { success: true }
-        } catch {
-            return { success: false }
+        } catch (err) {
+            reply.status(500)
+            return { success: false, error: `Delete failed: ${err.message}` }
         }
     })
 
