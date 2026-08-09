@@ -8,6 +8,7 @@ import { expand, derivePreview, hslToHex } from '@/data/themes'
 import { EMOJI_GROUPS } from '@/lib/emoji-data'
 import { ColorPicker } from '@/components/ui/color-picker'
 import { Input } from '@/components/ui/input'
+import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
@@ -729,12 +730,21 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                             className="h-8 text-xs"
                                             maxLength={80}
                                         />
-                                        <Input
-                                            value={logoUrl}
-                                            onChange={e => setLogoUrl(e.target.value)}
-                                            placeholder="Header logo URL (replaces AIOManager logo)..."
-                                            className="h-8 text-xs"
-                                        />
+                                        <div className="flex gap-2">
+                                            <Input
+                                                value={logoUrl.startsWith('data:') ? '\u2713 Uploaded image' : logoUrl}
+                                                onChange={e => setLogoUrl(e.target.value)}
+                                                placeholder="Header logo URL (replaces AIOManager logo)..."
+                                                className="h-8 text-xs"
+                                                readOnly={logoUrl.startsWith('data:')}
+                                            />
+                                            <ImageUploadButton
+                                                onUploaded={setLogoUrl}
+                                                options={{ maxDimension: 256, square: false, quality: 0.85 }}
+                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                                                label="Upload logo"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             </div>

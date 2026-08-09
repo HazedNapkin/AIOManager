@@ -13,7 +13,6 @@ import { fetchTmdbDetailsAsMeta, proxyFetch, searchTmdbPerson, fetchSeasonEpisod
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
 import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/catalog-sync'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
-import { getTraktComments } from '@/lib/trakt-sync'
 import { cn, openStremioDetail } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useAccountStore } from '@/store/accountStore'
@@ -38,6 +37,7 @@ export type RatingSource =
     | 'tmdb'
     | 'mal'
     | 'anilist'
+    | 'simkl'
 
 interface ProviderRating {
     source: RatingSource
@@ -226,6 +226,18 @@ const RatingBadge = memo(function RatingBadge({ rating }: { rating: ProviderRati
         )
     }
 
+    if (source === 'simkl') {
+        return (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-orange-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
+                <svg viewBox="0 0 40 20" className="h-3.5 w-8 shrink-0 rounded-sm">
+                    <rect width="40" height="20" rx="3" fill="#F97316" />
+                    <text x="20" y="14" fill="#FFFFFF" fontSize="9" fontWeight="900" textAnchor="middle" fontFamily="Arial Black, sans-serif">SIMKL</text>
+                </svg>
+                <span className="tabular-nums font-black text-white">{value}</span>
+            </span>
+        )
+    }
+
     return (
         <Tooltip content={`${source} Rating`}>
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/40 bg-black/70 px-2 py-1 text-xs font-bold backdrop-blur-md shadow-md">
@@ -312,6 +324,8 @@ async function fetchAdditionalRatings(imdbId: string, title?: string, type?: str
                             results.push({ source: 'trakt', value: typeof r.value === 'number' ? (r.value > 10 ? (r.value / 10).toFixed(1) : r.value.toFixed(1)) : String(r.value) })
                         } else if (r.source === 'letterboxd' && r.value && !has('letterboxd')) {
                             results.push({ source: 'letterboxd', value: typeof r.value === 'number' ? r.value.toFixed(1) : String(r.value) })
+                        } else if (r.source === 'simkl' && r.value && !has('simkl')) {
+                            results.push({ source: 'simkl', value: typeof r.value === 'number' ? (r.value > 10 ? (r.value / 10).toFixed(1) : r.value.toFixed(1)) : String(r.value) })
                         }
                     }
                 }
@@ -1027,6 +1041,7 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
     const [expandedEpisode, setExpandedEpisode] = useState<number | null>(null)
     const [cinemetaSeasons, setCinemetaSeasons] = useState<SeasonInfo[]>([])
     const [cinemetaEpisodesBySeason, setCinemetaEpisodesBySeason] = useState<Map<number, EpisodeInfo[]>>(new Map())
+    const [tmdbSeasonsFailed, setTmdbSeasonsFailed] = useState(false)
 
     useEffect(() => {
         setSeasons([])
@@ -1038,11 +1053,12 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
     useEffect(() => {
         if (!seriesTmdbId) return
         let active = true
+        setTmdbSeasonsFailed(false)
         fetchSeasonsList(seriesTmdbId)
             .then(list => {
                 if (!active) return
                 const filtered = list.filter(s => s.seasonNumber > 0)
-                if (filtered.length === 0) return
+                if (filtered.length === 0) { setTmdbSeasonsFailed(true); return }
                 setSeasons(filtered)
                 const watched = activeItem?.season
                 const target = watched != null && filtered.some(s => s.seasonNumber === watched)
@@ -1077,59 +1093,69 @@ function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBro
     useEffect(() => {
         setCinemetaSeasons([])
         setCinemetaEpisodesBySeason(new Map())
-        if (seriesTmdbId || !activeItem) return
+        if (!activeItem) return
+        if (seriesTmdbId && !tmdbSeasonsFailed) return
         const isSeries = activeItem.type === 'series' || activeItem.type === 'anime'
-        const imdbId = activeItem.itemId
-        if (!isSeries || !imdbId.startsWith('tt')) return
+        if (!isSeries) return
         let active = true
-        fetch(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(imdbId)}.json`)
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (!active || !data?.meta?.videos) return
-                const vids: Array<Record<string, unknown>> = data.meta.videos
-                const bySeason = new Map<number, EpisodeInfo[]>()
-                const seasonSet = new Set<number>()
-                for (const v of vids) {
-                    const season = typeof v.season === 'number' ? v.season : 1
-                    const episode = typeof v.episode === 'number' ? v.episode : typeof v.number === 'number' ? v.number : 0
-                    if (season < 1 || episode < 1) continue
-                    seasonSet.add(season)
-                    const ep: EpisodeInfo = {
-                        episodeNumber: episode,
-                        name: String(v.name || v.title || `Episode ${episode}`),
-                        overview: typeof v.overview === 'string' ? v.overview : typeof v.description === 'string' ? v.description : undefined,
-                        airDate: typeof v.released === 'string' ? v.released : typeof v.firstAired === 'string' ? v.firstAired : undefined,
-                        still: typeof v.thumbnail === 'string' ? v.thumbnail : undefined,
+        const fetchCinemeta = (imdb: string) => {
+            fetch(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(imdb)}.json`)
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                    if (!active || !data?.meta?.videos) return
+                    const vids: Array<Record<string, unknown>> = data.meta.videos
+                    const bySeason = new Map<number, EpisodeInfo[]>()
+                    const seasonSet = new Set<number>()
+                    for (const v of vids) {
+                        const season = typeof v.season === 'number' ? v.season : 1
+                        const episode = typeof v.episode === 'number' ? v.episode : typeof v.number === 'number' ? v.number : 0
+                        if (season < 1 || episode < 1) continue
+                        seasonSet.add(season)
+                        const ep: EpisodeInfo = {
+                            episodeNumber: episode,
+                            name: String(v.name || v.title || `Episode ${episode}`),
+                            overview: typeof v.overview === 'string' ? v.overview : typeof v.description === 'string' ? v.description : undefined,
+                            airDate: typeof v.released === 'string' ? v.released : typeof v.firstAired === 'string' ? v.firstAired : undefined,
+                            still: typeof v.thumbnail === 'string' ? v.thumbnail : undefined,
+                        }
+                        const arr = bySeason.get(season) ?? []
+                        arr.push(ep)
+                        bySeason.set(season, arr)
                     }
-                    const arr = bySeason.get(season) ?? []
-                    arr.push(ep)
-                    bySeason.set(season, arr)
-                }
-                for (const arr of bySeason.values()) arr.sort((a, b) => a.episodeNumber - b.episodeNumber)
-                const seasonList: SeasonInfo[] = Array.from(seasonSet)
-                    .sort((a, b) => b - a)
-                    .map(sn => ({
-                        seasonNumber: sn,
-                        name: sn === 0 ? 'Specials' : `Season ${sn}`,
-                        episodeCount: bySeason.get(sn)?.length ?? 0,
-                    }))
-                if (active && seasonList.length > 0) {
-                    setCinemetaSeasons(seasonList)
-                    setCinemetaEpisodesBySeason(bySeason)
-                }
-            })
-            .catch(() => { })
+                    for (const arr of bySeason.values()) arr.sort((a, b) => a.episodeNumber - b.episodeNumber)
+                    const seasonList: SeasonInfo[] = Array.from(seasonSet)
+                        .sort((a, b) => b - a)
+                        .map(sn => ({
+                            seasonNumber: sn,
+                            name: sn === 0 ? 'Specials' : `Season ${sn}`,
+                            episodeCount: bySeason.get(sn)?.length ?? 0,
+                        }))
+                    if (active && seasonList.length > 0) {
+                        setCinemetaSeasons(seasonList)
+                        setCinemetaEpisodesBySeason(bySeason)
+                    }
+                })
+                .catch(() => { })
+        }
+        const itemId = activeItem.itemId
+        if (itemId.startsWith('tt')) {
+            fetchCinemeta(itemId)
+        } else if (seriesTmdbId && tmdbSeasonsFailed) {
+            proxyFetch<{ imdb_id?: string }>(`tv/${seriesTmdbId}/external_ids`)
+                .then(ext => { if (active && ext?.imdb_id) fetchCinemeta(ext.imdb_id) })
+                .catch(() => { })
+        }
         return () => { active = false }
-    }, [seriesTmdbId, activeItem])
+    }, [seriesTmdbId, activeItem, tmdbSeasonsFailed])
 
     useEffect(() => {
-        if (seriesTmdbId || cinemetaSeasons.length === 0 || selectedSeason !== null) return
+        if ((seriesTmdbId && !tmdbSeasonsFailed) || cinemetaSeasons.length === 0 || selectedSeason !== null) return
         const watched = activeItem?.season
         const target = watched != null && cinemetaSeasons.some(s => s.seasonNumber === watched)
             ? watched
             : cinemetaSeasons[0].seasonNumber
         setSelectedSeason(target)
-    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem])
+    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed])
 
     if (loading || (seasons.length === 0 && cinemetaSeasons.length === 0)) return null
 
@@ -2054,30 +2080,6 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 })
                 .catch(() => { })
 
-            getTraktComments(renderItem.type === 'series' ? 'show' : 'movie', renderItem.itemId)
-                .then(traktComments => {
-                    if (!active || traktComments.length === 0) return
-                    setMeta(prev => {
-                        const base = prev ?? {} as CinemetaMeta
-                        const existing = base.reviewsList || []
-                        const combined = [...existing]
-                        for (const r of traktComments) {
-                            if (!combined.some(x => x.id === r.id || (x.author === r.author && x.content === r.content))) {
-                                combined.push({
-                                    id: r.id,
-                                    author: r.author,
-                                    content: r.content,
-                                    rating: r.rating ?? undefined,
-                                    createdAt: r.createdAt,
-                                    source: r.source,
-                                })
-                            }
-                        }
-                        return { ...base, reviewsList: combined }
-                    })
-                })
-                .catch(() => { })
-
             cinemetaPromise
                 .then(result => {
                     if (!active) return
@@ -2383,6 +2385,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                                     alt={film.title}
                                                                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                                                                     loading="lazy"
+                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
                                                                 />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
@@ -2438,6 +2441,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                                     alt={film.title}
                                                                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                                                                     loading="lazy"
+                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
                                                                 />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
@@ -2493,6 +2497,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                                     alt={film.title}
                                                                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                                                                     loading="lazy"
+                                                                    onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
                                                                 />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
@@ -2605,7 +2610,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                     >
                                                         <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                                                             {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
                                                                     {film.title}
@@ -2640,7 +2645,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                     >
                                                         <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                                                             {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
                                                                     {film.title}
@@ -2675,7 +2680,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                     >
                                                         <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-muted border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                                                             {film.poster ? (
-                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+                                                                <img src={film.poster} alt={film.title} className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                                                             ) : (
                                                                 <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs font-bold text-muted-foreground">
                                                                     {film.title}

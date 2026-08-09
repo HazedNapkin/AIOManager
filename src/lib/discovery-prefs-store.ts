@@ -17,23 +17,25 @@ export interface DiscoveryPrefs {
 
 const STORAGE_KEY = 'aiomanager-discovery-prefs'
 const MIN_RAIL_SIZE = 10
-const MAX_RAIL_SIZE = 50
+const MAX_RAIL_SIZE = 100
 const DEFAULT_RAIL_SIZE = 20
 
 export const DEFAULT_CATALOGS: CatalogConfig[] = [
     { id: 'recommended_movies', enabled: true, locked: true },
     { id: 'recommended_series', enabled: true, locked: true },
-    { id: 'continue_watching', enabled: true, locked: true },
+    { id: 'recommended_anime', enabled: true, locked: true },
     { id: 'watchlist', enabled: true, locked: true },
+    { id: 'continue_watching', enabled: true, locked: false },
     { id: 'because_you_watched', enabled: true, locked: false },
     { id: 'themed_rows', enabled: true, locked: false },
     { id: 'popular_household', enabled: true, locked: false },
-    { id: 'trending_household', enabled: false, locked: false },
+    { id: 'trending_household', enabled: true, locked: false },
 ]
 
 export const CATALOG_LABELS: Record<string, string> = {
     recommended_movies: 'Recommended Movies',
     recommended_series: 'Recommended Series',
+    recommended_anime: 'Recommended Anime',
     continue_watching: 'Continue Watching',
     watchlist: 'My Watchlist',
     because_you_watched: 'Because You Watched',

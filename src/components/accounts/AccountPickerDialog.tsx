@@ -11,6 +11,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAccountStore, getAccountEmail } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
+import { maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { User, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, useMemo } from 'react'
 import type { ReactNode } from 'react'
@@ -39,6 +41,9 @@ export function AccountPickerDialog({
     renderPreview,
 }: AccountPickerDialogProps) {
     const accounts = useAccountStore((state) => state.accounts)
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const namePrivacy = isPrivacyModeEnabled ? privacyLevelNames : 0
     const { toast } = useToast()
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [searchQuery, setSearchQuery] = useState('')
@@ -162,9 +167,9 @@ export function AccountPickerDialog({
                                             <div className="flex items-center gap-2">
                                                 {account.emoji && <span className="text-base shrink-0">{account.emoji}</span>}
                                                 {!account.emoji && account.avatar && <img src={account.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />}
-                                                <p className="text-sm font-medium truncate">{account.name}</p>
+                                                <p className="text-sm font-medium truncate">{maskNameLevel(account.name, namePrivacy)}</p>
                                             </div>
-                                            <p className="text-xs text-muted-foreground truncate">{getAccountEmail(account)}</p>
+                                            <p className="text-xs text-muted-foreground truncate">{maskEmailLevel(getAccountEmail(account) || '', namePrivacy)}</p>
                                         </div>
                                     </div>
                                 </label>

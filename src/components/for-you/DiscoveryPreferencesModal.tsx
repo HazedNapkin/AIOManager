@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
+import { toast } from '@/hooks/use-toast'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { GripVertical, ChevronUp, ChevronDown, X, LayoutGrid, SlidersHorizontal, RotateCcw, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -16,7 +17,7 @@ import {
     CATALOG_LABELS,
 } from '@/lib/discovery-prefs-store'
 import { useAccountStore } from '@/store/accountStore'
-import { useDiscoveryStore } from '@/store/discoveryStore'
+import { useDiscoveryStore, useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import {
     listCustomCatalogs,
     createCustomCatalog,
@@ -24,7 +25,7 @@ import {
     type CustomCatalog,
 } from '@/lib/catalog-sync'
 
-const SHELF_SIZE_OPTIONS = [10, 20, 30, 40, 50]
+const SHELF_SIZE_OPTIONS = [10, 20, 30, 40, 50, 75, 100]
 const DEFAULT_RAIL_SIZE = 20
 
 const COMMON_GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary', 'Drama', 'Family', 'Fantasy', 'History', 'Horror', 'Music', 'Mystery', 'Romance', 'Science Fiction', 'Thriller', 'War', 'Western']
@@ -101,7 +102,29 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
         return acc?.name || acc?.email?.split('@')[0] || 'Account'
     })()
 
-    const discoveryPrefs = useDiscoveryStore()
+    const ctx = accountId || HOUSEHOLD_CONTEXT
+    const _prefs = useDiscoveryPrefs(ctx)
+    const _store = useDiscoveryStore()
+    const _household = useHouseholdSettings()
+    const discoveryPrefs = {
+        ..._prefs,
+        enabledAccounts: _household.enabledAccounts,
+        mergeMode: _household.mergeMode,
+        setObscurity: (v: typeof _prefs.obscurity) => _store.setObscurity(ctx, v),
+        setMinRating: (v: number) => _store.setMinRating(ctx, v),
+        setEraRange: (from: number, to: number) => _store.setEraRange(ctx, from, to),
+        setTypeMix: (v: typeof _prefs.typeMix) => _store.setTypeMix(ctx, v),
+        setGenreBoost: (genre: string, mult: number) => _store.setGenreBoost(ctx, genre, mult),
+        removeGenreBoost: (genre: string) => _store.removeGenreBoost(ctx, genre),
+        toggleExcludedGenre: (genre: string) => _store.toggleExcludedGenre(ctx, genre),
+        dismissItem: (id: string) => _store.dismissItem(ctx, id),
+        undismissItem: (id: string) => _store.undismissItem(ctx, id),
+        loveItem: (id: string) => _store.loveItem(ctx, id),
+        unloveItem: (id: string) => _store.unloveItem(ctx, id),
+        resetToDefaults: () => _store.resetContext(ctx),
+        setEnabledAccounts: _store.setEnabledAccounts,
+        setMergeMode: _store.setMergeMode,
+    }
     const activeDecade = DECADES.find(d => d.from === discoveryPrefs.eraRange.from && d.to === discoveryPrefs.eraRange.to)
 
     const genreState = (genre: string): 'default' | 'boost' | 'strong' | 'suppress' | 'excluded' => {
@@ -143,7 +166,11 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
         if (!open) return
         let cancelled = false
         listCustomCatalogs().then(list => {
-            if (!cancelled) setCustomCatalogs(list)
+            if (cancelled) return
+            setCustomCatalogs(list)
+            if (import.meta.env.DEV) console.log('[CustomCatalogs] loaded:', list.length, list.map(c => c.name))
+        }).catch(err => {
+            if (import.meta.env.DEV) console.error('[CustomCatalogs] fetch failed:', err)
         })
         return () => { cancelled = true }
     }, [open])
@@ -173,7 +200,12 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
     }
 
     const handleDelete = async (id: string) => {
-        await deleteCustomCatalog(id)
+        const ok = await deleteCustomCatalog(id)
+        if (!ok) {
+            toast({ variant: 'destructive', title: 'Failed to delete catalog' })
+            return
+        }
+        toast({ title: 'Catalog deleted' })
         refreshCatalogs()
     }
 
@@ -490,7 +522,7 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                         </div>
                     </section>
 
-                    {accounts.length > 1 && (
+                    {accounts.length > 1 && !accountId && (
                         <>
                             <div className="border-t border-border/30" />
                             <section className="space-y-3">
@@ -562,6 +594,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                         </>
                     )}
 
+                    {!accountId && (
+                    <>
                     <div className="border-t border-border/30" />
 
                     <section className="space-y-3">
@@ -744,6 +778,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                             </div>
                         )}
                     </section>
+                    </>
+                    )}
 
                     {isAccountMode && accountId && (
                         <>

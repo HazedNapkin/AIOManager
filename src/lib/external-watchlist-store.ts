@@ -5,7 +5,7 @@ export interface WatchlistSeed {
     tmdbId: number | null
     title: string
     type: 'movie' | 'series'
-    source: 'trakt' | 'simkl'
+    source: 'trakt'
 }
 
 const STORAGE_KEY = 'aiom_external_watchlist'
@@ -40,7 +40,7 @@ function notify() {
     for (const fn of listeners) fn()
 }
 
-export function cacheWatchlist(source: 'trakt' | 'simkl', items: WatchlistSeed[]) {
+export function cacheWatchlist(source: 'trakt', items: WatchlistSeed[]) {
     const tagged = items.map(i => ({ ...i, source }))
     cache = cache.filter(i => i.source !== source)
     cache = [...cache, ...tagged]
@@ -48,7 +48,7 @@ export function cacheWatchlist(source: 'trakt' | 'simkl', items: WatchlistSeed[]
     notify()
 }
 
-export function clearWatchlist(source?: 'trakt' | 'simkl') {
+export function clearWatchlist(source?: 'trakt') {
     if (source) {
         cache = cache.filter(i => i.source !== source)
     } else {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { maskNameLevel, maskUrlLevel, maskProfileLevel } from '@/lib/utils'
+import { maskNameLevel, maskUrlLevel, maskProfileLevel, maskEmailLevel } from '@/lib/utils'
 import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
@@ -40,6 +40,7 @@ import {
     Link,
     Users,
     Activity,
+    Mail,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
@@ -148,6 +149,7 @@ export function SettingsPage() {
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
     const privacyLevelUrls = useUIStore(s => s.privacyLevelUrls)
     const privacyLevelProfiles = useUIStore(s => s.privacyLevelProfiles)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
     const setPrivacyOption = useUIStore(s => s.setPrivacyOption)
     const { clear: clearLibraryCache, invalidate } = useLibraryCache()
 
@@ -538,6 +540,16 @@ export function SettingsPage() {
                                                         <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
                                                         <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
                                                             Main Setup <span className="text-muted-foreground/50 mx-1">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="flex items-center gap-2 text-xs font-medium"><Mail className="h-3.5 w-3.5 text-muted-foreground" />Email</span>
+                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelEmail === 0 ? 'Visible' : privacyLevelEmail === 1 ? 'Light' : privacyLevelEmail === 2 ? 'Strict' : 'Hidden'}</span>
+                                                        </div>
+                                                        <PrivacyLevelSlider value={privacyLevelEmail} onChange={(v) => setPrivacyOption('privacyLevelEmail', v)} />
+                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
+                                                            sonic@example.com <span className="text-muted-foreground/50 mx-1">→</span> {maskEmailLevel('sonic@example.com', privacyLevelEmail)}
                                                         </p>
                                                     </div>
                                                 </div>

@@ -5,7 +5,7 @@ import crypto from 'crypto'
 const MAX_CATALOG_ITEMS = 100
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 const PUBLISH_THROTTLE_MS = 6 * 60 * 60 * 1000
-const REC_CACHE_TYPES = new Set(['recommended_movies', 'recommended_series', 'hidden_gems', 'because_you_watched', 'themed_rows'])
+const REC_CACHE_TYPES = new Set(['recommended_movies', 'recommended_series', 'recommended_anime', 'because_you_watched', 'themed_rows'])
 const HOUSEHOLD_ACCOUNT_ID = '__household__'
 
 function corsHeaders(reply) {
@@ -37,16 +37,13 @@ async function getRecCacheItems(syncUser, accountId, catalogType) {
 const HOUSEHOLD_CATALOGS = [
     { type: 'movie', id: 'continue_watching', name: 'Continue Watching' },
     { type: 'series', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'movie', id: 'recently_watched', name: 'Recently Watched' },
-    { type: 'series', id: 'recently_watched', name: 'Recently Watched' },
     { type: 'movie', id: 'popular_household', name: 'Popular in Household' },
     { type: 'series', id: 'popular_household', name: 'Popular in Household' },
     { type: 'movie', id: 'trending_household', name: 'Trending This Week' },
     { type: 'series', id: 'trending_household', name: 'Trending This Week' },
     { type: 'movie', id: 'recommended_movies', name: 'Recommended Movies' },
     { type: 'series', id: 'recommended_series', name: 'Recommended Series' },
-    { type: 'movie', id: 'hidden_gems', name: 'Hidden Gems' },
-    { type: 'series', id: 'hidden_gems', name: 'Hidden Gems' },
+    { type: 'series', id: 'recommended_anime', name: 'Recommended Anime' },
     { type: 'movie', id: 'because_you_watched', name: 'Because You Watched' },
     { type: 'series', id: 'because_you_watched', name: 'Because You Watched' },
     { type: 'movie', id: 'themed_rows', name: 'Themed For You' },
@@ -58,12 +55,9 @@ const HOUSEHOLD_CATALOGS = [
 const ACCOUNT_CATALOGS = [
     { type: 'movie', id: 'continue_watching', name: 'Continue Watching' },
     { type: 'series', id: 'continue_watching', name: 'Continue Watching' },
-    { type: 'movie', id: 'recently_watched', name: 'Recently Watched' },
-    { type: 'series', id: 'recently_watched', name: 'Recently Watched' },
     { type: 'movie', id: 'recommended_movies', name: 'Recommended Movies' },
     { type: 'series', id: 'recommended_series', name: 'Recommended Series' },
-    { type: 'movie', id: 'hidden_gems', name: 'Hidden Gems' },
-    { type: 'series', id: 'hidden_gems', name: 'Hidden Gems' },
+    { type: 'series', id: 'recommended_anime', name: 'Recommended Anime' },
     { type: 'movie', id: 'because_you_watched', name: 'Because You Watched' },
     { type: 'series', id: 'because_you_watched', name: 'Because You Watched' },
     { type: 'movie', id: 'themed_rows', name: 'Themed For You' },

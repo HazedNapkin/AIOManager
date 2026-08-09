@@ -125,7 +125,7 @@ interface ScoredCandidate {
 const DAY_MS = 24 * 60 * 60 * 1000
 const RECENCY_HALF_LIFE_DAYS = 180
 const TRUST_THRESHOLD_M = 500
-const DEFAULT_MAX_SEEDS = 5
+const DEFAULT_MAX_SEEDS = 15
 const DEFAULT_RAIL_SIZE = 20
 const MMR_LAMBDA = 0.7
 const MIN_VOTE_COUNT = 20
@@ -626,28 +626,37 @@ export async function buildRecommendations(
 
 export async function buildColdStartRails(
     signal?: AbortSignal,
-    railSize = 20
+    railSize = 20,
+    watchedTmdbIds?: Set<string>
 ): Promise<RankedRail[]> {
     const { fetchTrendingBatch } = await import('../api/metadata/adapters/tmdb.ts')
+    const fetchSize = watchedTmdbIds ? railSize * 2 : railSize
     const [movies, series] = await Promise.all([
-        fetchTrendingBatch('movie', signal, railSize),
-        fetchTrendingBatch('tv', signal, railSize),
+        fetchTrendingBatch('movie', signal, fetchSize),
+        fetchTrendingBatch('tv', signal, fetchSize),
     ])
 
-    if (movies.length > 0 || series.length > 0) {
+    const filterWatched = (items: typeof movies) => watchedTmdbIds
+        ? items.filter(item => !(typeof item.id.tmdb === 'number' && watchedTmdbIds.has(`tmdb:${item.id.tmdb}`)))
+        : items
+
+    const fMovies = filterWatched(movies).slice(0, railSize)
+    const fSeries = filterWatched(series).slice(0, railSize)
+
+    if (fMovies.length > 0 || fSeries.length > 0) {
         const rails: RankedRail[] = []
-        if (movies.length > 0) {
+        if (fMovies.length > 0) {
             rails.push({
                 title: 'Trending Movies',
                 source: 'trending',
-                items: movies.map(item => ({ ...item, score: item.voteAverage ?? 0, source: 'trending' })),
+                items: fMovies.map(item => ({ ...item, score: item.voteAverage ?? 0, source: 'trending' })),
             })
         }
-        if (series.length > 0) {
+        if (fSeries.length > 0) {
             rails.push({
                 title: 'Trending Series',
                 source: 'trending',
-                items: series.map(item => ({ ...item, score: item.voteAverage ?? 0, source: 'trending' })),
+                items: fSeries.map(item => ({ ...item, score: item.voteAverage ?? 0, source: 'trending' })),
             })
         }
         return rails
@@ -842,7 +851,8 @@ export async function buildThemedRails(
     genres: Record<string, { weight: number; count: number }>,
     mediaType: 'movie' | 'tv',
     signal?: AbortSignal,
-    railSize = 20
+    railSize = 20,
+    watchedTmdbIds?: Set<string>
 ): Promise<RankedRail[]> {
     const sortedGenres = Object.entries(genres)
         .filter(([, data]) => data.count >= 2)
@@ -861,7 +871,7 @@ export async function buildThemedRails(
         })
     }
 
-    const { discoverByGenre } = await import('../api/metadata/adapters/tmdb.ts')
+    const { discoverRich } = await import('../api/metadata/adapters/tmdb.ts')
     const tmdbMediaType = mediaType === 'tv' ? 'tv' : 'movie'
     const rails: RankedRail[] = []
 
@@ -869,9 +879,16 @@ export async function buildThemedRails(
         if (signal?.aborted) break
         try {
             const items: ScoredRecommendation[] = []
-            for await (const item of discoverByGenre(theme.genres, tmdbMediaType, signal)) {
+            for await (const item of discoverRich({
+                genres: theme.genres,
+                mediaType: tmdbMediaType,
+                sortBy: 'vote_average.desc',
+                minVoteCount: 100,
+                maxPages: 3,
+            }, signal)) {
                 if (signal?.aborted) break
                 if (items.length >= railSize) break
+                if (typeof item.id.tmdb === 'number' && watchedTmdbIds?.has(`tmdb:${item.id.tmdb}`)) continue
                 items.push({
                     ...item,
                     score: item.voteAverage ?? 0,
@@ -883,7 +900,7 @@ export async function buildThemedRails(
                 rails.push({
                     title: `Theme: ${theme.label}`,
                     source: 'recommendations',
-                    items,
+                    items: items.sort((a, b) => (b.voteAverage ?? 0) - (a.voteAverage ?? 0)),
                 })
             }
         } catch {}

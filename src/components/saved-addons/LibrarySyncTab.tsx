@@ -27,6 +27,8 @@ import {
 import { SavedAddonIcon } from './SavedAddonIcon'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { getAccountEmail } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
+import { maskNameLevel } from '@/lib/utils'
 
 type SyncFilter = 'all' | 'outOfSync'
 
@@ -76,6 +78,9 @@ export function LibrarySyncTab({
   onDisableSync,
   onEnableSync,
 }: LibrarySyncTabProps) {
+  const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+  const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+  const namePrivacy = isPrivacyModeEnabled ? privacyLevelNames : 0
   const hasUpdate = (addon: SavedAddon) => {
     const latest = getLatestAddonVersion(latestVersions, {
       transportUrl: addon.installUrl,
@@ -228,7 +233,7 @@ export function LibrarySyncTab({
                           <span className="w-4 text-center leading-none shrink-0">
                             {account.emoji ? account.emoji : account.avatar ? <img src={account.avatar} alt="" className="h-full w-full rounded-full object-cover" /> : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
                           </span>
-                           <span className="truncate font-medium text-foreground/75 flex-1">{account.name || getAccountEmail(account)}</span>
+                           <span className="truncate font-medium text-foreground/75 flex-1">{maskNameLevel(account.name || getAccountEmail(account) || '', namePrivacy)}</span>
                            <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', isReadyToUpdate ? 'bg-warning' : 'bg-success')} />
                         </div>
                       ))}
@@ -325,7 +330,7 @@ export function LibrarySyncTab({
                         <span className="w-4 text-center leading-none shrink-0">
                           {account.emoji ? account.emoji : account.avatar ? <img src={account.avatar} alt="" className="h-full w-full rounded-full object-cover" /> : <User className="h-3 w-3 text-muted-foreground mx-auto" />}
                         </span>
-                         <span className="truncate font-medium text-foreground/75 flex-1">{account.name || getAccountEmail(account)}</span>
+                         <span className="truncate font-medium text-foreground/75 flex-1">{maskNameLevel(account.name || getAccountEmail(account) || '', namePrivacy)}</span>
                        </div>
                      ))}
                    </div>

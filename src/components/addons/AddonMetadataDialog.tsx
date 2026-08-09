@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
     Dialog,
@@ -10,6 +11,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Upload } from 'lucide-react'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { AddonDescriptor } from '@/types/addon'
 import { useEffect, useState } from 'react'
@@ -151,9 +153,10 @@ export function AddonMetadataDialog({
                             <div className="flex gap-2">
                                 <Input
                                     id="logo"
-                                    value={customLogo}
+                                    value={customLogo.startsWith('data:') ? '\u2713 Uploaded image' : customLogo}
                                     onChange={(e) => setCustomLogo(e.target.value)}
                                     placeholder="https://..."
+                                    readOnly={customLogo.startsWith('data:')}
                                 />
                                 <Button
                                     variant="ghost"
@@ -165,6 +168,13 @@ export function AddonMetadataDialog({
                                     Reset
                                 </Button>
                             </div>
+                            <ImageUploadButton
+                                onUploaded={setCustomLogo}
+                                options={{ maxDimension: 512, square: false, quality: 0.85 }}
+                                className="flex h-8 w-fit items-center gap-1.5 rounded-md border border-border/40 px-3 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                            >
+                                <Upload className="h-3 w-3" /> Upload Image
+                            </ImageUploadButton>
                         </div>
 
 

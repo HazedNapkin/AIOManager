@@ -113,6 +113,7 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                         : undefined,
                 accentColor: acc.accentColor,
                 emoji: acc.emoji,
+                avatar: acc.avatar,
                 note: acc.note,
                 profiles: acc.profiles,
                 activeProfileId: acc.activeProfileId,
@@ -134,6 +135,8 @@ export async function exportAccounts(includeCredentialsValue: boolean) {
                 primaryConnectionId: acc.primaryConnectionId,
                 apiKey: includeCredentialsValue ? acc.apiKey : undefined,
                 hideLastWatched: acc.hideLastWatched,
+                hideAddonPreview: acc.hideAddonPreview,
+                hidePlatformLogos: acc.hidePlatformLogos,
             }))
         )
         const { useVaultStore } = await import('@/store/vaultStore')
@@ -323,9 +326,12 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     : [],
                 accentColor: acc.accentColor as string | undefined,
                 emoji: acc.emoji as string | undefined,
+                avatar: acc.avatar as string | undefined,
                 connections: acc.connections as Partial<Connection>[] | undefined,
                 primaryConnectionId: acc.primaryConnectionId as string | undefined,
                 hideLastWatched: acc.hideLastWatched as boolean | undefined,
+                hideAddonPreview: acc.hideAddonPreview as boolean | undefined,
+                hidePlatformLogos: acc.hidePlatformLogos as boolean | undefined,
                 apiKey: acc.apiKey as string | undefined,
                 lastSync: new Date(),
                 status: 'active' as const,
@@ -424,6 +430,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     emoji: ra.emoji || matchedAccount.emoji,
                     note: ra.note ?? matchedAccount.note,
                     hideLastWatched: ra.hideLastWatched ?? matchedAccount.hideLastWatched,
+                    hideAddonPreview: ra.hideAddonPreview ?? matchedAccount.hideAddonPreview,
+                    hidePlatformLogos: ra.hidePlatformLogos ?? matchedAccount.hidePlatformLogos,
+                    avatar: ra.avatar ?? matchedAccount.avatar,
                     apiKey: ra.apiKey ?? matchedAccount.apiKey,
                     profiles: (() => {
                         const localProfiles = matchedAccount.profiles || []

@@ -8,6 +8,7 @@ import { useAccounts } from '@/hooks/useAccounts'
 import { useAddons } from '@/hooks/useAddons'
 import { getLatestAddonVersion, maskEmailLevel, maskNameLevel, isNewerVersion, cn } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
+import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { pushAddonsToPlatform } from '@/lib/account-compat'
 import type { AddonDescriptor } from '@/types/addon'
@@ -1000,6 +1001,7 @@ export function AddonList({ accountId }: AddonListProps) {
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
+          <AccountAvatar account={account} size="lg" />
           <div className="min-w-0 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{displayName}</h2>

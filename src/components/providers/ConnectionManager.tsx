@@ -9,7 +9,9 @@ import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/Nuvi
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
 import { ApiKeyManager } from '@/components/providers/ApiKeyManager'
 import { useConnectionStore } from '@/store/connectionStore'
+import { useUIStore } from '@/store/uiStore'
 import { getAccountEmail } from '@/store/accountStore'
+import { maskEmailLevel } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
 import { useShallow } from 'zustand/react/shallow'
 import type { Connection } from '@/types/connection'
@@ -51,6 +53,9 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     const [editingId, setEditingId] = useState<string | null>(null)
     const [subTab, setSubTab] = useState('connections')
     const accountStates = connectionStates[accountId] || {}
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
+    const emailPrivacyLevel = isPrivacyModeEnabled ? privacyLevelEmail : 0
 
     // Pull live connection status (last sync, errors, expiry-driven state) so the cards can show it
     // without waiting for the next manual sync. Best-effort; the store swallows failures.
@@ -296,6 +301,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                         {resolvedConnections.map(conn => {
                             const state = accountStates[conn.id]
                             const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
+                            const maskedConnEmail = connEmail ? maskEmailLevel(connEmail, emailPrivacyLevel) : undefined
                             return (
                                 <ConnectionCard
                                     key={conn.id}
@@ -306,7 +312,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     syncing={isSyncing === accountId}
                                     onEdit={() => setEditingId(conn.id)}
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
-                                    email={connEmail}
+                                    email={maskedConnEmail}
                                 />
                             )
                         })}

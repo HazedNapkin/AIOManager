@@ -11,10 +11,11 @@ import { SearchDialog } from '@/components/search/SearchDialog'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useAccountStore } from '@/store/accountStore'
-import { useDiscoveryStore } from '@/store/discoveryStore'
+import { useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
-import { historyEntryToActivityItem } from '@/lib/activity-utils'
-import { cn } from '@/lib/utils'
+import { historyEntryToActivityItem, sanitizePosterUrl } from '@/lib/activity-utils'
+import { cn, maskNameLevel } from '@/lib/utils'
+import { useUIStore } from '@/store/uiStore'
 import { ActivityDetailModal, type DetailItem } from '@/components/activity/ActivityDetailModal'
 import { buildTasteProfile, computeHouseholdPopularity, findSimilarAccounts, type TasteProfile } from '@/lib/taste-profile'
 import { useExternalRatings } from '@/lib/external-ratings-store'
@@ -58,7 +59,6 @@ function railTitleToCatalogType(title: string): string | null {
     if (lower.startsWith('because ')) return 'because_you_watched'
     if (lower.includes('accounts like yours') || lower.includes('similar accounts')) return 'because_you_watched'
     if (lower.startsWith('popular ')) return 'popular_household'
-    if (lower.includes('hidden') || lower.includes('obscure') || lower.includes('gems')) return 'hidden_gems'
     if (lower.includes('movie')) return 'recommended_movies'
     if (lower.includes('series')) return 'recommended_series'
     return null
@@ -107,8 +107,10 @@ interface ForYouHeroProps {
 
 function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning }: ForYouHeroProps) {
     const [fetchedBackdrop, setFetchedBackdrop] = useState<string | null>(null)
+    const [backdropFailed, setBackdropFailed] = useState(false)
 
     useEffect(() => {
+        setBackdropFailed(false)
         if (!item || item.backdrop) {
             setFetchedBackdrop(null)
             return
@@ -141,12 +143,13 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
 
     return (
         <div className="relative w-full overflow-hidden rounded-3xl bg-black text-white shadow-2xl ring-1 ring-border/30" style={{ height: 'clamp(280px, 42vh, 420px)' }}>
-            {!loading && activeBackdrop && (
+            {!loading && activeBackdrop && !backdropFailed && (
                 <img
                     src={activeBackdrop}
                     alt=""
                     aria-hidden="true"
                     className="absolute inset-0 h-full w-full object-cover filter blur-3xl opacity-50 scale-125"
+                    onError={() => setBackdropFailed(true)}
                 />
             )}
 
@@ -170,7 +173,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                         transition={{ duration: 0.6, ease: 'easeInOut' }}
                         className="absolute inset-0 bg-black"
                     >
-                        {activeBackdrop ? (
+                        {activeBackdrop && !backdropFailed ? (
                             <img
                                 src={activeBackdrop}
                                 alt=""
@@ -180,6 +183,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                                     maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.9) 70%, rgba(0,0,0,0) 100%)',
                                     WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.9) 70%, rgba(0,0,0,0) 100%)',
                                 }}
+                                onError={() => setBackdropFailed(true)}
                             />
                         ) : item.poster ? (
                             <>
@@ -303,8 +307,12 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         return s
     }, [catalogs])
     const accounts = useAccountStore(s => s.accounts)
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const namePrivacy = isPrivacyModeEnabled ? privacyLevelNames : 0
     const { history: watchHistory, loading: historyLoading } = useWatchHistory()
-    const discoveryPrefs = useDiscoveryStore()
+    const discoveryPrefs = useDiscoveryPrefs(HOUSEHOLD_CONTEXT)
+    const householdSettings = useHouseholdSettings()
     const [catalogOpen, setCatalogOpen] = useState(false)
     const [subTab, setSubTab] = useState<'unified' | 'accounts'>('unified')
     const [heroIndex, setHeroIndex] = useState(0)
@@ -316,9 +324,9 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     )
 
     const filteredItems = useMemo(() => {
-        if (discoveryPrefs.enabledAccounts === 'all') return allItems
-        return allItems.filter(item => discoveryPrefs.enabledAccounts.includes(item.accountId))
-    }, [allItems, discoveryPrefs.enabledAccounts])
+        if (householdSettings.enabledAccounts === 'all') return allItems
+        return allItems.filter(item => householdSettings.enabledAccounts.includes(item.accountId))
+    }, [allItems, householdSettings.enabledAccounts])
 
     const itemsByAccount = useMemo(() => {
         const m = new Map<string, ActivityItem[]>()
@@ -450,7 +458,13 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             setRecsLoading(true)
             setRecsError(null)
             const ac = new AbortController()
-            buildColdStartRails(ac.signal, RAIL_MAX)
+            const coldStartWatched = new Set<string>()
+            try {
+                const cache = JSON.parse(localStorage.getItem('aiomanager-imdb-tmdb-cache') || '{}') as Record<string, string>
+                for (const v of Object.values(cache)) { if (v) coldStartWatched.add(v) }
+            } catch {}
+            for (const s of seeds) { if (s.itemId.startsWith('tmdb:')) coldStartWatched.add(s.itemId) }
+            buildColdStartRails(ac.signal, RAIL_MAX, coldStartWatched)
                 .then(rails => {
                     if (ac.signal.aborted) return
                     setRecsResult({ rails, totalCandidates: rails.reduce((s, r) => s + r.items.length, 0) })
@@ -509,7 +523,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     tasteProfile: householdProfile,
                     watchedTmdbIds,
                 }),
-                buildThemedRails(householdGenres, householdDominantType, ac.signal, RAIL_MAX).catch(() => [] as RankedRail[]),
+                buildThemedRails(householdGenres, householdDominantType, ac.signal, RAIL_MAX, watchedTmdbIds).catch(() => [] as RankedRail[]),
             ])
         )
             .then(([result, themedRails]) => {
@@ -568,19 +582,21 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     for (const rail of allRails) {
                         const catalogType = railTitleToCatalogType(rail.title)
                         if (!catalogType) continue
-                        let itemMap = itemsByCatalogType.get(catalogType)
-                        if (!itemMap) {
-                            itemMap = new Map()
-                            itemsByCatalogType.set(catalogType, itemMap)
-                        }
                         for (const item of rail.items) {
                             const id = itemIdFromCanonical(item.id)
+                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime'))
+                            const effectiveType = isAnime && catalogType === 'recommended_series' ? 'recommended_anime' : catalogType
+                            let itemMap = itemsByCatalogType.get(effectiveType)
+                            if (!itemMap) {
+                                itemMap = new Map()
+                                itemsByCatalogType.set(effectiveType, itemMap)
+                            }
                             if (!itemMap.has(id)) {
                                 itemMap.set(id, {
                                     id,
-                                    type: item.type === 'series' || item.type === 'anime' ? 'series' : 'movie',
+                                    type: 'series',
                                     name: item.title,
-                                    poster: item.poster,
+                                    poster: sanitizePosterUrl(item.poster) || undefined,
                                     score: item.score,
                                     reason: rail.title,
                                 })
@@ -951,22 +967,22 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         <AccountAvatar account={account} size="lg" />
                                         <div className="min-w-0 flex-1">
                                             <p className="truncate text-sm font-bold text-foreground">
-                                                {account.name || account.email?.split('@')[0] || 'Account'}
+                                                {maskNameLevel(account.name || account.email?.split('@')[0] || 'Account', namePrivacy)}
                                             </p>
                                         </div>
                                     </div>
                                     <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:translate-x-0.5 group-hover:text-primary" />
                                 </div>
 
-                                <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-3">
-                                    {topGenres.length > 0 ? topGenres.map(genre => (
-                                        <span key={genre} className="rounded-md border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                                            {genre}
-                                        </span>
-                                    )) : (
-                                        <span className="text-xs text-muted-foreground/50">No genre data yet</span>
-                                    )}
-                                </div>
+                                {topGenres.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-3">
+                                        {topGenres.map(genre => (
+                                            <span key={genre} className="rounded-md border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                                {genre}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>

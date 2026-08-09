@@ -106,10 +106,7 @@ function hasPoorVisibleContent(image: HTMLImageElement) {
   const boundsRatio = (boundsWidth * boundsHeight) / totalPixels
   if (boundsRatio < 0.16) return true
 
-  const averageLuminance = luminanceTotal / Math.max(visiblePixels, 1)
-  const brightRatio = brightPixels / Math.max(visiblePixels, 1)
-
-  return visibleRatio > 0.5 && averageLuminance < 28 && brightRatio < 0.03
+  return false
 }
 
 export function AddonIcon({

@@ -259,13 +259,20 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
                                     >
                                         <div style={{
                                             width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
-                                            background: color,
+                                            background: acc.avatar ? 'transparent' : color,
                                             border: `1px solid rgba(255,255,255,0.1)`,
                                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                                             fontFamily: '"DM Mono", monospace',
                                             fontSize: 9, fontWeight: 700, color: 'white',
+                                            overflow: 'hidden',
                                         }}>
-                                            {initials}
+                                            {acc.avatar ? (
+                                                <img src={acc.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : acc.emoji ? (
+                                                <span style={{ fontSize: 13 }}>{acc.emoji}</span>
+                                            ) : (
+                                                initials
+                                            )}
                                         </div>
 
                                         <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>

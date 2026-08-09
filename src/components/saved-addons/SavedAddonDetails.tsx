@@ -1,6 +1,8 @@
 import { Button } from '@/components/ui/button'
+import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Upload } from 'lucide-react'
 import { normalizeTagName } from '@/lib/addon-validator'
 import { useAddonStore } from '@/store/addonStore'
 import { useProfileStore } from '@/store/profileStore'
@@ -182,9 +184,10 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
               <Input
                 id="edit-logo"
                 type="text"
-                value={formData.customLogo}
+                value={formData.customLogo.startsWith('data:') ? '\u2713 Uploaded image' : formData.customLogo}
                 onChange={(e) => setFormData((prev) => ({ ...prev, customLogo: e.target.value }))}
                 placeholder="https://..."
+                readOnly={formData.customLogo.startsWith('data:')}
               />
               <Button
                 type="button"
@@ -197,6 +200,13 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
                 Reset
               </Button>
             </div>
+            <ImageUploadButton
+              onUploaded={(dataUrl) => setFormData((prev) => ({ ...prev, customLogo: dataUrl }))}
+              options={{ maxDimension: 512, square: false, quality: 0.85 }}
+              className="flex h-8 w-fit items-center gap-1.5 rounded-md border border-border/40 px-3 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            >
+              <Upload className="h-3 w-3" /> Upload Image
+            </ImageUploadButton>
           </div>
 
           <div className="space-y-2">

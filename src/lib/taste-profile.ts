@@ -1,6 +1,12 @@
 import type { ActivityItem } from '@/types/activity'
-import { ratingToWeight } from '@/lib/trakt-sync'
-import { simklRatingToWeight } from '@/lib/simkl-sync'
+
+function ratingToWeight(rating: number): number {
+    if (rating >= 9) return 3.0
+    if (rating >= 7) return 1.5
+    if (rating >= 5) return 0.5
+    if (rating >= 1) return -1.0
+    return 0
+}
 
 export interface ExternalRating {
   imdbId: string | null
@@ -11,7 +17,7 @@ export interface ExternalRating {
   type: 'movie' | 'series'
   rating: number
   ratedAt: string
-  source?: 'trakt' | 'simkl'
+  source?: 'trakt' | 'pmdb'
 }
 
 export interface TasteProfile {
@@ -187,7 +193,7 @@ export function buildTasteProfile(accountId: string, items: ActivityItem[], exte
   if (externalRatings && externalRatings.length > 0) {
     for (const r of externalRatings) {
       if (!r.imdbId || r.rating < 1) continue
-      const weight = r.source === 'simkl' ? simklRatingToWeight(r.rating) : ratingToWeight(r.rating)
+      const weight = ratingToWeight(r.rating)
       if (weight === 0) continue
       const existing = aggregated.find(a => a.itemId === r.imdbId)
       if (existing) {

@@ -342,7 +342,7 @@ export interface AccountStore {
       syncAccount: (id: string, forceRefresh?: boolean) => Promise<void>
       syncAllAccounts: (silent?: boolean) => Promise<void>
       repairAccount: (id: string) => Promise<void>
-      installAddonToAccount: (accountId: string, addonUrl: string) => Promise<void>
+      installAddonToAccount: (accountId: string, addonUrl: string, savedMetadata?: import('@/types/addon').AddonDescriptor['metadata']) => Promise<void>
       installAddonsToAccount: (accountId: string, addonUrls: string[], concurrency?: number) => Promise<{ successCount: number; failCount: number }>
       removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
       removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
@@ -873,9 +873,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return repairAccount(id)
       },
 
-      installAddonToAccount: async (accountId: string, addonUrl: string) => {
+      installAddonToAccount: async (accountId: string, addonUrl: string, savedMetadata?: import('@/types/addon').AddonDescriptor['metadata']) => {
             const { installAddonToAccount } = await import('./account/accountAddonOps')
-            return installAddonToAccount(accountId, addonUrl)
+            return installAddonToAccount(accountId, addonUrl, savedMetadata)
       },
 
       installAddonsToAccount: async (accountId: string, addonUrls: string[], concurrency?: number) => {

@@ -3,7 +3,7 @@ import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 
-function sanitizePosterUrl(url: string | undefined): string | undefined {
+export function sanitizePosterUrl(url: string | undefined): string | undefined {
     if (!url || typeof url !== 'string') return url
     try {
         const parsed = new URL(url)

@@ -245,7 +245,7 @@ function updateActiveProfile(account: Account, updatedAddons: AddonDescriptor[])
     }
 }
 
-export async function installAddonToAccount(accountId: string, addonUrl: string) {
+export async function installAddonToAccount(accountId: string, addonUrl: string, savedMetadata?: AddonDescriptor['metadata']) {
     const store = await getStore()
     store.setState({ error: null })
     setAccountLoading(accountId)
@@ -263,12 +263,13 @@ export async function installAddonToAccount(accountId: string, addonUrl: string)
             manifest: sanitizeAddonManifest(fetchedAddon.manifest, addonUrl),
             metadata: {
                 ...fetchedAddon.metadata,
+                ...savedMetadata,
                 lastUpdated: Date.now(),
             },
         }
 
         const baseAddons = await reconcileInstallBase(account)
-        const mergedAddons = mergeAddons(baseAddons, [normalizedAddon])
+        const mergedAddons = mergeAddons(baseAddons, [normalizedAddon], { keepMissingLocal: true })
         const finalAddons = dedupeAddonsByTransportUrl(mergedAddons).map(addon => ({
             ...addon,
             manifest: getEffectiveManifest(addon)

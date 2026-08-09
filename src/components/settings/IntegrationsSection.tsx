@@ -13,7 +13,6 @@ import {
     ChevronDown,
     ChevronUp,
     Zap,
-    RefreshCw,
     ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -30,7 +29,7 @@ import {
     DialogDescription,
     DialogFooter,
 } from '@/components/ui/dialog'
-import { toast, useToast } from '@/hooks/use-toast'
+import { toast } from '@/hooks/use-toast'
 import { getTimeAgo } from '@/lib/utils'
 import {
     ConfiguredProvider,
@@ -43,10 +42,6 @@ import {
     testMetadataKey,
 } from '@/lib/metadata-keys'
 import { useAIOMetadataInstances } from '@/hooks/useAIOMetadataInstances'
-import { startTraktAuth, getTraktStatus, disconnectTrakt, syncTrakt } from '@/lib/trakt-sync'
-import { startSimklAuth, getSimklStatus, disconnectSimkl, syncSimkl } from '@/lib/simkl-sync'
-import { cacheExternalRatings, clearExternalRatings } from '@/lib/external-ratings-store'
-import { cacheWatchlist, clearWatchlist } from '@/lib/external-watchlist-store'
 
 type ProviderOption = {
     id: string
@@ -79,50 +74,6 @@ interface ImportFormState {
 
 const EMPTY_IMPORT_FORM: ImportFormState = { url: '', uuid: '', password: '', addonPassword: '' }
 
-interface SyncServiceConfig {
-    id: 'trakt' | 'simkl'
-    label: string
-    logo: string
-    startAuth: () => Promise<{ url: string } | null>
-    getStatus: () => Promise<{ connected: boolean; configured: boolean } | null>
-    sync: () => Promise<{ stats: { watched: number; rated: number; watchlist: number }; data: any } | null>
-    disconnect: () => Promise<boolean>
-    connectedEvent: string
-    cacheRatings: (source: 'trakt' | 'simkl', ratings: any[]) => void
-    cacheWatchlist: (source: 'trakt' | 'simkl', items: any[]) => void
-    clearRatings: (source?: 'trakt' | 'simkl') => void
-    clearWatchlist: (source?: 'trakt' | 'simkl') => void
-}
-
-const traktConfig: SyncServiceConfig = {
-    id: 'trakt',
-    label: 'Trakt',
-    logo: '/trakt-logo.svg',
-    startAuth: startTraktAuth,
-    getStatus: getTraktStatus,
-    sync: syncTrakt,
-    disconnect: disconnectTrakt,
-    connectedEvent: 'trakt-connected',
-    cacheRatings: cacheExternalRatings,
-    cacheWatchlist,
-    clearRatings: clearExternalRatings,
-    clearWatchlist,
-}
-
-const simklConfig: SyncServiceConfig = {
-    id: 'simkl',
-    label: 'Simkl',
-    logo: '/simkl-logo.svg',
-    startAuth: startSimklAuth,
-    getStatus: getSimklStatus,
-    sync: syncSimkl,
-    disconnect: disconnectSimkl,
-    connectedEvent: 'simkl-connected',
-    cacheRatings: cacheExternalRatings,
-    cacheWatchlist,
-    clearRatings: clearExternalRatings,
-    clearWatchlist,
-}
 
 
 export function IntegrationsSection() {
@@ -144,8 +95,6 @@ export function IntegrationsSection() {
     const [importing, setImporting] = useState(false)
     const [importError, setImportError] = useState<string | null>(null)
 
-    const [traktConnected, setTraktConnected] = useState(false)
-    const [simklConnected, setSimklConnected] = useState(false)
     const [providerTestResults, setProviderTestResults] = useState<Record<string, { success: boolean; message: string } | null>>({})
     const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
     const [revealingKey, setRevealingKey] = useState<string | null>(null)
@@ -169,11 +118,6 @@ export function IntegrationsSection() {
     useEffect(() => {
         refreshProviders()
     }, [refreshProviders])
-
-    useEffect(() => {
-        getTraktStatus().then(s => setTraktConnected(s?.connected ?? false))
-        getSimklStatus().then(s => setSimklConnected(s?.connected ?? false))
-    }, [])
 
     const detectedFormat = detectKeyFormat(pastedKey)
     const canSave = detectedFormat !== 'unknown' && pastedKey.trim().length > 0 && !savingKey
@@ -320,8 +264,6 @@ export function IntegrationsSection() {
                                             const opt = PROVIDER_OPTIONS.find(o => o.id === p.provider)
                                             return opt?.logo ? [{ key: p.provider, logo: opt.logo, label: opt.label }] : []
                                         }),
-                                        ...(traktConnected ? [{ key: 'trakt', logo: '/trakt-logo.svg', label: 'Trakt' }] : []),
-                                        ...(simklConnected ? [{ key: 'simkl', logo: '/simkl-logo.svg', label: 'Simkl' }] : []),
                                     ].map(item => (
                                         <img key={item.key} src={item.logo} alt={item.label} className="h-3 w-auto max-w-[40px] object-contain" />
                                     ))}
@@ -559,7 +501,7 @@ export function IntegrationsSection() {
                                                 style={{ backgroundColor: opt.color }}
                                             >
                                                 {opt.logo ? (
-                                                    <img src={opt.logo} alt="" className="h-full w-full object-cover" />
+                                                    <img src={opt.logo} alt="" className="h-full w-full object-contain p-0.5" />
                                                 ) : (
                                                     opt.abbr
                                                 )}
@@ -671,13 +613,6 @@ export function IntegrationsSection() {
                             </Button>
                         </div>
                     </div>
-                </div>
-
-                <div className="space-y-3 pt-2 border-t border-border/30">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Watch Tracking Sync</p>
-                    <p className="text-[11px] text-muted-foreground/70">Connect your personal tracking account to pull ratings into your household recommendations. One account enhances the entire household.</p>
-                    <WatchTrackingSyncSection config={traktConfig} />
-                    <WatchTrackingSyncSection config={simklConfig} />
                 </div>
             </div>
 
@@ -928,129 +863,3 @@ export function IntegrationsSection() {
         </section>
     )
 }
-
-function WatchTrackingSyncSection({ config }: { config: SyncServiceConfig }) {
-    const [status, setStatus] = useState<{ connected: boolean; configured: boolean } | null>(null)
-    const [connecting, setConnecting] = useState(false)
-    const [syncing, setSyncing] = useState(false)
-    const [syncResult, setSyncResult] = useState<{ watched: number; rated: number; watchlist: number } | null>(null)
-    const { toast } = useToast()
-
-    useEffect(() => {
-        config.getStatus().then(s => { if (s) setStatus(s) })
-    }, [config])
-
-    useEffect(() => {
-        const handler = (e: MessageEvent) => {
-            if (e.data?.type === config.connectedEvent && e.data.success) {
-                setStatus({ connected: true, configured: true })
-                setConnecting(false)
-                toast({ title: `${config.label} connected`, description: 'Pulling your ratings into recommendations...' })
-            }
-        }
-        window.addEventListener('message', handler)
-        return () => window.removeEventListener('message', handler)
-    }, [toast, config])
-
-    const handleConnect = async () => {
-        setConnecting(true)
-        const result = await config.startAuth()
-        if (!result?.url) {
-            setConnecting(false)
-            toast({ variant: 'destructive', title: `${config.label} not configured`, description: 'Instance hoster needs to set the client id in .env' })
-            return
-        }
-        window.open(result.url, '_blank', 'width=600,height=700')
-    }
-
-    const handleDisconnect = async () => {
-        const ok = await config.disconnect()
-        if (ok) {
-            setStatus({ connected: false, configured: status?.configured ?? false })
-            setSyncResult(null)
-            config.clearRatings(config.id)
-            config.clearWatchlist(config.id)
-            toast({ title: `${config.label} disconnected` })
-        }
-    }
-
-    const handleSync = async () => {
-        setSyncing(true)
-        const result = await config.sync()
-        setSyncing(false)
-        if (result) {
-            setSyncResult(result.stats)
-            config.cacheRatings(config.id, result.data.ratings.map((r: any) => ({ ...r, source: config.id })))
-            config.cacheWatchlist(config.id, result.data.watchlist.filter((w: any) => w.imdbId).map((w: any) => ({
-                imdbId: w.imdbId,
-                tmdbId: w.tmdbId,
-                title: w.title,
-                type: w.type === 'series' ? 'series' : 'movie',
-                source: config.id,
-            })))
-            toast({
-                title: `${config.label} sync complete`,
-                description: `${config.label}: ${result.stats.watched} watched, ${result.stats.rated} rated, ${result.stats.watchlist} watchlist items`
-            })
-        } else {
-            toast({ variant: 'destructive', title: `${config.label} sync failed` })
-        }
-    }
-
-    return (
-        <div className="space-y-3 rounded-[1.35rem] border border-border/45 bg-card/80 p-3 sm:p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <img src={config.logo} alt={config.label} className="h-9 w-auto shrink-0 sm:h-10" />
-                    <div className="min-w-0">
-                        <h4 className="text-sm font-semibold truncate">{config.label}</h4>
-                        <p className="text-xs text-muted-foreground truncate">
-                            {status?.connected
-                                ? syncResult
-                                    ? `${syncResult.rated} rated, ${syncResult.watched} watched, ${syncResult.watchlist} watchlist`
-                                    : 'Connected'
-                                : status?.configured
-                                    ? 'Connect to sync your personal ratings'
-                                    : 'Not configured on this instance'
-                            }
-                        </p>
-                    </div>
-                </div>
-                {status?.connected ? (
-                    <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleSync}
-                            disabled={syncing}
-                            className="h-8 gap-1.5 text-xs font-medium"
-                        >
-                            <RefreshCw className={syncing ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
-                            Sync
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleDisconnect}
-                            className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
-                        >
-                            Disconnect
-                        </Button>
-                    </div>
-                ) : (
-                    <Button
-                        variant="subtle"
-                        size="sm"
-                        onClick={handleConnect}
-                        disabled={connecting || !status?.configured}
-                        className="h-8 gap-1.5 text-xs font-medium shrink-0"
-                    >
-                        {connecting ? 'Connecting...' : 'Connect'}
-                    </Button>
-                )}
-            </div>
-        </div>
-    )
-}
-
-

@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { Tooltip } from '@/components/ui/tooltip'
 import {
   Dialog,
@@ -684,8 +685,9 @@ export function AccountForm() {
           </div>
           <input
             type="url"
-            value={avatar}
+            value={avatar.startsWith('data:') ? '\u2713 Uploaded image' : avatar}
             onChange={(e) => setAvatar(e.target.value)}
+            readOnly={avatar.startsWith('data:')}
             placeholder="https://example.com/avatar.png"
             className="flex h-10 w-full rounded-md border border-border/50 bg-background/50 px-3 py-2 text-sm transition-[border,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
             autoComplete="off"
@@ -703,6 +705,12 @@ export function AccountForm() {
               <X className="h-4 w-4" />
             </Button>
           )}
+          <ImageUploadButton
+            onUploaded={(dataUrl) => setAvatar(dataUrl)}
+            options={{ maxDimension: 256, square: true, quality: 0.85 }}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            label="Upload avatar"
+          />
         </div>
       </div>
 
@@ -1361,6 +1369,12 @@ export function AccountForm() {
                     <X className="h-4 w-4" />
                   </Button>
                 )}
+                <ImageUploadButton
+                  onUploaded={(dataUrl) => setAvatar(dataUrl)}
+                  options={{ maxDimension: 256, square: true, quality: 0.85 }}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                  label="Upload avatar"
+                />
               </div>
             </div>
 

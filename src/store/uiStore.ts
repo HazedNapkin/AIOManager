@@ -10,6 +10,7 @@ interface UIStore {
   privacyLevelNames: number
   privacyLevelUrls: number
   privacyLevelProfiles: number
+  privacyLevelEmail: number
   liveActivity: boolean
   isWhatsNewOpen: boolean
   libraryViewMode: 'grid' | 'list'
@@ -23,7 +24,7 @@ interface UIStore {
 
   setWhatsNewOpen: (open: boolean) => void
   togglePrivacyMode: () => void
-  setPrivacyOption: (key: 'privacyLevelNames' | 'privacyLevelUrls' | 'privacyLevelProfiles', value: number) => void
+  setPrivacyOption: (key: 'privacyLevelNames' | 'privacyLevelUrls' | 'privacyLevelProfiles' | 'privacyLevelEmail', value: number) => void
   setLiveActivity: (value: boolean) => void
   setLibraryViewMode: (mode: 'grid' | 'list') => void
   setAccountsView: (mode: 'grid' | 'list') => void
@@ -37,6 +38,7 @@ const PRIVACY_MODE_KEY = 'aioman:privacy-mode'
 const PRIVACY_LEVEL_NAMES_KEY = 'aioman:privacy-level-names'
 const PRIVACY_LEVEL_URLS_KEY = 'aioman:privacy-level-urls'
 const PRIVACY_LEVEL_PROFILES_KEY = 'aioman:privacy-level-profiles'
+const PRIVACY_LEVEL_EMAIL_KEY = 'aioman:privacy-level-email'
 const LIVE_ACTIVITY_KEY = 'aioman:live-activity'
 
 function migratePrivacyLevel(newKey: string, oldKey: string): number {
@@ -74,6 +76,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   privacyLevelNames: (() => migratePrivacyLevel(PRIVACY_LEVEL_NAMES_KEY, 'aioman:privacy-obscure-names'))(),
   privacyLevelUrls: (() => migratePrivacyLevel(PRIVACY_LEVEL_URLS_KEY, 'aioman:privacy-obscure-urls'))(),
   privacyLevelProfiles: (() => migratePrivacyLevel(PRIVACY_LEVEL_PROFILES_KEY, 'aioman:privacy-obscure-profiles'))(),
+  privacyLevelEmail: (() => migratePrivacyLevel(PRIVACY_LEVEL_EMAIL_KEY, 'aioman:privacy-obscure-email'))(),
   liveActivity: (() => {
     try { return localStorage.getItem(LIVE_ACTIVITY_KEY) === 'true' } catch { return false }
   })(),
@@ -120,6 +123,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
       privacyLevelNames: PRIVACY_LEVEL_NAMES_KEY,
       privacyLevelUrls: PRIVACY_LEVEL_URLS_KEY,
       privacyLevelProfiles: PRIVACY_LEVEL_PROFILES_KEY,
+      privacyLevelEmail: PRIVACY_LEVEL_EMAIL_KEY,
     }
     localStorage.setItem(storageMap[key], String(value))
     syncSettings()

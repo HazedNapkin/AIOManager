@@ -280,7 +280,7 @@ export const AddonCard = React.memo(function AddonCard({
 
     for (const targetId of targetAccountIds) {
       try {
-        await accountStore.installAddonToAccount(targetId, addon.transportUrl)
+        await accountStore.installAddonToAccount(targetId, addon.transportUrl, addon.metadata)
         successCount++
       } catch (err) {
         if (import.meta.env.DEV) console.error(`Failed to deploy to ${targetId}:`, err)

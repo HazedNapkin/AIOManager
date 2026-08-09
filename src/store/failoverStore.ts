@@ -72,6 +72,7 @@ interface FailoverStore {
     addRule: (accountId: string, priorityChain: string[], name?: string, cooldown_ms?: number, webhookUrl?: string, notifyEnabled?: boolean, messageTemplate?: string, customCheckUrls?: CustomCheckEntry[]) => Promise<void>
     updateRule: (ruleId: string, updates: Partial<FailoverRule>) => Promise<void>
     removeRule: (ruleId: string) => Promise<void>
+    reorderRules: (accountId: string, orderedRuleIds: string[]) => Promise<void>
     toggleRuleActive: (ruleId: string, isActive: boolean) => Promise<void>
     checkRules: () => Promise<void>
     pullServerState: () => Promise<void>
@@ -886,6 +887,21 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             clearTimeout(timeoutId)
             _pendingRuleUpdates.delete(ruleId)
         }
+        triggerSync()
+    },
+
+    reorderRules: async (accountId, orderedRuleIds) => {
+        const rules = get().rules
+        const otherRules = rules.filter(r => r.accountId !== accountId)
+        const accountRuleMap = new Map(
+            rules.filter(r => r.accountId === accountId).map(r => [r.id, r as FailoverRule])
+        )
+        const reorderedAccountRules = orderedRuleIds
+            .map(id => accountRuleMap.get(id))
+            .filter((r): r is FailoverRule => r !== undefined)
+        const newRules = [...otherRules, ...reorderedAccountRules]
+        set({ rules: newRules })
+        await localforage.setItem(STORAGE_KEY, newRules)
         triggerSync()
     },
 

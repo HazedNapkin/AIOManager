@@ -196,6 +196,124 @@ const SortableChainTier = memo(function SortableChainTier({
     )
 })
 
+interface SortableDialogTierProps {
+    id: number
+    index: number
+    url: string
+    chainLength: number
+    localAddons: AddonDescriptor[]
+    chain: string[]
+    addons: AddonDescriptor[]
+    updateChainUrl: (index: number, url: string) => void
+    removeFromChain: (index: number) => void
+}
+
+const SortableDialogTier = memo(function SortableDialogTier({
+    id, index, url, chainLength, localAddons, chain, addons,
+    updateChainUrl, removeFromChain
+}: SortableDialogTierProps) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+    const style = {
+        transform: CSS.Translate.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 10 : 'auto' as const,
+    }
+    return (
+        <div ref={setNodeRef} style={style} className="bg-muted/30 border border-border/40 rounded-2xl px-4 py-3 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <div
+                        {...attributes}
+                        {...listeners}
+                        className="shrink-0 cursor-grab active:cursor-grabbing text-foreground/40 hover:text-foreground/60 transition-colors"
+                        style={{ touchAction: 'none' }}
+                    >
+                        <GripVertical className="w-4 h-4" />
+                    </div>
+                    <span className="font-mono text-xs font-medium text-muted-foreground uppercase">TIER {index + 1}</span>
+                </div>
+                <button
+                    className="text-foreground/60 hover:text-destructive transition-colors disabled:opacity-30 disabled:hover:text-foreground/60"
+                    onClick={() => removeFromChain(index)}
+                    disabled={chainLength <= 2}
+                    aria-label="Remove tier"
+                >
+                    <Trash2 className="w-3.5 h-3.5" />
+                </button>
+            </div>
+            <Select value={url} onValueChange={(val) => updateChainUrl(index, val)}>
+                <SelectTrigger className="w-full bg-transparent border-0 p-0 h-8 hover:bg-transparent focus:ring-0 shadow-none text-base font-medium focus-visible:ring-0">
+                    <SelectValue placeholder={`Select Tier ${index + 1} addon...`}>
+                        {(() => {
+                            const selectedAddon = addons.find(a => a.transportUrl === url)
+                            if (!selectedAddon) return null
+                            return (
+                                <div className="flex items-center gap-2">
+                                    <AddonIcon
+                                        name={selectedAddon.metadata?.customName || selectedAddon.manifest.name}
+                                        logo={selectedAddon.metadata?.customLogo || selectedAddon.manifest.logo}
+                                        className="h-5 w-5"
+                                        textClassName="text-xs"
+                                        imageClassName="p-0.5"
+                                    />
+                                    <span className="truncate">{selectedAddon.metadata?.customName || selectedAddon.manifest.name}</span>
+                                </div>
+                            )
+                        })()}
+                    </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                    {localAddons
+                        .filter(addon => !chain.some((u, i) => i !== index && u === addon.transportUrl))
+                        .map(addon => (
+                        <SelectItem key={addon.transportUrl} value={addon.transportUrl}>
+                            <div className="flex items-center gap-2">
+                                <AddonIcon
+                                    name={addon.metadata?.customName || addon.manifest.name}
+                                    logo={addon.metadata?.customLogo || addon.manifest.logo}
+                                    className="h-5 w-5"
+                                    textClassName="text-xs"
+                                    imageClassName="p-0.5"
+                                />
+                                <span>{addon.metadata?.customName || addon.manifest.name}</span>
+                            </div>
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+        </div>
+    )
+})
+
+const SortableRuleWrapper = memo(function SortableRuleWrapper({
+    id, children,
+}: {
+    id: string
+    children: React.ReactNode
+}) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+    const style = {
+        transform: CSS.Translate.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        zIndex: isDragging ? 10 : 'auto' as const,
+    }
+    return (
+        <div ref={setNodeRef} style={style} className="relative">
+            <div
+                {...attributes}
+                {...listeners}
+                className="absolute left-0 top-6 cursor-grab active:cursor-grabbing text-foreground/30 hover:text-foreground/60 transition-colors z-20 px-0.5"
+                style={{ touchAction: 'none' }}
+            >
+                <GripVertical className="w-4 h-4" />
+            </div>
+            {children}
+        </div>
+    )
+})
+
 export type FailoverView = 'rules' | 'history' | 'webhooks'
 
 interface FailoverManagerProps {
@@ -217,6 +335,7 @@ export function FailoverManager({
     const addRule = useFailoverStore(s => s.addRule)
     const updateRule = useFailoverStore(s => s.updateRule)
     const removeRule = useFailoverStore(s => s.removeRule)
+    const reorderRules = useFailoverStore(s => s.reorderRules)
     const webhook = useFailoverStore(s => s.webhook)
     const setWebhook = useFailoverStore(s => s.setWebhook)
     const lastWorkerRun = useFailoverStore(s => s.lastWorkerRun)
@@ -554,6 +673,26 @@ export function FailoverManager({
             updateRule(ruleId, { priorityChain: newChain, activeUrl: newChain[0] })
         }, 800)
     }, [updateRule])
+
+    const handleDialogChainDragEnd = useCallback((event: DragEndEvent) => {
+        const { active, over } = event
+        if (!over || active.id === over.id) return
+        const oldIndex = Number(active.id)
+        const newIndex = Number(over.id)
+        if (isNaN(oldIndex) || isNaN(newIndex)) return
+        setChain(prev => arrayMove(prev, oldIndex, newIndex))
+    }, [])
+
+    const handleRuleReorder = useCallback((event: DragEndEvent) => {
+        const { active, over } = event
+        if (!over || active.id === over.id) return
+        const currentRules = useFailoverStore.getState().rules.filter(r => r.accountId === accountId)
+        const oldIndex = currentRules.findIndex(r => r.id === active.id)
+        const newIndex = currentRules.findIndex(r => r.id === over.id)
+        if (oldIndex === -1 || newIndex === -1) return
+        const reorderedIds = arrayMove(currentRules, oldIndex, newIndex).map(r => r.id)
+        reorderRules(accountId, reorderedIds)
+    }, [accountId, reorderRules])
 
     if (!account) return null
 
@@ -989,71 +1128,42 @@ export function FailoverManager({
                                 )}
                             </div>
 
-                            <div className="space-y-3">
-                                {chain.map((url, index) => (
-                                    <div key={index} className="bg-muted/30 border border-border/40 rounded-2xl px-4 py-3 flex flex-col gap-1.5">
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-mono text-xs font-medium text-muted-foreground uppercase">TIER {index + 1}</span>
-                                            <button
-                                                className="text-foreground/60 hover:text-destructive transition-colors disabled:opacity-30 disabled:hover:text-foreground/60"
-                                                onClick={() => removeFromChain(index)}
-                                                disabled={chain.length <= 2}
-                                                aria-label="Remove tier"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                        </div>
-                                        <Select value={url} onValueChange={(val) => updateChainUrl(index, val)}>
-                                            <SelectTrigger className="w-full bg-transparent border-0 p-0 h-8 hover:bg-transparent focus:ring-0 shadow-none text-base font-medium focus-visible:ring-0">
-                                                <SelectValue placeholder={`Select Tier ${index + 1} addon...`}>
-                                                    {(() => {
-                                                        const selectedAddon = addons.find(a => a.transportUrl === url)
-                                                        if (!selectedAddon) return null
-                                                        return (
-                                                            <div className="flex items-center gap-2">
-                                                                <AddonIcon
-                                                                    name={selectedAddon.metadata?.customName || selectedAddon.manifest.name}
-                                                                    logo={selectedAddon.metadata?.customLogo || selectedAddon.manifest.logo}
-                                                                    className="h-5 w-5"
-                                                                    textClassName="text-xs"
-                                                                    imageClassName="p-0.5"
-                                                                />
-                                                                <span className="truncate">{selectedAddon.metadata?.customName || selectedAddon.manifest.name}</span>
-                                                            </div>
-                                                        )
-                                                    })()}
-                                                </SelectValue>
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {localAddons
-                                                    .filter(addon => !chain.some((u, i) => i !== index && u === addon.transportUrl))
-                                                    .map(addon => (
-                                                    <SelectItem key={addon.transportUrl} value={addon.transportUrl}>
-                                                        <div className="flex items-center gap-2">
-                                                            <AddonIcon
-                                                                name={addon.metadata?.customName || addon.manifest.name}
-                                                                logo={addon.metadata?.customLogo || addon.manifest.logo}
-                                                                className="h-5 w-5"
-                                                                textClassName="text-xs"
-                                                                imageClassName="p-0.5"
-                                                            />
-                                                            <span>{addon.metadata?.customName || addon.manifest.name}</span>
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                ))}
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={addToChain}
-                                    className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-12 rounded-2xl gap-2"
+                            <DndContext
+                                sensors={dragSensors}
+                                collisionDetection={closestCenter}
+                                onDragEnd={handleDialogChainDragEnd}
+                                modifiers={[restrictToVerticalAxis]}
+                            >
+                                <SortableContext
+                                    items={chain.map((_, i) => i)}
+                                    strategy={verticalListSortingStrategy}
                                 >
-                                    <Plus className="w-4 h-4" /> Add Fallback Tier
-                                </Button>
-                            </div>
+                                    <div className="space-y-3">
+                                        {chain.map((url, index) => (
+                                            <SortableDialogTier
+                                                key={index}
+                                                id={index}
+                                                index={index}
+                                                url={url}
+                                                chainLength={chain.length}
+                                                localAddons={localAddons}
+                                                chain={chain}
+                                                addons={addons}
+                                                updateChainUrl={updateChainUrl}
+                                                removeFromChain={removeFromChain}
+                                            />
+                                        ))}
+                                    </div>
+                                </SortableContext>
+                            </DndContext>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={addToChain}
+                                className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-12 rounded-2xl gap-2 mt-3"
+                            >
+                                <Plus className="w-4 h-4" /> Add Fallback Tier
+                            </Button>
 
                             <div className="flex justify-end gap-3 pt-2 mt-4 [&_button]:h-11 [&_button]:rounded-full [&_button]:px-5">
                                 <Button variant="ghost" onClick={resetForm}>
@@ -1240,15 +1350,26 @@ export function FailoverManager({
                                 </div>
                             </ToolbarShell>
 
-                        <div className="grid gap-4">
-                            {accountRules.map(rule => {
-                                if (!rule || !rule.priorityChain) return null;
-                                const activeUrl = rule.activeUrl || rule.priorityChain[0]
+                        <DndContext
+                            sensors={dragSensors}
+                            collisionDetection={closestCenter}
+                            onDragEnd={handleRuleReorder}
+                            modifiers={[restrictToVerticalAxis]}
+                        >
+                            <SortableContext
+                                items={accountRules.map(r => r.id)}
+                                strategy={verticalListSortingStrategy}
+                            >
+                                <div className="grid gap-4">
+                                    {accountRules.map(rule => {
+                                        if (!rule || !rule.priorityChain) return null;
+                                        const activeUrl = rule.activeUrl || rule.priorityChain[0]
 
-                                const activeAddonName = getAddonNameForUrl(activeUrl)
-                                const primaryAddonName = getAddonNameForUrl(rule.priorityChain[0])
-                                return (
-                                    <div key={rule.id} className="bg-card border border-border/40 rounded-2xl p-5 flex flex-col gap-5 shadow-sm min-w-0">
+                                        const activeAddonName = getAddonNameForUrl(activeUrl)
+                                        const primaryAddonName = getAddonNameForUrl(rule.priorityChain[0])
+                                        return (
+                                            <SortableRuleWrapper key={rule.id} id={rule.id}>
+                                                <div className="bg-card border border-border/40 rounded-2xl p-5 pl-8 flex flex-col gap-5 shadow-sm min-w-0">
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 <Tooltip content={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
@@ -1468,10 +1589,13 @@ export function FailoverManager({
                                             </div>
                                         )}
 
-                                    </div>
-                                )
-                            })}
-                        </div>
+                                                </div>
+                                            </SortableRuleWrapper>
+                                        )
+                                    })}
+                                </div>
+                            </SortableContext>
+                        </DndContext>
                             </>
                         )}
                     </div>

@@ -22,8 +22,6 @@ import { registerProviderRoutes } from './routes/providers.js'
 import { registerMetadataKeysRoutes } from './routes/metadata-keys.js'
 import { registerMetadataProxyRoutes } from './routes/metadata-proxy.js'
 import { registerStremioCatalogRoutes } from './routes/stremio-catalog.js'
-import { registerTraktRoutes } from './routes/trakt.js'
-import { registerSimklRoutes } from './routes/simkl.js'
 import { traceClientBatch, traceEnabled } from './utils/trace.js'
 
 const fastify = Fastify({
@@ -82,8 +80,6 @@ fastify.addHook('onSend', async (request, reply) => {
 })
 
 registerStremioCatalogRoutes(fastify)
-registerTraktRoutes(fastify)
-registerSimklRoutes(fastify)
 
 if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {

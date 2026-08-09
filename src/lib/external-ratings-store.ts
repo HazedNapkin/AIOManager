@@ -33,7 +33,7 @@ function notify() {
     for (const fn of listeners) fn()
 }
 
-export function cacheExternalRatings(source: 'trakt' | 'simkl', ratings: ExternalRating[]) {
+export function cacheExternalRatings(source: 'trakt' | 'pmdb', ratings: ExternalRating[]) {
     const tagged = ratings.map(r => ({ ...r, source }))
     cache = cache.filter(r => r.source !== source)
     cache = [...cache, ...tagged]
@@ -41,7 +41,7 @@ export function cacheExternalRatings(source: 'trakt' | 'simkl', ratings: Externa
     notify()
 }
 
-export function clearExternalRatings(source?: 'trakt' | 'simkl') {
+export function clearExternalRatings(source?: 'trakt' | 'pmdb') {
     if (source) {
         cache = cache.filter(r => r.source !== source)
     } else {

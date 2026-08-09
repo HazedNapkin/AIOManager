@@ -83,7 +83,58 @@ export async function* discoverByGenre(
     yield* iterPaged(basePath, mediaType, signal)
 }
 
-const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p'
+export interface DiscoverOptions {
+    genres?: string[]
+    mediaType: TmdbMediaType
+    sortBy?: string
+    minVoteCount?: number
+    minRating?: number
+    fromYear?: number
+    toYear?: number
+    withCast?: number[]
+    withCrew?: number[]
+    maxPages?: number
+}
+
+export async function* discoverRich(
+    options: DiscoverOptions,
+    signal?: AbortSignal
+): AsyncIterable<CanonicalItem> {
+    const { mediaType } = options
+    const parts: string[] = [`discover/${mediaType}?`]
+    const params: string[] = []
+
+    if (options.genres && options.genres.length > 0) {
+        const genreIds = genreNamesToIds(options.genres, mediaType)
+        if (genreIds.length > 0) {
+            params.push(`with_genres=${genreIds.slice(0, 3).join(',')}`)
+        }
+    }
+    params.push(`sort_by=${options.sortBy || 'vote_average.desc'}`)
+    params.push(`vote_count.gte=${options.minVoteCount ?? 100}`)
+    if (options.minRating && options.minRating > 0) {
+        params.push(`vote_average.gte=${options.minRating}`)
+    }
+    if (options.fromYear) {
+        const dateField = mediaType === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte'
+        params.push(`${dateField}=${options.fromYear}-01-01`)
+    }
+    if (options.toYear) {
+        const dateField = mediaType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte'
+        params.push(`${dateField}=${options.toYear}-12-31`)
+    }
+    if (options.withCast && options.withCast.length > 0) {
+        params.push(`with_cast=${options.withCast.join(',')}`)
+    }
+    if (options.withCrew && options.withCrew.length > 0) {
+        params.push(`with_crew=${options.withCrew.join(',')}`)
+    }
+
+    const basePath = parts[0] + params.join('&')
+    yield* iterPaged(basePath, mediaType, signal, options.maxPages ?? 3)
+}
+
+export const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p'
 
 interface TmdbGenre {
     id: number
@@ -415,7 +466,8 @@ export const tmdbAdapter: CandidateSource & MetadataSource = {
         yield* iterPaged(
             `${resolved.mediaType}/${resolved.tmdbId}/similar`,
             resolved.mediaType,
-            signal
+            signal,
+            2
         )
     },
 

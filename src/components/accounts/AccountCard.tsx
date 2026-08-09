@@ -682,7 +682,7 @@ export const AccountCard = memo(function AccountCard({
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <DialogTitle className="truncate text-base min-w-0">{account.name || getAccountEmail(account)}</DialogTitle>
+                <DialogTitle className="truncate text-base min-w-0">{displayName}</DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
                   {noteValue.trim() ? 'Quick sticky note' : 'Write a quick sticky note'}
                 </DialogDescription>

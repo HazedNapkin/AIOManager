@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Sparkles, Users, Link as LinkIcon, Copy, Check, Bookmark, LayoutGrid } from 'lucide-react'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
-import { historyEntryToActivityItem } from '@/lib/activity-utils'
+import { historyEntryToActivityItem, sanitizePosterUrl } from '@/lib/activity-utils'
 import { buildTasteProfile, findSimilarAccounts, type TasteProfile } from '@/lib/taste-profile'
 import { useExternalRatings } from '@/lib/external-ratings-store'
 import { useExternalWatchlist } from '@/lib/external-watchlist-store'
 import { useRailSize, useCatalogs } from '@/lib/discovery-prefs-store'
+import { useDiscoveryPrefs, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import {
     buildRecommendations,
     buildColdStartRails,
@@ -50,7 +51,7 @@ interface AccountDetailPageProps {
 const MIN_ITEMS_FOR_RECS = 5
 const MAX_PER_SEED_RAILS = 5
 const MAX_SIMILAR_ACCOUNT_ITEMS = 20
-const MAX_SEEDS = 5
+const MAX_SEEDS = 15
 const PER_SEED_PREFIX = 'Because you watched'
 const PUBLISH_THROTTLE_MS = 6 * 60 * 60 * 1000
 
@@ -58,7 +59,6 @@ function railTitleToCatalogType(title: string): string | null {
     const lower = title.toLowerCase()
     if (lower.startsWith('theme:')) return 'themed_rows'
     if (lower.startsWith('because ')) return 'because_you_watched'
-    if (lower.includes('hidden') || lower.includes('obscure') || lower.includes('gems')) return 'hidden_gems'
     if (lower.includes('movie')) return 'recommended_movies'
     if (lower.includes('series')) return 'recommended_series'
     return null
@@ -213,6 +213,8 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
         [tasteProfile, otherProfiles]
     )
 
+    const discoveryPrefs = useDiscoveryPrefs(accountId || HOUSEHOLD_CONTEXT)
+
     const seeds = useMemo(
         () => {
             const fromActivity = accountActivity.map(activityItemToSeed)
@@ -306,13 +308,30 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
         [watchlistItems]
     )
 
+    const filterKey = JSON.stringify({
+        o: discoveryPrefs.obscurity,
+        r: discoveryPrefs.minRating,
+        e: discoveryPrefs.eraRange,
+        t: discoveryPrefs.typeMix,
+        g: discoveryPrefs.genreBoosts,
+        x: discoveryPrefs.excludedGenres,
+        d: discoveryPrefs.dismissedItems,
+        l: discoveryPrefs.lovedItems,
+    })
+
     useEffect(() => {
         if (accountActivity.length < MIN_ITEMS_FOR_RECS) {
             setRecsLoading(true)
             setError(null)
             let cancelled = false
             const ctrl = new AbortController()
-            buildColdStartRails(ctrl.signal, RAIL_SIZE)
+            const coldWatched = new Set<string>()
+            try {
+                const cache = JSON.parse(localStorage.getItem('aiomanager-imdb-tmdb-cache') || '{}') as Record<string, string>
+                for (const v of Object.values(cache)) { if (v) coldWatched.add(v) }
+            } catch {}
+            for (const s of seeds) { if (s.itemId.startsWith('tmdb:')) coldWatched.add(s.itemId) }
+            buildColdStartRails(ctrl.signal, RAIL_SIZE, coldWatched)
                 .then(rails => { if (!cancelled) setRails(rails) })
                 .catch(() => { if (!cancelled) setError('Failed to load trending content') })
                 .finally(() => { if (!cancelled) setRecsLoading(false) })
@@ -335,8 +354,19 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                 maxSeeds: MAX_SEEDS,
                 railSize: RAIL_SIZE,
                 tasteProfile,
+                watchedTmdbIds: cachedTmdbIds,
+                filters: {
+                    obscurity: discoveryPrefs.obscurity,
+                    minRating: discoveryPrefs.minRating,
+                    eraRange: discoveryPrefs.eraRange,
+                    typeMix: discoveryPrefs.typeMix,
+                    genreBoosts: discoveryPrefs.genreBoosts,
+                    excludedGenres: discoveryPrefs.excludedGenres,
+                    dismissedItems: discoveryPrefs.dismissedItems,
+                    lovedItems: discoveryPrefs.lovedItems,
+                },
             }),
-            buildThemedRails(tasteProfile.genres, themedType, ctrl.signal, RAIL_SIZE).catch(() => [] as RankedRail[]),
+            buildThemedRails(tasteProfile.genres, themedType, ctrl.signal, RAIL_SIZE, cachedTmdbIds).catch(() => [] as RankedRail[]),
             buildCreatorsRails(seeds, ctrl.signal, RAIL_SIZE, cachedTmdbIds).catch(() => [] as RankedRail[]),
         ])
             .then(([result, themedRails, creatorsRails]) => {
@@ -358,19 +388,21 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                     for (const rail of allRails) {
                         const catalogType = railTitleToCatalogType(rail.title)
                         if (!catalogType) continue
-                        let itemMap = itemsByCatalogType.get(catalogType)
-                        if (!itemMap) {
-                            itemMap = new Map()
-                            itemsByCatalogType.set(catalogType, itemMap)
-                        }
                         for (const item of rail.items) {
                             const id = item.id.imdb ?? (typeof item.id.tmdb === 'number' ? `tmdb:${item.id.tmdb}` : item.id.slug)
+                            const isAnime = item.type === 'anime' || (item.genres?.some(g => g === 'Animation' || g === 'Anime'))
+                            const effectiveType = isAnime && catalogType === 'recommended_series' ? 'recommended_anime' : catalogType
+                            let itemMap = itemsByCatalogType.get(effectiveType)
+                            if (!itemMap) {
+                                itemMap = new Map()
+                                itemsByCatalogType.set(effectiveType, itemMap)
+                            }
                             if (!itemMap.has(id)) {
                                 itemMap.set(id, {
                                     id,
-                                    type: item.type === 'series' || item.type === 'anime' ? 'series' : 'movie',
+                                    type: 'series',
                                     name: item.title,
-                                    poster: item.poster,
+                                    poster: sanitizePosterUrl(item.poster) || undefined,
                                     score: item.score,
                                     reason: rail.title,
                                 })
@@ -399,7 +431,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
             cancelled = true
             ctrl.abort()
         }
-    }, [seeds, accountActivity.length, RAIL_SIZE, accountId])
+    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, filterKey])
 
     const visibleRails = useMemo(
         () => rails.filter(rail => {

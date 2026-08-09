@@ -280,7 +280,9 @@ export async function reinstallAddon(
     if (import.meta.env.DEV) console.error(`[Reinstall Failsafe] Failed to reach addon at ${transportUrl}`, error)
     throw new Error(`Cannot reach addon: ${error instanceof Error ? error.message : 'Unknown error'}. Aborting reinstall.`)
   })
-  const collectionPromise = getAddons(authKey, accountContext)
+  const collectionPromise = authKey
+    ? getAddons(authKey, accountContext).catch(() => [] as AddonDescriptor[])
+    : Promise.resolve([] as AddonDescriptor[])
   const [newAddonDescriptor, currentAddons] = await Promise.all([manifestPromise, collectionPromise])
   const addonIndex = currentAddons.findIndex((addon) => normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl))
   const existingAddon = currentAddons[addonIndex]

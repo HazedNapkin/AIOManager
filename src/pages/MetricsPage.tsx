@@ -824,8 +824,13 @@ export function MetricsPage() {
                                                         "w-10 text-center text-2xl font-black tabular-nums transition-colors duration-300 shrink-0",
                                                         user.rank === 1 ? "text-primary" : "text-muted-foreground/35"
                                                     )}>#{user.rank}</div>
-                                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-muted/35 text-sm font-bold text-muted-foreground shadow-inner">
-                                                        {user.avatarChar}
+                                                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-muted/35 text-sm font-bold text-muted-foreground shadow-inner overflow-hidden">
+                                                        {(() => {
+                                                            const acc = accounts.find(a => a.id === user.id)
+                                                            if (acc?.avatar) return <img src={acc.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
+                                                            if (acc?.emoji) return <span className="text-lg">{acc.emoji}</span>
+                                                            return user.avatarChar
+                                                        })()}
                                                     </div>
                                                     <div className="min-w-0 flex-1">
                                                         <div className="flex items-center gap-2">
