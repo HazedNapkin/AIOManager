@@ -38,13 +38,14 @@ export function Poster({
         setHasError(false)
         setAttempt(0)
         const cleanSrc = sanitizePosterUrl(src)
+        const effectiveSrc = typeof cleanSrc === 'string' && cleanSrc.trim() ? cleanSrc : undefined
         const cinemetaItemId = getCinemetaItemId(itemId)
         const cinemetaSrc = fallback && cinemetaItemId ? proxyUrl(getCinemetaPosterUrl(cinemetaItemId)) : undefined
         const extractedFallbacks: string[] = []
         let hasEmbeddedFallback = false
-        if (typeof cleanSrc === 'string') {
+        if (typeof effectiveSrc === 'string') {
             try {
-                const parsed = new URL(cleanSrc)
+                const parsed = new URL(effectiveSrc)
                 for (const key of ['fallback', 'url']) {
                     const val = parsed.searchParams.get(key)
                     if (val && val.startsWith('http')) {
@@ -55,7 +56,7 @@ export function Poster({
                 }
             } catch {}
         }
-        const providedSrc = (!hasEmbeddedFallback && typeof cleanSrc === 'string') ? proxyUrl(cleanSrc) : undefined
+        const providedSrc = (!hasEmbeddedFallback && typeof effectiveSrc === 'string') ? proxyUrl(effectiveSrc) : undefined
         const nextSources = [cinemetaSrc, ...extractedFallbacks, providedSrc].filter(
             (url, index, arr): url is string => Boolean(url) && arr.indexOf(url) === index
         )

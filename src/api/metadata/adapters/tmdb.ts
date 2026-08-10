@@ -751,27 +751,37 @@ export async function searchMedia(query: string, signal?: AbortSignal): Promise<
 
 export async function searchCinemeta(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
     if (!query.trim()) return []
+    const q = encodeURIComponent(query.trim())
+    const mapMeta = (m: Record<string, unknown>): SearchResult | null => {
+        if (!m || (m.type !== 'movie' && m.type !== 'series')) return null
+        return {
+            id: String(m.id ?? m.imdb_id ?? ''),
+            tmdbId: 0,
+            type: m.type as 'movie' | 'series',
+            name: String(m.name ?? 'Unknown'),
+            year: typeof m.year === 'string' ? m.year : undefined,
+            poster: typeof m.poster === 'string' && m.poster.trim() ? m.poster : undefined,
+            overview: typeof m.description === 'string' ? m.description : undefined,
+            voteAverage: typeof m.imdbRating === 'string' ? parseFloat(m.imdbRating) : undefined,
+        }
+    }
     try {
-        const res = await fetch(
-            `https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(query.trim())}.json`,
-            { signal }
-        )
-        if (!res.ok) return []
-        const data = await res.json()
-        if (!Array.isArray(data?.metas)) return []
-        return data.metas
-            .filter((m: Record<string, unknown>) => m && (m.type === 'movie' || m.type === 'series'))
-            .slice(0, 20)
-            .map((m: Record<string, unknown>) => ({
-                id: String(m.id ?? m.imdb_id ?? ''),
-                tmdbId: 0,
-                type: m.type as 'movie' | 'series',
-                name: String(m.name ?? 'Unknown'),
-                year: typeof m.year === 'string' ? m.year : undefined,
-                poster: typeof m.poster === 'string' ? m.poster : undefined,
-                overview: typeof m.description === 'string' ? m.description : undefined,
-                voteAverage: typeof m.imdbRating === 'string' ? parseFloat(m.imdbRating) : undefined,
-            }))
+        const endpoints = [
+            `https://v3-cinemeta.strem.io/catalog/search/top/search=${q}.json`,
+            `https://v3-cinemeta.strem.io/catalog/movie/top/search=${q}.json`,
+            `https://v3-cinemeta.strem.io/catalog/series/top/search=${q}.json`,
+        ]
+        for (const url of endpoints) {
+            try {
+                const res = await fetch(url, { signal })
+                if (!res.ok) continue
+                const data = await res.json()
+                if (Array.isArray(data?.metas) && data.metas.length > 0) {
+                    return data.metas.map(mapMeta).filter((x: SearchResult | null): x is SearchResult => x !== null).slice(0, 20)
+                }
+            } catch { continue }
+        }
+        return []
     } catch {
         return []
     }
