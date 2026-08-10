@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Sparkles, ArrowRight, Dice3, Info, Search, Bookmark, LayoutGrid, Upload } from 'lucide-react'
 
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
+import { Input } from '@/components/ui/input'
 import { ContentRail, ContentRailCard, ContentRailSkeleton } from '@/components/ui/content-rail'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { Button } from '@/components/ui/button'
@@ -656,8 +657,18 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 </TabsList>
             </Tabs>
 
-            <ToolbarShell contentClassName="gap-3">
-                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <ToolbarShell contentClassName="gap-2 sm:gap-3">
+                <div className="relative w-full sm:w-80 shrink-0 min-w-0">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                        placeholder="Search movies, series, anime, people…"
+                        value=""
+                        onClick={(e) => { setSearchOpen(true); e.currentTarget.blur() }}
+                        readOnly
+                        className="pl-9 h-8 text-xs bg-muted/30 border border-border/40 cursor-pointer hover:bg-muted/40 transition-colors w-full"
+                    />
+                </div>
+                <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:ml-auto sm:gap-2">
                     <Button
                         variant="outline"
                         size="sm"
@@ -710,16 +721,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         className="h-8 gap-1.5 text-xs font-medium"
                     >
                         <LayoutGrid className="h-3.5 w-3.5" />
-                        Preferences
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSearchOpen(true)}
-                        className="h-8 gap-1.5 text-xs font-medium"
-                    >
-                        <Search className="h-3.5 w-3.5" />
-                        Search
+                        Shelves
                     </Button>
                 </div>
             </ToolbarShell>

@@ -497,3 +497,16 @@ export function saveImdbTmdbCache(cache: Record<string, string>): void {
         localStorage.setItem(IMDB_TMDB_CACHE_TS_KEY, String(Date.now()))
     } catch {}
 }
+
+export function sanitizePosterUrl(url: string | undefined): string | undefined {
+    if (!url || typeof url !== 'string') return url
+    try {
+        const parsed = new URL(url)
+        const fb = parsed.searchParams.get('fallback')
+        if (fb && fb.startsWith('http')) return fb
+        const alt = parsed.searchParams.get('url')
+        if (alt && alt.startsWith('http') && !alt.includes(parsed.hostname)) return alt
+        if (parsed.hostname.includes('ratingposterdb')) return undefined
+    } catch {}
+    return url
+}

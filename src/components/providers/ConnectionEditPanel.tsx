@@ -3,8 +3,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
-import { Trash2, ArrowLeft, MoreVertical, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff } from 'lucide-react'
-import { useState } from 'react'
+import { Trash2, ArrowLeft, MoreVertical, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, Check, User } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
 import { stremioClient } from '@/api/stremio-client'
@@ -573,6 +573,125 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
     )
 }
 
+function StremioProfilePicker({ accountId, connection }: { accountId: string; connection: Connection }) {
+    const updateConnection = useConnectionStore(s => s.updateConnection)
+    const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
+    const [profiles, setProfiles] = useState<Array<{ id: string; name: string; avatar?: string }>>([])
+    const [loading, setLoading] = useState(true)
+    const [switching, setSwitching] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    const currentProfileId = connection.credentials?.stremioProfileId || ''
+
+    const loadProfiles = useCallback(async () => {
+        if (!account) return
+        setLoading(true)
+        setError(null)
+        try {
+            const encryptedKey = getStremioAuthKey(account)
+            if (!encryptedKey) throw new Error('No auth key found')
+            const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
+            const user = await stremioClient.getUser(authKey)
+            const userProfiles = user.premiumPrefs?.userProfiles
+            if (userProfiles) {
+                setProfiles(Object.values(userProfiles).map(p => ({ id: p.id, name: p.name, avatar: p.avatar })))
+            } else {
+                setProfiles([])
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not load Stremio profiles')
+        } finally {
+            setLoading(false)
+        }
+    }, [account])
+
+    useEffect(() => { loadProfiles() }, [loadProfiles])
+
+    const handleSelect = async (profileId: string) => {
+        if (profileId === currentProfileId) return
+        setSwitching(true)
+        try {
+            await updateConnection(accountId, connection.id, {
+                credentials: { ...connection.credentials, stremioProfileId: profileId }
+            })
+            toast({ title: 'Stremio profile updated' })
+        } catch (err) {
+            toast({ title: 'Could not switch profile', description: errMsg(err), variant: 'destructive' })
+        } finally {
+            setSwitching(false)
+        }
+    }
+
+    if (loading) {
+        return (
+            <SectionShell title="Premium profiles" description="Stremio Premium sub-profiles for this account.">
+                <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading profiles...
+                </div>
+            </SectionShell>
+        )
+    }
+
+    if (error) {
+        return (
+            <SectionShell title="Premium profiles" description="Stremio Premium sub-profiles for this account.">
+                <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
+                    <RefreshCw className="h-3.5 w-3.5" /> Retry
+                </Button>
+            </SectionShell>
+        )
+    }
+
+    if (profiles.length === 0) {
+        return null
+    }
+
+    return (
+        <SectionShell title="Premium profiles" description="Select which Stremio Premium sub-profile to target for this connection.">
+            <div className="space-y-1.5">
+                {profiles.map(p => {
+                    const active = p.id === currentProfileId
+                    return (
+                        <button
+                            key={p.id}
+                            type="button"
+                            disabled={switching}
+                            onClick={() => handleSelect(p.id)}
+                            className={cn(
+                                'flex w-full items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-left text-sm transition-[background-color,border-color,box-shadow,transform] duration-200',
+                                active
+                                    ? 'border-primary/30 bg-primary/10 text-foreground shadow-sm cursor-default'
+                                    : 'border-border/40 bg-card text-foreground shadow-sm hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md',
+                                switching && 'pointer-events-none opacity-60'
+                            )}
+                        >
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 overflow-hidden">
+                                {p.avatar ? (
+                                    <img
+                                        src={p.avatar}
+                                        alt=""
+                                        className="h-full w-full object-cover"
+                                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden') }}
+                                    />
+                                ) : null}
+                                <User className={cn('h-3.5 w-3.5 text-muted-foreground', p.avatar && 'hidden')} />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+                            {active && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary shrink-0">
+                                    <Check className="h-3 w-3" />
+                                    Active
+                                </span>
+                            )}
+                        </button>
+                    )
+                })}
+            </div>
+        </SectionShell>
+    )
+}
+
 export function ConnectionEditPanel({
     accountId,
     connection,
@@ -691,6 +810,7 @@ export function ConnectionEditPanel({
                         <TestResultBanner result={testResult} />
                     </div>
                     <StremioCredentialsSection accountId={accountId} connection={connection} />
+                    <StremioProfilePicker accountId={accountId} connection={connection} />
                 </>
             )}
 

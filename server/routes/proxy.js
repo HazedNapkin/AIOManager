@@ -535,14 +535,21 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             'AddonCollectionSet': 'Pushing Addon Updates',
             'DatastoreGet': 'Syncing Library',
             'DatastorePut': 'Updating Library Items',
-            'GetUser': 'Fetching User Profile'
+            'GetUser': 'Fetching User Profile',
+            'GetProfilesAddons': 'Fetching Sub-Profile Addons',
+            'SetProfileAddons': 'Updating Sub-Profile Addons'
+        }
+
+        const PREMIUM_PREFS_PATHS = {
+            'GetProfilesAddons': 'premiumPrefs/getProfilesAddons',
+            'SetProfileAddons': 'premiumPrefs/setProfileAddons'
         }
 
         const friendlyAction = actionMap[type] || `Operation: ${type}`
         const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (accountContext === 'Profile Swap' || accountContext === 'Bulk Op' || accountContext === 'Clear All')
         delete payload.allowCollectionShrink
 
-        if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser') {
+        if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser' || type === 'GetProfilesAddons' || type === 'SetProfileAddons') {
             fastify.log.info({ category: 'Sync' }, `[${masked}] ${friendlyAction}...`)
         } else {
             // Strict Whitelist: Block unknown methods to prevent abuse
@@ -601,7 +608,8 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                     await new Promise(r => setTimeout(r, 1000 * attempt))
                 }
 
-                const response = await fetch('https://api.strem.io/api/' + type.charAt(0).toLowerCase() + type.slice(1), {
+                const apiPath = PREMIUM_PREFS_PATHS[type] || (type.charAt(0).toLowerCase() + type.slice(1))
+                const response = await fetch('https://api.strem.io/api/' + apiPath, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),

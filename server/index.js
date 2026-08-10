@@ -66,7 +66,7 @@ fastify.addHook('onSend', async (request, reply) => {
     reply.header('X-Frame-Options', 'DENY')
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin')
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'none'")
+    reply.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; font-src 'self'; frame-src 'self' https://www.youtube.com https://youtube.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'")
     if (request.protocol === 'https') {
         reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     }

@@ -123,7 +123,13 @@ export class StremioClient {
     }
   }
 
-  async getUser(authKey: string): Promise<{ email: string, _id: string }> {
+  async getUser(authKey: string): Promise<{
+    email: string
+    _id: string
+    premiumPrefs?: {
+      userProfiles?: Record<string, { id: string; name: string; avatar?: string }>
+    }
+  }> {
     try {
       const data = await serverPost('/api/stremio-proxy', {
         type: 'GetUser',
@@ -139,7 +145,49 @@ export class StremioClient {
         throw new Error('Invalid getUser response')
       }
 
-      return data.result as unknown as { email: string; _id: string }
+      return data.result as unknown as {
+        email: string
+        _id: string
+        premiumPrefs?: {
+          userProfiles?: Record<string, { id: string; name: string; avatar?: string }>
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
+      }
+      throw error
+    }
+  }
+
+  async getProfilesAddons(authKey: string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<Record<string, AddonDescriptor[]>> {
+    try {
+      const data = await serverPost('/api/stremio-proxy', {
+        type: 'GetProfilesAddons',
+        authKey,
+      }, { 'x-account-context': accountContext })
+
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get sub-profile addons')
+      }
+
+      const profiles = (data?.result as Record<string, unknown>)?.profiles as Record<string, { addons?: unknown[] }> | undefined
+      if (!profiles) return {}
+
+      const result: Record<string, AddonDescriptor[]> = {}
+      for (const [profileId, profile] of Object.entries(profiles)) {
+        const addons = Array.isArray(profile?.addons) ? profile.addons : []
+        result[profileId] = (addons as Record<string, unknown>[]).map((addon) => ({
+            ...addon,
+            manifest: {
+                ...(addon.manifest as Record<string, unknown> || {}),
+                types: (addon.manifest as Record<string, unknown>)?.types || [],
+                resources: (addon.manifest as Record<string, unknown>)?.resources || []
+            }
+        })) as AddonDescriptor[]
+      }
+      return result
     } catch (error) {
       if (error instanceof Error && error.message.includes('401')) {
         throw new Error('Invalid or expired auth key')

@@ -410,7 +410,6 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
                       Sync
-                      <span className="ml-auto text-[10px] text-muted-foreground/50">Pull addons</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={async (e) => {
@@ -428,7 +427,6 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RefreshCw className={`h-4 w-4 shrink-0 text-warning ${loading ? 'animate-spin' : ''}`} />
                       Repair
-                      <span className="ml-auto text-[10px] text-muted-foreground/50">Deep refresh</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={async (e) => {
@@ -448,7 +446,6 @@ export const AccountCard = memo(function AccountCard({
                     >
                       <RotateCw className={`h-4 w-4 shrink-0 text-primary ${loading ? 'animate-spin' : ''}`} />
                       Reinstall All
-                      <span className="ml-auto text-[10px] text-muted-foreground/50">Re-download manifests</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={(e) => { e.stopPropagation(); onDelete?.(account.id); }}

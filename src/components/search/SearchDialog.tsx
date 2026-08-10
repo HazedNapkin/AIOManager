@@ -206,9 +206,8 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                 }>(`person/${selectedPerson.id}/combined_credits`, ac.signal)
                 if (!ac.signal.aborted && data?.cast) {
                     setPersonCredits(data.cast
-                        .filter(c => c.poster_path && (c.vote_count ?? 0) >= 10)
+                        .filter(c => c.poster_path && (c.vote_count ?? 0) >= 5)
                         .sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0))
-                        .slice(0, 24)
                         .map(c => ({
                             id: `tmdb:${c.id}`,
                             tmdbId: c.id,
@@ -289,7 +288,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                         type="text"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search movies, shows, people..."
+                        placeholder="Search movies, series, anime, people…"
                         className="min-w-0 flex-1 bg-transparent text-sm font-medium text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                     />
                     {query && (

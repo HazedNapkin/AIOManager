@@ -1,9 +1,12 @@
-import { useRef, useState, memo, type ReactNode } from 'react'
+import { useRef, useState, memo, createContext, useContext, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, X, Heart, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react'
 import { Poster } from '@/components/common/Poster'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
+const GridModeContext = createContext(false)
 
 export interface RailWatcher {
     id: string
@@ -46,8 +49,8 @@ export const ContentRailCard = memo(function ContentRailCard({
     subtitle,
     caption,
     rank,
-    itemId: _itemId,
-    itemType: _itemType,
+    itemId,
+    itemType,
     watchers,
     onDismiss,
     onLove,
@@ -55,18 +58,25 @@ export const ContentRailCard = memo(function ContentRailCard({
     onClick,
     index = 0,
 }: ContentRailCardProps) {
+    const isGrid = useContext(GridModeContext)
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.3 }}
-            className="group relative w-32 shrink-0 cursor-pointer sm:w-36"
+            className={cn(
+                'group relative cursor-pointer',
+                isGrid ? 'w-full' : 'w-32 shrink-0 sm:w-36'
+            )}
             onClick={onClick}
         >
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-border/30 bg-muted shadow-md transition-all duration-200 group-hover:border-primary/40 group-hover:shadow-xl">
                 <Poster
                     src={poster}
                     alt={title}
+                    itemId={itemId}
+                    itemType={itemType}
                     className="h-full w-full transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
                 />
@@ -130,9 +140,11 @@ export const ContentRailCard = memo(function ContentRailCard({
             </div>
 
             <div className="mt-2 w-full px-0.5">
-                <p className="line-clamp-2 min-h-[2.25rem] text-xs font-semibold leading-tight text-foreground transition-colors group-hover:text-primary">
-                    {title}
-                </p>
+                <Tooltip content={title} side="bottom" delayDuration={400}>
+                    <p className="truncate text-xs font-semibold leading-tight text-foreground transition-colors group-hover:text-primary">
+                        {title}
+                    </p>
+                </Tooltip>
                 {subtitle && (
                     <p className="truncate text-[11px] text-muted-foreground/70 leading-tight">{subtitle}</p>
                 )}
@@ -215,9 +227,11 @@ export function ContentRail({
                 </div>
             </div>
             {gridMode ? (
-                <div className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 [&>*]:w-full [&>*]:shrink">
-                    {children}
-                </div>
+                <GridModeContext.Provider value={true}>
+                    <div className="grid gap-4 pt-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
+                        {children}
+                    </div>
+                </GridModeContext.Provider>
             ) : (
                 <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-1 pt-3 scrollbar-hide scroll-smooth">
                     {children}

@@ -2,19 +2,9 @@ import { LibraryItem, ActivityItem } from '@/types/activity'
 import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
+import { sanitizePosterUrl } from '@/lib/utils'
 
-export function sanitizePosterUrl(url: string | undefined): string | undefined {
-    if (!url || typeof url !== 'string') return url
-    try {
-        const parsed = new URL(url)
-        const fb = parsed.searchParams.get('fallback')
-        if (fb && fb.startsWith('http')) return fb
-        const alt = parsed.searchParams.get('url')
-        if (alt && alt.startsWith('http') && !alt.includes(parsed.hostname)) return alt
-        if (parsed.hostname.includes('micasa161') || parsed.hostname.includes('meta.micasa')) return undefined
-    } catch {}
-    return url
-}
+export { sanitizePosterUrl }
 
 export function isActuallyWatched(item: LibraryItem): boolean {
     const s = item.state || {}
