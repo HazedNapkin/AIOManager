@@ -1881,7 +1881,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                         <div className="mb-3 flex items-center justify-between">
                                             <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground/80">
                                                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                                                More Like This ({meta.relatedList.length})
+                                                Related ({meta.relatedList.length})
                                             </h3>
                                             <div className="flex items-center gap-1">
                                                 <button

@@ -1,6 +1,6 @@
-import { useRef, memo, type ReactNode } from 'react'
+import { useRef, useState, memo, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronLeft, ChevronRight, X, Heart } from 'lucide-react'
+import { ChevronLeft, ChevronRight, X, Heart, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react'
 import { Poster } from '@/components/common/Poster'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,7 @@ export interface ContentRailProps {
     children: ReactNode
     scrollAmount?: number
     className?: string
+    showGridToggle?: boolean
 }
 
 export const ContentRailCard = memo(function ContentRailCard({
@@ -45,8 +46,8 @@ export const ContentRailCard = memo(function ContentRailCard({
     subtitle,
     caption,
     rank,
-    itemId,
-    itemType,
+    itemId: _itemId,
+    itemType: _itemType,
     watchers,
     onDismiss,
     onLove,
@@ -58,34 +59,43 @@ export const ContentRailCard = memo(function ContentRailCard({
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: Math.min(index * 0.04, 0.5), duration: 0.3, ease: 'easeOut' }}
-            className="group relative w-32 md:w-36 shrink-0 cursor-pointer flex flex-col"
+            transition={{ delay: Math.min(index * 0.04, 0.4), duration: 0.3 }}
+            className="group relative w-32 shrink-0 cursor-pointer sm:w-36"
             onClick={onClick}
         >
-            <div className={cn(
-                'relative h-48 md:h-56 w-full overflow-hidden rounded-2xl border border-border/40 shadow-sm bg-muted',
-                'transition-[transform,box-shadow,border-color] duration-200',
-                'group-hover:border-primary/50 group-hover:shadow-lg',
-            )}>
+            <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-border/30 bg-muted shadow-md transition-all duration-200 group-hover:border-primary/40 group-hover:shadow-xl">
                 <Poster
                     src={poster}
-                    itemId={itemId}
-                    itemType={itemType}
                     alt={title}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    className="h-full w-full transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
                 />
 
-                <div className="absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-black/60 to-transparent" />
-
-                {typeof rank === 'number' && (
-                    <div className="absolute left-2 top-2 z-10 rounded-full bg-black/55 px-2 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">
-                        #{rank}
+                {rank !== undefined && (
+                    <div className="absolute left-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-lg bg-black/80 px-1.5 text-xs font-black text-white shadow-md backdrop-blur-sm">
+                        {rank}
                     </div>
                 )}
 
+                {typeof isLoved === 'boolean' && (
+                    <div className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
+                        <Heart className={cn('h-3 w-3', isLoved ? 'fill-red-500 text-red-500' : 'text-white/50')} />
+                    </div>
+                )}
+
+                {onLove && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onLove() }}
+                        className="absolute right-1.5 bottom-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100"
+                        aria-label={isLoved ? 'Remove from loved' : 'Add to loved'}
+                    >
+                        <Heart className={cn('h-3.5 w-3.5 transition-colors', isLoved ? 'fill-red-500 text-red-500' : 'text-white')} />
+                    </button>
+                )}
+
                 {watchers && watchers.length > 0 && (
-                    <div className="absolute bottom-2 right-2 z-10 flex items-center -space-x-1.5">
+                    <div className="absolute bottom-1.5 left-1.5 flex items-center -space-x-1.5">
                         {watchers.slice(0, 3).map(w => (
                             <div key={w.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
                                 {w.avatar ? (
@@ -106,21 +116,11 @@ export const ContentRailCard = memo(function ContentRailCard({
                 )}
 
                 {onDismiss && (
-                    <div className="absolute right-2 top-2 z-20 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
-                        {onLove && (
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); onLove() }}
-                                className="flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur-sm transition-all hover:scale-110 hover:bg-black/85"
-                                aria-label={isLoved ? 'Unlove' : 'Love'}
-                            >
-                                <Heart className={cn('h-3.5 w-3.5', isLoved && 'fill-red-500 text-red-500')} />
-                            </button>
-                        )}
+                    <div className="absolute right-1.5 top-1.5 z-10 opacity-0 transition-opacity group-hover:opacity-100">
                         <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onDismiss() }}
-                            className="flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur-sm transition-all hover:scale-110 hover:bg-black/85"
+                            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white shadow-sm backdrop-blur-sm hover:bg-destructive"
                             aria-label="Dismiss"
                         >
                             <X className="h-3.5 w-3.5" />
@@ -153,8 +153,10 @@ export function ContentRail({
     children,
     scrollAmount = 300,
     className,
+    showGridToggle = false,
 }: ContentRailProps) {
     const scrollRef = useRef<HTMLDivElement>(null)
+    const [gridMode, setGridMode] = useState(false)
 
     const scroll = (dir: 'left' | 'right') => {
         scrollRef.current?.scrollBy({
@@ -180,27 +182,47 @@ export function ContentRail({
                     {typeof count === 'number' && (
                         <span className="text-xs font-medium text-muted-foreground">{count} {countLabel || 'titles'}</span>
                     )}
-                    <button
-                        type="button"
-                        onClick={() => scroll('left')}
-                        className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
-                        aria-label="Scroll left"
-                    >
-                        <ChevronLeft className="h-4 w-4" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => scroll('right')}
-                        className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
-                        aria-label="Scroll right"
-                    >
-                        <ChevronRight className="h-4 w-4" />
-                    </button>
+                    {showGridToggle && (
+                        <button
+                            type="button"
+                            onClick={() => setGridMode(g => !g)}
+                            className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
+                            aria-label={gridMode ? 'Rail view' : 'Grid view'}
+                        >
+                            {gridMode ? <GalleryHorizontalEnd className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}
+                        </button>
+                    )}
+                    {!gridMode && (
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => scroll('left')}
+                                className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
+                                aria-label="Scroll left"
+                            >
+                                <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => scroll('right')}
+                                className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
+                                aria-label="Scroll right"
+                            >
+                                <ChevronRight className="h-4 w-4" />
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
-            <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-1 pt-3 scrollbar-hide scroll-smooth">
-                {children}
-            </div>
+            {gridMode ? (
+                <div className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 [&>*]:w-full [&>*]:shrink">
+                    {children}
+                </div>
+            ) : (
+                <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-1 pt-3 scrollbar-hide scroll-smooth">
+                    {children}
+                </div>
+            )}
         </section>
     )
 }

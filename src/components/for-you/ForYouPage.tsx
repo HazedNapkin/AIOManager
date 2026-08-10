@@ -904,7 +904,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.movies.length > 0 && (
-                                            <ContentRail title="Movies" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
+                                            <ContentRail title="Movies" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'} showGridToggle>
                                                 {buckets.movies.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`mv-${item.id}`}
@@ -921,7 +921,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.series.length > 0 && (
-                                            <ContentRail title="Series" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
+                                            <ContentRail title="Series" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'} showGridToggle>
                                                 {buckets.series.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`sr-${item.id}`}
@@ -938,7 +938,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                         )}
 
                                         {buckets.anime.length > 0 && (
-                                            <ContentRail title="Anime" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'}>
+                                            <ContentRail title="Anime" subtitle={isColdStart ? 'Trending now' : 'Recommended for your household'} showGridToggle>
                                                 {buckets.anime.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`an-${item.id}`}
