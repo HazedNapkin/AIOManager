@@ -122,8 +122,11 @@ export interface TestKeyResult {
     source: string | null
 }
 
-export async function testMetadataKey(provider?: string): Promise<TestKeyResult> {
-    const url = provider ? `/api/metadata/test?provider=${encodeURIComponent(provider)}` : '/api/metadata/test'
+export async function testMetadataKey(provider?: string, key?: string): Promise<TestKeyResult> {
+    const params = new URLSearchParams()
+    if (provider) params.set('provider', provider)
+    if (key) params.set('key', key)
+    const url = `/api/metadata/test${params.toString() ? '?' + params : ''}`
     const res = await fetch(url, { headers: await authHeaders() })
     const json = await res.json().catch(() => null)
     if (!res.ok && !json) {

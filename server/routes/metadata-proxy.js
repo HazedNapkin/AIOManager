@@ -263,10 +263,16 @@ export function registerMetadataProxyRoutes(fastify) {
         const provider = (request.query.provider || 'tmdb').toLowerCase()
 
         let keyRecord
-        try {
-            keyRecord = await loadUserKey(authUser, provider)
-        } catch {
-            reply.status(500); return { error: 'Key lookup failed' }
+        const unsavedKey = typeof request.query.key === 'string' && request.query.key.trim() ? request.query.key.trim() : null
+        if (unsavedKey) {
+            const format = unsavedKey.startsWith('eyJ') ? 'v4' : (/^[0-9a-fA-F]{32}$/.test(unsavedKey) ? 'v3' : 'v3')
+            keyRecord = { key: unsavedKey, format, source: 'unsaved' }
+        } else {
+            try {
+                keyRecord = await loadUserKey(authUser, provider)
+            } catch {
+                reply.status(500); return { error: 'Key lookup failed' }
+            }
         }
 
         if (!keyRecord) {

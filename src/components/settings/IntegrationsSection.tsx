@@ -152,7 +152,7 @@ export function IntegrationsSection() {
         setTesting(true)
         setTestResult(null)
         try {
-            const result = await testMetadataKey(selectedProvider)
+            const result = await testMetadataKey(selectedProvider, pastedKey.trim() || undefined)
             setTestResult({ success: result.success, message: result.message })
             const lbl = selectedProviderOption?.label || 'Provider'
             if (result.success) {
