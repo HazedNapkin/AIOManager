@@ -1,7 +1,4 @@
-let _cachedHeaders: Record<string, string> | null = null
-
 export async function getSyncAuthHeaders(): Promise<Record<string, string>> {
-    if (_cachedHeaders) return { ..._cachedHeaders }
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     try {
         const { useSyncStore } = await import('@/store/syncStore')
@@ -12,12 +9,7 @@ export async function getSyncAuthHeaders(): Promise<Record<string, string>> {
             headers['x-sync-password'] = await deriveSyncToken(auth.password)
         }
     } catch {}
-    if (headers['x-sync-user']) {
-        _cachedHeaders = headers
-    }
-    return { ...headers }
+    return headers
 }
 
-export function invalidateSyncAuthCache(): void {
-    _cachedHeaders = null
-}
+export function invalidateSyncAuthCache(): void {}
