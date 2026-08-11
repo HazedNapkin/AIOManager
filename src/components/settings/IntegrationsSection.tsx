@@ -118,7 +118,8 @@ export function IntegrationsSection() {
     }, [refreshProviders])
 
     const detectedFormat = detectKeyFormat(pastedKey)
-    const canSave = detectedFormat !== 'unknown' && pastedKey.trim().length > 0 && !savingKey
+    const isTmdb = selectedProvider === 'tmdb'
+    const canSave = pastedKey.trim().length > 0 && !savingKey && (!isTmdb || detectedFormat !== 'unknown')
     const selectedProviderOption = PROVIDER_OPTIONS.find(p => p.id === selectedProvider)
 
     const handleSaveKey = async () => {
