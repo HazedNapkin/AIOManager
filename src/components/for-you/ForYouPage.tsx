@@ -559,7 +559,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             const result = await checkPmdbKeyConfigured()
             if (cancelled) return
             if (result) { setHasPmdbKey(true); return }
-            if (attempt < 3) setTimeout(() => check(attempt + 1), 2000 * (attempt + 1))
+            if (attempt < 5) setTimeout(() => check(attempt + 1), 1500 * (attempt + 1))
         }
         check(0)
         return () => { cancelled = true }

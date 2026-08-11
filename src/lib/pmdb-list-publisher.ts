@@ -422,7 +422,15 @@ export async function publishScope(
 
 export async function checkPmdbKeyConfigured(): Promise<boolean> {
     try {
-        const res = await fetch('/api/metadata-keys', { headers: await getSyncAuthHeaders() })
+        const { useSyncStore } = await import('@/store/syncStore')
+        const { deriveSyncToken } = await import('@/lib/crypto')
+        const auth = useSyncStore.getState().auth
+        if (!auth.isAuthenticated) return false
+        const headers: Record<string, string> = {
+            'x-sync-user': auth.id,
+            'x-sync-password': await deriveSyncToken(auth.password),
+        }
+        const res = await fetch('/api/metadata-keys', { headers })
         if (!res.ok) return false
         const data = await res.json()
         const providers = Array.isArray(data?.providers) ? data.providers : []
