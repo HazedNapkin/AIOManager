@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Tv, Play, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { fetchSeasonEpisodes, fetchSeasonsList, proxyFetch, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
 import type { DetailItem } from '@/components/activity/detail/types'
@@ -30,6 +31,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
     const [cinemetaEpisodesBySeason, setCinemetaEpisodesBySeason] = useState<Map<number, EpisodeInfo[]>>(new Map())
     const [cinemetaTmdbId, setCinemetaTmdbId] = useState<number | null>(null)
     const [tmdbSeasonsFailed, setTmdbSeasonsFailed] = useState(false)
+    const absoluteSeasonRedirectRef = useRef<string | null>(null)
 
     const effectiveTmdbId = seriesTmdbId ?? cinemetaTmdbId
 
@@ -38,6 +40,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
         setSelectedSeason(null)
         setEpisodes([])
         setCinemetaTmdbId(null)
+        absoluteSeasonRedirectRef.current = null
     }, [activeItem])
 
     useEffect(() => {
@@ -172,6 +175,46 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
     const activeEpisodes = seriesTmdbId ? episodes : (cinemetaEpisodesBySeason.get(selectedSeason ?? -1) ?? [])
     const isLoadingEps = seriesTmdbId ? episodesLoading : false
 
+    // Anime watch events usually carry absolute episode numbers on a flat season 1,
+    // while TMDB splits the show into real seasons. When the watched episode isn't in
+    // the selected season, map it through cumulative episode counts (absolute →
+    // season/offset) so the watched episode still gets selected and highlighted.
+    const watchedSeason = activeItem?.season
+    const watchedEpisode = activeItem?.episode
+    const directHit = watchedSeason != null && watchedEpisode != null
+        && watchedSeason === selectedSeason
+        && activeEpisodes.some(ep => ep.episodeNumber === watchedEpisode)
+    const mappedFromAbsolute = (!directHit && watchedEpisode != null && activeItem?.type === 'anime')
+        ? (() => {
+            const ordered = [...activeSeasons].sort((a, b) => a.seasonNumber - b.seasonNumber)
+            let before = 0
+            for (const s of ordered) {
+                const count = s.episodeCount || 0
+                if (watchedEpisode! <= before + count) {
+                    return { season: s.seasonNumber, episode: watchedEpisode! - before }
+                }
+                before += count
+            }
+            return null
+        })()
+        : null
+    const redirectKey = activeItem ? `${activeItem.itemId}:${watchedSeason ?? ''}:${watchedEpisode ?? ''}` : null
+    if (
+        mappedFromAbsolute &&
+        redirectKey !== null &&
+        absoluteSeasonRedirectRef.current !== redirectKey &&
+        selectedSeason != null &&
+        selectedSeason === watchedSeason &&
+        mappedFromAbsolute.season !== selectedSeason &&
+        !isLoadingEps
+    ) {
+        absoluteSeasonRedirectRef.current = redirectKey
+        setSelectedSeason(mappedFromAbsolute.season)
+    }
+    const highlight = directHit
+        ? { season: watchedSeason!, episode: watchedEpisode! }
+        : mappedFromAbsolute ?? null
+
     const handleEpisodeClick = (ep: EpisodeInfo) => {
         if (!onEpisodeClick || selectedSeason === null) return
         onEpisodeClick({
@@ -241,13 +284,13 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                     </p>
                 ) : (
                     activeEpisodes.map(ep => {
-                        const isWatched = activeItem?.season === selectedSeason && activeItem?.episode === ep.episodeNumber
+                        const isWatched = highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber
                         return (
+                            <Tooltip content="View episode details" side="top">
                             <button
                                 key={ep.episodeNumber}
                                 type="button"
                                 onClick={() => handleEpisodeClick(ep)}
-                                title="View episode details"
                                 className={cn(
                                     'group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',
                                     isWatched
@@ -303,6 +346,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                                 </div>
                                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
                             </button>
+                            </Tooltip>
                         )
                     })
                 )}

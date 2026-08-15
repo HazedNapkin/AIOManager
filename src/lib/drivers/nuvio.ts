@@ -27,25 +27,6 @@ interface DriverPlugin {
     repo_type?: string | null
 }
 
-const NUvio_CURSOR_KEY = 'aiomanager-nuvio-delta-cursors'
-
-export function getNuvioCursors(connectionId: string): { watched: number; progress: number } {
-    try {
-        const all = JSON.parse(localStorage.getItem(NUvio_CURSOR_KEY) || '{}')
-        return all[connectionId] || { watched: 0, progress: 0 }
-    } catch {
-        return { watched: 0, progress: 0 }
-    }
-}
-
-export function setNuvioCursors(connectionId: string, cursors: { watched: number; progress: number }) {
-    try {
-        const all = JSON.parse(localStorage.getItem(NUvio_CURSOR_KEY) || '{}')
-        all[connectionId] = cursors
-        localStorage.setItem(NUvio_CURSOR_KEY, JSON.stringify(all))
-    } catch {}
-}
-
 export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: string } = {}) {
     const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
     const publishableKey = options.publishableKey || DEFAULT_PUBLISHABLE_KEY
@@ -196,22 +177,6 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
             }
         },
 
-        async readWatchHistoryDelta(accessToken: string, profileId: string | number, sinceEventId: number) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const rows = await rpc('sync_pull_watched_items_delta', {
-                p_profile_id: idx,
-                p_since_event_id: sinceEventId,
-                p_limit: 1000,
-            }, accessToken)
-            return Array.isArray(rows) ? rows : []
-        },
-
-        async getWatchHistoryDeltaCursor(accessToken: string, profileId: string | number) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const result = await rpc('sync_get_watched_items_delta_cursor', { p_profile_id: idx }, accessToken)
-            return typeof result === 'number' ? result : 0
-        },
-
         async readWatchProgress(accessToken: string, profileId?: string | number) {
             const idx = await resolveProfileIndex(accessToken, profileId)
             const rows = await rpc('sync_pull_watch_progress', {
@@ -220,22 +185,6 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
                 p_limit: 100000,
             }, accessToken)
             return Array.isArray(rows) ? rows : []
-        },
-
-        async readWatchProgressDelta(accessToken: string, profileId: string | number, sinceEventId: number) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const rows = await rpc('sync_pull_watch_progress_delta', {
-                p_profile_id: idx,
-                p_since_event_id: sinceEventId,
-                p_limit: 1000,
-            }, accessToken)
-            return Array.isArray(rows) ? rows : []
-        },
-
-        async getWatchProgressDeltaCursor(accessToken: string, profileId: string | number) {
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const result = await rpc('sync_get_watch_progress_delta_cursor', { p_profile_id: idx }, accessToken)
-            return typeof result === 'number' ? result : 0
         },
 
         async readPlugins(accessToken: string, profileId?: string | number) {

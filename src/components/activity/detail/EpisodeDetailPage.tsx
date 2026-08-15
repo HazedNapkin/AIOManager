@@ -10,6 +10,10 @@ import { RatingBadge, type ProviderRating } from '@/components/activity/detail/R
 import { fetchAdditionalRatings } from '@/lib/ratings'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useAccountStore } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
+import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { maskedDisplayName } from '@/components/common/AccountSwitcher'
+import { Tooltip } from '@/components/ui/tooltip'
 
 export interface EpisodeDetailPageProps {
     seriesName: string
@@ -21,11 +25,13 @@ export interface EpisodeDetailPageProps {
     still?: string
     seriesTmdbId: number | null
     seriesImdbId?: string
+    isAnime?: boolean
     isLight: boolean
     maxEpisodesInSeason?: number | null
     hasPrevSeason?: boolean
     hasNextSeason?: boolean
     onPersonClick: (person: { name: string; photo?: string }, role: string) => void
+    onAccountClick?: (accountId: string, accountName: string) => void
     onGoBack: () => void
     onClose: () => void
     onNavigateEpisode?: (seasonNumber: number, episodeNumber: number) => void
@@ -41,11 +47,13 @@ export function EpisodeDetailPage({
     still,
     seriesTmdbId,
     seriesImdbId,
+    isAnime = false,
     isLight,
     maxEpisodesInSeason,
     hasPrevSeason,
     hasNextSeason,
     onPersonClick,
+    onAccountClick,
     onGoBack,
     onClose,
     onNavigateEpisode,
@@ -145,14 +153,22 @@ export function EpisodeDetailPage({
 
     const events = useWatchEventStore(s => s.events)
     const accounts = useAccountStore(s => s.accounts)
+    const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
 
     const episodeWatchStats = useMemo(() => {
         if (!seriesImdbId) return null
-        const matches = events.filter(e =>
+        const exact = events.filter(e =>
             e.itemId === seriesImdbId &&
             e.season === seasonNumber &&
             e.episode === episodeNumber
         )
+        // Anime entries often store absolute numbering with a flat season while
+        // TMDB splits them into real seasons; when the exact match is empty,
+        // fall back to matching the episode number across seasons.
+        const matches = exact.length > 0 || !isAnime
+            ? exact
+            : events.filter(e => e.itemId === seriesImdbId && e.episode === episodeNumber)
         if (matches.length === 0) return null
         const accountIds = new Set(matches.map(e => e.accountId))
         const totalTime = matches.reduce((sum, e) => sum + (e.time_watched || 0), 0)
@@ -163,7 +179,7 @@ export function EpisodeDetailPage({
             totalTimeMs: totalTime,
             latestTs: latest > 0 ? new Date(latest) : null,
         }
-    }, [events, seriesImdbId, seasonNumber, episodeNumber])
+    }, [events, seriesImdbId, seasonNumber, episodeNumber, isAnime])
 
     return (
         <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-card text-card-foreground">
@@ -333,20 +349,31 @@ export function EpisodeDetailPage({
                             </h3>
                             <div className="flex flex-wrap items-center gap-3">
                                 {watcherAccounts.length > 0 && (
-                                    <div className="flex items-center gap-1.5">
-                                        {watcherAccounts.slice(0, 8).map((acc, i) => (
-                                            <div key={i} className="relative h-7 w-7 overflow-hidden rounded-full border-2 border-border/40 bg-muted shadow-sm" title={acc!.name || acc!.id}>
-                                                {acc!.emoji ? (
-                                                    <span className="flex h-full w-full items-center justify-center text-[10px] font-bold text-foreground">{acc!.emoji}</span>
-                                                ) : acc!.avatar ? (
-                                                    <img src={acc!.avatar} alt="" className="h-full w-full object-cover" />
-                                                ) : (
-                                                    <span className="flex h-full w-full items-center justify-center text-[10px] font-bold text-muted-foreground">{(acc!.name || '?')[0].toUpperCase()}</span>
-                                                )}
-                                            </div>
-                                        ))}
+                                    <div className="flex items-center -space-x-2">
+                                        {watcherAccounts.slice(0, 8).map((acc) => {
+                                            const maskedName = maskedDisplayName(acc!.name, acc!.email, isPrivacyModeEnabled ? privacyLevelNames : 0)
+                                            return (
+                                                <Tooltip key={acc!.id} content={maskedName}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={onAccountClick ? () => onAccountClick(acc!.id, acc!.name || 'Account') : undefined}
+                                                        className={cn(
+                                                            'relative flex h-9 w-9 items-center justify-center rounded-full border-2 border-background bg-card overflow-hidden transition-transform',
+                                                            onAccountClick && 'hover:scale-110 hover:z-10'
+                                                        )}
+                                                    >
+                                                        <AccountAvatar
+                                                            account={{ ...acc!, name: maskedName }}
+                                                            size="md"
+                                                            showStatus={false}
+                                                            className="!h-full !w-full rounded-full"
+                                                        />
+                                                    </button>
+                                                </Tooltip>
+                                            )
+                                        })}
                                         {watcherAccounts.length > 8 && (
-                                            <span className="text-xs text-muted-foreground/60">+{watcherAccounts.length - 8}</span>
+                                            <span className="pl-3 text-xs text-muted-foreground/60">+{watcherAccounts.length - 8}</span>
                                         )}
                                     </div>
                                 )}

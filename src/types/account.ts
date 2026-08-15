@@ -23,6 +23,8 @@ export interface Account {
   addons: AddonDescriptor[]
   lastSync: Date
   status: AccountStatus
+  lastError?: string
+  lastErrorAt?: number
   accentColor?: string
   emoji?: string
   avatar?: string

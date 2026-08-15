@@ -395,7 +395,7 @@ export async function syncAccount(id: string, forceRefresh = false) {
         const message = error instanceof Error ? error.message : 'Failed to sync account'
         const isExpired = isAuthError(error)
         const accounts = store.getState().accounts.map((acc) =>
-            acc.id === id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const } : acc
+            acc.id === id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const, lastError: message, lastErrorAt: Date.now() } : acc
         )
         store.setState({ accounts, error: message })
         persistAccounts(accounts)
@@ -447,9 +447,10 @@ export async function syncAllAccounts(silent = false) {
             } catch (error: unknown) {
                 if (isTransientSyncError(error)) return
                 const isExpired = isAuthError(error)
+                const message = error instanceof Error ? error.message : 'Failed to sync account'
                 store.setState(state => ({
                     accounts: state.accounts.map(acc =>
-                        acc.id === account.id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const } : acc
+                        acc.id === account.id ? { ...acc, status: isExpired ? 'expired' as const : 'error' as const, lastError: message, lastErrorAt: Date.now() } : acc
                     )
                 }))
                 hasAnyChange = true

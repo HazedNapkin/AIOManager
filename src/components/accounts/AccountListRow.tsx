@@ -273,8 +273,8 @@ export const AccountListRow = memo(function AccountListRow({
                                 toast({ title: 'Syncing...', description: `Refreshing ${displayName}` })
                                 await syncAccount(account.id)
                                 toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` })
-                            } catch {
-                                toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}` })
+                            } catch (err) {
+                                toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` })
                             }
                         }}
                         disabled={loading}
@@ -319,8 +319,8 @@ export const AccountListRow = memo(function AccountListRow({
                                 toast({ title: 'Syncing...', description: `Refreshing ${displayName}` })
                                 await syncAccount(account.id)
                                 toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` })
-                            } catch {
-                                toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}` })
+                            } catch (err) {
+                                toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` })
                             }
                         }} disabled={loading}>
                             <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} /> Sync

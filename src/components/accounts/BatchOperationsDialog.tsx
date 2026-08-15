@@ -44,6 +44,7 @@ import { OperationProgress } from '@/components/ui/operation-progress'
 interface BatchOperationsDialogProps {
   selectedAccounts: Account[]
   allAccounts?: Account[]
+  initialAction?: BulkAction
   onClose: () => void
 }
 
@@ -292,6 +293,7 @@ function ResultReceipt({ result, accounts, action }: { result: BulkResult; accou
 export function BatchOperationsDialog({
   selectedAccounts,
   allAccounts = [],
+  initialAction,
   onClose,
 }: BatchOperationsDialogProps) {
   const library = useAddonStore(s => s.library)
@@ -309,7 +311,7 @@ export function BatchOperationsDialog({
   const bulkSetHideConfigure = useAccountStore(s => s.bulkSetHideConfigure)
   const profiles = useProfileStore(s => s.profiles)
 
-  const [action, setAction] = useState<BulkAction>('install-from-library')
+    const [action, setAction] = useState<BulkAction>(initialAction ?? 'install-from-library')
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [activeActionIndex, setActiveActionIndex] = useState(0)
   const actionTriggerRef = useRef<HTMLButtonElement>(null)

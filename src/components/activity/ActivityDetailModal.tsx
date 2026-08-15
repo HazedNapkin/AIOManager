@@ -1544,11 +1544,13 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                         airDate={currentEntry.airDate}
                         still={currentEntry.still}
                         seriesTmdbId={currentEntry.seriesTmdbId}
+                        isAnime={renderItem?.type === 'anime'}
                         isLight={isLight}
                         maxEpisodesInSeason={episodeSeasonBounds?.maxEpisodes || null}
                         hasPrevSeason={episodeSeasonBounds?.hasPrev ?? false}
                         hasNextSeason={episodeSeasonBounds?.hasNext ?? false}
                         onPersonClick={handlePersonClick}
+                        onAccountClick={handleAccountClick}
                         onGoBack={handleGoBack}
                         onClose={() => onOpenChange(false)}
                         onNavigateEpisode={(season, episode) => {

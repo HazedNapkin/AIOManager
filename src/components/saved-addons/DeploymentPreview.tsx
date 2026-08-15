@@ -4,6 +4,7 @@ import { cn, normalizeAddonUrl } from '@/lib/utils'
 import type { SavedAddon } from '@/types/saved-addon'
 import type { Account } from '@/types/account'
 import { Info, Plus, RefreshCw, ShieldAlert, Trash2, Users, Tag, Layers } from 'lucide-react'
+import { Tooltip } from '@/components/ui/tooltip'
 import { SavedAddonIcon } from './SavedAddonIcon'
 import { extractAddonParams } from '@/lib/addon-params'
 
@@ -242,10 +243,12 @@ export function DeploymentPreview({
                 )}>
                   <span>{operation === 'remove' ? 'Will remove if found' : 'Will add/update'}</span>
                   {(() => { const p = extractAddonParams(addon.installUrl).params; if (!p.tag && !p.variant) return null; return (
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1 text-primary" title={`${p.tag ? 'Tag' : 'Variant'}: ${p.tag || p.variant}`}>
-                      {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
-                      <span className="truncate max-w-[100px]">{p.tag || p.variant}</span>
-                    </span>
+                    <Tooltip content={`${p.tag ? 'Tag' : 'Variant'}: ${p.tag || p.variant}`} side="top">
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1 text-primary">
+                        {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
+                        <span className="truncate max-w-[100px]">{p.tag || p.variant}</span>
+                      </span>
+                    </Tooltip>
                   ) })()}
                 </div>
               </div>

@@ -6,6 +6,7 @@ import { getCachedAuth, setCachedAuth, invalidateCachedAuth, hashAuthPassword } 
 import { timingSafeEqual } from '../auth.js'
 import { hashApiKey } from '../api-keys.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
+import { invalidateCanonicalAddons } from './hydra.js'
 import { isRegistrationsClosed } from '../config.js'
 import { trace } from '../utils/trace.js'
 
@@ -218,10 +219,10 @@ export function registerSyncRoutes(fastify) {
             // server can't otherwise read (Nuvio-only / local-only). Midnight-safe: the guard
             // no-ops when an account's addon list is unchanged, so re-syncs don't churn the row.
             const canonicalAddons = data.canonicalAddons
+            const canonicalWrites = []
             if (canonicalAddons && typeof canonicalAddons === 'object') {
                 const now = Date.now()
                 const canonicalRows = []
-                const canonicalWrites = []
                 for (const [accountId, addons] of Object.entries(canonicalAddons)) {
                     if (!accountId || !Array.isArray(addons)) continue
                     canonicalRows.push([accountId, id, now])
@@ -250,6 +251,9 @@ export function registerSyncRoutes(fastify) {
             }
 
             invalidateCachedAuth('sync:' + id)
+            for (const [accountId] of canonicalWrites) {
+                invalidateCanonicalAddons(accountId, id)
+            }
             trace('syncRoute', 'push.success', { accountId: id, bytes: JSON.stringify(data).length, timing: Date.now() - postStart })
             return { success: true, syncedAt: serverTime }
         })

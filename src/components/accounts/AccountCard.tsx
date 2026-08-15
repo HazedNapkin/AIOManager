@@ -402,7 +402,7 @@ export const AccountCard = memo(function AccountCard({
                           await syncAccount(account.id);
                           toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` });
                         } catch (err) {
-                          toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}` });
+                          toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` });
                         }
                       }}
                       disabled={loading}
@@ -566,7 +566,7 @@ export const AccountCard = memo(function AccountCard({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-destructive">Sync Failed</p>
                     <p className="text-xs text-destructive/80 mt-0.5">
-                      Could not reach the server. Try a re-sync; if it keeps failing, update the account credentials.
+                      {account.lastError || 'Could not reach the server. Try a re-sync; if it keeps failing, update the account credentials.'}
                     </p>
                   </div>
                 </div>

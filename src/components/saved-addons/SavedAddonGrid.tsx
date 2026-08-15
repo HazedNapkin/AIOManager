@@ -1,10 +1,11 @@
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn, getLatestAddonVersion } from '@/lib/utils'
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import type { Profile } from '@/types/profile'
-import { ChevronDown, Package, User } from 'lucide-react'
+import { ChevronDown, GripVertical, Package, User } from 'lucide-react'
 import { SavedAddonCard } from './SavedAddonCard'
 import { SavedAddonListRow } from './SavedAddonListRow'
 import type { SavedAddonDeploymentSummary } from './hooks/useSavedAddonLibraryData'
@@ -25,6 +26,7 @@ interface SavedAddonGridProps {
   selectedIds: Set<string>
   onToggleSelect: (id: string) => void
   onEnterSelectionMode: () => void
+  onReorderSection?: (sectionId: string) => void
   highlight?: string
 }
 
@@ -46,6 +48,7 @@ export function SavedAddonGrid({
   selectedIds,
   onToggleSelect,
   onEnterSelectionMode,
+  onReorderSection,
   highlight,
 }: SavedAddonGridProps) {
   const renderAddon = (addon: SavedAddon, profileName?: string, showHighlight = false) => {
@@ -100,6 +103,23 @@ export function SavedAddonGrid({
     )
   }
 
+  const reorderButton = (sectionId: string, count: number) =>
+    onReorderSection ? (
+      <Tooltip content="Reorder this section" side="top">
+        <Button
+          variant="outline"
+          size="icon"
+          ripple={false}
+          onClick={(e) => { e.stopPropagation(); onReorderSection(sectionId) }}
+          disabled={count < 2}
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          aria-label="Reorder this section"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </Button>
+      </Tooltip>
+    ) : null
+
   if (selectedProfileId !== null) {
     return (
       <StaggerContainer className={cn(
@@ -138,9 +158,12 @@ export function SavedAddonGrid({
                   {profile.name}
                 </span>
               </Button>
-              <StatusChip variant="muted">
-                {profileAddons.length} addon{profileAddons.length !== 1 ? 's' : ''}
-              </StatusChip>
+              <div className="flex items-center gap-1.5">
+                {reorderButton(profile.id, profileAddons.length)}
+                <StatusChip variant="muted">
+                  {profileAddons.length} addon{profileAddons.length !== 1 ? 's' : ''}
+                </StatusChip>
+              </div>
             </div>
 
             {isExpanded && (
@@ -177,9 +200,12 @@ export function SavedAddonGrid({
                   Unassigned
                 </span>
               </Button>
-              <StatusChip variant="muted">
-                {unassigned.length} addon{unassigned.length !== 1 ? 's' : ''}
-              </StatusChip>
+              <div className="flex items-center gap-1.5">
+                {reorderButton('__unassigned__', unassigned.length)}
+                <StatusChip variant="muted">
+                  {unassigned.length} addon{unassigned.length !== 1 ? 's' : ''}
+                </StatusChip>
+              </div>
             </div>
 
             {isExpanded && (

@@ -73,21 +73,42 @@ export const isSafeUrl = (url) => {
 // that resolves to a private address. Returns false only when DNS clearly resolves to a private
 // IP; on resolution failure it defers to isSafeUrl (returns true) so transient DNS issues don't
 // block legitimate public hosts. Use at SSRF-sensitive entry points that fetch user URLs.
+
+// Resolution results are TTL-cached: autopilot health scans and per-request proxy checks call
+// this for the same handful of hostnames thousands of times per minute, and each uncached call
+// burns a getaddrinfo slot on the shared libuv thread pool. Positive answers (public IPs) are
+// the common case and cheap to trust briefly; failures resolve again sooner.
+const DNS_CACHE_TTL_POSITIVE_MS = 30 * 1000
+const DNS_CACHE_TTL_FAILURE_MS = 30 * 1000
+const dnsCache = new Map()
+
 export const resolveAndValidateHost = async (hostname) => {
     if (ALLOW_PRIVATE) return true
     const host = String(hostname || '').toLowerCase().replace(/^\[(.+)\]$/, '$1')
     if (!host) return false
 
+    const cached = dnsCache.get(host)
+    if (cached && Date.now() - cached.at < cached.ttl) return cached.safe
+
+    const settle = (safe, ttl) => {
+        dnsCache.set(host, { safe, at: Date.now(), ttl })
+        if (dnsCache.size > 2000) {
+            const oldest = dnsCache.keys().next().value
+            dnsCache.delete(oldest)
+        }
+        return safe
+    }
+
     try {
         const records = await lookup(host, { all: true })
         if (!Array.isArray(records) || records.length === 0) {
-            return true
+            return settle(true, DNS_CACHE_TTL_FAILURE_MS)
         }
-        return !records.some(r => isPrivateIp(r.address))
+        return settle(!records.some(r => isPrivateIp(r.address)), DNS_CACHE_TTL_POSITIVE_MS)
     } catch {
         // Fail open to the literal check per the contract above; only hostnames that
         // resolve to private ranges are rejected. Do not "harden" this to fail-closed.
-        return true
+        return settle(true, DNS_CACHE_TTL_FAILURE_MS)
     }
 }
 

@@ -60,7 +60,6 @@ interface LibraryCacheState {
     clear: () => Promise<void>
     removeItems: (itemIds: string[]) => void
     removeItemsForAccount: (accountId: string) => void
-    clearDeletedItems: () => void
     deletedItemIds: Set<string>
 }
 
@@ -109,11 +108,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
         delete newMtimes[accountId]
         set({ items: filtered, lastMtimeByAccount: newMtimes, isStale: true })
         localforage.removeItem(CACHE_KEY).catch(() => {})
-    },
-
-    clearDeletedItems: () => {
-        set({ deletedItemIds: new Set() })
-        localforage.removeItem(DELETED_ITEMS_KEY)
     },
 
     invalidate: () => {
@@ -255,61 +249,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     set({ deletedItemIds: new Set(Object.keys(savedDeleted)) })
                 }
 
-                if (import.meta.env.DEV && import.meta.env.VITE_MOCK_ACTIVITY === 'true') {
-                    if (import.meta.env.DEV) console.log('[LibraryCache] Generating mock data...')
-                    set({ loadingProgress: { current: 0, total: 30 } })
-
-                    const mockItems: ActivityItem[] = []
-                    const accountCount = 30
-                    const itemsPerAccount = 500
-
-                    for (let a = 0; a < accountCount; a++) {
-                        const accountId = `mock-acc-${a}`
-                        const accountName = `Mock User ${a}`
-                        for (let i = 0; i < itemsPerAccount; i++) {
-                            const timestamp = new Date(now - (Math.random() * 365 * 24 * 60 * 60 * 1000))
-                            mockItems.push({
-                                id: `${accountId}:tt${i}`,
-                                accountId,
-                                accountName,
-                                accountColorIndex: a % 10,
-                                itemId: `tt${i}`,
-                                uniqueItemId: `tt${i}`,
-                                name: `Mock Content ${i}`,
-                                type: Math.random() > 0.5 ? 'movie' : 'series',
-                                poster: `https://picsum.photos/seed/${i}/200/300`,
-                                timestamp,
-                                isInProgress: false,
-                                duration: 3600000,
-                                watched: 1800000,
-                                progress: 50,
-                                season: 1,
-                                episode: i % 20
-                            })
-                        }
-                        set({ loadingProgress: { current: a + 1, total: accountCount } })
-                        // Yield to UI
-                        await new Promise(r => setTimeout(r, 0))
-                    }
-
-                    mockItems.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-                    const mockMtimes = Object.fromEntries(accounts.map(account => [account.id, new Date(now).toISOString()]))
-                    set({
-                        items: mockItems,
-                        lastFetched: now,
-                        lastMtimeByAccount: mockMtimes,
-                        loading: false,
-                        isStale: false,
-                        loadingProgress: { current: accountCount, total: accountCount }
-                    })
-                    const { encryptionKey } = useAuthStore.getState()
-                    if (encryptionKey) {
-                        const encrypted = await encrypt(JSON.stringify({ items: mockItems, lastFetched: now, lastMtimeByAccount: mockMtimes }), encryptionKey)
-                        await localforage.setItem(CACHE_KEY, encrypted)
-                    }
-                    return
-                }
-
                 set({ loadingProgress: { current: 0, total: accounts.length } })
 
                 const { encryptionKey } = useAuthStore.getState()
@@ -416,6 +355,11 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                         } catch (err) {
                             if (import.meta.env.DEV) console.error(`[LibraryCache] Failed to fetch account ${account.name || account.id}:`, err)
                             newMtimes[account.id] = newMtimes[account.id] ?? '0'
+                            // Fetch failed (offline/flaky): preserve last-known items like the
+                            // Nuvio/RealStream paths do, instead of recording an empty account
+                            // and wiping the cached feed.
+                            const stale = staleByAccount.get(account.id)
+                            if (stale) accountItems.push(...stale)
                         }
 
                         const existingKeys = new Set<string>()
@@ -443,16 +387,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     ])
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
                                     trace('libraryCache', 'nuvio.fetch', { accountId: account.id, watched: watched.length, progress: progress.length })
-                                    try {
-                                        const [whCursor, wpCursor] = await Promise.all([
-                                            driver.getWatchHistoryDeltaCursor(token.accessToken, profileId).catch(() => 0),
-                                            driver.getWatchProgressDeltaCursor(token.accessToken, profileId).catch(() => 0),
-                                        ])
-                                        if (whCursor > 0 || wpCursor > 0) {
-                                            const { setNuvioCursors } = await import('@/lib/drivers/nuvio')
-                                            setNuvioCursors(conn.id, { watched: whCursor, progress: wpCursor })
-                                        }
-                                    } catch {}
                                     const nuvioTitles = new Map<string, string>()
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))

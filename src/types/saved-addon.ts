@@ -14,6 +14,7 @@ export interface SavedAddon {
   originalManifest?: AddonManifest
   tags: string[] // User-defined tags for organization
   profileId?: string // Link to a Profile
+  sortOrder?: number // Manual position in the library (custom sort mode); unset = after all ordered items
   createdAt: Date
   updatedAt: Date
   lastUsed?: Date

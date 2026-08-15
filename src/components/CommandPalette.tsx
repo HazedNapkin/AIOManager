@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAccountStore } from '@/store/accountStore'
+import { BULK_ACTIONS } from '@/components/accounts/bulk-actions/registry'
 import { useNavigate } from 'react-router-dom'
 import {
     LayoutDashboard,
@@ -18,6 +19,7 @@ import {
     Tv,
     Key,
     Bookmark,
+    ListChecks,
 } from 'lucide-react'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useFailoverStore } from '@/store/failoverStore'
@@ -32,7 +34,7 @@ interface CommandItem {
     sublabel?: string
     icon: React.ReactNode
     action: () => void
-    category: 'Navigation' | 'Accounts' | 'Notes' | 'Vault' | 'Saved Addons' | 'Quick Actions'
+    category: 'Navigation' | 'Accounts' | 'Notes' | 'Vault' | 'Saved Addons' | 'Quick Actions' | 'Bulk Operations'
     emoji?: string
     searchText?: string
 }
@@ -234,8 +236,22 @@ export function CommandPalette() {
             }
         )
 
+        for (const def of BULK_ACTIONS) {
+            items.push({
+                id: `bulk-${def.id}`,
+                label: def.title,
+                sublabel: def.description,
+                icon: <ListChecks className="h-4 w-4" />,
+                action: () => {
+                    navigate('/?bulk=' + def.id)
+                    setOpen(false)
+                },
+                category: 'Bulk Operations',
+            })
+        }
+
         return items
-    }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules])
+    }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules, navigate])
 
     const filtered = useMemo(() => {
         if (!query.trim()) return allItems

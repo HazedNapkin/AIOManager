@@ -8,10 +8,12 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { AlertCircle, Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { useState, useRef, useMemo, useCallback, lazy, Suspense, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { AccountCard } from './AccountCard'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 const BatchOperationsDialog = lazy(() => import('./BatchOperationsDialog').then(m => ({ default: m.BatchOperationsDialog })))
+import { BULK_ACTION_OPTIONS, type BulkAction } from './bulk-actions/registry'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import {
@@ -180,7 +182,19 @@ export function AccountList() {
   }
 
   const [showBulkActions, setShowBulkActions] = useState(false)
+  const [bulkInitialAction, setBulkInitialAction] = useState<string | undefined>(undefined)
   const [reorderDialogOpen, setReorderDialogOpen] = useState(false)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const bulkParam = searchParams.get('bulk')
+    if (!bulkParam) return
+    setSearchParams({}, { replace: true })
+    if (!BULK_ACTION_OPTIONS.includes(bulkParam as BulkAction)) return
+    setBulkInitialAction(bulkParam)
+    setIsSelectionMode(true)
+    setShowBulkActions(true)
+  }, [searchParams, setSearchParams])
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     open: boolean;
     accountIds: string[];
@@ -236,10 +250,10 @@ export function AccountList() {
   }
 
   const selectAll = () => {
-    if (selectedAccountIds.size === accounts.length) {
+    if (selectedAccountIds.size === filteredAccounts.length) {
       setSelectedAccountIds(new Set())
     } else {
-      setSelectedAccountIds(new Set(accounts.map((a) => a.id)))
+      setSelectedAccountIds(new Set(filteredAccounts.map((a) => a.id)))
     }
   }
 
@@ -656,8 +670,10 @@ export function AccountList() {
             <BatchOperationsDialog
               selectedAccounts={accounts.filter((a) => selectedAccountIds.has(a.id))}
               allAccounts={accounts}
+              initialAction={bulkInitialAction as BulkAction | undefined}
               onClose={() => {
                 setShowBulkActions(false)
+                setBulkInitialAction(undefined)
                 clearSelection()
               }}
             />

@@ -4,7 +4,7 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { AnimatedRefreshIcon, AnimatedUpdateIcon } from '@/components/ui/AnimatedIcons'
 import { cn } from '@/lib/utils'
-import { Check, Grid, List, Plus, Search, SlidersHorizontal, Wand2, X } from 'lucide-react'
+import { Check, Grid, List, Plus, Search, SlidersHorizontal, Wand2, X, GripVertical } from 'lucide-react'
 import type { Profile } from '@/types/profile'
 import { useShallow } from 'zustand/react/shallow'
 import { useUIStore } from '@/store/uiStore'
@@ -19,6 +19,8 @@ interface LibraryToolbarProps {
   searchRef?: React.RefObject<HTMLInputElement | null>
   viewMode: 'grid' | 'list'
   onViewModeChange: (mode: 'grid' | 'list') => void
+  showReorder?: boolean
+  onReorder?: () => void
   savedAddonsCount: number
   healthSummary: { online: number; offline: number }
   checkingUpdates: boolean
@@ -44,6 +46,8 @@ export function LibraryToolbar({
   searchRef,
   viewMode,
   onViewModeChange,
+  showReorder,
+  onReorder,
   savedAddonsCount,
   healthSummary,
   checkingUpdates,
@@ -162,13 +166,25 @@ export function LibraryToolbar({
             </div>
           )}
 
+            {showReorder && onReorder && (
+              <Button
+              size="sm"
+              variant="outline"
+              className="h-9 w-full shrink-0 gap-1.5 text-xs font-medium sm:h-8 sm:w-auto"
+              onClick={onReorder}
+              aria-label="Reorder addons"
+              >
+              <GripVertical className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Reorder</span>
+              </Button>
+            )}
             <Button
             size="sm"
             variant="outline"
             className="h-9 w-full shrink-0 gap-1.5 text-xs font-medium sm:h-8 sm:w-auto"
             onClick={onRefresh}
             disabled={checkingUpdates || checkingHealth || updatingAll || savedAddonsCount === 0}
-          >
+            >
             <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={checkingUpdates || checkingHealth} />
             <span>{(checkingUpdates || checkingHealth) ? 'Checking...' : 'Refresh'}</span>
           </Button>

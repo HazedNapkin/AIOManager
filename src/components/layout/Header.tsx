@@ -24,12 +24,12 @@ import {
 const PRIMARY_NAV = [
   { to: '/', icon: Users, label: 'Accounts', match: (p: string) => p === '/' || p.startsWith('/account/') },
   { to: '/saved-addons', icon: Package, label: 'Addons', match: (p: string) => p === '/saved-addons' },
-  { to: '/notes', icon: StickyNote, label: 'Notes', match: (p: string) => p === '/notes' },
+  { to: '/activity', icon: Activity, label: 'Activity', match: (p: string) => p === '/activity' },
   { to: '/vault', icon: KeyRound, label: 'Vault', match: (p: string) => p === '/vault' || p.startsWith('/vault/') },
 ]
 
 const MORE_NAV = [
-  { to: '/activity', icon: Activity, label: 'Activity', match: (p: string) => p === '/activity' },
+  { to: '/notes', icon: StickyNote, label: 'Notes', match: (p: string) => p === '/notes' },
   { to: '/metrics', icon: BarChart3, label: 'Metrics', match: (p: string) => p === '/metrics' },
   { to: '/replay', icon: null, label: 'Replay', match: (p: string) => p === '/replay' },
   { to: '/kronorium', icon: HelpCircle, label: 'Docs', match: (p: string) => p.startsWith('/kronorium') },
@@ -229,17 +229,20 @@ export function Header() {
     return formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: true })
   }, [lastSyncedAt])
 
+  const recentSyncError = useMemo(() => {
+    const lastError = syncHistory.find(h => h.status === 'error')
+    return lastError && (Date.now() - new Date(lastError.timestamp).getTime()) < 5 * 60 * 1000 ? lastError : null
+  }, [syncHistory])
+
   const syncDotColor = useMemo(() => {
     const isOnline = auth.isAuthenticated
     if (!isOnline || (!isSyncing && !isRefreshingFromCloud && !lastSyncedAt)) return 'bg-red-500'
     if (isSyncing || isRefreshingFromCloud) return 'bg-yellow-500 animate-pulse'
+    if (recentSyncError) return 'bg-red-500'
     const lastSync = lastSyncedAt ? new Date(lastSyncedAt).getTime() : 0
-    const lastError = syncHistory.find(h => h.status === 'error')
-    const hasRecentError = lastError && (Date.now() - new Date(lastError.timestamp).getTime()) < 5 * 60 * 1000
-    if (hasRecentError) return 'bg-red-500'
-    if (Date.now() - lastSync > 5 * 60 * 1000) return 'bg-red-500'
+    if (Date.now() - lastSync > 5 * 60 * 1000) return 'bg-yellow-500'
     return 'bg-green-500'
-  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, syncHistory])
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, recentSyncError])
 
   const [syncLabel, setSyncLabel] = useState('')
   useEffect(() => {
@@ -434,7 +437,12 @@ export function Header() {
                 </div>
               </Tooltip>
 
-              <Tooltip content={syncLabel === 'Offline' ? 'Offline mode' : `Synced ${syncTimeAgo}`} side="bottom">
+              <Tooltip content={
+                !auth.isAuthenticated ? 'Offline mode'
+                  : recentSyncError ? `Sync failed: ${recentSyncError.message}. Click to retry.`
+                  : isSyncing || isRefreshingFromCloud ? 'Syncing...'
+                  : `Synced ${syncTimeAgo}`
+              } side="bottom">
                 <button
                   onClick={() => auth.isAuthenticated && syncToRemote(false)}
                   className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full rounded-r-lg hover:bg-muted/20 transition-colors"

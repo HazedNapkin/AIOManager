@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { getHealthSummary } from '@/lib/addon-health'
 import { getLatestAddonVersion, isNewerVersion, normalizeAddonUrl } from '@/lib/utils'
+import { sortSavedAddons } from '@/lib/library-sort'
 import type { Account } from '@/types/account'
 import type { Profile } from '@/types/profile'
 import type { AccountAddonState, SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
@@ -70,7 +71,7 @@ export function useSavedAddonLibraryData({
       filtered = filtered.filter((addon) => addon.tags.includes(selectedTag))
     }
 
-    return filtered.sort((a, b) => a.name.localeCompare(b.name))
+    return sortSavedAddons(filtered, 'custom')
   }, [savedAddons, debouncedSearchQuery, selectedTag, selectedProfileId, profiles])
 
   const healthSummary = useMemo(() => {

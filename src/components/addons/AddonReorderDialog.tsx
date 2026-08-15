@@ -1,38 +1,8 @@
-import { useState, useEffect } from 'react'
-import {
-  DndContext,
-  closestCenter,
-  MouseSensor,
-  TouchSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-  DragOverlay,
-  DragStartEvent,
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import {
-  restrictToVerticalAxis,
-} from '@dnd-kit/modifiers'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
+import { useMemo } from 'react'
+import { ReorderDialog } from '@/components/ui/reorder-dialog'
 import { AddonDescriptor } from '@/types/addon'
 import { AddonReorderRow, SortableAddonItem } from './SortableAddonItem'
 import { useAccountStore } from '@/store/accountStore'
-import { createPortal } from 'react-dom'
 
 interface AddonReorderDialogProps {
   accountId: string
@@ -41,132 +11,35 @@ interface AddonReorderDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+type UniqueAddon = AddonDescriptor & { uniqueId: string }
+
 export function AddonReorderDialog({
   accountId,
   addons,
   open,
   onOpenChange,
 }: AddonReorderDialogProps) {
-  const [items, setItems] = useState<(AddonDescriptor & { uniqueId: string })[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const reorderAddons = useAccountStore((state) => state.reorderAddons)
-  const activeAddon = activeId ? items.find((item) => item.uniqueId === activeId) : null
-
-  useEffect(() => {
-    if (open) {
-      // Assign unique fallback IDs to support duplicates during reorg
-      setItems(addons.map((a, i) => ({ ...a, uniqueId: `${a.transportUrl}::${i}` })))
-      setError(null)
-    }
-  }, [open, addons])
-
-  const sensors = useSensors(
-    useSensor(MouseSensor, {
-      activationConstraint: {
-        distance: 3,
-      },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: {
-        delay: 200,
-        tolerance: 5,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+  const items = useMemo<UniqueAddon[]>(
+    () => addons.map((a, i) => ({ ...a, uniqueId: `${a.transportUrl}::${i}` })),
+    [addons]
   )
 
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(String(event.active.id))
-  }
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-
-    if (over && active.id !== over.id) {
-      setItems((items) => {
-        const oldIndex = items.findIndex((item) => item.uniqueId === active.id)
-        const newIndex = items.findIndex((item) => item.uniqueId === over.id)
-        return arrayMove(items, oldIndex, newIndex)
-      })
-    }
-    setActiveId(null)
-  }
-
-  const handleDragCancel = () => {
-    setActiveId(null)
-  }
-
-  const handleSave = async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      await reorderAddons(accountId, items)
-      onOpenChange(false)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save addon order'
-      setError(message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleCancel = () => {
-    onOpenChange(false)
-  }
-
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Reorder Addons</DialogTitle>
-          <DialogDescription>
-            Drag and drop to reorder your addons. Changes will be saved.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="max-h-[70vh] overflow-y-auto py-4">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragCancel={handleDragCancel}
-            modifiers={[restrictToVerticalAxis]}
-          >
-            <SortableContext
-              items={items.map((item) => item.uniqueId)} // Use unique IDs
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="space-y-2">
-                {items.map((addon) => (
-                  <SortableAddonItem key={addon.uniqueId} id={addon.uniqueId} addon={addon} />
-                ))}
-              </div>
-            </SortableContext>
-            {createPortal(
-              <DragOverlay adjustScale={false} dropAnimation={null}>
-                {activeAddon ? <AddonReorderRow addon={activeAddon} isOverlay /> : null}
-              </DragOverlay>,
-              document.body
-            )}
-          </DndContext>
-        </div>
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        <DialogFooter>
-          <Button variant="subtle" onClick={handleCancel} disabled={saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ReorderDialog<UniqueAddon>
+      title="Reorder Addons"
+      description="Drag and drop to reorder your addons. Changes will be saved."
+      items={items}
+      getId={(item) => item.uniqueId}
+      renderRow={(item) => <SortableAddonItem addon={item} id={item.uniqueId} />}
+      renderOverlay={(item) => <AddonReorderRow addon={item} isOverlay />}
+      onSave={async (ordered) => {
+        const stripped = ordered.map(({ uniqueId: _uniqueId, ...rest }) => rest)
+        await reorderAddons(accountId, stripped)
+      }}
+      saveErrorMessage="Failed to save addon order"
+      open={open}
+      onOpenChange={onOpenChange}
+    />
   )
 }

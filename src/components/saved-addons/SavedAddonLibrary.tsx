@@ -9,6 +9,8 @@ import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { TagManagerDialog } from './TagManagerDialog'
+import { LibraryReorderDialog } from './LibraryReorderDialog'
+import { sortSavedAddons } from '@/lib/library-sort'
 
 import {
   User,
@@ -18,7 +20,7 @@ import {
 } from 'lucide-react'
 import { AnimatedTrashIcon } from '../ui/AnimatedIcons'
 import { OperationProgress } from '@/components/ui/operation-progress'
-import { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
 const DiscoverPanel = lazy(() => import('@/components/discover/DiscoverPanel').then(m => ({ default: m.DiscoverPanel })))
@@ -119,6 +121,7 @@ export function SavedAddonLibrary() {
     return () => { isMounted.current = false }
   }, [])
   const [collapsedProfiles, setCollapsedProfiles] = useState<Set<string>>(new Set())
+  const [reorderSection, setReorderSection] = useState<{ key: string; title: string } | null>(null)
   const [showTagManager, setShowTagManager] = useState(false)
   const [showBulkUrlReplaceDialog, setShowBulkUrlReplaceDialog] = useState(false)
   const [showInjectDialog, setShowInjectDialog] = useState(false)
@@ -180,6 +183,14 @@ export function SavedAddonLibrary() {
     latestVersions,
     manifestChangeHints,
   })
+
+  const reorderSectionAddons = useMemo(() => {
+    if (!reorderSection) return []
+    const members = reorderSection.key === '__unassigned__'
+      ? savedAddons.filter(a => !a.profileId || !profiles.some(p => p.id === a.profileId))
+      : savedAddons.filter(a => a.profileId === reorderSection.key)
+    return sortSavedAddons(members, 'custom')
+  }, [reorderSection, savedAddons, profiles])
 
   const {
     syncFilter,
@@ -711,6 +722,12 @@ export function SavedAddonLibrary() {
                 searchRef={librarySearchRef}
                 viewMode={viewMode}
                 onViewModeChange={(mode) => { setViewMode(mode); setCollapsedProfiles(new Set()) }}
+                showReorder={selectedProfileId !== null && filteredAddons.length > 1}
+                onReorder={selectedProfileId !== null ? () => {
+                  const key = selectedProfileId === 'unassigned' ? '__unassigned__' : selectedProfileId
+                  const title = selectedProfileId === 'unassigned' ? 'Unassigned' : profiles.find(p => p.id === selectedProfileId)?.name || 'Profile'
+                  setReorderSection({ key, title })
+                } : undefined}
                 savedAddonsCount={savedAddons.length}
                 healthSummary={healthSummary}
                 checkingUpdates={checkingUpdates}
@@ -802,10 +819,21 @@ export function SavedAddonLibrary() {
                 selectedIds={selectedIds}
                 onToggleSelect={handleToggleSelect}
                 onEnterSelectionMode={enterSelectionMode}
+                onReorderSection={(sectionId) => {
+                  const title = sectionId === '__unassigned__' ? 'Unassigned' : profiles.find(p => p.id === sectionId)?.name || 'Profile'
+                  setReorderSection({ key: sectionId, title })
+                }}
                 highlight={debouncedSearchQuery}
               />
             </div>
           )}
+
+          <LibraryReorderDialog
+            sectionTitle={reorderSection?.title || ''}
+            addons={reorderSectionAddons}
+            open={reorderSection !== null}
+            onOpenChange={(open) => { if (!open) setReorderSection(null) }}
+          />
 
         <AddSavedAddonDialog
           open={showAddDialog}

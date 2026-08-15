@@ -3,5 +3,5 @@ export function normalizeTagName(tag: string): string {
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
+    .replace(/[^\p{L}\p{N}-]/gu, '')
 }

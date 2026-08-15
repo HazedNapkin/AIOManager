@@ -5,16 +5,6 @@ import { FALLBACK_KEYS } from '../keys.js'
 const _keyCache = new Map()
 const _KEY_CACHE_TTL = 60_000
 
-export function getUserKey(userId, provider) {
-    const cacheKey = `${userId}:${provider}`
-    const cached = _keyCache.get(cacheKey)
-    if (cached) {
-        if (cached.expiresAt > Date.now()) return cached.value
-        _keyCache.delete(cacheKey)
-    }
-    return null
-}
-
 export async function loadUserKey(userId, provider) {
     const cacheKey = `${userId}:${provider}`
     const cached = _keyCache.get(cacheKey)

@@ -44,6 +44,7 @@ function compressSyncPayload(jsonStr: string): string {
 let _pendingRetry = false
 let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let _accountsHydrated = false
+let _lastSyncedAccountCount: number | null = null
 let _syncLock: Promise<void> | null = null
 let _onlineHandler: (() => void) | null = null
 let _syncBC: BroadcastChannel | null = null
@@ -481,6 +482,7 @@ export const useSyncStore = create<SyncState>()(
                         const localAccounts = useAccountStore.getState().accounts
                         const remoteAccountsRaw = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | undefined)?.accounts || []
                         const remoteAccounts = remoteAccountsRaw as Record<string, unknown>[]
+                        _lastSyncedAccountCount = remoteAccounts.length
 
                         const hasRemoteData = remoteAccounts.length > 0
                         const hasLocalData = localAccounts.length > 0
@@ -658,7 +660,7 @@ export const useSyncStore = create<SyncState>()(
                 if (get().auth.isAuthenticated && get().isInitialSyncCompleted && !get().isSyncing) {
                     try {
                         await Promise.race([
-                            get().syncToRemote(true, false),
+                            get().syncToRemote(false, false),
                             new Promise(resolve => setTimeout(resolve, 5000))
                         ])
                     } catch {}
@@ -678,6 +680,7 @@ export const useSyncStore = create<SyncState>()(
                     lastSyncedAt: null,
                     isInitialSyncCompleted: false
                 })
+                _lastSyncedAccountCount = null
 
                 const { useWatchEventStore } = await import('@/store/watchEventStore')
                 await useWatchEventStore.getState().reset()
@@ -772,6 +775,17 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     const exportedAccounts = safeParse(rawAccounts)
+                    const accountCount = Array.isArray(exportedAccounts.accounts) ? exportedAccounts.accounts.length : 0
+                    const { shouldBlockEmptyAccountPush } = await import('@/lib/sync-guards')
+                    if (shouldBlockEmptyAccountPush({
+                        currentAccountCount: accountCount,
+                        lastSyncedAccountCount: _lastSyncedAccountCount,
+                        isManualPush: !isAuto && !isDebounced,
+                    })) {
+                        trace('sync', 'push.blocked-empty-accounts', { accountId: auth.id, lastSyncedAccountCount: _lastSyncedAccountCount })
+                        console.warn('[Sync] Blocked automatic push of 0 accounts (data-loss guard, issue #34). If you intentionally deleted all accounts, use a manual sync to force it.')
+                        throw new Error('Blocked push of 0 accounts: local state contradicts the last synced cloud copy. Restore accounts or trigger a manual sync to force-push.')
+                    }
                     if (useVaultStore.getState().isLocked && useAuthStore.getState().encryptionKey) {
                         await useVaultStore.getState().initialize()
                     }
@@ -890,6 +904,7 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     _lastPushedHash = stateHash
+                    _lastSyncedAccountCount = accountCount
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the

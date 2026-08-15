@@ -112,16 +112,6 @@ export function maskProfileLevel(profileName: string, level: number, count?: num
   return '****'
 }
 
-export function maskUrl(url: string): string {
-  try {
-    const urlObj = new URL(url)
-    const hostname = urlObj.hostname
-    return `${urlObj.protocol}//${hostname}/********`
-  } catch {
-    return '********'
-  }
-}
-
 export function getStremioLink(url: string): string {
   return url.replace(/^https?:\/\//, 'stremio://')
 }

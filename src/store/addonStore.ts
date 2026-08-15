@@ -142,6 +142,7 @@ export interface AddonStore {
   ) => Promise<void>
   bulkDeleteSavedAddons: (ids: string[]) => Promise<void>
   updateSavedAddonManifest: (id: string) => Promise<SavedAddonManifestUpdateResult>
+  reorderSavedAddons: (orderedIds: string[]) => Promise<void>
   deleteSavedAddon: (id: string) => Promise<void>
   deleteSavedAddonsByProfile: (profileId: string) => Promise<void>
   getSavedAddon: (id: string) => SavedAddon | null
@@ -741,6 +742,22 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
 
   updateSavedAddonManifest: async (id) => {
     return updateSavedAddonManifest(id)
+  },
+
+  reorderSavedAddons: async (orderedIds) => {
+    const { library } = get()
+    const known = orderedIds.filter(id => library[id])
+    if (known.length < 2) return
+
+    const updates: Record<string, SavedAddon> = {}
+    known.forEach((id, i) => {
+      if (library[id].sortOrder !== i) updates[id] = { ...library[id], sortOrder: i }
+    })
+    if (Object.keys(updates).length === 0) return
+
+    const next = { ...library, ...updates }
+    set({ library: next })
+    await saveAddonLibrary(next)
   },
 
   deleteSavedAddonsByProfile: async (profileId) => {

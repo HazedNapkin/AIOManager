@@ -58,6 +58,44 @@ async function lookupAccountByApiKey(request, reply) {
 // maliciously registered against another user's accountId (account_api_keys is populated from the
 // client sync blob) resolves only to the key owner's own data -- never the victim's credentials,
 // canonical store, or autopilot rule.
+
+// Hydra consumers poll version/addons frequently; a live Stremio read per poll hammers the
+// upstream and adds 300-800ms latency. Short TTL cache, keyed by (account, owner); any local
+// write path that can change the result (sync push, canonical write, rule write) busts it.
+const CANONICAL_TTL_MS = 30_000
+const canonicalCache = new Map()
+const canonicalInFlight = new Map()
+const canonicalGeneration = new Map()
+
+export function invalidateCanonicalAddons(accountId, syncUser) {
+    const key = `${syncUser}:${accountId}`
+    canonicalCache.delete(key)
+    canonicalGeneration.set(key, (canonicalGeneration.get(key) ?? 0) + 1)
+}
+
+async function getCanonicalAddonsCached(accountId, syncUser) {
+    const key = `${syncUser}:${accountId}`
+    const cached = canonicalCache.get(key)
+    if (cached && Date.now() - cached.at < CANONICAL_TTL_MS) return cached.value
+    if (canonicalInFlight.has(key)) return canonicalInFlight.get(key)
+
+    const generation = canonicalGeneration.get(key) ?? 0
+    const p = (async () => {
+        try {
+            const value = await getCanonicalAddons(accountId, syncUser)
+            // A read that raced an invalidation is stale; serve it but don't cache it.
+            if ((canonicalGeneration.get(key) ?? 0) === generation) {
+                canonicalCache.set(key, { value, at: Date.now() })
+            }
+            return value
+        } finally {
+            canonicalInFlight.delete(key)
+        }
+    })()
+    canonicalInFlight.set(key, p)
+    return p
+}
+
 async function getCanonicalAddons(accountId, syncUser) {
     // Stremio accounts are served Stremio-first (the most mature path). Filter to the Stremio
     // credential so a Nuvio/Hydra credential row doesn't get mis-used as a Stremio authKey.
@@ -158,6 +196,7 @@ async function writeCanonicalAddons(account, addons) {
         const { createStremioDriver } = await import('../providers/stremio-driver.js')
         const driver = createStremioDriver()
         await driver.writeAddons(authKey, addons)
+        invalidateCanonicalAddons(accountId, syncUser)
         return
     }
 
@@ -185,6 +224,7 @@ async function writeCanonicalAddons(account, addons) {
             { alsoSet: { sync_user: syncUser, updated_at: now }, runner: tx }
         )
     })
+    invalidateCanonicalAddons(accountId, syncUser)
 }
 
 async function validateManifest(manifestUrl) {
@@ -256,7 +296,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         const account = await lookupAccountByApiKey(request, reply)
         if (!account) return
         try {
-            const raw = await getCanonicalAddons(account.account_id, account.sync_user)
+            const raw = await getCanonicalAddonsCached(account.account_id, account.sync_user)
             const addons = raw.map(toHydraAddon).filter(Boolean)
             return { version: computeAddonsVersion(addons) }
         } catch {
@@ -272,7 +312,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         if (!account) return
 
         try {
-            const raw = await getCanonicalAddons(account.account_id, account.sync_user)
+            const raw = await getCanonicalAddonsCached(account.account_id, account.sync_user)
             const addons = raw.map(toHydraAddon).filter(Boolean)
             return { addons }
         } catch {
@@ -295,7 +335,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         }
 
         try {
-            const current = await getCanonicalAddons(account.account_id, account.sync_user)
+            const current = await getCanonicalAddonsCached(account.account_id, account.sync_user)
             const norm = normalizeAddonUrl(url)
             if (current.some(a => normalizeAddonUrl(a.transportUrl || a.url || '') === norm)) {
                 const addons = current.map(toHydraAddon).filter(Boolean)
@@ -332,7 +372,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         }
 
         try {
-            const current = await getCanonicalAddons(account.account_id, account.sync_user)
+            const current = await getCanonicalAddonsCached(account.account_id, account.sync_user)
             const norm = normalizeAddonUrl(url)
             const filtered = current.filter(a => normalizeAddonUrl(a.transportUrl || a.url || '') !== norm)
 
@@ -380,7 +420,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
             // a bad replace on the next sync). Reject only the obvious wipe: clearing a
             // non-trivial collection to empty, never a legitimate few-addon removal.
             if (addons.length === 0) {
-                const current = await getCanonicalAddons(account.account_id, account.sync_user)
+                const current = await getCanonicalAddonsCached(account.account_id, account.sync_user)
                 if (current.length >= 3) {
                     reply.code(409)
                     return { error: 'conflict', message: 'Refusing to clear a non-empty addon collection. Remove addons individually.' }
@@ -449,7 +489,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         }
 
         try {
-            const current = await getCanonicalAddons(account.account_id, account.sync_user)
+            const current = await getCanonicalAddonsCached(account.account_id, account.sync_user)
 
             let fetchUrl = addonUrl
             if (!fetchUrl) {
@@ -511,7 +551,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
         if (!account) return
 
         try {
-            const current = await getCanonicalAddons(account.account_id, account.sync_user)
+            const current = await getCanonicalAddonsCached(account.account_id, account.sync_user)
             await writeCanonicalAddons(account, current)
             return { synced: true, addonCount: current.length }
         } catch {

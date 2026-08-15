@@ -211,6 +211,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
 
         const manifestMap = (data.manifests || {}) as Record<string, unknown>
 
+        if (!localDecryptionKey) getEncryptionKey()
+
         const { useAddonStore } = await import('@/store/addonStore')
         await useAddonStore.getState().importLibrary(data as Record<string, unknown>, mode === 'merge', false, true)
 
