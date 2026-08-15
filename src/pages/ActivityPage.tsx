@@ -27,6 +27,7 @@ import { FloatingActionBar } from '@/components/ui/floating-action-bar'
 import { Grid, List, Search, Check, X, PlayCircle } from 'lucide-react'
 import { AnimatedRefreshIcon, AnimatedTrashIcon } from '@/components/ui/AnimatedIcons'
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -87,6 +88,59 @@ async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): P
         }
     }
     return !failed
+}
+
+async function deleteRealStreamWatchItems(account: Account, items: ActivityItem[]): Promise<boolean> {
+    const rsConns = (account.connections || []).filter(c => c.enabled && c.platform === 'realstream')
+    if (rsConns.length === 0) return false
+    const [{ fetchConnectionToken }, { realStreamDriverFor }] = await Promise.all([
+        import('@/api/connection'),
+        import('@/lib/drivers/factory'),
+    ])
+    const entries = items.map(i => ({
+        videoId: i.uniqueItemId || i.itemId,
+        contentId: i.itemId.startsWith('tt') ? i.itemId : undefined,
+        season: i.season ?? null,
+        episode: i.episode ?? null,
+    }))
+
+    let failed = false
+    for (const conn of rsConns) {
+        try {
+            const userId = conn.credentials?.userId || ''
+            if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
+            const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
+            const driver = realStreamDriverFor(conn)
+            await driver.deleteWatchProgress(token.accessToken, userId, entries)
+        } catch (e) {
+            if (import.meta.env.DEV) console.error('[Activity] RealStream delete failed:', e)
+            failed = true
+        }
+    }
+    return !failed
+}
+
+// Minimal ActivityItem for deep links (?detail=<id>): the watch-history
+// object is preferred when available, but on a cold load (or for films only
+// reachable via filmography/person URLs) we open with just the id and let the
+// modal's metadata fetch fill in name/poster/genres.
+function detailItemFromUrlParams(itemId: string, type: string | null): ActivityItem {
+    return {
+        id: `url:${itemId}`,
+        accountId: '',
+        accountName: '',
+        accountColorIndex: 0,
+        itemId,
+        uniqueItemId: itemId,
+        name: '',
+        type: type || 'movie',
+        poster: '',
+        timestamp: new Date(0),
+        duration: 0,
+        watched: 0,
+        progress: 0,
+        isInProgress: false,
+    }
 }
 
 export function ActivityPage() {
@@ -461,8 +515,30 @@ export function ActivityPage() {
         setDetailItem(item)
     }, [])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; hasRealStream: boolean }> => {
-        if (items.length === 0) return { failed: false, hasRealStream: false }
+    // Deep-link sync with the detail modal's URL params. Opening the modal
+    // pushes ?detail=… (handled inside ActivityDetailModal); this covers the
+    // other direction: entering /activity with ?detail=… opens the modal
+    // (deep link / refresh), and browser Back removing the params closes it.
+    // While the modal is open we never swap detailItem from here — in-modal
+    // navigation (person/episode/filmography) belongs to the modal's navStack.
+    // If two accounts watched the same itemId the first history match wins,
+    // and a cold-load fallback item is not retro-upgraded once history loads.
+    const [searchParams] = useSearchParams()
+    const detailParamId = searchParams.get('detail')
+
+    useEffect(() => {
+        if (!detailParamId) {
+            setDetailItem(null)
+            return
+        }
+        setDetailItem(prev => {
+            if (prev) return prev
+            return history.find(h => h.itemId === detailParamId) ?? detailItemFromUrlParams(detailParamId, searchParams.get('type'))
+        })
+    }, [detailParamId, history, searchParams])
+
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<boolean> => {
+        if (items.length === 0) return false
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
             (byAccount[item.accountId] ||= []).push(item)
@@ -502,9 +578,12 @@ export function ActivityPage() {
                 if (!ok) failed = true
             }
 
-            if (realstreamItems.length > 0) failed = true
+            if (realstreamItems.length > 0) {
+                const ok = await deleteRealStreamWatchItems(account, realstreamItems)
+                if (!ok) failed = true
+            }
         })
-        return { failed, hasRealStream: items.some(i => i.source === 'realstream') }
+        return failed
     }, [accountById])
 
     const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
@@ -528,15 +607,12 @@ export function ActivityPage() {
 
         const itemIdSet = new Set(itemIds)
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-        const deleteResult = await deletePlatformItems(itemsToDelete)
+        const deleteFailed = await deletePlatformItems(itemsToDelete)
 
         purgeLocalActivity(itemsToDelete, itemIds)
 
-        if (deleteResult.failed) {
-            const desc = deleteResult.hasRealStream
-                ? 'RealStream items cannot be removed remotely. Other items were removed successfully.'
-                : 'Some items could not be removed from their source platform.'
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: desc })
+        if (deleteFailed) {
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
         } else {
             toast({
                 title: 'Items Deleted',
@@ -558,9 +634,9 @@ export function ActivityPage() {
             const itemsToDelete = history.filter(item => idSet.has(item.id))
 
             purgeLocalActivity(itemsToDelete, ids)
-            const failed = await deletePlatformItems(itemsToDelete)
+            const deleteFailed = await deletePlatformItems(itemsToDelete)
 
-            if (failed) {
+            if (deleteFailed) {
                 toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
             } else {
                 toast({

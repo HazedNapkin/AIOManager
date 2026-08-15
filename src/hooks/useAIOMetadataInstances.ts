@@ -35,7 +35,7 @@ export function useAIOMetadataInstances() {
                 const parsed = parseAIOMetadataUrl(addon.transportUrl)
                 if (!parsed) continue
 
-                const storedPassword = getStoredAIOMetadataPassword(parsed.baseUrl, parsed.uuid)
+                const storedPassword = vaultLocked ? null : getStoredAIOMetadataPassword(parsed.baseUrl, parsed.uuid)
                 if (storedPassword === null) {
                     hasLocked = true
                 }

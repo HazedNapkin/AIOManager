@@ -104,7 +104,7 @@ export function createNuvioDriver(options = {}) {
             if (!res.ok) {
                 const err = new Error(`Nuvio auth failed: ${res.status}`)
                 err.status = res.status
-                err.isAuthError = res.status === 401
+                err.isAuthError = res.status === 401 || res.status === 403
                 try { err.data = await res.json() } catch { }
                 trace('nuvioServerDriver', 'authenticate.error', { status: res.status, isAuthError: err.isAuthError, timing: Date.now() - start })
                 throw err
@@ -131,7 +131,7 @@ export function createNuvioDriver(options = {}) {
                 const detail = data?.msg || data?.error_description || data?.message
                 const err = new Error(`Nuvio signup failed: ${res.status}${detail ? ' - ' + detail : ''}`)
                 err.status = res.status
-                err.isAuthError = res.status === 400 || res.status === 422
+                err.isAuthError = res.status === 400 || res.status === 403 || res.status === 422
                 err.data = data
                 throw err
             }

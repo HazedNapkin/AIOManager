@@ -174,6 +174,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
             }
 
             loadPromiseGeneration = cacheGeneration
+            let loadFailed = false
             loadPromise = (async () => {
                 const state = get()
                 const now = Date.now()
@@ -206,7 +207,15 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             const deletedEntries = savedDeleted || {}
                             const filteredItems = cached.items.filter(item =>
                                 activeAccountIds.has(item.accountId) && !deletedEntries[item.id]
-                            )
+                            ).filter(item => {
+                                const n = item.name?.trim() || ''
+                                if (!n || n === 'Unknown' || n === 'Unknown Title') return false
+                                if (item.source === 'realstream' && /^(tmdb:|movie_|series_|rs:|tv_)/i.test(n)) return false
+                                // Pre-2026-08 mapper artifact: realstream series cached without episode
+                                // identity duplicate the badged entries — drop; the next refresh re-adds them.
+                                if (item.source === 'realstream' && item.type !== 'movie' && item.episode == null) return false
+                                return true
+                            })
                             const hydratedItems = filteredItems.map(i => {
                                 const t = new Date(i.timestamp)
                                 return {
@@ -462,8 +471,9 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         const pk2 = `${account.id}:${activity.itemId}`
                                         if (existingKeys.has(pk1) || existingKeys.has(pk2)) continue
                                         seenIds.add(activity.uniqueItemId)
+                                        // pk2 (show-level) is checked only — never added — so that
+                                        // later episodes of the same show in this batch survive.
                                         existingKeys.add(pk1)
-                                        existingKeys.add(pk2)
                                         accountItems.push(activity)
                                     }
                                     const watchedActivities = await mapConcurrent(watched, 5, async (row) => {
@@ -538,9 +548,13 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     const progressActivities = await Promise.all(
                                         progress.map(async (row) => {
                                             try {
-                                                const activity = await transformNuvioProgressToActivityItem(row, account, accounts)
+                                                const rsTitle = row.title
+                                                const rsPoster = row.posterPath
+                                                const activity = await transformNuvioProgressToActivityItem(row, account, accounts, rsTitle)
                                                 activity.id = `${account.id}:realstream:${activity.uniqueItemId}`
                                                 activity.source = 'realstream'
+                                                if (rsTitle && rsTitle.trim()) activity.name = rsTitle.trim()
+                                                if (rsPoster && rsPoster.trim()) activity.poster = rsPoster.trim()
                                                 return activity
                                             } catch {
                                                 return null
@@ -554,8 +568,9 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         const rk2 = `${account.id}:${activity.itemId}`
                                         if (existingKeys.has(rk1) || existingKeys.has(rk2)) continue
                                         seenIds.add(activity.uniqueItemId)
+                                        // rk2 (show-level) is checked only — never added — so that
+                                        // later episodes of the same show in this batch survive.
                                         existingKeys.add(rk1)
-                                        existingKeys.add(rk2)
                                         accountItems.push(activity)
                                     }
                                     const realstreamActivities = progressActivities.filter((a): a is ActivityItem => a !== null)
@@ -596,7 +611,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     })().then(() => {
                         completedCount++
                         set({
-                            items: buildMergedItems(),
                             loadingProgress: { current: completedCount, total: accounts.length }
                         })
                         executing.delete(p)
@@ -619,13 +633,24 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 let entriesChanged = false
 
                 const filteredFinal = finalItems.filter(item => {
+                    const n = item.name?.trim() || ''
+                    if (!n || n === 'Unknown' || n === 'Unknown Title') return false
+                    if (item.source === 'realstream' && /^(tmdb:|movie_|series_|rs:|tv_)/i.test(n)) return false
+                    // Pre-2026-08 mapper artifact: realstream series cached without episode
+                    // identity duplicate the badged entries — drop; the next refresh re-adds them.
+                    if (item.source === 'realstream' && item.type !== 'movie' && item.episode == null) return false
                     const entry = deletedEntries[item.id]
                     if (!entry) return true
 
                     // If Stremio shows a newer _mtime than when we deleted it,
-                    // the user watched it again - remove from blacklist and show it
+                    // the user watched it again - remove from blacklist and show it.
+                    // allMtimes holds Stremio library mtimes only, so the restore check
+                    // is limited to Stremio-source items; an external item's _id collision
+                    // with a Stremio library entry must not resurrect it.
                     const itemMtimeKey = `${item.accountId}:${item.itemId}`
-                    const itemMtime = allMtimes.get(itemMtimeKey) || 0
+                    const itemMtime = item.source && item.source !== 'stremio'
+                        ? 0
+                        : (allMtimes.get(itemMtimeKey) || 0)
 
                     if (itemMtime > entry.deletedAt) {
                         delete deletedEntries[item.id]
@@ -661,6 +686,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     await localforage.setItem(CACHE_KEY, encrypted)
                 }
                 } catch (err) {
+                    loadFailed = true
                     if (import.meta.env.DEV) console.error('[LibraryCache] Fatal error during load:', err)
                 } finally {
                     set({ loading: false })
@@ -677,6 +703,13 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
             }
 
             const nextState = get()
+            if (loadFailed && loadPromiseGeneration === cacheGeneration) {
+                // Fatal load error with no pending invalidation (e.g. vault locked
+                // mid-refresh): an immediate retry fails identically and busy-loops.
+                // Bail; the next ensureLoaded call re-attempts.
+                shouldRetry = false
+                continue
+            }
             if (
                 loadPromiseGeneration !== cacheGeneration ||
                 nextState.isStale ||

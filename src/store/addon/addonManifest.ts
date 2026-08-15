@@ -12,6 +12,8 @@ import {
 import localforage from 'localforage'
 import type { AddonStore } from '../addonStore'
 import type { SavedAddonManifestUpdateResult } from '@/types/saved-addon'
+import { mapConcurrent } from '@/lib/concurrency'
+import { SAVED_ADDON_ACCOUNT_CONCURRENCY } from './addonDeployment'
 
 const UUID_FRAGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{2,}/i
 
@@ -115,15 +117,31 @@ export async function updateSavedAddonManifest(id: string): Promise<SavedAddonMa
     )
 
     if (updatedSavedAddon.syncWithInstalled && previousFingerprint !== nextFingerprint) {
-      if (import.meta.env.DEV) console.log(`[AddonStore] Outbound Sync: Propagating manifest update for "${savedAddon.name}" to all accounts.`)
       const { useAccountStore } = await import('../accountStore')
-      await useAccountStore.getState().replaceTransportUrl(
-        savedAddon.installUrl,
-        savedAddon.installUrl,
-        undefined,
-        effectiveManifest,
-        updatedSavedAddon.metadata
-      )
+      const targets = updatedSavedAddon.syncAccountIds
+      if (Array.isArray(targets) && targets.length > 0) {
+        await mapConcurrent(targets, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
+          try {
+            await useAccountStore.getState().replaceTransportUrl(
+              savedAddon.installUrl,
+              savedAddon.installUrl,
+              targetAccountId,
+              effectiveManifest,
+              updatedSavedAddon.metadata
+            )
+          } catch (error) {
+            if (import.meta.env.DEV) console.error(`[AddonStore] Manifest sync failed for account ${targetAccountId}:`, error)
+          }
+        })
+      } else if (!Array.isArray(targets)) {
+        await useAccountStore.getState().replaceTransportUrl(
+          savedAddon.installUrl,
+          savedAddon.installUrl,
+          undefined,
+          effectiveManifest,
+          updatedSavedAddon.metadata
+        )
+      }
     }
 
     return {

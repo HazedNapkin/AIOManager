@@ -23,7 +23,7 @@ The frontend is a fully client-side app. The server is optional and only needed 
 
 ### What you need
 
-- Node.js v18 or higher
+- Node.js v22.6 or higher (required for --experimental-strip-types + --env-file)
 - npm v9 or higher
 
 ### Frontend
@@ -40,27 +40,32 @@ That runs on `http://localhost:5173` by default. For a production build it's jus
 ```bash
 cd server
 npm install
-npm run dev
 ```
 
-You'll need a `.env` file in the `/server` folder. Here's what it supports:
+Then run it **from the repository root** so it picks up your `.env`:
+
+```bash
+npm run server
+```
+
+(`npm run dev` at the root runs both the frontend and the server together — that's the easiest path.)
+
+You'll need a `.env` file at the repository root (copy `.env.example`). It documents every variable; the essentials:
 
 ```env
 # Encryption key for data at rest. If you leave this blank, a random one gets
-# generated and saved to server/data/.secret on the first run. That's fine for local dev.
+# generated and saved to DATA_DIR/server_secret.key on the first run. That's fine for local dev.
 ENCRYPTION_KEY=
 
-# Port (default is 16100)
+# Port. The server's default is 1610; the sample sets 16100 so a dev instance
+# doesn't clash with a Docker install on 1610.
 PORT=16100
 
 # Where the database and secrets are stored (default is ./data)
 DATA_DIR=./data
-
-# Max concurrent proxy requests (default is 50)
-PROXY_CONCURRENCY_LIMIT=50
 ```
 
-In dev, the frontend already proxies `/api` calls to `http://localhost:16100` through Vite. You don't need to configure anything, just run both and they connect.
+In dev, the frontend proxies `/api` calls through Vite to your `PORT` (16100 in the sample). Run both and they connect.
 
 ---
 
@@ -80,7 +85,7 @@ In dev, the frontend already proxies `/api` calls to `http://localhost:16100` th
 
 1. Fork the repo and create a branch off `main`
 2. Make your changes, keep them focused on one thing
-3. Test it manually end to end, there's no automated test suite right now
+3. Run `npm run lint` and `npm run typecheck` — both must pass clean
 4. Open a PR against `main` and describe what you changed and why
 
 ### Good places to start
@@ -94,7 +99,7 @@ In dev, the frontend already proxies `/api` calls to `http://localhost:16100` th
 
 - Keep changes small and targeted. One focused PR is a lot easier to review than a large one touching everything.
 - If you're fixing a bug, describe how to reproduce it.
-- There's no enforced linter in CI right now but try to match the style of the code around whatever you're touching.
+- CI enforces `npm run lint` (zero warnings allowed) plus typechecks, and a pre-commit hook lints staged TS/TSX — run `npm run lint` locally before pushing.
 - This is maintained on a best-effort basis so reviews may take some time. I appreciate the patience.
 
 ---

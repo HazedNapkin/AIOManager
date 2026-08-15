@@ -28,10 +28,30 @@ import localforage from 'localforage'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 import type { CloneMode } from '@/lib/clone-mode'
 
-import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkReplaceUrl, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally } from './addon/addonDeployment'
+import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkReplaceUrl, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally, SAVED_ADDON_ACCOUNT_CONCURRENCY } from './addon/addonDeployment'
 import { updateSavedAddonManifest } from './addon/addonManifest'
+import { mapConcurrent } from '@/lib/concurrency'
 
 export const _outboundSyncInProgress = new Set<string>()
+
+function anyTargetAccountHasUrl(url: string, targetAccountIds: string[] | null): boolean {
+  const norm = normalizeAddonUrl(url)
+  return useAccountStore.getState().accounts.some(account =>
+    (targetAccountIds === null || targetAccountIds.includes(account.id)) &&
+    account.addons.some(addon => normalizeAddonUrl(addon.transportUrl) === norm)
+  )
+}
+
+async function persistPendingUrlSync(id: string, fromUrl: string, toUrl: string, failedAccountIds: string[]) {
+  const entry = useAddonStore.getState().library[id]
+  if (!entry) return
+  const library = {
+    ...useAddonStore.getState().library,
+    [id]: { ...entry, pendingUrlSync: { fromUrl, toUrl, failedAccountIds } },
+  }
+  useAddonStore.setState({ library })
+  await saveAddonLibrary(library)
+}
 
 const BACKOFF_STORAGE_KEY = 'aio:self-repair-backoff'
 const SELF_REPAIR_COOLDOWN_MS = 60 * 60 * 1000
@@ -109,7 +129,7 @@ export interface AddonStore {
   ) => Promise<string>
   updateSavedAddon: (
     id: string,
-    updates: Partial<Pick<SavedAddon, 'name' | 'tags' | 'installUrl' | 'syncWithInstalled' | 'manifest'>> & { profileId?: string | null; metadata?: SavedAddon['metadata'] }
+    updates: Partial<Pick<SavedAddon, 'name' | 'tags' | 'installUrl' | 'syncWithInstalled' | 'syncAccountIds' | 'manifest'>> & { profileId?: string | null; metadata?: SavedAddon['metadata'] }
   ) => Promise<void>
   updateSavedAddonMetadata: (
     id: string,
@@ -154,7 +174,8 @@ export interface AddonStore {
   bulkApplySavedAddons: (
     savedAddonIds: string[],
     accountIds: Array<{ id: string; authKey: string }>,
-    allowProtected?: boolean
+    allowProtected?: boolean,
+    urlOverrides?: Record<string, string>
   ) => Promise<BulkResult>
   bulkApplyTag: (
     tag: string,
@@ -508,15 +529,20 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       if (updates.syncWithInstalled !== undefined) {
         updatedSavedAddon.syncWithInstalled = updates.syncWithInstalled
       }
+      if (updates.syncAccountIds !== undefined) {
+        updatedSavedAddon.syncAccountIds = updates.syncAccountIds
+      }
+
+      const syncTargets = (target: SavedAddon) => {
+        const ids = target.syncAccountIds
+        // Tri-state: an explicit [] means "sync to NO accounts" (routed to the '__none__' branch
+        // below); null/undefined means "no explicit targeting" = ALL accounts. Do NOT change this
+        // to a `length > 0` check — that would silently convert "sync to nobody" into "sync to everyone".
+        return Array.isArray(ids) ? ids : null
+      }
 
       if (updates.manifest !== undefined) {
         updatedSavedAddon.manifest = updates.manifest
-      }
-
-      if (updates.installUrl && updates.installUrl !== savedAddon.installUrl && (updates.syncWithInstalled ?? savedAddon.syncWithInstalled)) {
-        if (import.meta.env.DEV) console.log(`[AddonStore] Outbound Sync: Updating all accounts for "${savedAddon.name}" due to library URL change.`)
-        await get().replaceTransportUrlUniversally(id, savedAddon.installUrl, updates.installUrl)
-        return
       }
 
       if (updates.metadata !== undefined) {
@@ -526,21 +552,99 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         }
       }
 
+      const syncEnabled = updates.syncWithInstalled ?? savedAddon.syncWithInstalled
+      const urlChanged = Boolean(updates.installUrl) && updates.installUrl !== savedAddon.installUrl
+      let retryFromUrl: string | null = null
+      if (updates.installUrl && !urlChanged && savedAddon.pendingUrlSync && savedAddon.pendingUrlSync.toUrl === updates.installUrl) {
+        if (anyTargetAccountHasUrl(savedAddon.pendingUrlSync.fromUrl, syncTargets(updatedSavedAddon))) {
+          retryFromUrl = savedAddon.pendingUrlSync.fromUrl
+        } else {
+          delete updatedSavedAddon.pendingUrlSync
+        }
+      }
+
+      if (updates.installUrl && syncEnabled && (urlChanged || retryFromUrl !== null)) {
+        const fromUrl = urlChanged ? savedAddon.installUrl : (retryFromUrl as string)
+        const newUrl = updates.installUrl
+
+        const descriptor = await fetchAddonManifest(newUrl, 'System-Check')
+
+        updatedSavedAddon.installUrl = newUrl
+        updatedSavedAddon.updatedAt = new Date()
+        delete updatedSavedAddon.pendingUrlSync
+        const library = { ...get().library, [id]: updatedSavedAddon }
+        set({ library })
+        if (updates.syncWithInstalled !== undefined) {
+          await saveAddonLibrary(library)
+        } else {
+          _saveLibraryDebounced(get)
+        }
+        triggerSync()
+
+        const targets = syncTargets(updatedSavedAddon)
+        const failedTargets: Array<{ accountId: string; error: string }> = []
+
+        if (targets && targets.length > 0) {
+          await mapConcurrent(targets, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
+            try {
+              await get().replaceTransportUrlUniversally(id, fromUrl, newUrl, targetAccountId, descriptor)
+            } catch (error) {
+              failedTargets.push({ accountId: targetAccountId, error: error instanceof Error ? error.message : 'Unknown error' })
+            }
+          })
+        } else if (targets) {
+          await get().replaceTransportUrlUniversally(id, fromUrl, newUrl, '__none__', descriptor)
+        } else {
+          try {
+            await get().replaceTransportUrlUniversally(id, fromUrl, newUrl, undefined, descriptor)
+          } catch (error) {
+            await persistPendingUrlSync(id, fromUrl, newUrl, [])
+            throw error
+          }
+        }
+
+        if (failedTargets.length > 0) {
+          await persistPendingUrlSync(id, fromUrl, newUrl, failedTargets.map(failed => failed.accountId))
+          const accountName = (accountId: string) => useAccountStore.getState().accounts.find(a => a.id === accountId)?.name || accountId
+          const failedSummary = failedTargets.map(failed => `${accountName(failed.accountId)}: ${failed.error}`).join(', ')
+          throw new Error(`New URL applied to ${targets ? targets.length - failedTargets.length : 0} of ${targets ? targets.length : 0} sync targets. Failed (${failedTargets.length}) — ${failedSummary}. Save the same URL again to retry the failed accounts.`)
+        }
+
+        return
+      }
+
+      if (updates.installUrl) updatedSavedAddon.installUrl = updates.installUrl
       updatedSavedAddon.updatedAt = new Date()
 
       const hasMetadataChanges = updates.metadata !== undefined || (updates.name !== undefined && updates.name !== savedAddon.name)
       if ((updates.syncWithInstalled ?? savedAddon.syncWithInstalled) && hasMetadataChanges) {
         _outboundSyncInProgress.add(id)
         try {
-          if (import.meta.env.DEV) console.log(`[AddonStore] Outbound Sync: Propagating library state for "${savedAddon.name}" to all accounts.`)
           const { useAccountStore } = await import('./accountStore')
-          await useAccountStore.getState().replaceTransportUrl(
-            updatedSavedAddon.installUrl,
-            updatedSavedAddon.installUrl,
-            undefined,
-            updatedSavedAddon.manifest,
-            updatedSavedAddon.metadata
-          )
+          const targets = updatedSavedAddon.syncAccountIds
+          if (Array.isArray(targets) && targets.length > 0) {
+            await mapConcurrent(targets, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
+              try {
+                await useAccountStore.getState().replaceTransportUrl(
+                  updatedSavedAddon.installUrl,
+                  updatedSavedAddon.installUrl,
+                  targetAccountId,
+                  updatedSavedAddon.manifest,
+                  updatedSavedAddon.metadata
+                )
+              } catch (error) {
+                if (import.meta.env.DEV) console.error(`[AddonStore] Metadata sync failed for account ${targetAccountId}:`, error)
+              }
+            })
+          } else if (!Array.isArray(targets)) {
+            await useAccountStore.getState().replaceTransportUrl(
+              updatedSavedAddon.installUrl,
+              updatedSavedAddon.installUrl,
+              undefined,
+              updatedSavedAddon.manifest,
+              updatedSavedAddon.metadata
+            )
+          }
         } finally {
           _outboundSyncInProgress.delete(id)
         }
@@ -595,15 +699,31 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
       if (updatedSavedAddon.syncWithInstalled && !skipOutbound && hasChanged) {
         _outboundSyncInProgress.add(id)
         try {
-          if (import.meta.env.DEV) console.log(`[AddonStore] Outbound Sync: Propagating metadata update for "${savedAddon.name}" to all accounts.`)
           const { useAccountStore } = await import('./accountStore')
-          await useAccountStore.getState().replaceTransportUrl(
-            savedAddon.installUrl,
-            savedAddon.installUrl,
-            undefined,
-            savedAddon.manifest,
-            cleanMetadata
-          )
+          const targets = updatedSavedAddon.syncAccountIds
+          if (Array.isArray(targets) && targets.length > 0) {
+            await mapConcurrent(targets, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
+              try {
+                await useAccountStore.getState().replaceTransportUrl(
+                  savedAddon.installUrl,
+                  savedAddon.installUrl,
+                  targetAccountId,
+                  savedAddon.manifest,
+                  cleanMetadata
+                )
+              } catch (error) {
+                if (import.meta.env.DEV) console.error(`[AddonStore] Metadata sync failed for account ${targetAccountId}:`, error)
+              }
+            })
+          } else if (!Array.isArray(targets)) {
+            await useAccountStore.getState().replaceTransportUrl(
+              savedAddon.installUrl,
+              savedAddon.installUrl,
+              undefined,
+              savedAddon.manifest,
+              cleanMetadata
+            )
+          }
         } finally {
           _outboundSyncInProgress.delete(id)
         }
@@ -800,8 +920,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     await localforage.setItem('aioman:account-addons', currentStates)
   },
 
-  bulkApplySavedAddons: async (savedAddonIds, accountIds, allowProtected?) => {
-    return bulkApplySavedAddons(savedAddonIds, accountIds, allowProtected)
+  bulkApplySavedAddons: async (savedAddonIds, accountIds, allowProtected?, urlOverrides?) => {
+    return bulkApplySavedAddons(savedAddonIds, accountIds, allowProtected, urlOverrides)
   },
 
   bulkApplyTag: async (tag, accountIds) => {
@@ -1006,6 +1126,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
           ...(catalogOverrides && { catalogOverrides }),
           ...(typeof newItem.autoRestore === 'boolean' && { autoRestore: newItem.autoRestore }),
           ...(typeof newItem.syncWithInstalled === 'boolean' && { syncWithInstalled: newItem.syncWithInstalled }),
+          ...(Array.isArray(newItem.syncAccountIds) && { syncAccountIds: newItem.syncAccountIds.map(String) }),
           note: typeof newItem.note === 'string' ? newItem.note.slice(0, 10000) : undefined,
         }
         const existing = currentLibrary[newItem.id as string]

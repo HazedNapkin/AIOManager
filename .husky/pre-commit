@@ -1,0 +1,1 @@
+FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx)$' || true); [ -z "$FILES" ] && exit 0; npx eslint $FILES

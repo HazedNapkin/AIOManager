@@ -65,7 +65,7 @@ function updateActiveProfile(account: Account, updatedAddons: AddonDescriptor[])
   }
 }
 
-const SAVED_ADDON_ACCOUNT_CONCURRENCY = 5
+export const SAVED_ADDON_ACCOUNT_CONCURRENCY = 5
 
 const createEmptyMergeResult = (): MergeResult => ({
   added: [],
@@ -342,13 +342,21 @@ export async function applyTagToAccounts(
 export async function bulkApplySavedAddons(
   savedAddonIds: string[],
   accountIds: Array<{ id: string; authKey: string }>,
-  allowProtected = true
+  allowProtected = true,
+  urlOverrides?: Record<string, string>
 ): Promise<BulkResult> {
   const useAddonStore = await getStore()
   useAddonStore.setState({ loading: true, error: null })
   try {
+    const originalsById = new Map<string, SavedAddon>()
     const savedAddons = savedAddonIds
-      .map((id) => useAddonStore.getState().library[id])
+      .map((id) => {
+        const saved = useAddonStore.getState().library[id]
+        if (!saved) return null
+        originalsById.set(id, saved)
+        const override = urlOverrides?.[id]
+        return override ? { ...saved, installUrl: override } : saved
+      })
       .filter(Boolean) as SavedAddon[]
 
     if (savedAddons.length === 0) {
@@ -445,8 +453,11 @@ export async function bulkApplySavedAddons(
     })
 
     const library = { ...useAddonStore.getState().library }
-    savedAddons.forEach((savedAddon) => {
-      library[savedAddon.id] = { ...savedAddon, lastUsed: new Date() }
+    savedAddons.forEach((applied) => {
+      // Write back from the pre-override library entry so a per-install
+      // urlOverride never permanently replaces the saved installUrl.
+      const original = originalsById.get(applied.id)
+      if (original) library[applied.id] = { ...original, lastUsed: new Date() }
     })
     useAddonStore.setState({ library })
     await saveAddonLibrary(library)
@@ -1458,6 +1469,7 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
     const syncableSavedAddonByAddonId = new Map(
       savedAddons
         .filter(savedAddon => savedAddon.syncWithInstalled)
+        .filter(savedAddon => !Array.isArray(savedAddon.syncAccountIds) || savedAddon.syncAccountIds.includes(accountId))
         .map(savedAddon => [savedAddon.manifest.id, savedAddon])
     )
     const installedAddons: InstalledAddon[] = []

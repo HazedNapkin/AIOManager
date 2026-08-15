@@ -342,7 +342,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         theme, setTheme,
         customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme,
         getAllThemeOptions, isLight, logoUrl
-    }), [theme, setTheme, customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme, getAllThemeOptions, isLight])
+    }), [theme, setTheme, customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme, getAllThemeOptions, isLight, logoUrl])
 
     return (
         <ThemeContext.Provider value={contextValue}>

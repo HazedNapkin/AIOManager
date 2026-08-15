@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Tv, Play, Calendar, Clock, Star } from 'lucide-react'
+import { Tv, Play, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { fetchSeasonEpisodes, fetchSeasonsList, proxyFetch, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
@@ -10,23 +10,34 @@ interface SeasonBrowserProps {
     activeItem: DetailItem | null
     isLight: boolean
     loading: boolean
+    onEpisodeClick?: (data: {
+        episodeNumber: number
+        episodeName: string
+        episodeOverview?: string
+        airDate?: string
+        still?: string
+        seasonNumber: number
+        seriesTmdbId: number | null
+    }) => void
 }
 
-export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: SeasonBrowserProps) {
+export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEpisodeClick }: SeasonBrowserProps) {
     const [seasons, setSeasons] = useState<SeasonInfo[]>([])
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null)
     const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
     const [episodesLoading, setEpisodesLoading] = useState(false)
-    const [expandedEpisode, setExpandedEpisode] = useState<number | null>(null)
     const [cinemetaSeasons, setCinemetaSeasons] = useState<SeasonInfo[]>([])
     const [cinemetaEpisodesBySeason, setCinemetaEpisodesBySeason] = useState<Map<number, EpisodeInfo[]>>(new Map())
+    const [cinemetaTmdbId, setCinemetaTmdbId] = useState<number | null>(null)
     const [tmdbSeasonsFailed, setTmdbSeasonsFailed] = useState(false)
+
+    const effectiveTmdbId = seriesTmdbId ?? cinemetaTmdbId
 
     useEffect(() => {
         setSeasons([])
         setSelectedSeason(null)
         setEpisodes([])
-        setExpandedEpisode(null)
+        setCinemetaTmdbId(null)
     }, [activeItem])
 
     useEffect(() => {
@@ -47,22 +58,17 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
             })
             .catch(() => { if (active) setTmdbSeasonsFailed(true) })
         return () => { active = false }
-    }, [seriesTmdbId])
+    }, [seriesTmdbId, activeItem?.season])
 
     useEffect(() => {
         if (!seriesTmdbId || selectedSeason === null) return
         let active = true
         const controller = new AbortController()
         setEpisodesLoading(true)
-        setExpandedEpisode(null)
         fetchSeasonEpisodes(seriesTmdbId, selectedSeason, controller.signal)
             .then(eps => {
                 if (!active || controller.signal.aborted) return
                 setEpisodes(eps)
-                const watched = activeItem?.episode
-                if (watched != null && eps.some(e => e.episodeNumber === watched)) {
-                    setExpandedEpisode(watched)
-                }
             })
             .catch(() => { })
             .finally(() => { if (active && !controller.signal.aborted) setEpisodesLoading(false) })
@@ -77,11 +83,16 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
         const isSeries = activeItem.type === 'series' || activeItem.type === 'anime' || activeItem.type === 'episode'
         if (!isSeries) return
         let active = true
+        const cinemetaController = new AbortController()
+        const cinemetaTimeout = setTimeout(() => cinemetaController.abort(), 8000)
         const fetchCinemeta = (imdb: string) => {
-            fetch(`https://v3-cinemeta.strem.io/meta/series/${encodeURIComponent(imdb)}.json`)
+            fetch(`https://cinemeta-live.strem.io/meta/series/${encodeURIComponent(imdb)}.json`, { signal: cinemetaController.signal })
                 .then(res => res.ok ? res.json() : null)
                 .then(data => {
                     if (!active || !data?.meta?.videos) return
+                    if (typeof data.meta.moviedb_id === 'number' && data.meta.moviedb_id > 0) {
+                        setCinemetaTmdbId(data.meta.moviedb_id)
+                    }
                     const vids: Array<Record<string, unknown>> = data.meta.videos
                     const bySeason = new Map<number, EpisodeInfo[]>()
                     const seasonSet = new Set<number>()
@@ -126,7 +137,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                     if (ext?.imdb_id) {
                         fetchCinemeta(ext.imdb_id)
                     } else if (activeItem.name) {
-                        fetch(`https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(activeItem.name)}.json`)
+                        fetch(`https://cinemeta-live.strem.io/catalog/search/top/search=${encodeURIComponent(activeItem.name)}.json`)
                             .then(r => r.ok ? r.json() : null)
                             .then(data => {
                                 if (!active || !data?.metas?.[0]) return
@@ -143,7 +154,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                 })
                 .catch(() => {})
         }
-        return () => { active = false }
+        return () => { active = false; clearTimeout(cinemetaTimeout); cinemetaController.abort() }
     }, [seriesTmdbId, activeItem, tmdbSeasonsFailed])
 
     useEffect(() => {
@@ -161,6 +172,19 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
     const activeEpisodes = seriesTmdbId ? episodes : (cinemetaEpisodesBySeason.get(selectedSeason ?? -1) ?? [])
     const isLoadingEps = seriesTmdbId ? episodesLoading : false
 
+    const handleEpisodeClick = (ep: EpisodeInfo) => {
+        if (!onEpisodeClick || selectedSeason === null) return
+        onEpisodeClick({
+            episodeNumber: ep.episodeNumber,
+            episodeName: ep.name,
+            episodeOverview: ep.overview,
+            airDate: ep.airDate,
+            still: ep.still,
+            seasonNumber: selectedSeason,
+            seriesTmdbId: effectiveTmdbId,
+        })
+    }
+
     return (
         <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -173,7 +197,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                     return s ? (
                         <span className="text-[11px] font-medium text-muted-foreground/60">
                             {s.episodeCount} episode{s.episodeCount === 1 ? '' : 's'}
-                            {s.airDate ? ` \u00b7 ${s.airDate.slice(0, 4)}` : ''}
+                            {s.airDate ? ` \u00b7 ${new Date(s.airDate).getFullYear()}` : ''}
                         </span>
                     ) : null
                 })()}
@@ -218,14 +242,14 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                 ) : (
                     activeEpisodes.map(ep => {
                         const isWatched = activeItem?.season === selectedSeason && activeItem?.episode === ep.episodeNumber
-                        const isExpanded = expandedEpisode === ep.episodeNumber
                         return (
                             <button
                                 key={ep.episodeNumber}
                                 type="button"
-                                onClick={() => setExpandedEpisode(isExpanded ? null : ep.episodeNumber)}
+                                onClick={() => handleEpisodeClick(ep)}
+                                title="View episode details"
                                 className={cn(
-                                    'group flex w-full gap-3 rounded-xl border p-2 text-left transition-all',
+                                    'group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',
                                     isWatched
                                         ? 'border-primary/60 bg-primary/10 shadow-sm'
                                         : 'border-border/40 bg-muted/20 hover:border-border hover:bg-muted/40'
@@ -250,24 +274,17 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                                     )}
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <p className={cn(
-                                            'line-clamp-1 text-xs font-bold leading-tight sm:text-sm',
-                                            isWatched ? 'text-primary' : 'text-foreground/90'
-                                        )}>
-                                            {ep.name}
-                                        </p>
-                                        {isWatched && (
-                                            <span className="shrink-0 rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-primary">
-                                                Watched
-                                            </span>
-                                        )}
-                                    </div>
+                                    <p className={cn(
+                                        'line-clamp-1 text-xs font-bold leading-tight sm:text-sm',
+                                        isWatched ? 'text-primary' : 'text-foreground/90'
+                                    )}>
+                                        {ep.name}
+                                    </p>
                                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground/70">
                                         {ep.airDate && (
                                             <span className="inline-flex items-center gap-0.5">
                                                 <Calendar className="h-3 w-3" />
-                                                {ep.airDate}
+                                                {new Date(ep.airDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                                             </span>
                                         )}
                                         {ep.runtime ? (
@@ -283,12 +300,8 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading }: Se
                                             </span>
                                         )}
                                     </div>
-                                    {isExpanded && ep.overview && (
-                                        <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                                            {ep.overview}
-                                        </p>
-                                    )}
                                 </div>
+                                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
                             </button>
                         )
                     })

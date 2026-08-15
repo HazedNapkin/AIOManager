@@ -100,5 +100,5 @@ export function getPendingFetch(url: string): Promise<AddonDescriptor> | null {
 
 export function setPendingFetch(url: string, promise: Promise<AddonDescriptor>): void {
     pendingFetches.set(url.toLowerCase(), promise)
-    promise.finally(() => pendingFetches.delete(url.toLowerCase()))
+    promise.catch(() => {}).finally(() => pendingFetches.delete(url.toLowerCase()))
 }

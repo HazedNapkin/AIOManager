@@ -10,16 +10,31 @@ import {
 } from '@/components/ui/select'
 import { mapConcurrent } from '@/lib/concurrency'
 import type { CloneMode } from '@/lib/clone-mode'
-import { cn, getAddonGroupKey, getCanonicalAddonUrl, normalizeAddonUrl } from '@/lib/utils'
+import { cn, getAddonGroupKey } from '@/lib/utils'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getStremioAuthKey } from '@/store/accountStore'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { useProfileStore } from '@/store/profileStore'
 import { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
-import type { BulkResult, MergeResult, SavedAddon } from '@/types/saved-addon'
+import type { BulkResult } from '@/types/saved-addon'
+import {
+  BULK_ACTION_GROUPS,
+  BULK_ACTION_OPTIONS,
+  buildDefaultBulkPreview,
+  getAccountName,
+  getBulkActionDefinition,
+  getReceiptLabels,
+  type BatchPreview,
+  type BulkAction,
+  type BulkAccountTarget,
+  type BulkExecuteContext,
+  type BulkPreviewContext,
+  type PreviewAccountRow,
+  type PreviewStat,
+} from './bulk-actions/registry'
 import { AccountAvatar } from './AccountAvatar'
-import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Eye, EyeOff, Globe, GripVertical, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldAlert, ShieldCheck, Trash2, Zap, UserMinus, FileDown, Search, Tags, Wand2, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldCheck, Trash2, Search, Tags, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
@@ -32,121 +47,11 @@ interface BatchOperationsDialogProps {
   onClose: () => void
 }
 
-function escapeReplaceRegExp(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function replaceUrlFragment(url: string, find: string, replace: string) {
-  return url.replace(new RegExp(escapeReplaceRegExp(find), 'gi'), replace)
-}
-
-type BulkAction =
-  | 'install-from-library'
-  | 'add-saved-addons'
-  | 'install-from-url'
-  | 'clone-account'
-  | 'update-addons'
-  | 'reinstall-all'
-  | 'protect-all'
-  | 'unprotect-all'
-  | 'hide-configure-all'
-  | 'show-configure-all'
-  | 'remove-addons'
-  | 'remove-by-tag'
-  | 'replace-url'
-  | 'sync-order'
-
-type BulkAccountTarget = {
-  id: string
-  authKey: string
-}
-
 type BulkProgress = {
   status: 'running' | 'cancelling' | 'cancelled' | 'complete'
   current: number
   total: number
   accountName?: string
-}
-
-const ACTION_TITLES: Record<BulkAction, string> = {
-  'install-from-library': 'Install from Library',
-  'add-saved-addons': 'Install Saved Add-ons',
-  'install-from-url': 'Install from URLs',
-  'clone-account': 'Mirror from Account',
-  'sync-order': 'Sync Addon Order',
-  'update-addons': 'Update Add-ons',
-  'remove-by-tag': 'Remove by Tags',
-  'reinstall-all': 'Update All',
-  'remove-addons': 'Remove Add-ons',
-  'replace-url': 'Find & Replace URL',
-  'protect-all': 'Protect All',
-  'unprotect-all': 'Unprotect All',
-  'hide-configure-all': 'Hide Configure All',
-  'show-configure-all': 'Show Configure All'
-}
-
-const ACTION_DESCRIPTIONS: Record<BulkAction, string> = {
-  'install-from-library': 'Add saved add-ons from a profile or tag.',
-  'add-saved-addons': 'Choose saved add-ons and add them to the selected accounts.',
-  'install-from-url': 'Paste add-on links and add them to the selected accounts.',
-  'clone-account': 'Copy add-ons from one account to the selected accounts.',
-  'sync-order': 'Make selected accounts use the same add-on order.',
-  'update-addons': 'Check selected add-ons and use the newest copy available.',
-  'remove-by-tag': 'Remove add-ons that use a saved-library tag.',
-  'reinstall-all': 'Check every add-on and use the newest copy available.',
-  'remove-addons': 'Choose installed add-ons to remove from selected accounts.',
-  'replace-url': 'Swap a URL fragment (like a domain) across the selected accounts.',
-  'protect-all': 'Lock every add-on so tag cleanup leaves them alone.',
-  'unprotect-all': 'Unlock every add-on so tag cleanup can remove them again.',
-  'hide-configure-all': 'Hide the configure button on every add-on across selected accounts.',
-  'show-configure-all': 'Show the configure button on every add-on across selected accounts.'
-}
-
-const ACTION_GROUPS: Array<{ label: string; actions: BulkAction[] }> = [
-  { label: 'Install', actions: ['install-from-library', 'add-saved-addons', 'install-from-url'] },
-  { label: 'Sync', actions: ['clone-account', 'sync-order'] },
-  { label: 'Manage', actions: ['update-addons', 'replace-url', 'remove-by-tag', 'reinstall-all', 'remove-addons'] },
-  { label: 'Protection', actions: ['protect-all', 'unprotect-all'] },
-  { label: 'Configure', actions: ['hide-configure-all', 'show-configure-all'] }
-]
-const ACTION_OPTIONS = ACTION_GROUPS.flatMap(group => group.actions)
-
-const DANGER_ACTIONS = new Set<BulkAction>(['remove-addons', 'remove-by-tag'])
-const WARNING_ACTIONS = new Set<BulkAction>(['clone-account', 'reinstall-all', 'unprotect-all', 'replace-url'])
-
-type PreviewTone = 'muted' | 'success' | 'warning' | 'destructive'
-
-type PreviewStat = {
-  label: string
-  value: string | number
-  detail?: string
-  tone?: PreviewTone
-}
-
-type PreviewAccountRow = {
-  id: string
-  name: string
-  detail: string
-  tone?: PreviewTone
-}
-
-type PreviewAddon = {
-  id: string
-  name: string
-  logo?: string
-  detail: string
-  tone?: PreviewTone
-}
-
-type BatchPreview = {
-  title: string
-  description: string
-  targetCount: number
-  stats: PreviewStat[]
-  addons: PreviewAddon[]
-  rows: PreviewAccountRow[]
-  notes: string[]
-  tone: PreviewTone
 }
 
 type ResultSummary = {
@@ -156,232 +61,6 @@ type ResultSummary = {
   skipped: number
   protected: number
   rows: PreviewAccountRow[]
-}
-
-function getReceiptLabels(action?: BulkAction) {
-  if (action === 'protect-all') {
-    return {
-      added: 'added',
-      updated: 'locked',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'already locked',
-      protectedIsWarning: false,
-    }
-  }
-
-  if (action === 'unprotect-all') {
-    return {
-      added: 'added',
-      updated: 'unlocked',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'already unlocked',
-      protectedIsWarning: false,
-    }
-  }
-
-  if (action === 'hide-configure-all') {
-    return {
-      added: 'added',
-      updated: 'hidden',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'already hidden',
-      protectedIsWarning: false,
-    }
-  }
-
-  if (action === 'show-configure-all') {
-    return {
-      added: 'added',
-      updated: 'shown',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'already visible',
-      protectedIsWarning: false,
-    }
-  }
-
-  if (action === 'clone-account') {
-    return {
-      added: 'copied',
-      updated: 'matched',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'left alone',
-      protectedIsWarning: true,
-    }
-  }
-
-  if (action === 'sync-order') {
-    return {
-      added: 'added',
-      updated: 'moved',
-      removed: 'removed',
-      skipped: 'skipped',
-      protected: 'already in place',
-      protectedIsWarning: false,
-    }
-  }
-
-  return {
-    added: 'added',
-    updated: 'updated',
-    removed: 'removed',
-    skipped: 'skipped',
-    protected: 'left alone',
-    protectedIsWarning: true,
-  }
-}
-
-function getAccountName(account?: Account) {
-  return account?.name || account?.email || (account?.id ? `${account.id.substring(0, 8)}...` : 'Unknown account')
-}
-
-function getAddonDisplayName(addon: AddonDescriptor) {
-  return addon.metadata?.customName || addon.manifest?.name || 'Add-on'
-}
-
-function savedAddonToPreview(addon: SavedAddon, detail: string, tone: PreviewTone = 'success'): PreviewAddon {
-  return {
-    id: addon.id,
-    name: addon.name || addon.manifest.name || 'Saved add-on',
-    logo: addon.metadata?.customLogo || addon.manifest.logo,
-    detail,
-    tone,
-  }
-}
-
-function descriptorToPreview(addon: AddonDescriptor, detail: string, tone: PreviewTone = 'success'): PreviewAddon {
-  return {
-    id: normalizeAddonUrl(addon.transportUrl) || addon.manifest?.id || getAddonDisplayName(addon),
-    name: getAddonDisplayName(addon),
-    logo: addon.metadata?.customLogo || addon.manifest?.logo,
-    detail,
-    tone,
-  }
-}
-
-function linkToPreview(url: string): PreviewAddon {
-  let name = 'Pasted link'
-  try {
-    const normalized = normalizeAddonUrl(url)
-    const parsed = new URL(normalized.startsWith('http') ? normalized : `https://${normalized}`)
-    name = parsed.hostname.replace(/^www\./, '')
-  } catch {
-    name = url.replace(/^https?:\/\//, '').slice(0, 32) || 'Pasted link'
-  }
-
-  return {
-    id: url,
-    name,
-    detail: 'Will check',
-    tone: 'success',
-  }
-}
-
-function uniquePreviewAddons(addons: PreviewAddon[]) {
-  const seen = new Set<string>()
-  const unique: PreviewAddon[] = []
-
-  for (const addon of addons) {
-    const key = addon.id || addon.name
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(addon)
-  }
-
-  return unique
-}
-
-function countByUrl(account: Account, urls: string[]) {
-  if (urls.length === 0) return 0
-  const targetUrls = new Set(urls.map(url => normalizeAddonUrl(url)).filter(Boolean))
-  return account.addons.reduce((count, addon) => (
-    targetUrls.has(normalizeAddonUrl(addon.transportUrl)) ? count + 1 : count
-  ), 0)
-}
-
-function countByCanonicalUrl(account: Account, urls: string[]) {
-  if (urls.length === 0) return 0
-  const targetUrls = new Set(urls.map(url => getCanonicalAddonUrl(url)).filter(Boolean))
-  return account.addons.reduce((count, addon) => (
-    targetUrls.has(getCanonicalAddonUrl(addon.transportUrl)) ? count + 1 : count
-  ), 0)
-}
-
-function countProtectedMatches(account: Account, urls: string[]) {
-  if (urls.length === 0) return 0
-  const targetUrls = new Set(urls.map(url => normalizeAddonUrl(url)).filter(Boolean))
-  return account.addons.reduce((count, addon) => {
-    const matches = targetUrls.has(normalizeAddonUrl(addon.transportUrl))
-    return matches && addon.flags?.protected ? count + 1 : count
-  }, 0)
-}
-
-function countProtectedCanonicalMatches(account: Account, urls: string[]) {
-  if (urls.length === 0) return 0
-  const targetUrls = new Set(urls.map(url => getCanonicalAddonUrl(url)).filter(Boolean))
-  return account.addons.reduce((count, addon) => {
-    const matches = targetUrls.has(getCanonicalAddonUrl(addon.transportUrl))
-    return matches && addon.flags?.protected ? count + 1 : count
-  }, 0)
-}
-
-function createPickFirstPreview(title: string, description: string, targetCount: number, tone: PreviewTone = 'muted'): BatchPreview {
-  return {
-    title,
-    description,
-    targetCount,
-    tone,
-    stats: [],
-    addons: [],
-    rows: [],
-    notes: [],
-  }
-}
-
-function createProtectionMergeResult(account: Account | undefined, isProtected: boolean): MergeResult {
-  const addons = account?.addons ?? []
-  const changed = addons.filter(addon => Boolean(addon.flags?.protected) !== isProtected)
-  const unchanged = addons.filter(addon => Boolean(addon.flags?.protected) === isProtected)
-
-  return {
-    added: [],
-    updated: changed.map((addon) => ({
-      addonId: addon.manifest.id,
-      oldUrl: '',
-      newUrl: addon.transportUrl,
-    })),
-    removed: [],
-    skipped: [],
-    protected: unchanged.map((addon) => ({
-      addonId: addon.manifest.id,
-      name: getAddonDisplayName(addon),
-    })),
-  }
-}
-
-function createHideConfigureMergeResult(account: Account | undefined, hideConfigure: boolean): MergeResult {
-  const addons = account?.addons ?? []
-  const changed = addons.filter(addon => Boolean(addon.metadata?.hideConfigure) !== hideConfigure)
-  const unchanged = addons.filter(addon => Boolean(addon.metadata?.hideConfigure) === hideConfigure)
-
-  return {
-    added: [],
-    updated: changed.map((addon) => ({
-      addonId: addon.manifest.id,
-      oldUrl: '',
-      newUrl: addon.transportUrl,
-    })),
-    removed: [],
-    skipped: [],
-    protected: unchanged.map((addon) => ({
-      addonId: addon.manifest.id,
-      name: getAddonDisplayName(addon),
-    })),
-  }
 }
 
 function summarizeResult(result: BulkResult, accounts: Account[], action?: BulkAction): ResultSummary {
@@ -610,41 +289,6 @@ function ResultReceipt({ result, accounts, action }: { result: BulkResult; accou
   )
 }
 
-function getActionIcon(action: BulkAction, className = 'h-4 w-4') {
-  switch (action) {
-    case 'install-from-library':
-      return <Library className={className} />
-    case 'add-saved-addons':
-      return <PlusCircle className={className} />
-    case 'install-from-url':
-      return <Globe className={className} />
-    case 'clone-account':
-      return <Copy className={className} />
-    case 'sync-order':
-      return <GripVertical className={className} />
-    case 'update-addons':
-      return <FileDown className={className} />
-    case 'remove-by-tag':
-      return <UserMinus className={className} />
-    case 'reinstall-all':
-      return <Zap className={className} />
-    case 'remove-addons':
-      return <Trash2 className={className} />
-    case 'replace-url':
-      return <Wand2 className={className} />
-    case 'protect-all':
-      return <ShieldCheck className={className} />
-    case 'unprotect-all':
-      return <ShieldAlert className={className} />
-    case 'hide-configure-all':
-      return <EyeOff className={className} />
-    case 'show-configure-all':
-      return <Eye className={className} />
-    default:
-      return <LayoutGrid className={className} />
-  }
-}
-
 export function BatchOperationsDialog({
   selectedAccounts,
   allAccounts = [],
@@ -705,8 +349,10 @@ export function BatchOperationsDialog({
   const [progress, setProgress] = useState<BulkProgress | null>(null)
   const cancelRequestedRef = useRef(false)
   const isExecuting = progress?.status === 'running' || progress?.status === 'cancelling'
-  const selectedActionIndex = ACTION_OPTIONS.indexOf(action)
-  const activeAction = ACTION_OPTIONS[activeActionIndex] ?? action
+  const actionDefinition = getBulkActionDefinition(action)
+  const ActionIcon = actionDefinition.icon
+  const selectedActionIndex = BULK_ACTION_OPTIONS.indexOf(action)
+  const activeAction = BULK_ACTION_OPTIONS[activeActionIndex] ?? action
   const actionMenuId = 'batch-action-menu'
   const getActionOptionId = (item: BulkAction) => `batch-action-option-${item}`
 
@@ -747,7 +393,7 @@ export function BatchOperationsDialog({
   const handleActionMenuKeyDown = (e: ReactKeyboardEvent<HTMLElement>) => {
     const moveActive = (nextIndex: number) => {
       setActionMenuOpen(true)
-      setActiveActionIndex((nextIndex + ACTION_OPTIONS.length) % ACTION_OPTIONS.length)
+      setActiveActionIndex((nextIndex + BULK_ACTION_OPTIONS.length) % BULK_ACTION_OPTIONS.length)
     }
 
     switch (e.key) {
@@ -765,7 +411,7 @@ export function BatchOperationsDialog({
         break
       case 'End':
         e.preventDefault()
-        moveActive(ACTION_OPTIONS.length - 1)
+        moveActive(BULK_ACTION_OPTIONS.length - 1)
         break
       case 'Enter':
       case ' ':
@@ -886,499 +532,34 @@ export function BatchOperationsDialog({
   }, [action, selectedAccounts, sourceAccountId])
 
   const batchPreview = useMemo<BatchPreview>(() => {
-    const targetCount = effectiveTargetAccounts.length
-    const notes = ['This is an estimate. AIOManager checks the account again before making changes.']
-    const totalTargetAddons = effectiveTargetAccounts.reduce((total, account) => total + account.addons.length, 0)
-    const getInstalledPreviewAddons = (urls: string[], detail: string, tone: PreviewTone, mode: 'url' | 'canonical' = 'url') => {
-      if (urls.length === 0) return []
-      const targets = new Set(urls.map(url => mode === 'canonical'
-        ? getCanonicalAddonUrl(url)
-        : normalizeAddonUrl(url)
-      ).filter(Boolean))
-
-      return uniquePreviewAddons(
-        allAddonsRaw
-          .filter(item => targets.has(mode === 'canonical'
-            ? getCanonicalAddonUrl(item.addon.transportUrl)
-            : normalizeAddonUrl(item.addon.transportUrl)
-          ))
-          .map(item => descriptorToPreview(item.addon, detail, tone))
-      )
+    const previewCtx: BulkPreviewContext = {
+      targetAccounts: effectiveTargetAccounts,
+      totalTargetAddons: effectiveTargetAccounts.reduce((total, account) => total + account.addons.length, 0),
+      allAddonsRaw,
+      installGroupAddons,
+      selectedSavedAddons: selectedSavedAddonsForPreview,
+      urlEntries,
+      sourceAccount,
+      overwriteClone,
+      cloneMode,
+      selectedAddonIds,
+      selectedUpdateAddonIds,
+      selectedBulkTag,
+      libraryAddons: libraryArray,
+      replaceFindText,
+      replaceWithText,
+      installMode,
+      selectedInstallProfileId,
+      selectedInstallTagName,
+      profiles,
     }
 
-    const buildInstallPreview = (addons: typeof libraryArray, title: string, emptyText: string): BatchPreview => {
-      const installUrls = addons.map(addon => addon.installUrl)
-      if (installUrls.length === 0) {
-        return createPickFirstPreview(title, emptyText, targetCount)
-      }
-
-      let updates = 0
-      let installs = 0
-      const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-        const existing = countByUrl(account, installUrls)
-        const missing = Math.max(0, installUrls.length - existing)
-        updates += existing
-        installs += missing
-        return {
-          id: account.id,
-          name: getAccountName(account),
-          detail: `${missing} to add, ${existing} to update`,
-          tone: missing > 0 ? 'success' : 'muted',
-        }
-      })
-
-      return {
-        title,
-        description: `${addons.length} add-on${addons.length !== 1 ? 's' : ''} will be added where missing and updated where already installed.`,
-        targetCount,
-        tone: 'success',
-        stats: [
-          { label: 'Picked', value: addons.length },
-          { label: 'Will add', value: installs, tone: installs > 0 ? 'success' : 'muted' },
-          { label: 'Will update', value: updates, tone: updates > 0 ? 'success' : 'muted' },
-          { label: 'Accounts', value: targetCount },
-        ],
-        addons: addons.map(addon => savedAddonToPreview(addon, 'Will add/update')),
-        rows,
-        notes,
-      }
-    }
-
-    switch (action) {
-      case 'install-from-library': {
-        const profileName = selectedInstallProfileId === 'unassigned'
-          ? 'Unassigned'
-          : profiles.find(profile => profile.id === selectedInstallProfileId)?.name
-        const groupName = installMode === 'profile'
-          ? (profileName || 'Select a profile')
-          : (selectedInstallTagName || 'Select a tag')
-        return buildInstallPreview(
-          installGroupAddons,
-          installGroupAddons.length > 0 ? `Add add-ons from ${groupName}` : 'Pick a group first',
-          installMode === 'profile' ? 'Pick a library profile first.' : 'Pick a tag first.'
-        )
-      }
-
-      case 'add-saved-addons':
-        return buildInstallPreview(
-          selectedSavedAddonsForPreview,
-          selectedSavedAddonsForPreview.length > 0 ? 'Add selected saved add-ons' : 'Pick saved add-ons first',
-          'Choose one or more saved add-ons. Nothing will change until you run it.'
-        )
-
-      case 'install-from-url': {
-        if (urlEntries.length === 0) {
-          return createPickFirstPreview('Paste add-on links first', 'Paste one add-on link per line. Nothing will change until you run it.', targetCount)
-        }
-
-        let updates = 0
-        let installs = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const existing = countByUrl(account, urlEntries)
-          const missing = Math.max(0, urlEntries.length - existing)
-          updates += existing
-          installs += missing
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: `${missing} to add, ${existing} to update`,
-            tone: missing > 0 ? 'success' : 'muted',
-          }
-        })
-
-        return {
-          title: 'Add pasted links',
-          description: `${urlEntries.length} link${urlEntries.length !== 1 ? 's' : ''} will be checked, then added where missing and updated where already installed.`,
-          targetCount,
-          tone: 'success',
-          stats: [
-            { label: 'Links', value: urlEntries.length },
-            { label: 'Will add', value: installs, tone: installs > 0 ? 'success' : 'muted' },
-            { label: 'Will update', value: updates, tone: updates > 0 ? 'success' : 'muted' },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: urlEntries.map(url => ({ ...linkToPreview(url), detail: 'Will add/update' })),
-          rows,
-          notes: [...notes, 'If a link is broken, it will be skipped and shown in the result.'],
-        }
-      }
-
-      case 'clone-account': {
-        if (!sourceAccount) {
-          return createPickFirstPreview('Pick an account to copy from', 'Choose the account you want to use as the source. Nothing will change until you run it.', targetCount)
-        }
-
-        const sourceAddons = sourceAccount?.addons ?? []
-        const sourceUrls = sourceAddons.map(addon => addon.transportUrl)
-        const sourceUrlSet = new Set(sourceUrls.map(url => normalizeAddonUrl(url)))
-        const effectiveOverwrite = overwriteClone && cloneMode === 'full-mirror'
-        const modeNoun = cloneMode === 'addons-only'
-          ? 'add-ons only'
-          : cloneMode === 'addons-settings'
-            ? 'add-ons with settings'
-            : 'a full mirror'
-        const modeDetail = cloneMode === 'addons-only'
-          ? 'Only add-on links are installed. No settings, protection, or custom branding are carried over.'
-          : cloneMode === 'addons-settings'
-            ? 'Protection state and configure-button visibility are copied. Custom names, logos, and overrides stay untouched.'
-            : 'Custom names, logos, catalog overrides, and notes are all copied.'
-        const modeStatLabel = cloneMode === 'addons-only'
-          ? 'Addons'
-          : cloneMode === 'addons-settings'
-            ? 'Addons + Set'
-            : 'Mirror'
-        let missingInstalls = 0
-        let removed = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const existing = countByUrl(account, sourceUrls)
-          const missing = Math.max(0, sourceAddons.length - existing)
-          const targetOnly = effectiveOverwrite
-            ? account.addons.filter(addon => !sourceUrlSet.has(normalizeAddonUrl(addon.transportUrl))).length
-            : 0
-          missingInstalls += missing
-          removed += targetOnly
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: effectiveOverwrite
-              ? `${sourceAddons.length} after copy, ${targetOnly} may be removed`
-              : `${missing} to add, current add-ons stay`,
-            tone: effectiveOverwrite && targetOnly > 0 ? 'warning' : 'success',
-          }
-        })
-
-        return {
-          title: effectiveOverwrite
-            ? `Make accounts match ${getAccountName(sourceAccount)}`
-            : `Copy ${modeNoun} from ${getAccountName(sourceAccount)}`,
-          description: effectiveOverwrite
-            ? 'Accounts will be changed to match the source account.'
-            : modeDetail,
-          targetCount,
-          tone: effectiveOverwrite ? 'warning' : 'success',
-          stats: [
-            { label: 'Source add-ons', value: sourceAddons.length },
-            { label: effectiveOverwrite ? 'May remove' : 'Will add', value: effectiveOverwrite ? removed : missingInstalls, tone: effectiveOverwrite && removed > 0 ? 'warning' : 'success' },
-            { label: 'Mode', value: modeStatLabel },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: sourceAddons.map(addon => descriptorToPreview(addon, effectiveOverwrite ? 'Will copy' : 'Will add')),
-          rows,
-          notes: effectiveOverwrite
-            ? [...notes, 'Matching can remove add-ons that only exist on the selected accounts.']
-            : notes,
-        }
-      }
-
-      case 'sync-order': {
-        if (!sourceAccount) {
-          return createPickFirstPreview('Pick an account to match', 'Choose the account whose add-on order should be copied. Nothing will change until you run it.', targetCount)
-        }
-
-        const sourceAddons = sourceAccount?.addons ?? []
-        const sourceNormUrls = new Set(sourceAddons.map(addon => normalizeAddonUrl(addon.transportUrl)))
-        const sourceIds = new Set(sourceAddons.map(addon => addon.manifest.id).filter(Boolean))
-        const sourceNames = new Set(sourceAddons.map(addon => addon.manifest.name).filter(Boolean))
-        let matched = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const accountMatches = account.addons.filter(addon => (
-            sourceNormUrls.has(normalizeAddonUrl(addon.transportUrl)) ||
-            sourceIds.has(addon.manifest.id) ||
-            sourceNames.has(addon.manifest.name)
-          )).length
-          matched += accountMatches
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: `${accountMatches} of ${account.addons.length} can be moved`,
-            tone: accountMatches > 0 ? 'success' : 'muted',
-          }
-        })
-
-        return {
-          title: `Match the order from ${getAccountName(sourceAccount)}`,
-          description: 'Only the order changes. Extra add-ons stay at the bottom.',
-          targetCount,
-          tone: 'muted',
-          stats: [
-            { label: 'Source list', value: sourceAddons.length },
-            { label: 'Can move', value: matched, tone: matched > 0 ? 'success' : 'muted' },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: sourceAddons.map(addon => descriptorToPreview(addon, 'Order source', 'muted')),
-          rows,
-          notes,
-        }
-      }
-
-      case 'update-addons': {
-        const selectedUrls = Array.from(selectedUpdateAddonIds)
-        if (selectedUrls.length === 0) {
-          return createPickFirstPreview('Pick add-ons to update', 'Choose one or more installed add-ons. Nothing will change until you run it.', targetCount)
-        }
-
-        let refreshes = 0
-        let lockedIncluded = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const matched = countByCanonicalUrl(account, selectedUrls)
-          const protectedMatches = countProtectedCanonicalMatches(account, selectedUrls)
-          refreshes += matched
-          lockedIncluded += protectedMatches
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: protectedMatches > 0 ? `${matched} to check, ${protectedMatches} locked` : `${matched} to check`,
-            tone: matched > 0 ? 'success' : 'muted',
-          }
-        })
-
-        const stats: PreviewStat[] = [
-          { label: 'Picked', value: selectedUrls.length },
-          { label: 'Will check', value: refreshes, tone: refreshes > 0 ? 'success' : 'muted' },
-        ]
-        if (lockedIncluded > 0) {
-          stats.push({ label: 'Locked included', value: lockedIncluded, detail: 'selected by you', tone: 'warning' })
-        }
-        stats.push({ label: 'Accounts', value: targetCount })
-
-        return {
-          title: 'Update selected add-ons',
-          description: 'AIOManager will check these add-ons again and use the newest copy it finds.',
-          targetCount,
-          tone: 'success',
-          stats,
-          addons: getInstalledPreviewAddons(selectedUrls, 'Will check', 'success', 'canonical'),
-          rows,
-          notes,
-        }
-      }
-
-      case 'replace-url': {
-        if (!replaceFindText.trim()) {
-          return createPickFirstPreview('Enter text to find', 'Type the part of the URL you want to replace (like an old domain). Nothing changes until you run it.', targetCount)
-        }
-
-        const find = replaceFindText
-        const previewAddons: PreviewAddon[] = []
-        let totalChanges = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          let changes = 0
-          for (const addon of account.addons) {
-            if (!addon.transportUrl.toLowerCase().includes(find.toLowerCase())) continue
-            const newUrl = replaceUrlFragment(addon.transportUrl, find, replaceWithText)
-            if (normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(newUrl)) continue
-            changes++
-            previewAddons.push(descriptorToPreview(addon, `New: ...${newUrl.slice(-30)}`, 'success'))
-          }
-          totalChanges += changes
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: changes > 0 ? `${changes} to change` : 'No matches',
-            tone: changes > 0 ? 'success' : 'muted',
-          }
-        })
-
-        return {
-          title: `Replace "${find}" in add-on URLs`,
-          description: 'Matching add-on URLs are rewritten on the selected accounts only. Your Library is not changed.',
-          targetCount,
-          tone: 'warning',
-          stats: [
-            { label: 'Find', value: find.length > 14 ? `${find.slice(0, 14)}...` : find },
-            { label: 'Will change', value: totalChanges, tone: totalChanges > 0 ? 'success' : 'muted' },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: uniquePreviewAddons(previewAddons),
-          rows,
-          notes: [...notes, 'Each matching add-on is re-fetched at its new URL. If the new URL is unreachable, that add-on is skipped.'],
-        }
-      }
-
-      case 'remove-by-tag': {
-        if (!selectedBulkTag) {
-          return createPickFirstPreview('Pick a tag first', 'Choose a tag, then AIOManager will show what would be removed.', targetCount, 'destructive')
-        }
-
-        const taggedAddons = selectedBulkTag ? libraryArray.filter(addon => addon.tags.includes(selectedBulkTag)) : []
-        const taggedUrls = taggedAddons.map(addon => addon.installUrl)
-        let removals = 0
-        let protectedSkipped = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const matches = countByUrl(account, taggedUrls)
-          const protectedMatches = countProtectedMatches(account, taggedUrls)
-          const removable = Math.max(0, matches - protectedMatches)
-          removals += removable
-          protectedSkipped += protectedMatches
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: `${removable} to remove, ${protectedMatches} locked`,
-            tone: removable > 0 ? 'destructive' : protectedMatches > 0 ? 'warning' : 'muted',
-          }
-        })
-
-        return {
-          title: `Remove add-ons tagged ${selectedBulkTag}`,
-          description: taggedAddons.length > 0 ? `${taggedAddons.length} saved add-on${taggedAddons.length !== 1 ? 's' : ''} use this tag. Locked add-ons are left alone.` : 'No saved add-ons use this tag.',
-          targetCount,
-          tone: 'destructive',
-          stats: [
-            { label: 'With tag', value: taggedAddons.length },
-            { label: 'Will remove', value: removals, tone: removals > 0 ? 'destructive' : 'muted' },
-            { label: 'Left alone', value: protectedSkipped, tone: protectedSkipped > 0 ? 'warning' : 'muted' },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: taggedAddons.map(addon => savedAddonToPreview(addon, 'Will remove', 'destructive')),
-          rows,
-          notes,
-        }
-      }
-
-      case 'remove-addons': {
-        const selectedUrls = Array.from(selectedAddonIds)
-        if (selectedUrls.length === 0) {
-          return createPickFirstPreview('Pick add-ons to remove', 'Choose one or more installed add-ons. Nothing will change until you run it.', targetCount, 'destructive')
-        }
-
-        let removals = 0
-        let lockedIncluded = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const matches = countByUrl(account, selectedUrls)
-          const protectedMatches = countProtectedMatches(account, selectedUrls)
-          removals += matches
-          lockedIncluded += protectedMatches
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: protectedMatches > 0 ? `${matches} to remove, ${protectedMatches} locked` : `${matches} to remove`,
-            tone: matches > 0 ? 'destructive' : 'muted',
-          }
-        })
-
-        const stats: PreviewStat[] = [
-          { label: 'Picked', value: selectedUrls.length },
-          { label: 'Will remove', value: removals, tone: removals > 0 ? 'destructive' : 'muted' },
-        ]
-        if (lockedIncluded > 0) {
-          stats.push({ label: 'Locked included', value: lockedIncluded, detail: 'selected by you', tone: 'warning' })
-        }
-        stats.push({ label: 'Accounts', value: targetCount })
-
-        return {
-          title: 'Remove selected add-ons',
-          description: 'These add-ons will be removed from any selected account where they are found, including locked ones you selected.',
-          targetCount,
-          tone: 'destructive',
-          stats,
-          addons: getInstalledPreviewAddons(selectedUrls, 'Will remove', 'destructive'),
-          rows,
-          notes,
-        }
-      }
-
-      case 'reinstall-all': {
-        let refreshes = 0
-        let lockedIncluded = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const protectedCount = account.addons.filter(addon => addon.flags?.protected).length
-          const refreshCount = account.addons.length
-          refreshes += refreshCount
-          lockedIncluded += protectedCount
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: protectedCount > 0 ? `${refreshCount} to check, ${protectedCount} locked` : `${refreshCount} to check`,
-            tone: refreshCount > 0 ? 'success' : 'muted',
-          }
-        })
-
-        const stats: PreviewStat[] = [
-          { label: 'On accounts', value: totalTargetAddons },
-          { label: 'Will check', value: refreshes, tone: refreshes > 0 ? 'success' : 'muted' },
-        ]
-        if (lockedIncluded > 0) {
-          stats.push({ label: 'Locked included', value: lockedIncluded, detail: 'still checked', tone: 'warning' })
-        }
-        stats.push({ label: 'Accounts', value: targetCount })
-
-        return {
-          title: 'Update every add-on',
-          description: 'AIOManager will check every add-on on these accounts and use the newest copy it finds.',
-          targetCount,
-          tone: 'warning',
-          stats,
-          addons: uniquePreviewAddons(
-            effectiveTargetAccounts.flatMap(account => (
-              account.addons
-                .map(addon => descriptorToPreview(addon, 'Will check', 'success'))
-            ))
-          ),
-          rows,
-          notes,
-        }
-      }
-
-      case 'protect-all':
-      case 'unprotect-all': {
-        const enableProtection = action === 'protect-all'
-        let changes = 0
-        let already = 0
-        const rows: PreviewAccountRow[] = effectiveTargetAccounts.map((account) => {
-          const protectedCount = account.addons.filter(addon => addon.flags?.protected).length
-          const changeCount = enableProtection ? account.addons.length - protectedCount : protectedCount
-          const alreadyCount = account.addons.length - changeCount
-          changes += changeCount
-          already += alreadyCount
-          return {
-            id: account.id,
-            name: getAccountName(account),
-            detail: `${changeCount} change${changeCount !== 1 ? 's' : ''}, ${alreadyCount} unchanged`,
-            tone: changeCount > 0 ? 'success' : 'muted',
-          }
-        })
-
-        return {
-          title: enableProtection ? 'Lock all add-ons' : 'Unlock all add-ons',
-          description: enableProtection ? 'Locked add-ons are left alone by tag-based cleanup.' : 'Unlocked add-ons can be removed by tag-based cleanup again.',
-          targetCount,
-          tone: enableProtection ? 'success' : 'warning',
-          stats: [
-            { label: 'On accounts', value: totalTargetAddons },
-            { label: 'Will change', value: changes, tone: changes > 0 ? 'success' : 'muted' },
-            { label: 'Already okay', value: already },
-            { label: 'Accounts', value: targetCount },
-          ],
-          addons: uniquePreviewAddons(
-            effectiveTargetAccounts.flatMap(account => (
-              account.addons
-                .filter(addon => enableProtection ? !addon.flags?.protected : addon.flags?.protected)
-                .map(addon => descriptorToPreview(addon, enableProtection ? 'Will lock' : 'Will unlock', enableProtection ? 'success' : 'warning'))
-            ))
-          ),
-          rows,
-          notes,
-        }
-      }
-    }
-
-    return {
-      title: ACTION_TITLES[action],
-      description: ACTION_DESCRIPTIONS[action],
-      targetCount,
-      tone: 'muted',
-      stats: [
-        { label: 'Accounts', value: targetCount },
-        { label: 'Add-ons', value: totalTargetAddons },
-        { label: 'Will update', value: targetCount },
-        { label: 'Mode', value: 'Bulk' },
-      ],
-      addons: [],
-      rows: [],
-      notes,
-    }
+    return actionDefinition.buildPreview
+      ? actionDefinition.buildPreview(previewCtx)
+      : buildDefaultBulkPreview(action, previewCtx)
   }, [
     action,
+    actionDefinition,
     effectiveTargetAccounts,
     installGroupAddons,
     installMode,
@@ -1456,175 +637,49 @@ export function BatchOperationsDialog({
     }
 
     try {
-      let targets = accountsData
-      let runForAccount: ((target: BulkAccountTarget) => Promise<BulkResult>) | null = null
-
-      switch (action) {
-        case 'remove-by-tag': {
-          if (!selectedBulkTag) {
-            setError('Select a tag')
-            return
-          }
-          runForAccount = (target) => bulkRemoveByTag(selectedBulkTag, [target])
-          break
-        }
-
-        case 'add-saved-addons': {
-          if (selectedSavedAddonIds.size === 0) {
-            setError('Choose at least one saved add-on')
-            return
-          }
-          const addonIds = Array.from(selectedSavedAddonIds)
-          runForAccount = (target) => bulkApplySavedAddons(addonIds, [target], true)
-          break
-        }
-
-        case 'remove-addons': {
-          if (selectedAddonIds.size === 0) {
-            setError('Choose at least one add-on to remove')
-            return
-          }
-          const addonIds = Array.from(selectedAddonIds)
-          runForAccount = (target) => bulkRemoveAddons(addonIds, [target], true)
-          break
-        }
-
-        case 'update-addons': {
-          if (selectedUpdateAddonIds.size === 0) {
-            setError('Choose at least one add-on to update')
-            return
-          }
-          const addonIds = Array.from(selectedUpdateAddonIds)
-          runForAccount = (target) => bulkReinstallAddons(addonIds, [target], true)
-          break
-        }
-
-        case 'install-from-url': {
-          const urls = urlList.split('\n').map(u => u.trim()).filter(u => u.length > 0)
-          if (urls.length === 0) {
-            setError('Enter at least one URL')
-            return
-          }
-          runForAccount = (target) => bulkInstallFromUrls(urls, [target], true)
-          break
-        }
-
-        case 'replace-url': {
-          if (!replaceFindText.trim()) {
-            setError('Enter the text to find')
-            return
-          }
-          runForAccount = (target) => bulkReplaceUrl(replaceFindText, replaceWithText, [target])
-          break
-        }
-
-        case 'clone-account': {
-          if (!sourceAccountId) {
-            setError('Select a source account')
-            return
-          }
-          const sourceAccount = allAccounts.find(a => a.id === sourceAccountId)
-          if (!sourceAccount) {
-            setError('Source account not found')
-            return
-          }
-          targets = accountsData.filter(target => target.id !== sourceAccount.id)
-          runForAccount = (target) => bulkCloneAccount(
-            { id: sourceAccount.id, authKey: getStremioAuthKey(sourceAccount) },
-            [target],
-            overwriteClone && cloneMode === 'full-mirror',
-            cloneMode
-          )
-          break
-        }
-
-        case 'sync-order': {
-          if (!sourceAccountId) {
-            setError('Select a source account')
-            return
-          }
-          if (!allAccounts.find(a => a.id === sourceAccountId)) {
-            setError('Source account not found')
-            return
-          }
-          targets = accountsData.filter(target => target.id !== sourceAccountId)
-          runForAccount = (target) => bulkSyncOrder(sourceAccountId, [target])
-          break
-        }
-
-        case 'protect-all':
-          runForAccount = async (target) => {
-            const targetAccount = selectedAccounts.find(account => account.id === target.id) || allAccounts.find(account => account.id === target.id)
-            if (!targetAccount) throw new Error('Account not found')
-            await bulkProtectAddons(target.id, true)
-            return {
-              success: 1,
-              failed: 0,
-              errors: [],
-              details: [{ accountId: target.id, result: createProtectionMergeResult(targetAccount, true) }],
-            }
-          }
-          break
-
-        case 'unprotect-all':
-          runForAccount = async (target) => {
-            const targetAccount = selectedAccounts.find(account => account.id === target.id) || allAccounts.find(account => account.id === target.id)
-            if (!targetAccount) throw new Error('Account not found')
-            await bulkProtectAddons(target.id, false)
-            return {
-              success: 1,
-              failed: 0,
-              errors: [],
-              details: [{ accountId: target.id, result: createProtectionMergeResult(targetAccount, false) }],
-            }
-          }
-          break
-
-        case 'hide-configure-all':
-        case 'show-configure-all': {
-          const hide = action === 'hide-configure-all'
-          runForAccount = async (target) => {
-            const targetAccount = selectedAccounts.find(account => account.id === target.id) || allAccounts.find(account => account.id === target.id)
-            await bulkSetHideConfigure(target.id, hide)
-            return {
-              success: 1,
-              failed: 0,
-              errors: [],
-              details: [{ accountId: target.id, result: createHideConfigureMergeResult(targetAccount, hide) }],
-            }
-          }
-          break
-        }
-
-        case 'reinstall-all':
-          runForAccount = (target) => bulkReinstallAddons(['*'], [target], true)
-          break
-
-        case 'install-from-library': {
-          const libraryArray = Object.values(library)
-          let addonsToInstall: typeof libraryArray = []
-          if (installMode === 'profile' && selectedInstallProfileId) {
-            addonsToInstall = selectedInstallProfileId === 'unassigned'
-              ? libraryArray.filter(a => !a.profileId)
-              : libraryArray.filter(a => a.profileId === selectedInstallProfileId)
-          } else if (installMode === 'tag' && selectedInstallTagName) {
-            addonsToInstall = libraryArray.filter(a => a.tags.includes(selectedInstallTagName))
-          }
-
-          if (addonsToInstall.length === 0) {
-            setError('No add-ons found in the selected group')
-            return
-          }
-
-          const addonIds = addonsToInstall.map(a => a.id)
-          runForAccount = (target) => bulkApplySavedAddons(addonIds, [target], true)
-          break
-        }
+      const executeCtx: BulkExecuteContext = {
+        accountsData,
+        selectedAccounts,
+        allAccounts,
+        getStremioAuthKey,
+        selectedSavedAddonIds,
+        selectedAddonIds,
+        selectedUpdateAddonIds,
+        selectedBulkTag,
+        urlList,
+        replaceFindText,
+        replaceWithText,
+        sourceAccountId,
+        overwriteClone,
+        cloneMode,
+        installMode,
+        selectedInstallProfileId,
+        selectedInstallTagName,
+        library,
+        bulkApplySavedAddons,
+        bulkRemoveAddons,
+        bulkReinstallAddons,
+        bulkInstallFromUrls,
+        bulkReplaceUrl,
+        bulkCloneAccount,
+        bulkRemoveByTag,
+        bulkSyncOrder,
+        bulkProtectAddons,
+        bulkSetHideConfigure,
       }
 
-      if (!runForAccount) {
+      const plan = actionDefinition.buildExecutionPlan?.(executeCtx)
+
+      if (!plan) {
         throw new Error('Action failed or not implemented')
       }
+
+      if ('error' in plan) {
+        setError(plan.error)
+        return
+      }
+
+      const { targets, runForAccount } = plan
 
       if (targets.length === 0) {
         setError('No accounts to update')
@@ -1798,18 +853,18 @@ export function BatchOperationsDialog({
                 <span
                   className={cn(
                     "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border",
-                    DANGER_ACTIONS.has(action)
+                    actionDefinition.severity === 'danger'
                       ? "border-destructive/15 bg-destructive/10 text-destructive"
-                      : WARNING_ACTIONS.has(action)
+                      : actionDefinition.severity === 'warning'
                         ? "border-warning/15 bg-warning/10 text-warning"
                         : "border-primary/15 bg-primary/10 text-primary",
                   )}
                 >
-                  {getActionIcon(action)}
+                  <ActionIcon className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold">{ACTION_TITLES[action]}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{ACTION_DESCRIPTIONS[action]}</span>
+                  <span className="block text-sm font-semibold">{actionDefinition.title}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{actionDefinition.description}</span>
                 </span>
                 <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", actionMenuOpen && "rotate-180")} />
               </button>
@@ -1825,10 +880,12 @@ export function BatchOperationsDialog({
                   onKeyDown={handleActionMenuKeyDown}
                   className="mt-2 max-h-[min(52vh,26rem)] overflow-y-auto overscroll-contain rounded-2xl border border-border/40 bg-background p-1.5 shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {ACTION_GROUPS.map((group) => (
+                  {BULK_ACTION_GROUPS.map((group) => (
                     <div key={group.label} className="py-1">
                       <div className="px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</div>
                       {group.actions.map((item) => {
+                        const itemDefinition = getBulkActionDefinition(item)
+                        const ItemIcon = itemDefinition.icon
                         const selected = action === item
                         return (
                           <button
@@ -1841,7 +898,7 @@ export function BatchOperationsDialog({
                             onClick={() => {
                               selectAction(item)
                             }}
-                            onMouseEnter={() => setActiveActionIndex(ACTION_OPTIONS.indexOf(item))}
+                            onMouseEnter={() => setActiveActionIndex(BULK_ACTION_OPTIONS.indexOf(item))}
                             className={cn(
                               "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors",
                               selected
@@ -1857,19 +914,19 @@ export function BatchOperationsDialog({
                               selected
                                 ? "border-primary/20 bg-primary/15 text-primary"
                                 :
-                              DANGER_ACTIONS.has(item)
+                              itemDefinition.severity === 'danger'
                                 ? "border-destructive/15 bg-destructive/10 text-destructive"
-                                : WARNING_ACTIONS.has(item)
+                                : itemDefinition.severity === 'warning'
                                   ? "border-warning/15 bg-warning/10 text-warning"
                                   : "border-primary/15 bg-primary/10 text-primary",
                             )}
                           >
-                            {getActionIcon(item)}
+                            <ItemIcon className="h-4 w-4" />
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-semibold">{ACTION_TITLES[item]}</span>
+                            <span className="block text-sm font-semibold">{itemDefinition.title}</span>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {ACTION_DESCRIPTIONS[item]}
+                              {itemDefinition.description}
                             </span>
                           </span>
                           {selected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
@@ -1892,18 +949,18 @@ export function BatchOperationsDialog({
                 <div
                   className={cn(
                     "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border",
-                    DANGER_ACTIONS.has(action)
+                    actionDefinition.severity === 'danger'
                       ? "border-destructive/20 bg-destructive/10 text-destructive"
-                      : WARNING_ACTIONS.has(action)
+                      : actionDefinition.severity === 'warning'
                         ? "border-warning/20 bg-warning/10 text-warning"
                         : "border-primary/20 bg-primary/12 text-primary",
                   )}
                 >
-                  {getActionIcon(action, "h-5 w-5")}
+                  <ActionIcon className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
-                  <CardTitle className="text-lg leading-tight">{ACTION_TITLES[action]}</CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">{ACTION_DESCRIPTIONS[action]}</p>
+                  <CardTitle className="text-lg leading-tight">{actionDefinition.title}</CardTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">{actionDefinition.description}</p>
                 </div>
               </div>
               <span className="w-fit rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-xs font-semibold text-muted-foreground">

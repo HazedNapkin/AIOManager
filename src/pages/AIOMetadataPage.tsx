@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CopyButton } from '@/components/ui/copy-button'
 import { StatusChip } from '@/components/ui/status-chip'
@@ -14,6 +15,9 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { useAccountStore, getAccountEmail } from '@/store/accountStore'
+import { useAddonStore } from '@/store/addonStore'
+import { normalizeUrl } from '@/lib/addon-storage'
+import { useToast } from '@/hooks/use-toast'
 import {
     isAIOMetadataAddon,
     parseAIOMetadataUrl,
@@ -28,11 +32,13 @@ import {
     getSectionSummary,
     type AIOMetadataAddonInfo,
 } from '@/lib/aiometadata-utils'
+import { extractAddonParams, buildTaggedUrl, NO_SELECTION } from '@/lib/addon-params'
 import { AIOMetadataSyncTab, type TargetOption, type MissingTargetAccount } from '@/components/addons/aiometadata/AIOMetadataSyncTab'
 import { AIOMetadataActionsTab } from '@/components/addons/aiometadata/AIOMetadataActionsTab'
+import { BulkAccountPicker } from '@/components/accounts/BulkAccountPicker'
 import {
     ArrowLeft, Loader2, AlertTriangle, ExternalLink, Eye, EyeOff, Lock, Shield,
-    ArrowRightLeft, RefreshCw, Wifi, Database, Image, KeyRound, LayoutGrid, Users,
+    ArrowRightLeft, RefreshCw, Wifi, Database, Image, KeyRound, LayoutGrid, Users, Tag,
 } from 'lucide-react'
 
 type Section = 'overview' | 'config' | 'users' | 'sync'
@@ -96,6 +102,19 @@ export function AIOMetadataPage() {
     const missingAccounts: MissingTargetAccount[] = useMemo(() => accounts
         .filter(acc => acc.id !== accountId && !(acc.addons || []).some(isAIOMetadataAddon))
         .map(acc => ({ accountId: acc.id, accountName: acc.name || getAccountEmail(acc) || acc.id })), [accounts, accountId])
+
+    const sameUserAccounts = useMemo(() => accounts
+        .filter(acc => acc.id !== accountId && acc.addons.some(a => {
+            if (!isAIOMetadataAddon(a)) return false
+            const p = parseAIOMetadataUrl(a.transportUrl)
+            return p?.baseUrl === baseUrl && p.uuid === uuid
+        }))
+        .map(acc => ({
+            id: acc.id,
+            name: acc.name,
+            email: getAccountEmail(acc),
+            emoji: acc.emoji,
+        })), [accounts, accountId, baseUrl, uuid])
 
     useEffect(() => {
         if (!addon) return
@@ -242,9 +261,11 @@ export function AIOMetadataPage() {
                                     transportUrl={addon.transportUrl}
                                     configureUrl={configureUrl}
                                     accountName={accountLabel}
+                                    accountId={accountId!}
                                     status={status}
                                     targetOptions={targetOptions}
                                     missingAccounts={missingAccounts}
+                                    sameUserAccounts={sameUserAccounts}
                                 />
                             ) : (
                                 <div className="space-y-4">
@@ -408,8 +429,20 @@ function StatCard({ value, label }: { value: number; label: string }) {
     )
 }
 
+function resolveLinkedSavedAddonId(accountId: string, oldUrl: string): string | null {
+    const { accountStates, library } = useAddonStore.getState()
+    const viaAccountState = accountStates[accountId]?.installedAddons.find(
+        (installed) => installed.savedAddonId && normalizeUrl(installed.installUrl) === normalizeUrl(oldUrl)
+    )
+    if (viaAccountState?.savedAddonId && library[viaAccountState.savedAddonId]) return viaAccountState.savedAddonId
+    const viaLibraryUrl = Object.values(library).find(
+        (savedAddon) => normalizeUrl(savedAddon.installUrl) === normalizeUrl(oldUrl)
+    )
+    return viaLibraryUrl?.id ?? null
+}
+
 function SectionContent({
-    activeSection, sourceConfig, baseUrl, uuid, transportUrl, configureUrl, accountName, status, targetOptions, missingAccounts,
+    activeSection, sourceConfig, baseUrl, uuid, transportUrl, configureUrl, accountName, accountId, status, targetOptions, missingAccounts, sameUserAccounts,
 }: {
     activeSection: Section
     sourceConfig: Record<string, unknown>
@@ -418,15 +451,97 @@ function SectionContent({
     transportUrl: string
     configureUrl: string | null
     accountName: string
+    accountId: string
     status: AIOMetadataAddonInfo | null
     targetOptions: TargetOption[]
     missingAccounts: MissingTargetAccount[]
+    sameUserAccounts: { id: string; name?: string; email?: string; emoji?: string }[]
 }) {
+    const { toast } = useToast()
+    const [tagSwapping, setTagSwapping] = useState(false)
+    const [bulkTagExpanded, setBulkTagExpanded] = useState(false)
+    const [bulkTagSelected, setBulkTagSelected] = useState<Set<string>>(new Set())
     const stats = useMemo(() => getConfigStats(sourceConfig), [sourceConfig])
     const sections = useMemo(() => getConfigSections(sourceConfig), [sourceConfig])
     const objectSections = useMemo(() => sections.filter(s => s.category === 'section'), [sections])
     const toggleSections = useMemo(() => sections.filter(s => s.category === 'toggle'), [sections])
     const keySections = useMemo(() => sections.filter(s => s.category === 'key'), [sections])
+
+    const availableTags = useMemo(() => {
+        const raw = sourceConfig.tags
+        if (!Array.isArray(raw)) return []
+        return raw.map((t: unknown): string | null => {
+            if (typeof t === 'string') return t.trim() || null
+            if (t && typeof t === 'object') {
+                const obj = t as Record<string, unknown>
+                if (typeof obj.id === 'string') return obj.id
+                if (typeof obj.name === 'string') return obj.name
+            }
+            return null
+        }).filter((t): t is string => t !== null && t.length > 0)
+    }, [sourceConfig])
+
+    const currentTag = useMemo(() => extractAddonParams(transportUrl).params.tag || '', [transportUrl])
+
+    const handleTagSwap = async (value: string) => {
+        const tag = value === NO_SELECTION ? null : value
+        const newUrl = buildTaggedUrl(transportUrl, tag)
+        if (newUrl === transportUrl) return
+
+        const otherTargets: { accountId: string; oldUrl: string; newUrl: string }[] = []
+        for (const accId of bulkTagSelected) {
+            const acc = useAccountStore.getState().accounts.find(a => a.id === accId)
+            if (!acc) continue
+            const matched = acc.addons.find(a => {
+                if (!isAIOMetadataAddon(a)) return false
+                const p = parseAIOMetadataUrl(a.transportUrl)
+                return p?.baseUrl === baseUrl && p.uuid === uuid
+            })
+            if (!matched) continue
+            const theirNewUrl = buildTaggedUrl(matched.transportUrl, tag)
+            if (theirNewUrl === matched.transportUrl) continue
+            otherTargets.push({ accountId: acc.id, oldUrl: matched.transportUrl, newUrl: theirNewUrl })
+        }
+
+        setTagSwapping(true)
+        try {
+            await useAccountStore.getState().replaceTransportUrl(transportUrl, newUrl, accountId)
+            if (otherTargets.length === 0) {
+                toast({ title: 'Tag updated', description: tag ? `Filtering by "${tag}"` : 'Showing all catalogs' })
+            } else {
+                let success = 0
+                let fail = 0
+                const results = await Promise.allSettled(otherTargets.map(t =>
+                    useAccountStore.getState().replaceTransportUrl(t.oldUrl, t.newUrl, t.accountId)
+                ))
+                for (const r of results) {
+                    if (r.status === 'fulfilled') success++
+                    else fail++
+                }
+                const total = 1 + success
+                if (fail === 0) {
+                    toast({ title: 'Tag updated across accounts', description: `${tag ? `Filtering by "${tag}"` : 'Showing all catalogs'} — ${total} account${total !== 1 ? 's' : ''}` })
+                } else {
+                    toast({ title: 'Tag partially updated', description: `${total} succeeded, ${fail} failed`, variant: 'destructive' })
+                }
+                setBulkTagSelected(new Set())
+            }
+
+            // Sync the linked library entry so normalizeUrl(account URL) === normalizeUrl(library installUrl) and syncAccountState linkage survives.
+            const linkedSavedAddonId = resolveLinkedSavedAddonId(accountId, transportUrl)
+            if (linkedSavedAddonId) {
+                try {
+                    await useAddonStore.getState().updateSavedAddon(linkedSavedAddonId, { installUrl: newUrl })
+                } catch (err) {
+                    if (import.meta.env.DEV) console.warn('[AIOMetadataPage] Saved-addon library URL sync failed after tag swap:', err)
+                }
+            }
+        } catch (err) {
+            toast({ title: 'Failed to switch tag', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+        } finally {
+            setTagSwapping(false)
+        }
+    }
 
     if (activeSection === 'overview') {
         return (
@@ -461,6 +576,39 @@ function SectionContent({
                         <CopyButton value={transportUrl} variant="outline" className="h-9 w-9 shrink-0" iconSize={14} />
                     </div>
                 </div>
+
+                {availableTags.length > 0 && (
+                    <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                        <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                            <Tag className="w-3.5 h-3.5" /> Active Tag
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                            Filter which catalogs appear in the manifest. Updates the addon URL in place.
+                        </p>
+                        <Select value={currentTag || NO_SELECTION} onValueChange={handleTagSwap} disabled={tagSwapping}>
+                            <SelectTrigger className="w-full">
+                                <SelectValue placeholder="All catalogs (no tag)" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={NO_SELECTION}>All catalogs (no tag)</SelectItem>
+                                {availableTags.map(t => (
+                                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        {sameUserAccounts.length > 0 && (
+                            <BulkAccountPicker
+                                label={`Also apply to ${sameUserAccounts.length} other account${sameUserAccounts.length !== 1 ? 's' : ''}`}
+                                accounts={sameUserAccounts}
+                                expanded={bulkTagExpanded}
+                                onExpandedChange={setBulkTagExpanded}
+                                selected={bulkTagSelected}
+                                onSelectedChange={setBulkTagSelected}
+                                disabled={tagSwapping}
+                            />
+                        )}
+                    </div>
+                )}
 
                 {configureUrl && (
                     <div className="rounded-2xl border border-border/40 bg-muted/25 p-4 space-y-2">

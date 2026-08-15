@@ -472,6 +472,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     didHubMigrate = true
                                     // Dual-write: give the Stremio connection a stable id and KEEP the flat
                                     // authKey/email so v1.8.5 clients on the same cloud account still work.
+                                    // The v1.8.5 root password is deliberately NOT copied into connection
+                                    // credentials: authKey covers every active flow, and re-auth prompts
+                                    // ask for the password again.
                                     const stremioId = `${acc.id}:stremio`
                                     migrated = {
                                           ...migrated,

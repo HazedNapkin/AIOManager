@@ -31,6 +31,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+export function getSyncScopeLabel(syncAccountIds: string[] | null | undefined): string {
+  if (!syncAccountIds || syncAccountIds === null) {
+    return `All accounts`
+  }
+  if (syncAccountIds.length === 0) {
+    return `No accounts`
+  }
+  return `${syncAccountIds.length} account${syncAccountIds.length !== 1 ? 's' : ''}`
+}
+
 export function maskEmail(email: string): string {
   if (!email || !email.includes('@')) return email
   const [local, domain] = email.split('@')

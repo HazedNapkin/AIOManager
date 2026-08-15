@@ -43,10 +43,11 @@ const LOCALFORAGE_KEYS = [
     'stremio-manager:manifest-cache',
 ]
 
-export function migrateLocalStorageKeys(): void {
-    if (typeof window === 'undefined') return
-    if (localStorage.getItem(MIGRATION_KEY)) return
+export function migrateLocalStorageKeys(): boolean {
+    if (typeof window === 'undefined') return true
+    if (localStorage.getItem(MIGRATION_KEY)) return true
 
+    let allSucceeded = true
     for (const [oldKey, newKey] of Object.entries(KEY_MAP)) {
         try {
             const value = localStorage.getItem(oldKey)
@@ -54,16 +55,25 @@ export function migrateLocalStorageKeys(): void {
                 localStorage.setItem(newKey, value)
                 localStorage.removeItem(oldKey)
             }
-        } catch {}
+        } catch (error) {
+            console.warn(`Failed to migrate localStorage key ${oldKey} to ${newKey}:`, error)
+            allSucceeded = false
+        }
     }
+    
+    return allSucceeded
 }
 
 export async function migrateLocalforageKeys(): Promise<void> {
     if (typeof window === 'undefined') return
     if (localStorage.getItem(MIGRATION_KEY)) return
 
+    const localStorageSuccess = migrateLocalStorageKeys()
+    
     try {
         const { default: localforage } = await import('localforage')
+        let localforageSuccess = true
+        
         for (const oldKey of LOCALFORAGE_KEYS) {
             try {
                 const value = await localforage.getItem(oldKey)
@@ -74,9 +84,20 @@ export async function migrateLocalforageKeys(): Promise<void> {
                         await localforage.removeItem(oldKey)
                     }
                 }
-            } catch {}
+            } catch (error) {
+                console.warn(`Failed to migrate localforage key ${oldKey} to ${KEY_MAP[oldKey] || '(unknown)'}:`, error)
+                localforageSuccess = false
+            }
         }
-    } catch {}
-
-    try { localStorage.setItem(MIGRATION_KEY, '1') } catch {}
+        
+        if (localStorageSuccess && localforageSuccess) {
+            try {
+                localStorage.setItem(MIGRATION_KEY, '1')
+            } catch (error) {
+                console.warn('Failed to set migration flag:', error)
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to load localforage:', error)
+    }
 }

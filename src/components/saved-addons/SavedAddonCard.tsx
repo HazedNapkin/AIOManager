@@ -7,17 +7,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useToast } from '@/hooks/use-toast'
-import { cn, getAddonConfigureUrl, isNewerVersion, getTimeAgo } from '@/lib/utils'
-import { describeManifestChanges } from '@/lib/addon-manifest-diff'
-import { useAddonStore } from '@/store/addonStore'
+import { cn, getAddonConfigureUrl, getTimeAgo, getSyncScopeLabel } from '@/lib/utils'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
-import { AlertCircle, ArrowUpCircle, Copy, FileEdit, Link2, Loader2, MoreVertical, Pencil, Send } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, Copy, FileEdit, Layers, Link2, Loader2, MoreVertical, Pencil, Send, Tag } from 'lucide-react'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
+import { extractAddonParams } from '@/lib/addon-params'
 
-import React, { useState } from 'react'
+import React from 'react'
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import type { Account } from '@/types/account'
 import { SavedAddonDetails } from './SavedAddonDetails'
@@ -26,8 +24,8 @@ import { HighlightText } from '@/components/ui/highlight-text'
 import { Tooltip } from '@/components/ui/tooltip'
 import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
 import { SavedAddonIcon } from './SavedAddonIcon'
+import { useSavedAddonActions } from './hooks/useSavedAddonActions'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
-import type { AddonDescriptor } from '@/types/addon'
 
 interface SavedAddonCardProps {
   savedAddon: SavedAddon
@@ -58,71 +56,33 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
   highlight = '',
   manifestChange,
 }: SavedAddonCardProps) {
-  const deleteSavedAddon = useAddonStore(s => s.deleteSavedAddon)
-  const replaceTransportUrlUniversally = useAddonStore(s => s.replaceTransportUrlUniversally)
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
-  const { toast } = useToast()
-  const [showDetails, setShowDetails] = useState(false)
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [updating, setUpdating] = useState(false)
 
-  const hasVersionUpdate = latestVersion ? isNewerVersion(savedAddon.manifest.version, latestVersion) : false
-  const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
-  const hasUpdate = hasVersionUpdate || hasManifestShapeChange
-  const manifestChangeLabel = manifestChange ? describeManifestChanges(manifestChange) : ''
+  const {
+    showDetails,
+    setShowDetails,
+    showDeleteDialog,
+    setShowDeleteDialog,
+    updating,
+    hasUpdate,
+    hasVersionUpdate,
+    hasManifestShapeChange,
+    manifestChangeLabel,
+    handleConfirmDelete,
+    handleCopyUrl,
+    handleUpdate,
+    handleReplaceUrl,
+    getHealthTooltip,
+  } = useSavedAddonActions({ savedAddon, latestVersion, manifestChange, onUpdate })
 
   const handleDelete = () => {
     setShowDeleteDialog(true)
-  }
-
-  const handleConfirmDelete = async () => {
-    try {
-      await deleteSavedAddon(savedAddon.id)
-      setShowDeleteDialog(false)
-    } catch (error) {
-      if (import.meta.env.DEV) console.error('Failed to delete saved addon:', error)
-    }
-  }
-
-  const handleCopyUrl = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    navigator.clipboard.writeText(savedAddon.installUrl)
-    toast({
-      title: 'URL Copied',
-      description: 'Addon install URL copied to clipboard',
-    })
   }
 
   const handleOpenConfiguration = (e: React.MouseEvent) => {
     e.stopPropagation()
     const configUrl = getAddonConfigureUrl(savedAddon.installUrl)
     window.open(configUrl, '_blank', 'noopener,noreferrer')
-  }
-
-  const getHealthTooltip = () => {
-    if (!savedAddon.health) {
-      return 'Health not checked'
-    }
-    const status = savedAddon.health.isOnline ? 'Online' : 'Offline'
-    const error = savedAddon.health.error ? ` (${savedAddon.health.error})` : ''
-    const lastChecked = new Date(savedAddon.health.lastChecked)
-    const timeAgo = getTimeAgo(lastChecked)
-    return `${status}${error}\nLast checked: ${timeAgo}`
-  }
-
-  const handleUpdate = async (e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    if (!onUpdate) return
-    setUpdating(true)
-    try {
-      await onUpdate(savedAddon.id, savedAddon.name)
-    } finally {
-      setUpdating(false)
-    }
-  }
-
-  const handleReplaceUrl = async (descriptor: AddonDescriptor, requestedUrl: string) => {
-    return replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, descriptor.transportUrl || requestedUrl, undefined, descriptor)
   }
 
   const { isLongPressTriggered, ...longPressProps } = useLongPress(() => {
@@ -217,15 +177,26 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     )}
                   </div>
 
+                  {(() => {
+                    const { params } = extractAddonParams(savedAddon.installUrl)
+                    if (!params.tag && !params.variant) return null
+                    return (
+                      <Tooltip content={`Params: ${params.tag ? `tag=${params.tag}` : ''}${params.tag && params.variant ? ', ' : ''}${params.variant ? `v=${params.variant}` : ''}`}>
+                        <span aria-label="Has addon params" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                          {params.tag ? <Tag className="h-3 w-3" /> : <Layers className="h-3 w-3" />}
+                        </span>
+                      </Tooltip>
+                    )
+                  })()}
                   {savedAddon.syncWithInstalled && (
                     hasUpdate ? (
-                      <Tooltip content={manifestChangeLabel || 'A newer version is available to push to your installed accounts'}>
+                      <Tooltip content={`${manifestChangeLabel || 'A newer version is available to push to your installed accounts'} (${getSyncScopeLabel(savedAddon.syncAccountIds)})`}>
                         <span aria-label="Update ready" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
                           <ArrowUpCircle className="h-3 w-3" />
                         </span>
                       </Tooltip>
                     ) : (
-                      <Tooltip content="In sync with your installed accounts">
+                      <Tooltip content={`In sync with your installed accounts (${getSyncScopeLabel(savedAddon.syncAccountIds)})`}>
                         <span aria-label="In sync" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
                           <Link2 className="h-3 w-3" />
                         </span>

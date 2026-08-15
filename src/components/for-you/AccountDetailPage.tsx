@@ -141,17 +141,6 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
         }
     }, [pmdbDialogOpen, accountId])
 
-    const filterKey = JSON.stringify({
-        o: discoveryPrefs.obscurity,
-        r: discoveryPrefs.minRating,
-        e: discoveryPrefs.eraRange,
-        t: discoveryPrefs.typeMix,
-        g: discoveryPrefs.genreBoosts,
-        x: discoveryPrefs.excludedGenres,
-        d: discoveryPrefs.dismissedItems,
-        l: discoveryPrefs.lovedItems,
-    })
-
     useEffect(() => {
         if (accountActivity.length < MIN_ITEMS_FOR_RECS) {
             setRecsLoading(true)
@@ -220,7 +209,9 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
             cancelled = true
             try { ctrl.abort() } catch {}
         }
-    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, filterKey, reloadKey])
+    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, reloadKey, tasteProfile,
+        discoveryPrefs.obscurity, discoveryPrefs.minRating, discoveryPrefs.eraRange, discoveryPrefs.typeMix,
+        discoveryPrefs.genreBoosts, discoveryPrefs.excludedGenres, discoveryPrefs.dismissedItems, discoveryPrefs.lovedItems])
 
     const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
     const refreshWatchlist = useCallback(() => {

@@ -307,7 +307,7 @@ export function SavedAddonLibrary() {
   const handleDeploySingle = useCallback((savedAddonId: string) => {
     setSelectedIds(new Set([savedAddonId]))
     setShowAccountPicker(true)
-  }, [])
+  }, [setSelectedIds, setShowAccountPicker])
 
   const handleOpenInjectDialog = useCallback(() => {
     const addons = Array.from(selectedIds)

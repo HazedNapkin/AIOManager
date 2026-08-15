@@ -100,7 +100,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
             }).catch(() => {})
         }
         return () => { active = false }
-    }, [item?.itemId, item?.backdrop, item?.type])
+    }, [item])
 
     const activeBackdrop = item?.backdrop || fetchedBackdrop
 
@@ -343,17 +343,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     const [reloadKey, setReloadKey] = useState(0)
     const hasResultsRef = useRef(false)
 
-    const filterKey = JSON.stringify({
-        o: discoveryPrefs.obscurity,
-        r: discoveryPrefs.minRating,
-        e: discoveryPrefs.eraRange,
-        t: discoveryPrefs.typeMix,
-        g: discoveryPrefs.genreBoosts,
-        x: discoveryPrefs.excludedGenres,
-        d: discoveryPrefs.dismissedItems,
-        l: discoveryPrefs.lovedItems,
-    })
-
     const [isColdStart, setIsColdStart] = useState(false)
 
     useEffect(() => {
@@ -446,7 +435,9 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 }
             })
         return () => { try { ac.abort() } catch {} }
-    }, [seeds, reloadKey, filterKey, RAIL_MAX])
+    }, [seeds, reloadKey, RAIL_MAX, householdProfile,
+        discoveryPrefs.obscurity, discoveryPrefs.minRating, discoveryPrefs.eraRange, discoveryPrefs.typeMix,
+        discoveryPrefs.genreBoosts, discoveryPrefs.excludedGenres, discoveryPrefs.dismissedItems, discoveryPrefs.lovedItems])
 
     const itemMetaById = useMemo(() => {
         const m = new Map<string, { title: string; poster?: string; type?: string; genres?: string[] }>()

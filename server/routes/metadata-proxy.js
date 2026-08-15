@@ -3,16 +3,22 @@ import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { verifyAuth } from '../auth.js'
 import { metadataCache, jitteredTtl } from '../lib/metadata-cache.js'
+import { loadUserKey } from '../lib/user-key-cache.js'
 import { maskContext } from '../utils/log-helpers.js'
 
 const TMDB_V3_API_BASE = 'https://api.themoviedb.org/3'
-const TMDB_V4_API_BASE = 'https://api.themoviedb.org/4'
 const SUPPORTED_PROVIDERS = new Set(['tmdb'])
 const DEFAULT_TTL_DETAILS_MS = 24 * 60 * 60 * 1000
 const DEFAULT_TTL_LONG_MS = 7 * 24 * 60 * 60 * 1000
 
 const RATE_LIMIT_PROXY = { max: 300, timeWindow: '1 minute' }
 const RATE_LIMIT_STATS = { max: 30, timeWindow: '1 minute' }
+
+const ErrorResponse = {
+    type: 'object',
+    required: ['error'],
+    properties: { error: { type: 'string' } }
+}
 
 export function _redactKey(input) {
     if (input == null) return input
@@ -93,54 +99,65 @@ function classifyTmdbKey(pathParts, query) {
     return { kind: 'misc', ttl: DEFAULT_TTL_DETAILS_MS }
 }
 
+// TMDB responses vary by these query params. Every tmdb cache key must carry them:
+// the cache is shared across users and persisted to the DB, so omitting them lets
+// one user's locale/page choice poison the entry served to everyone else.
+const TMDB_VARIANT_PARAMS = ['language', 'region', 'watch_region', 'include_image_language', 'timezone', 'page']
+function tmdbVariantSuffix(query) {
+    const q = query || ''
+    const parts = []
+    for (const p of TMDB_VARIANT_PARAMS) {
+        const m = q.match(new RegExp(`(?:^|&)${p}=([^&]*)`, 'i'))
+        if (m) parts.push(`${p}=${m[1]}`)
+    }
+    return parts.length ? `:${parts.join('&')}` : ''
+}
+
 function buildCacheKey(provider, pathParts, query) {
     const resource = (pathParts[0] || '').toLowerCase()
     if (provider === 'tmdb') {
         if (resource === 'find') {
+            // Key segments stay percent-encoded: decoded values could contain ':' and
+            // forge collisions against other tuples in this shared, persisted cache.
             const imdbMatch = (query || '').match(/external_id=([^&]+)/i)
-            const imdbId = imdbMatch ? decodeURIComponent(imdbMatch[1]) : (pathParts[1] || 'unknown')
-            return `tmdb:find:${imdbId}`
+            const imdbId = imdbMatch ? imdbMatch[1] : encodeURIComponent(pathParts[1] || 'unknown')
+            const sourceMatch = (query || '').match(/external_source=([^&]+)/i)
+            const source = sourceMatch ? sourceMatch[1] : 'unknown'
+            const langMatch = (query || '').match(/language=([^&]+)/i)
+            const lang = langMatch ? langMatch[1] : 'en'
+            return `tmdb:find:${source}:${imdbId}:${lang}`
         }
+        const variant = tmdbVariantSuffix(query)
         if (resource === 'trending') {
             const mediaType = (pathParts[1] || 'all').toLowerCase()
             const window = (pathParts[2] || 'week').toLowerCase()
-            return `tmdb:trending:${mediaType}:${window}`
+            return `tmdb:trending:${mediaType}:${window}${variant}`
         }
         if (resource === 'movie' || resource === 'tv') {
             const tmdbId = String(pathParts[1] || 'unknown')
             const sub = (pathParts[2] || '').toLowerCase()
-            if (sub === 'videos') return `tmdb:videos:${resource}:${tmdbId}`
-            if (sub === 'recommendations' || sub === 'similar') return `tmdb:recommendations:${resource}:${tmdbId}`
-            if (sub === 'season') return `tmdb:season:${resource}:${tmdbId}:${pathParts[3] || 'unknown'}`
+            if (sub === 'videos') return `tmdb:videos:${resource}:${tmdbId}${variant}`
+            if (sub === 'recommendations' || sub === 'similar') return `tmdb:recommendations:${resource}:${tmdbId}${variant}`
+            if (sub === 'season') {
+                const seasonNum = pathParts[3] || 'unknown'
+                const episodeSub = (pathParts[4] || '').toLowerCase()
+                const episodeNum = pathParts[5] || 'unknown'
+                if (episodeSub === 'episode') {
+                    const appendMatch = (query || '').match(/append_to_response=([^&]+)/i)
+                    const append = appendMatch ? appendMatch[1] : ''
+                    return `tmdb:episode:${resource}:${tmdbId}:${seasonNum}:${episodeNum}:${append}${variant}`
+                }
+                return `tmdb:season:${resource}:${tmdbId}:${seasonNum}${variant}`
+            }
             if (!sub) {
                 const appendMatch = (query || '').match(/append_to_response=([^&]+)/i)
                 const append = appendMatch ? appendMatch[1] : ''
-                return `tmdb:details:${resource}:${tmdbId}:${append}`
+                return `tmdb:details:${resource}:${tmdbId}:${append}${variant}`
             }
-            return `tmdb:${sub}:${resource}:${tmdbId}`
+            return `tmdb:${sub}:${resource}:${tmdbId}${variant}`
         }
     }
     return `${provider}:${resource}:${(pathParts || []).slice(1).join(':') || 'root'}:${query || ''}`
-}
-
-async function loadUserKey(userId, provider) {
-    const row = await db.get(
-        'SELECT encrypted_key, key_format FROM metadata_keys WHERE user_id = $1 AND provider = $2 LIMIT 1',
-        [userId, provider]
-    )
-    if (row && row.encrypted_key) {
-        const plaintext = decrypt(row.encrypted_key, FALLBACK_KEYS)
-        if (plaintext) {
-            let format = row.key_format
-            if (format !== 'v3' && format !== 'v4') {
-                if (plaintext.startsWith('eyJ')) format = 'v4'
-                else if (/^[0-9a-fA-F]{32}$/.test(plaintext)) format = 'v3'
-                else format = 'generic'
-            }
-            return { key: plaintext, format, source: 'user' }
-        }
-    }
-    return null
 }
 
 async function fetchUpstream(requestDescriptor, signal) {
@@ -253,7 +270,31 @@ export function registerMetadataProxyRoutes(fastify) {
     })
 
     fastify.get('/api/metadata/test', {
-        config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+        schema: {
+            tags: ['metadata'],
+            summary: 'Test a stored (or unsaved) provider API key',
+            querystring: {
+                type: 'object',
+                properties: {
+                    provider: { type: 'string', description: 'Defaults to tmdb' },
+                    key: { type: 'string', description: 'Unsaved key value to test instead of the stored one' }
+                }
+            },
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['success', 'message', 'source'],
+                    properties: {
+                        success: { type: 'boolean' },
+                        message: { type: 'string' },
+                        source: { type: ['string', 'null'], description: 'Where the tested key came from (user, unsaved) or null' }
+                    }
+                },
+                401: ErrorResponse,
+                500: ErrorResponse
+            }
+        }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) {
@@ -380,7 +421,7 @@ export function registerMetadataProxyRoutes(fastify) {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 15000)
             if (request.socket && !request.socket.destroyed) {
-                request.socket.on('close', () => controller.abort())
+                request.socket.once('close', () => controller.abort())
             }
             const response = await fetch(url, {
                 headers: {
@@ -432,7 +473,7 @@ export function registerMetadataProxyRoutes(fastify) {
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 15000)
             if (request.socket && !request.socket.destroyed) {
-                request.socket.on('close', () => controller.abort())
+                request.socket.once('close', () => controller.abort())
             }
             const fetchOptions = {
                 method,
@@ -679,7 +720,7 @@ export function registerMetadataProxyRoutes(fastify) {
         }
 
         const json = JSON.stringify(comments)
-        auxCacheSet(cacheKey, json)
+        if (tmdbKeyRecord) auxCacheSet(cacheKey, json)
         reply.header('Content-Type', 'application/json')
         return json
     })

@@ -3,8 +3,11 @@ import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Upload } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { normalizeTagName } from '@/lib/addon-validator'
+import { mapConcurrent } from '@/lib/concurrency'
 import { useAddonStore } from '@/store/addonStore'
+import { SAVED_ADDON_ACCOUNT_CONCURRENCY } from '@/store/addon/addonDeployment'
 import { useProfileStore } from '@/store/profileStore'
 import { useUIStore } from '@/store/uiStore'
 import { Switch } from '@/components/ui/switch'
@@ -16,7 +19,9 @@ import { useState, useEffect } from 'react'
 import { useToast } from '@/hooks/use-toast'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
 import { ManifestJSONEditor } from '@/components/addons/ManifestJSONEditor'
+import { AddonParamSelector } from '@/components/ui/addon-param-selector'
 import type { AddonDescriptor } from '@/types/addon'
+import { getAddonParamType, extractAddonParams } from '@/lib/addon-params'
 
 export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }: { savedAddon: SavedAddon; deployedAccounts?: Account[]; onClose: () => void }) {
   const updateSavedAddon = useAddonStore(s => s.updateSavedAddon)
@@ -39,6 +44,10 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
     profileId: currentProfileId,
   })
 
+  const [syncAccountIds, setSyncAccountIds] = useState<string[] | null>(
+    Array.isArray(savedAddon.syncAccountIds) ? savedAddon.syncAccountIds : null
+  )
+
   useEffect(() => {
     setFormData({
       name: savedAddon.metadata?.customName || '',
@@ -48,9 +57,20 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
       syncWithInstalled: savedAddon.syncWithInstalled ?? false,
       profileId: savedAddon.profileId ?? 'unassigned',
     })
+    setSyncAccountIds(Array.isArray(savedAddon.syncAccountIds) ? savedAddon.syncAccountIds : null)
   }, [savedAddon])
 
   const [formError, setFormError] = useState<string | null>(null)
+  const [addonUrl, setAddonUrl] = useState(savedAddon.installUrl)
+
+  useEffect(() => {
+    setAddonUrl(savedAddon.installUrl)
+  }, [savedAddon.installUrl])
+
+  const addonType = getAddonParamType(savedAddon.installUrl, savedAddon.manifest)
+  const originalParams = extractAddonParams(savedAddon.installUrl).params
+  const currentParams = extractAddonParams(addonUrl).params
+  const urlChanged = addonType !== null && (originalParams.tag !== currentParams.tag || originalParams.variant !== currentParams.variant)
 
   const hasChanges =
     formData.name !== (savedAddon.metadata?.customName || '') ||
@@ -58,7 +78,9 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
     formData.customLogo !== (savedAddon.metadata?.customLogo || '') ||
     formData.customDescription !== (savedAddon.metadata?.customDescription || '') ||
     formData.syncWithInstalled !== (savedAddon.syncWithInstalled ?? false) ||
-    formData.profileId !== currentProfileId
+    formData.profileId !== currentProfileId ||
+    urlChanged ||
+    JSON.stringify(syncAccountIds ?? null) !== JSON.stringify(Array.isArray(savedAddon.syncAccountIds) ? savedAddon.syncAccountIds : null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -71,18 +93,51 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         .filter(Boolean)
 
       const name = formData.name.trim()
+      const urlDirty = urlChanged && addonUrl !== savedAddon.installUrl
 
       await updateSavedAddon(savedAddon.id, {
         name: name || savedAddon.manifest.name,
         tags,
         syncWithInstalled: formData.syncWithInstalled,
+        syncAccountIds,
         profileId: formData.profileId === 'unassigned' ? null : formData.profileId,
+        ...(formData.syncWithInstalled && urlDirty ? { installUrl: addonUrl } : {}),
         metadata: {
           customName: name || undefined,
           customLogo: formData.customLogo.trim() || undefined,
           customDescription: formData.customDescription.trim() || undefined
         }
       })
+
+      // The store's updateSavedAddon installUrl branch already does the scoped
+      // fan-out, but only while syncWithInstalled is on — mirror its tri-state
+      // target resolution here so non-sync edits don't broadcast to all accounts.
+      if (urlDirty && !formData.syncWithInstalled) {
+        if (syncAccountIds === null) {
+          await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, undefined, undefined)
+        } else if (syncAccountIds.length === 0) {
+          await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, '__none__', undefined)
+        } else {
+          const { fetchAddonManifest } = await import('@/api/addons')
+          const descriptor = await fetchAddonManifest(addonUrl, 'System-Check')
+          const failedTargets: Array<{ accountId: string; error: string }> = []
+          await mapConcurrent(syncAccountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
+            try {
+              await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, targetAccountId, descriptor)
+            } catch (error) {
+              failedTargets.push({ accountId: targetAccountId, error: error instanceof Error ? error.message : 'Unknown error' })
+            }
+          })
+          if (failedTargets.length > 0) {
+            const accountName = (accountId: string) => {
+              const account = deployedAccounts.find(a => a.id === accountId)
+              return account?.name || account?.email || accountId
+            }
+            const failedSummary = failedTargets.map(failed => `${accountName(failed.accountId)}: ${failed.error}`).join(', ')
+            throw new Error(`New URL applied to ${syncAccountIds.length - failedTargets.length} of ${syncAccountIds.length} sync targets. Failed (${failedTargets.length}) — ${failedSummary}.`)
+          }
+        }
+      }
 
       onClose()
     } catch (err) {
@@ -293,19 +348,23 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
           </div>
         </div>
 
+        {addonType && (
+          <AddonParamSelector
+            url={addonUrl}
+            onUrlChange={setAddonUrl}
+            manifest={savedAddon.manifest}
+            className="rounded-xl border border-border/40 bg-muted/20 p-3"
+          />
+        )}
+
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-0.5">
             <Label htmlFor="sync-with-installed" className="block truncate text-sm font-semibold">Keep in sync with installed versions</Label>
             <p className="text-xs text-muted-foreground">
               {deployedAccounts.length > 0
-                ? `Auto-push changes to ${deployedAccounts.length} account${deployedAccounts.length !== 1 ? 's' : ''} where this is installed.`
+                ? `Auto-push changes to ${syncAccountIds ? `${syncAccountIds.length} selected account${syncAccountIds.length !== 1 ? 's' : ''}` : `${deployedAccounts.length} account${deployedAccounts.length !== 1 ? 's' : ''}`} where this is installed.`
                 : 'Auto-push URL and metadata changes to accounts where this addon is installed.'}
             </p>
-            {deployedAccounts.length > 0 && (
-              <p className="text-xs text-muted-foreground/70">
-                {deployedAccounts.map(a => a.name || a.email || a.id).join(', ')}
-              </p>
-            )}
           </div>
           <div className="flex-shrink-0">
             <Switch
@@ -315,6 +374,53 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
             />
           </div>
         </div>
+
+        {formData.syncWithInstalled && deployedAccounts.length > 0 && (
+          <div className="space-y-1.5 rounded-xl border border-border/40 bg-muted/20 p-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              {syncAccountIds === null ? 'Syncing to all accounts (default)' : `Syncing to ${syncAccountIds.length} of ${deployedAccounts.length} accounts`}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSyncAccountIds(null)}
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                  syncAccountIds === null
+                    ? 'border-primary/40 bg-primary/15 text-primary'
+                    : 'border-border/40 bg-background/60 text-muted-foreground hover:text-foreground'
+                )}
+              >
+                All accounts
+              </button>
+              {deployedAccounts.map(acc => {
+                const checked = syncAccountIds?.includes(acc.id) ?? false
+                return (
+                  <button
+                    key={acc.id}
+                    type="button"
+                    onClick={() => {
+                      setSyncAccountIds(prev => {
+                        const current = prev ?? deployedAccounts.map(a => a.id)
+                        return current.includes(acc.id)
+                          ? current.filter(id => id !== acc.id)
+                          : [...current, acc.id]
+                      })
+                    }}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+                      checked
+                        ? 'border-primary/40 bg-primary/15 text-primary'
+                        : 'border-border/40 bg-background/60 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {acc.name || acc.email || acc.id}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="-mx-6 mt-4 grid grid-cols-1 gap-4 border-t bg-muted/50 px-6 py-4 text-xs text-muted-foreground sm:grid-cols-2">

@@ -32,6 +32,13 @@ export interface SavedAddon {
   // Health & Restoration
   autoRestore?: boolean
   syncWithInstalled?: boolean
+  syncAccountIds?: string[] | null
+  // Partially-failed installUrl fan-out; retried by saving toUrl again.
+  pendingUrlSync?: {
+    fromUrl: string
+    toUrl: string
+    failedAccountIds: string[] // [] = unknown scope (global fan-out failed)
+  }
   health?: {
     isOnline: boolean
     error?: string

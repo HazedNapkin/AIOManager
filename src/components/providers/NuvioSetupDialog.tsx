@@ -93,12 +93,15 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
         publishableKey: customPublishableKey.trim() || undefined,
     })
 
+    const initialBaseUrl = initialBackend?.baseUrl
+    const initialPublishableKey = initialBackend?.publishableKey
+
     useEffect(() => {
-        if (open && initialBackend) {
-            if (initialBackend.baseUrl) setCustomBaseUrl(initialBackend.baseUrl)
-            if (initialBackend.publishableKey) setCustomPublishableKey(initialBackend.publishableKey)
+        if (open) {
+            if (initialBaseUrl) setCustomBaseUrl(initialBaseUrl)
+            if (initialPublishableKey) setCustomPublishableKey(initialPublishableKey)
         }
-    }, [open])
+    }, [open, initialBaseUrl, initialPublishableKey])
 
     const handleClose = (nextOpen: boolean) => {
         if (!nextOpen) reset()

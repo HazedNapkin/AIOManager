@@ -5,6 +5,7 @@ import { Account } from '@/types/account'
 import { getSeasonEpisode, parseStremioDate, isActuallyWatched, getLocalDayKey, getEpisodeIdentity } from '@/lib/activity-utils'
 import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
+import { evictLegacyExternalEvents } from '@/lib/external-watch-events'
 
 const STORAGE_KEY = 'aio_watch_events_v2'
 
@@ -672,6 +673,8 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             const ek = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)
             sessionKeys.add(`${e.accountId}:${ek}:${getLocalDayKey(e.event_ts)}`)
         }
+        const incomingEventIds = new Set<string>()
+        const incomingDayVideoKeys = new Set<string>()
         let changed = false
 
         for (const item of items) {
@@ -680,6 +683,8 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             const dayKey = getLocalDayKey(item.timestamp)
             const sessionKey = `${accountId}:${episodeKey}:${dayKey}`
             const eventId = `ext:${platform}:${accountId}:${episodeKey}:${dayKey}`
+            incomingEventIds.add(eventId)
+            incomingDayVideoKeys.add(`${dayKey}:${video_id}`)
 
             const duration = item.duration || 0
             const progress = item.progress ?? 0
@@ -728,9 +733,16 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             changed = true
         }
 
+        const surviving = evictLegacyExternalEvents(
+            Array.from(eventsById.values()),
+            { platform, accountId, incomingEventIds, incomingDayVideoKeys },
+            e => getLocalDayKey(e.event_ts),
+        )
+        if (surviving.length !== eventsById.size) changed = true
+
         if (!changed) return
 
-        const sorted = Array.from(eventsById.values()).sort((a, b) => b.event_ts - a.event_ts)
+        const sorted = surviving.sort((a, b) => b.event_ts - a.event_ts)
         const capped = filterTombstonedEvents(capEvents(sorted), state.deletedEventKeys)
         set({ events: capped })
         persistWatchEvents(capped, state.snapshot)

@@ -822,6 +822,44 @@ export async function initializeDatabase(fastify) {
         updated_at: `ALTER TABLE discovery_prefs ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
     }, ['sync_user', 'account_id'])
 
+    // Command queue jobs (POST /api/commands). Keep DDL in sync with migrations/002_commands.sql.
+    const commandsDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS commands (
+            id TEXT PRIMARY KEY,
+            sync_user TEXT NOT NULL,
+            command TEXT NOT NULL,
+            account_ids TEXT NOT NULL,
+            status TEXT NOT NULL,
+            results TEXT,
+            error TEXT,
+            created_at BIGINT NOT NULL DEFAULT 0,
+            updated_at BIGINT NOT NULL DEFAULT 0
+        );`
+        : `CREATE TABLE IF NOT EXISTS commands (
+            id TEXT PRIMARY KEY,
+            sync_user TEXT NOT NULL,
+            command TEXT NOT NULL,
+            account_ids TEXT NOT NULL,
+            status TEXT NOT NULL,
+            results TEXT,
+            error TEXT,
+            created_at BIGINT NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        );`
+    await ensureTable('commands', commandsDdl, [
+        `CREATE INDEX IF NOT EXISTS idx_commands_user_updated ON commands (sync_user, updated_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_commands_status ON commands (status)`,
+    ], ['id', 'sync_user', 'command', 'account_ids', 'status', 'created_at', 'updated_at'], {
+        sync_user: `ALTER TABLE commands ADD COLUMN sync_user TEXT NOT NULL DEFAULT ''`,
+        command: `ALTER TABLE commands ADD COLUMN command TEXT NOT NULL DEFAULT ''`,
+        account_ids: `ALTER TABLE commands ADD COLUMN account_ids TEXT NOT NULL DEFAULT '[]'`,
+        status: `ALTER TABLE commands ADD COLUMN status TEXT NOT NULL DEFAULT 'queued'`,
+        results: `ALTER TABLE commands ADD COLUMN results TEXT`,
+        error: `ALTER TABLE commands ADD COLUMN error TEXT`,
+        created_at: `ALTER TABLE commands ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
+        updated_at: `ALTER TABLE commands ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['id'])
+
     try {
         const MIGRATION_KEY = 'migration:activity_season_clamp_v1'
         const done = await db.get(`SELECT key FROM kv_store WHERE key = $1`, [MIGRATION_KEY])
@@ -855,6 +893,17 @@ export async function initializeDatabase(fastify) {
         proxyQueue.length = 0
         domainLastRequestTime.clear()
         globalHealthCache.clear()
+        // Command queue jobs run in-process; anything still queued/running at boot died
+        // with the previous session and must not be reported as live forever.
+        try {
+            const staleJobs = await db.run(
+                `UPDATE commands SET status = 'failed', error = 'server restarted', updated_at = $1 WHERE status IN ('queued', 'running')`,
+                [Date.now()]
+            )
+            if (staleJobs?.changes > 0) {
+                fastify.log.info({ category: 'Commands' }, `Startup cleanup: marked ${staleJobs.changes} orphaned command job(s) as failed (server restarted).`)
+            }
+        } catch (e) { fastify.log.warn({ category: 'Commands' }, `Command job startup cleanup failed: ${e.message}`) }
         fastify.log.info({ category: 'Server' }, 'Startup cleanup: Reset in-memory state from previous session.')
     } catch (cleanupErr) {
         fastify.log.warn({ category: 'Database' }, `Startup cleanup warning: ${cleanupErr.message}`)

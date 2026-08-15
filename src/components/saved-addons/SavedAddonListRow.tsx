@@ -1,9 +1,8 @@
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import type { Account } from '@/types/account'
-import { isNewerVersion, getAddonConfigureUrl, cn, getTimeAgo } from '@/lib/utils'
-import { describeManifestChanges } from '@/lib/addon-manifest-diff'
+import { getAddonConfigureUrl, cn, getTimeAgo, getSyncScopeLabel } from '@/lib/utils'
 import { useLongPress } from '@/hooks/useLongPress'
-import { Copy, FileEdit, MoreVertical, Pencil, Check, Send } from 'lucide-react'
+import { Copy, FileEdit, Layers, MoreVertical, Pencil, Check, Send, Tag, Link2, ArrowUpCircle } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AnimatedSettingsIcon, AnimatedTrashIcon, AnimatedUpdateIcon } from '../ui/AnimatedIcons'
 import {
@@ -17,18 +16,17 @@ import {
     DialogContent,
     DialogTitle,
 } from '@/components/ui/dialog'
-import { useToast } from '@/hooks/use-toast'
-import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
-import { useState, memo } from 'react'
+import { memo } from 'react'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { SavedAddonDetails } from './SavedAddonDetails'
 import { getTagColor } from '@/lib/tag-utils'
 import { Button } from '@/components/ui/button'
 import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
 import { SavedAddonIcon } from './SavedAddonIcon'
+import { useSavedAddonActions } from './hooks/useSavedAddonActions'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
-import type { AddonDescriptor } from '@/types/addon'
+import { extractAddonParams } from '@/lib/addon-params'
 
 interface SavedAddonListRowProps {
     savedAddon: SavedAddon
@@ -57,60 +55,29 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
     deployedAccounts = [],
     manifestChange,
 }: SavedAddonListRowProps) {
-    const deleteSavedAddon = useAddonStore(s => s.deleteSavedAddon)
-    const replaceTransportUrlUniversally = useAddonStore(s => s.replaceTransportUrlUniversally)
     const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
-    const { toast } = useToast()
-    const [showDetails, setShowDetails] = useState(false)
-    const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-    const [updating, setUpdating] = useState(false)
 
-    const hasVersionUpdate = latestVersion ? isNewerVersion(savedAddon.manifest.version, latestVersion) : false
-    const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
-    const hasUpdate = hasVersionUpdate || hasManifestShapeChange
-    const manifestChangeLabel = manifestChange ? describeManifestChanges(manifestChange) : ''
-
-    const handleCopyUrl = (e: React.MouseEvent) => {
-        e.stopPropagation()
-        navigator.clipboard.writeText(savedAddon.installUrl)
-        toast({ title: 'URL Copied', description: 'Addon install URL copied to clipboard' })
-    }
+    const {
+        showDetails,
+        setShowDetails,
+        showDeleteDialog,
+        setShowDeleteDialog,
+        updating,
+        hasUpdate,
+        hasVersionUpdate,
+        hasManifestShapeChange,
+        manifestChangeLabel,
+        handleConfirmDelete,
+        handleCopyUrl,
+        handleUpdate,
+        handleReplaceUrl,
+        getHealthTooltip,
+    } = useSavedAddonActions({ savedAddon, latestVersion, manifestChange, onUpdate })
 
     const handleOpenConfiguration = (e: React.MouseEvent) => {
         e.stopPropagation()
         const configUrl = getAddonConfigureUrl(savedAddon.installUrl)
         window.open(configUrl, '_blank', 'noopener,noreferrer')
-    }
-
-    const handleConfirmDelete = async () => {
-        try {
-            await deleteSavedAddon(savedAddon.id)
-            setShowDeleteDialog(false)
-        } catch (error) {
-            if (import.meta.env.DEV) console.error('Failed to delete saved addon:', error)
-        }
-    }
-
-    const handleUpdate = async (e?: React.MouseEvent) => {
-        e?.stopPropagation()
-        if (!onUpdate) return
-        setUpdating(true)
-        try {
-            await onUpdate(savedAddon.id, savedAddon.name)
-        } finally {
-            setUpdating(false)
-        }
-    }
-
-    const handleReplaceUrl = async (descriptor: AddonDescriptor, requestedUrl: string) => {
-        return replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, descriptor.transportUrl || requestedUrl, undefined, descriptor)
-    }
-
-    const getHealthTooltip = () => {
-        if (!savedAddon.health) return 'Health not checked'
-        const status = savedAddon.health.isOnline ? 'Online' : 'Offline'
-        const error = savedAddon.health.error ? ` (${savedAddon.health.error})` : ''
-        return `${status}${error}`
     }
 
     const { isLongPressTriggered, ...longPressProps } = useLongPress(() => {
@@ -175,6 +142,21 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                     <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm font-semibold truncate">{savedAddon.name}</span>
                         <span className="hidden text-xs text-muted-foreground/60 shrink-0 min-[380px]:inline">v{savedAddon.manifest.version}</span>
+                        {savedAddon.syncWithInstalled && (
+                            hasUpdate ? (
+                                <Tooltip content={`${manifestChangeLabel || 'A newer version is available to push to your installed accounts'} (${getSyncScopeLabel(savedAddon.syncAccountIds)})`} side="top">
+                                    <span aria-label="Update ready" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
+                                        <ArrowUpCircle className="h-3 w-3" />
+                                    </span>
+                                </Tooltip>
+                            ) : (
+                                <Tooltip content={`In sync with your installed accounts (${getSyncScopeLabel(savedAddon.syncAccountIds)})`} side="top">
+                                    <span aria-label="In sync" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success shrink-0">
+                                        <Link2 className="h-3 w-3" />
+                                    </span>
+                                </Tooltip>
+                            )
+                        )}
                         {hasManifestShapeChange && (
                             <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'} side="top">
                                 <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
@@ -239,6 +221,15 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                 <span className="hidden truncate text-foreground/60 sm:inline">{profileName}</span>
                             </>
                         )}
+                        {(() => { const p = extractAddonParams(savedAddon.installUrl).params; if (!p.tag && !p.variant) return null; return (
+                            <>
+                                <span className="hidden shrink-0 sm:inline">·</span>
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
+                                    {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
+                                    {p.tag || p.variant}
+                                </span>
+                            </>
+                        ) })()}
                         {deployedAccounts.length > 0 && (
                             <>
                                 <span className="hidden shrink-0 sm:inline">·</span>

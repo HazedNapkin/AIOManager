@@ -12,8 +12,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
-import { ClipboardPaste, Zap } from 'lucide-react'
+import { ClipboardPaste, Zap, Loader2 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { AddonParamSelector } from '@/components/ui/addon-param-selector'
+import { AddonIcon } from '@/components/ui/addon-icon'
+import { useAddonManifest } from '@/hooks/useAddonManifest'
+import { AddonManifest } from '@/types/addon'
 
 export function AddonInstaller() {
   const isOpen = useUIStore((state) => state.isAddAddonDialogOpen)
@@ -25,7 +29,24 @@ export function AddonInstaller() {
   const [addonUrl, setAddonUrl] = useState('')
   const [error, setError] = useState('')
   const [isClipboardScanActive, setIsClipboardScanActive] = useState(false)
+  const [debouncedUrl, setDebouncedUrl] = useState('')
   const { isLight } = useTheme()
+
+  useEffect(() => {
+    const trimmed = addonUrl.trim()
+    if (!isOpen || !trimmed || !trimmed.startsWith('http')) {
+      setDebouncedUrl('')
+      return
+    }
+    const timer = setTimeout(() => {
+      setDebouncedUrl(trimmed.replace(/^stremio:\/\//, 'https://'))
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [addonUrl, isOpen])
+
+  const { data: previewDescriptor, isFetching: previewFetching } = useAddonManifest(isOpen ? debouncedUrl : null)
+  const previewManifest: AddonManifest | null = debouncedUrl ? previewDescriptor?.manifest ?? null : null
+  const previewLoading = debouncedUrl ? previewFetching : false
 
   useEffect(() => {
     if (!isOpen) {
@@ -146,6 +167,43 @@ export function AddonInstaller() {
               The URL should point to the addon's base URL (e.g., https://addon.example.com)
             </p>
           </div>
+
+          {previewLoading && (
+            <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Checking addon...
+            </div>
+          )}
+
+          {!previewLoading && previewManifest && (
+            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+              <AddonIcon
+                name={previewManifest.name || 'Addon'}
+                logo={previewManifest.logo}
+                alt={previewManifest.name || 'Addon'}
+                className="h-9 w-9 shrink-0"
+                textClassName="text-xs"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="truncate text-sm font-semibold">{previewManifest.name || 'Unknown addon'}</span>
+                  {previewManifest.version && (
+                    <span className="shrink-0 text-xs text-muted-foreground">v{previewManifest.version}</span>
+                  )}
+                </div>
+                {previewManifest.description && (
+                  <p className="truncate text-xs text-muted-foreground">{previewManifest.description}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <AddonParamSelector
+            url={addonUrl}
+            onUrlChange={setAddonUrl}
+            manifest={previewManifest || undefined}
+            compact
+          />
 
           {error && (
             <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

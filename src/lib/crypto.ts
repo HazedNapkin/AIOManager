@@ -331,6 +331,11 @@ export function restoreLocalAuthSecrets(snapshot: LocalAuthSecretsSnapshot): voi
 
 const SYNC_KEY_SALT = new TextEncoder().encode('aiomanager-sync-key-v2')
 
+// Migration target: src/lib/crypto-envelope.ts defines the versioned v2 envelope
+// ('v2.<salt>.<iv>.<ct>', self-contained salt/IV) whose decryptEnvelope dual-reads both
+// legacy shapes below. syncStore should move to encryptEnvelope/decryptEnvelope in a
+// later release (after the pilot soaks); this module stays untouched for legacy reads.
+
 export async function deriveSyncEncryptionKey(password: string, salt?: Uint8Array): Promise<CryptoKey> {
   const bits = await runPbkdf2(String(password), salt ?? SYNC_KEY_SALT, PBKDF2_ITERATIONS, 256)
   return crypto.subtle.importKey(

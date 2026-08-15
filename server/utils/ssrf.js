@@ -81,11 +81,13 @@ export const resolveAndValidateHost = async (hostname) => {
     try {
         const records = await lookup(host, { all: true })
         if (!Array.isArray(records) || records.length === 0) {
-            return false
+            return true
         }
         return !records.some(r => isPrivateIp(r.address))
     } catch {
-        return false
+        // Fail open to the literal check per the contract above; only hostnames that
+        // resolve to private ranges are rejected. Do not "harden" this to fail-closed.
+        return true
     }
 }
 

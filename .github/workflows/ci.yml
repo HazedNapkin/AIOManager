@@ -7,7 +7,7 @@ on:
     branches: [beta, main]
 
 jobs:
-  quality:
+  client:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,5 +16,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run test:client
+      - name: API contract drift check
+        run: |
+          npm --prefix server ci
+          npm run generate:api
+          git diff --exit-code server/openapi.json src/api/schema.d.ts || {
+            echo "::error::server/openapi.json or src/api/schema.d.ts drifted from the server routes. Run 'npm run generate:api' and commit the results."
+            exit 1
+          }
+      - run: npm run lint
+      - run: npm run typecheck

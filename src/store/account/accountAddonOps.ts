@@ -977,6 +977,7 @@ export async function updateAddonSettings(
             const savedAddon = Object.values(addonStore.library).find(s =>
                 normalizeAddonUrl(s.installUrl) === normalizeAddonUrl(transportUrl)
                 && s.syncWithInstalled === true
+                && (!Array.isArray(s.syncAccountIds) || s.syncAccountIds.includes(accountId))
             )
 
             if (savedAddon) {

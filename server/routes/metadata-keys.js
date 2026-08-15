@@ -4,10 +4,24 @@ import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { verifyAuth } from '../auth.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { maskContext } from '../utils/log-helpers.js'
+import { invalidateUserKey } from '../lib/user-key-cache.js'
 
 const SUPPORTED_PROVIDERS = new Set([
     'tmdb', 'tvdb', 'mdblist', 'simkl', 'pmdb'
 ])
+
+const KeyFormat = { type: 'string', enum: ['v3', 'v4', 'unknown'] }
+
+const ErrorResponse = {
+    type: 'object',
+    required: ['error'],
+    properties: { error: { type: 'string' } }
+}
+
+const ProviderParam = {
+    type: 'object',
+    properties: { provider: { type: 'string' } }
+}
 
 const PROVIDER_KEY_ALIASES = {
     themoviedb: 'tmdb',
@@ -59,13 +73,29 @@ export function registerMetadataKeysRoutes(fastify) {
         bodyLimit: 1024 * 16,
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
         schema: {
+            tags: ['metadata-keys'],
+            summary: 'Store or update a provider API key',
             body: {
                 type: 'object',
                 required: ['provider', 'key'],
                 properties: {
-                    provider: { type: 'string' },
-                    key: { type: 'string' }
+                    provider: { type: 'string', description: 'Provider id or known alias (tmdb, tvdb, mdblist, simkl, pmdb)' },
+                    key: { type: 'string', description: 'API key value' }
                 }
+            },
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['success', 'provider', 'keyFormat'],
+                    properties: {
+                        success: { type: 'boolean' },
+                        provider: { type: 'string', description: 'Normalized provider id' },
+                        keyFormat: KeyFormat
+                    }
+                },
+                400: ErrorResponse,
+                401: ErrorResponse,
+                500: ErrorResponse
             }
         }
     }, async (request, reply) => {
@@ -87,6 +117,7 @@ export function registerMetadataKeysRoutes(fastify) {
 
         try {
             await upsertMetadataKey(authUser, provider, encrypt(key, PRIMARY_KEY), keyFormat, now)
+            invalidateUserKey(authUser, provider)
         } catch (err) {
             fastify.log.error({ category: 'MetadataKeys' }, `Save failed for provider ${provider}: ${err.message}`)
             reply.status(500); return { error: 'Failed to save key' }
@@ -97,7 +128,33 @@ export function registerMetadataKeysRoutes(fastify) {
     })
 
     fastify.get('/api/metadata-keys', {
-        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+        schema: {
+            tags: ['metadata-keys'],
+            summary: 'List configured providers without exposing raw keys',
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['providers'],
+                    properties: {
+                        providers: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                required: ['provider', 'keyFormat', 'updatedAt'],
+                                properties: {
+                                    provider: { type: 'string' },
+                                    keyFormat: KeyFormat,
+                                    updatedAt: { type: 'number', description: 'Unix epoch (ms) of last update' }
+                                }
+                            }
+                        }
+                    }
+                },
+                401: ErrorResponse,
+                500: ErrorResponse
+            }
+        }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
@@ -120,7 +177,22 @@ export function registerMetadataKeysRoutes(fastify) {
     })
 
     fastify.delete('/api/metadata-keys/:provider', {
-        config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+        schema: {
+            tags: ['metadata-keys'],
+            summary: 'Delete a stored provider key',
+            params: ProviderParam,
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['success'],
+                    properties: { success: { type: 'boolean' } }
+                },
+                400: ErrorResponse,
+                401: ErrorResponse,
+                500: ErrorResponse
+            }
+        }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
@@ -136,6 +208,7 @@ export function registerMetadataKeysRoutes(fastify) {
                 'DELETE FROM metadata_keys WHERE user_id = $1 AND provider = $2',
                 [authUser, provider]
             )
+            invalidateUserKey(authUser, provider)
         } catch (err) {
             fastify.log.error({ category: 'MetadataKeys' }, `Delete failed for provider ${provider}: ${err.message}`)
             reply.status(500); return { error: 'Failed to delete key' }
@@ -145,7 +218,26 @@ export function registerMetadataKeysRoutes(fastify) {
     })
 
     fastify.get('/api/metadata-keys/:provider/value', {
-        config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+        config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+        schema: {
+            tags: ['metadata-keys'],
+            summary: 'Decrypt and return the raw provider key',
+            params: ProviderParam,
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['provider', 'key'],
+                    properties: {
+                        provider: { type: 'string' },
+                        key: { type: 'string' }
+                    }
+                },
+                400: ErrorResponse,
+                401: ErrorResponse,
+                404: ErrorResponse,
+                500: ErrorResponse
+            }
+        }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
@@ -178,6 +270,8 @@ export function registerMetadataKeysRoutes(fastify) {
         bodyLimit: 1024 * 16,
         config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
         schema: {
+            tags: ['metadata-keys'],
+            summary: 'Import provider keys from an AIOMetadata instance',
             body: {
                 type: 'object',
                 required: ['aiometadataUrl', 'uuid', 'password'],
@@ -187,6 +281,28 @@ export function registerMetadataKeysRoutes(fastify) {
                     password: { type: 'string' },
                     addonPassword: { type: 'string' }
                 }
+            },
+            response: {
+                200: {
+                    type: 'object',
+                    required: ['imported'],
+                    properties: {
+                        imported: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                required: ['provider', 'keyFormat'],
+                                properties: {
+                                    provider: { type: 'string' },
+                                    keyFormat: KeyFormat
+                                }
+                            }
+                        }
+                    }
+                },
+                400: ErrorResponse,
+                401: ErrorResponse,
+                502: ErrorResponse
             }
         }
     }, async (request, reply) => {
@@ -263,6 +379,7 @@ export function registerMetadataKeysRoutes(fastify) {
             const keyFormat = detectKeyFormat(keyStr)
             try {
                 await upsertMetadataKey(authUser, provider, encrypt(keyStr, PRIMARY_KEY), keyFormat, now)
+                invalidateUserKey(authUser, provider)
                 imported.push({ provider, keyFormat })
             } catch (err) {
                 fastify.log.warn({ category: 'MetadataKeys' }, `Import save failed for provider ${provider}: ${err.message}`)

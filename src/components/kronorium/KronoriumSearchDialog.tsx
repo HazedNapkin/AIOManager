@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom'
 import { useCallback } from 'react'
 
 export default function KronoriumSearchDialog(props: SharedProps) {
+    const { onOpenChange } = props
     const { search, setSearch, query } = useDocsSearch({
         client: { search: (q: string) => searchDocs(q) },
     })
@@ -26,9 +27,9 @@ export default function KronoriumSearchDialog(props: SharedProps) {
         if (anchor && anchor.pathname.startsWith('/kronorium')) {
             e.preventDefault()
             navigate(anchor.pathname + anchor.search + anchor.hash)
-            props.onOpenChange?.(false)
+            onOpenChange?.(false)
         }
-    }, [navigate, props.onOpenChange])
+    }, [navigate, onOpenChange])
 
     return (
         <SearchDialog

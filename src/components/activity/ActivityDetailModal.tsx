@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -7,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
 import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
-import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch } from '@/api/metadata/adapters/tmdb'
+import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
 import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/watchlist'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
@@ -20,7 +21,8 @@ import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, Tv, Sparkles, Languages, Building2, Layers, Users } from 'lucide-react'
-import { RatingBadge, type ProviderRating, type RatingSource } from '@/components/activity/detail/RatingBadge'
+import { RatingBadge, type ProviderRating } from '@/components/activity/detail/RatingBadge'
+import { authedFetch, fetchAdditionalRatings, mergeRatingsKeepExisting } from '@/lib/ratings'
 import { CastInitials } from '@/components/activity/detail/CastInitials'
 import { LightboxViewer } from '@/components/activity/detail/LightboxViewer'
 import { ReviewsSection } from '@/components/activity/detail/ReviewsSection'
@@ -28,6 +30,7 @@ import { WatchlistPicker } from '@/components/activity/detail/WatchlistPicker'
 import { FilmPosterCard } from '@/components/activity/detail/FilmPosterCard'
 import { CastSection } from '@/components/activity/detail/CastSection'
 import { SeasonBrowser } from '@/components/activity/detail/SeasonBrowser'
+import { EpisodeDetailPage } from '@/components/activity/detail/EpisodeDetailPage'
 import type { RailWatcher } from '@/components/ui/content-rail'
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -62,124 +65,49 @@ const RATING_LABELS: Record<string, string> = {
 
 // ── Rating Fetchers ───────────────────────────────────────────────────────
 
-async function authedFetch(url: string, options?: RequestInit): Promise<Response> {
-    try {
-        const { useSyncStore } = await import('@/store/syncStore')
-        const { deriveSyncToken } = await import('@/lib/crypto')
-        const auth = useSyncStore.getState().auth
-        const headers: Record<string, string> = { ...(options?.headers as Record<string, string>) }
-        if (auth.isAuthenticated) {
-            headers['x-sync-user'] = auth.id
-            headers['x-sync-password'] = await deriveSyncToken(auth.password)
-        }
-        return fetch(url, { ...options, headers })
-    } catch {
-        return fetch(url, options)
-    }
-}
-
 async function getPmdbRatingFromImdb(
     imdbId: string,
     type: string,
 ): Promise<{ score: number | null; voteCount: number } | null> {
     try {
-        const res = await authedFetch(
-            `/api/metadata/tmdb/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`,
-        )
-        if (!res.ok) return null
-        const data = await res.json()
         const isTv = type === 'series' || type === 'anime'
-        const tmdbId =
-            (isTv
-                ? (Array.isArray(data?.tv_results) && data.tv_results.length > 0
+        const mediaType = isTv ? 'tv' : 'movie'
+
+        let tmdbId: number | null = null
+
+        const cinemetaMeta = await fetchCinemetaDetail(imdbId, type)
+        if (cinemetaMeta?.tmdbId) {
+            tmdbId = cinemetaMeta.tmdbId
+        }
+
+        if (!tmdbId) {
+            const res = await authedFetch(
+                `/api/metadata/tmdb/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`,
+            )
+            if (!res.ok) return null
+            const data = await res.json()
+            tmdbId =
+                (isTv
+                    ? (Array.isArray(data?.tv_results) && data.tv_results.length > 0
+                        ? data.tv_results[0].id
+                        : null)
+                    : null
+                ) ??
+                (Array.isArray(data?.movie_results) && data.movie_results.length > 0
+                    ? data.movie_results[0].id
+                    : null) ??
+                (!isTv && Array.isArray(data?.tv_results) && data.tv_results.length > 0
                     ? data.tv_results[0].id
                     : null)
-                : null
-            ) ??
-            (Array.isArray(data?.movie_results) && data.movie_results.length > 0
-                ? data.movie_results[0].id
-                : null) ??
-            (!isTv && Array.isArray(data?.tv_results) && data.tv_results.length > 0
-                ? data.tv_results[0].id
-                : null)
+        }
+
         if (!tmdbId) return null
-        const mediaType = isTv ? 'tv' : 'movie'
         const pmdb = await getPmdbRating(tmdbId, undefined, mediaType)
         if (!pmdb) return null
         return { score: pmdb.rating, voteCount: pmdb.voteCount }
     } catch {
         return null
     }
-}
-
-async function fetchAdditionalRatings(imdbId: string): Promise<ProviderRating[]> {
-    const results: ProviderRating[] = []
-    const has = (src: RatingSource) => results.some(x => x.source === src)
-    const DEV = import.meta.env?.DEV
-
-    if (imdbId.startsWith('tt')) {
-        try {
-            const mdblistRes = await authedFetch(`/api/metadata/mdblist/i/${encodeURIComponent(imdbId)}`)
-            if (DEV) console.log('[trace] mdblist: status=%d ok=%b', mdblistRes.status, mdblistRes.ok)
-            if (mdblistRes.ok) {
-                const data = await mdblistRes.json()
-                const before = results.length
-                if (Array.isArray(data?.ratings)) {
-                    for (const r of data.ratings) {
-                        if (r.source === 'tomatoes' && r.value && !has('tomatoes')) {
-                            results.push({ source: 'tomatoes', value: `${r.value}%` })
-                        } else if (r.source === 'tomatoesaudience' && r.value && !has('popcorn')) {
-                            results.push({ source: 'popcorn', value: `${r.value}%` })
-                        } else if (r.source === 'metacritic' && r.value && !has('metacritic')) {
-                            results.push({ source: 'metacritic', value: String(r.value) })
-                        } else if (r.source === 'trakt' && r.value && !has('trakt')) {
-                            results.push({ source: 'trakt', value: typeof r.value === 'number' ? (r.value > 10 ? (r.value / 10).toFixed(1) : r.value.toFixed(1)) : String(r.value) })
-                        } else if (r.source === 'letterboxd' && r.value && !has('letterboxd')) {
-                            results.push({ source: 'letterboxd', value: typeof r.value === 'number' ? r.value.toFixed(1) : String(r.value) })
-                        } else if (r.source === 'simkl' && r.value && !has('simkl')) {
-                            results.push({ source: 'simkl', value: typeof r.value === 'number' ? (r.value > 10 ? (r.value / 10).toFixed(1) : r.value.toFixed(1)) : String(r.value) })
-                        }
-                    }
-                }
-                if (DEV) console.log('[trace] mdblist: +%d ratings (%s)', results.length - before, results.slice(before).map(r => r.source).join(', ') || 'none')
-            }
-        } catch (e) { if (DEV) console.warn('[trace] mdblist: FAILED', e) }
-    }
-
-    if (imdbId.startsWith('tt')) {
-        try {
-            const omdbRes = await fetch(`https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=trilogy`)
-            if (DEV) console.log('[trace] omdb: status=%d ok=%b', omdbRes.status, omdbRes.ok)
-            if (omdbRes.ok) {
-                const data = await omdbRes.json()
-                const before = results.length
-                if (Array.isArray(data?.Ratings)) {
-                    for (const r of data.Ratings) {
-                        if (r.Source === 'Rotten Tomatoes' && r.Value && !has('tomatoes')) {
-                            results.push({ source: 'tomatoes', value: r.Value })
-                        } else if (r.Source === 'Metacritic' && r.Value && !has('metacritic')) {
-                            results.push({ source: 'metacritic', value: r.Value.split('/')[0] })
-                        }
-                    }
-                }
-                if (data?.Metascore && data.Metascore !== 'N/A' && !has('metacritic')) {
-                    results.push({ source: 'metacritic', value: data.Metascore })
-                }
-                if (DEV) console.log('[trace] omdb: +%d ratings (%s)', results.length - before, results.slice(before).map(r => r.source).join(', ') || 'none')
-            }
-        } catch (e) { if (DEV) console.warn('[trace] omdb: FAILED', e) }
-    }
-
-    if (DEV) console.log('[trace] fetchAdditionalRatings: total=%d sources=[%s]', results.length, results.map(r => r.source).join(', '))
-    return results
-}
-
-const mergeProviderRatings = (prev: ProviderRating[], extra: ProviderRating[]): ProviderRating[] => {
-    const combined = [...prev]
-    for (const item of extra) {
-        if (!combined.some(x => x.source === item.source)) combined.push(item)
-    }
-    return combined
 }
 
 
@@ -303,6 +231,114 @@ export type NavEntry =
         accountId: string
         accountName: string
     }
+    | {
+        kind: 'episode'
+        seriesName: string
+        seriesImdbId?: string
+        seasonNumber: number
+        episodeNumber: number
+        episodeName: string
+        episodeOverview?: string
+        airDate?: string
+        still?: string
+        seriesTmdbId: number | null
+        seriesPoster?: string
+    }
+
+// ── Deep-link URL encoding ─────────────────────────────────────────────────
+//
+// DESIGN CHOICE: the in-component navStack remains the source of truth (URL
+// params cannot carry loaded filmography / episode data). Every nav change
+// mirrors the CURRENT entry into the /activity search params — a deeper stack
+// pushes a history entry so browser Back pops one nav level — and external
+// param changes (browser back/forward) are reconciled back into the stack.
+//
+// Encoding (cumulative, the entry kind determines which keys are present):
+//   item    → ?detail=<itemId>&type=<type>
+//   episode → ?detail=<seriesId>&type=<type>&season=<n>&episode=<n>
+//   account → ?detail=<itemId>&type=<type>&account=<accountId>
+//   person  → …&person=<name>   (layered over whatever entry is below)
+//
+// Known limits (honest scope): the URL only encodes the nav path down to the
+// current entry — deeper stack context (e.g. a person page two levels below a
+// filmography-picked film) survives browser Back but not a fresh page load,
+// and person filmography / episode details are re-fetched on restore.
+
+const DETAIL_URL_KEYS = ['detail', 'type', 'person', 'account', 'season', 'episode'] as const
+
+interface ParsedDetailParams {
+    detail: string
+    type?: string
+    person?: string
+    account?: string
+    season?: number
+    episode?: number
+}
+
+function parseDetailParams(sp: URLSearchParams): ParsedDetailParams | null {
+    const detail = sp.get('detail')
+    if (!detail) return null
+    const season = sp.get('season')
+    const episode = sp.get('episode')
+    return {
+        detail,
+        type: sp.get('type') || undefined,
+        person: sp.get('person') || undefined,
+        account: sp.get('account') || undefined,
+        season: season && /^\d+$/.test(season) ? Number(season) : undefined,
+        episode: episode && /^\d+$/.test(episode) ? Number(episode) : undefined,
+    }
+}
+
+function stripDetailParams(sp: URLSearchParams): URLSearchParams {
+    const next = new URLSearchParams(sp.toString())
+    for (const key of DETAIL_URL_KEYS) next.delete(key)
+    return next
+}
+
+function paramsEqual(a: URLSearchParams, b: URLSearchParams): boolean {
+    const aKeys = Array.from(a.keys())
+    if (aKeys.length !== Array.from(b.keys()).length) return false
+    for (const key of aKeys) {
+        if (a.get(key) !== b.get(key)) return false
+    }
+    return true
+}
+
+/** Search params mirroring the current navStack state (null = modal closed). */
+function paramsForStack(stack: NavEntry[]): URLSearchParams | null {
+    const top = stack[stack.length - 1]
+    if (!top) return null
+    if (top.kind === 'item') {
+        const sp = new URLSearchParams()
+        sp.set('detail', top.item.itemId)
+        sp.set('type', top.item.type)
+        return sp
+    }
+    const below = paramsForStack(stack.slice(0, -1))
+    if (!below) return null
+    if (top.kind === 'episode') {
+        below.set('season', String(top.seasonNumber))
+        below.set('episode', String(top.episodeNumber))
+    } else if (top.kind === 'account') {
+        below.set('account', top.accountId)
+    } else {
+        below.set('person', top.name)
+    }
+    return below
+}
+
+function filmographyFallbackFor(item: DetailItem | null, role?: string): FilmographyItem | null {
+    if (!item) return null
+    return {
+        id: item.itemId,
+        title: item.name || 'Current Title',
+        poster: item.poster,
+        year: item.year,
+        type: item.type === 'anime' ? 'anime' : item.type === 'series' ? 'series' : 'movie',
+        job: role,
+    }
+}
 
 function calculateAge(birthday?: string, deathday?: string | null): number | null {
     if (!birthday) return null
@@ -487,23 +523,247 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     const [navStack, setNavStack] = useState<NavEntry[]>([])
     const [bioExpanded, setBioExpanded] = useState(false)
 
+    // ── URL ↔ navStack sync (deep-link support) ──────────────────────────────
+    const [searchParams, setSearchParams] = useSearchParams()
+    // Refs mirror router/stack state so each sync effect below only reacts to
+    // the dependency that actually changed (navStack vs searchParams).
+    const searchParamsRef = useRef(searchParams)
+    const navStackRef = useRef(navStack)
+    const lastSyncedParamsRef = useRef<URLSearchParams | null>(null)
+    const prevStackLenRef = useRef(0)
+    const prevOpenRef = useRef(false)
+
+    useEffect(() => { searchParamsRef.current = searchParams }, [searchParams])
+    useEffect(() => { navStackRef.current = navStack }, [navStack])
+
+    const applyPersonResult = useCallback((personName: string, res: PersonFilmographyResult) => {
+        setNavStack(prev => {
+            const next = [...prev]
+            const lastIdx = next.length - 1
+            if (lastIdx >= 0 && next[lastIdx].kind === 'person' && next[lastIdx].name === personName) {
+                const cur = next[lastIdx]
+                next[lastIdx] = {
+                    ...cur,
+                    name: res.person.name || cur.name,
+                    photo: res.person.photo || cur.photo,
+                    biography: res.person.biography,
+                    birthday: res.person.birthday,
+                    deathday: res.person.deathday,
+                    placeOfBirth: res.person.placeOfBirth,
+                    knownFor: res.person.knownFor,
+                    movies: res.movies,
+                    series: res.series,
+                    anime: res.anime,
+                    loading: false,
+                }
+            }
+            return next
+        })
+    }, [])
+
+    const markPersonLoadFailed = useCallback((personName: string) => {
+        setNavStack(prev => {
+            const next = [...prev]
+            const lastIdx = next.length - 1
+            if (lastIdx >= 0 && next[lastIdx].kind === 'person' && next[lastIdx].name === personName) {
+                next[lastIdx] = { ...next[lastIdx], loading: false }
+            }
+            return next
+        })
+    }, [])
+
     useEffect(() => {
         if (open && item) {
-            setNavStack([{ kind: 'item', item }])
+            prevStackLenRef.current = 0
+            // Deep-link/refresh: if the URL already describes this item with
+            // nested nav (episode/account/person), rebuild that stack. Entries
+            // needing fetches (person filmography) start loading and hydrate
+            // in place; deep-linked episodes get their TMDB id patched once
+            // the series meta resolves (see effect below).
+            const p = parseDetailParams(searchParamsRef.current)
+            if (p && p.detail === item.itemId && (p.person || p.account || (p.season != null && p.episode != null))) {
+                const rebuilt: NavEntry[] = [{ kind: 'item', item }]
+                if (p.season != null && p.episode != null) {
+                    rebuilt.push({
+                        kind: 'episode',
+                        seriesName: item.name || 'Series',
+                        seriesImdbId: item.itemId.startsWith('tt') ? item.itemId : undefined,
+                        seasonNumber: p.season,
+                        episodeNumber: p.episode,
+                        episodeName: `Episode ${p.episode}`,
+                        seriesTmdbId: null,
+                        seriesPoster: item.poster,
+                    })
+                } else if (p.account) {
+                    const acc = useAccountStore.getState().accounts.find(a => a.id === p.account)
+                    rebuilt.push({ kind: 'account', accountId: p.account, accountName: acc?.name || 'Account' })
+                }
+                const personName = p.person
+                if (personName) {
+                    rebuilt.push({ kind: 'person', name: personName, movies: [], series: [], anime: [], loading: true, activeTab: 'all' })
+                    fetchPersonFilmography(personName, filmographyFallbackFor(item))
+                        .then(res => applyPersonResult(personName, res))
+                        .catch(() => markPersonLoadFailed(personName))
+                }
+                setNavStack(rebuilt)
+            } else {
+                setNavStack([{ kind: 'item', item }])
+            }
             setActiveItem(item)
+            setSeriesTmdbId(null)
             setBioExpanded(false)
         }
-    }, [open, item])
+    }, [open, item, applyPersonResult, markPersonLoadFailed])
 
-    const currentEntry = navStack[navStack.length - 1] ?? (item ? { kind: 'item', item } : null)
+    const currentEntry = useMemo(
+        () => navStack[navStack.length - 1] ?? (item ? { kind: 'item', item } : null),
+        [navStack, item]
+    )
     const previousEntry = navStack.length > 1 ? navStack[navStack.length - 2] : null
+
+    // navStack → URL: a deeper stack PUSHes a history entry (browser Back pops
+    // one nav level); shallower/in-place changes REPLACE so closing the modal
+    // or its own Back button don't pollute history.
+    useEffect(() => {
+        const wasOpen = prevOpenRef.current
+        prevOpenRef.current = open
+        const grew = navStack.length > prevStackLenRef.current
+        prevStackLenRef.current = navStack.length
+        if (!open) {
+            prevStackLenRef.current = 0
+            if (wasOpen && parseDetailParams(searchParamsRef.current)) {
+                lastSyncedParamsRef.current = null
+                setSearchParams(stripDetailParams(searchParamsRef.current), { replace: true })
+            }
+            return
+        }
+        const desired = paramsForStack(navStack)
+        if (!desired) return
+        lastSyncedParamsRef.current = desired
+        if (!paramsEqual(searchParamsRef.current, desired)) {
+            setSearchParams(desired, { replace: !grew })
+        }
+    }, [open, navStack, setSearchParams])
+
+    // URL → navStack: reconcile external param changes (browser back/forward)
+    // back into the stack. Our own writes are recognised via
+    // lastSyncedParamsRef; the open-flip commit is skipped because the open
+    // effect above already restored any deep-linked state.
+    const prevOpenForSyncRef = useRef(false)
+    useEffect(() => {
+        const wasOpen = prevOpenForSyncRef.current
+        prevOpenForSyncRef.current = open
+        if (!open || !wasOpen) return
+        if (lastSyncedParamsRef.current && paramsEqual(lastSyncedParamsRef.current, searchParams)) return
+        lastSyncedParamsRef.current = searchParams
+        const target = parseDetailParams(searchParams)
+        if (!target) return // detail params removed — the page closes the modal
+        const prev = navStackRef.current
+        const baseEntry = prev.find((e): e is Extract<NavEntry, { kind: 'item' }> => e.kind === 'item')
+        let stack: NavEntry[]
+        let baseItem: DetailItem
+        if (baseEntry && baseEntry.item.itemId === target.detail) {
+            // Browser Back: pop entries no longer reflected in the URL.
+            stack = [...prev]
+            while (stack.length > 1) {
+                const cur = paramsForStack(stack)
+                if (cur && paramsEqual(cur, searchParams)) break
+                stack.pop()
+            }
+            baseItem = baseEntry.item
+        } else {
+            // Forward nav to a different base film — rebuild around a minimal
+            // item; the modal's metadata fetch fills in name/poster.
+            baseItem = { itemId: target.detail, type: target.type || 'movie' }
+            stack = [{ kind: 'item', item: baseItem }]
+            setActiveItem(baseItem)
+        }
+        // Browser Forward / manual URL: re-add encoded entries that aren't in
+        // the surviving stack (filmography re-fetches asynchronously).
+        let personToFetch: string | null = null
+        let top = stack[stack.length - 1]
+        if (target.season != null && target.episode != null && top.kind === 'item') {
+            stack.push({
+                kind: 'episode',
+                seriesName: top.item.name || 'Series',
+                seriesImdbId: target.detail.startsWith('tt') ? target.detail : undefined,
+                seasonNumber: target.season,
+                episodeNumber: target.episode,
+                episodeName: `Episode ${target.episode}`,
+                seriesTmdbId: null,
+                seriesPoster: top.item.poster,
+            })
+            top = stack[stack.length - 1]
+        }
+        if (target.account && top.kind === 'item') {
+            const acc = useAccountStore.getState().accounts.find(a => a.id === target.account)
+            stack.push({ kind: 'account', accountId: target.account, accountName: acc?.name || 'Account' })
+            top = stack[stack.length - 1]
+        }
+        if (target.person && !(top.kind === 'person' && top.name === target.person && !top.loading)) {
+            stack.push({ kind: 'person', name: target.person, movies: [], series: [], anime: [], loading: true, activeTab: 'all' })
+            personToFetch = target.person
+        }
+        setNavStack(stack)
+        if (personToFetch) {
+            const personName = personToFetch
+            fetchPersonFilmography(personName, filmographyFallbackFor(baseItem))
+                .then(res => applyPersonResult(personName, res))
+                .catch(() => markPersonLoadFailed(personName))
+        }
+    }, [searchParams, open, applyPersonResult, markPersonLoadFailed])
+
+    // Deep-linked episodes are rebuilt without a TMDB id (the URL only carries
+    // item ids); patch the entry once series meta resolves so EpisodeDetailPage
+    // can fetch real episode details and season bounds.
+    useEffect(() => {
+        if (!seriesTmdbId) return
+        setNavStack(prev => {
+            const lastIdx = prev.length - 1
+            if (lastIdx >= 0 && prev[lastIdx].kind === 'episode' && prev[lastIdx].seriesTmdbId === null) {
+                const next = [...prev]
+                next[lastIdx] = { ...prev[lastIdx], seriesTmdbId }
+                return next
+            }
+            return prev
+        })
+    }, [seriesTmdbId])
+
+    const [episodeSeasonBounds, setEpisodeSeasonBounds] = useState<{ maxEpisodes: number; hasPrev: boolean; hasNext: boolean } | null>(null)
+
+    const episodeSeriesTmdbId = currentEntry?.kind === 'episode' ? currentEntry.seriesTmdbId : null
+    const episodeSeasonNumber = currentEntry?.kind === 'episode' ? currentEntry.seasonNumber : null
+
+    useEffect(() => {
+        if (!episodeSeriesTmdbId) {
+            setEpisodeSeasonBounds(null)
+            return
+        }
+        let active = true
+        fetchSeasonsList(episodeSeriesTmdbId)
+            .then(seasons => {
+                if (!active) return
+                const sorted = seasons.filter(s => s.seasonNumber >= 1).sort((a, b) => a.seasonNumber - b.seasonNumber)
+                const idx = sorted.findIndex(s => s.seasonNumber === episodeSeasonNumber)
+                if (idx < 0) { setEpisodeSeasonBounds(null); return }
+                setEpisodeSeasonBounds({
+                    maxEpisodes: sorted[idx].episodeCount || 0,
+                    hasPrev: idx > 0,
+                    hasNext: idx < sorted.length - 1,
+                })
+            })
+            .catch(() => { if (active) setEpisodeSeasonBounds(null) })
+        return () => { active = false }
+    }, [episodeSeriesTmdbId, episodeSeasonNumber])
 
     const previousTitle = previousEntry
         ? previousEntry.kind === 'item'
             ? previousEntry.item.name || 'Details'
             : previousEntry.kind === 'person'
                 ? previousEntry.name
-                : previousEntry.accountName
+                : previousEntry.kind === 'episode'
+                    ? previousEntry.seriesName
+                    : previousEntry.accountName
         : ''
 
     const renderItem: DetailItem | null = currentEntry?.kind === 'item' ? currentEntry.item : (activeItem ?? item)
@@ -528,7 +788,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             }
         }
         return [...seen.values()].sort((a, b) => b.lastWatched.getTime() - a.lastWatched.getTime())
-    }, [allWatchHistory, renderItem?.itemId, accounts])
+    }, [allWatchHistory, renderItem?.itemId, renderItem?.accountId, accounts])
 
     const watchersByItemId = useMemo(() => {
         const map = new Map<string, RailWatcher[]>()
@@ -573,12 +833,15 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         let active = true
         const itemId = renderItem.itemId
         Promise.all([
-            getWatchlist().then(items => items.some(i => i.itemId === itemId) ? [''] : []),
-            ...accounts.map(a => getWatchlist(a.id).then(items => items.some(i => i.itemId === itemId) ? [a.id] : []).catch(() => []))
-        ]).then(results => {
+            getWatchlist().catch(() => []),
+            ...accounts.map(a => getWatchlist(a.id).catch(() => [] as Awaited<ReturnType<typeof getWatchlist>>))
+        ]).then(([globalList, ...accountLists]) => {
             if (!active) return
             const targets = new Set<string>()
-            for (const r of results) for (const id of r) targets.add(id)
+            if (globalList.some(i => i.itemId === itemId)) targets.add('')
+            accounts.forEach((a, i) => {
+                if (accountLists[i]?.some(i => i.itemId === itemId)) targets.add(a.id)
+            })
             setWatchlistTargets(targets)
         }).catch(() => { })
         return () => { active = false }
@@ -616,21 +879,36 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         }
     }
 
+    const handleEpisodeClick = useCallback((data: {
+        episodeNumber: number
+        episodeName: string
+        episodeOverview?: string
+        airDate?: string
+        still?: string
+        seasonNumber: number
+        seriesTmdbId: number | null
+    }) => {
+        setNavStack(prev => [...prev, {
+            kind: 'episode',
+            seriesName: renderItem?.name || 'Series',
+            seriesImdbId: renderItem?.itemId?.startsWith('tt') ? renderItem.itemId : undefined,
+            seasonNumber: data.seasonNumber,
+            episodeNumber: data.episodeNumber,
+            episodeName: data.episodeName,
+            episodeOverview: data.episodeOverview,
+            airDate: data.airDate,
+            still: data.still,
+            seriesTmdbId: data.seriesTmdbId,
+            seriesPoster: renderItem?.poster,
+        }])
+    }, [renderItem?.name, renderItem?.poster, renderItem?.itemId])
+
     const handleAccountClick = useCallback((accountId: string, accountName: string) => {
         setNavStack(prev => [...prev, { kind: 'account', accountId, accountName }])
         setBioExpanded(false)
     }, [])
 
     const handlePersonClick = useCallback((person: { name: string; photo?: string }, role: string) => {
-        const currentFilmFallback: FilmographyItem | null = renderItem ? {
-            id: renderItem.itemId,
-            title: renderItem.name || 'Current Title',
-            poster: renderItem.poster,
-            year: renderItem.year,
-            type: renderItem.type === 'anime' ? 'anime' : renderItem.type === 'series' ? 'series' : 'movie',
-            job: role,
-        } : null
-
         const personEntry: NavEntry = {
             kind: 'person',
             name: person.name,
@@ -646,41 +924,10 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         setNavStack(prev => [...prev, personEntry])
         setBioExpanded(false)
 
-        fetchPersonFilmography(person.name, currentFilmFallback)
-            .then(res => {
-                setNavStack(prev => {
-                    const next = [...prev]
-                    const lastIdx = next.length - 1
-                    if (lastIdx >= 0 && next[lastIdx].kind === 'person' && next[lastIdx].name === person.name) {
-                        next[lastIdx] = {
-                            ...next[lastIdx],
-                            name: res.person.name || next[lastIdx].name,
-                            photo: res.person.photo || next[lastIdx].photo,
-                            biography: res.person.biography,
-                            birthday: res.person.birthday,
-                            deathday: res.person.deathday,
-                            placeOfBirth: res.person.placeOfBirth,
-                            knownFor: res.person.knownFor,
-                            movies: res.movies,
-                            series: res.series,
-                            anime: res.anime,
-                            loading: false,
-                        }
-                    }
-                    return next
-                })
-            })
-            .catch(() => {
-                setNavStack(prev => {
-                    const next = [...prev]
-                    const lastIdx = next.length - 1
-                    if (lastIdx >= 0 && next[lastIdx].kind === 'person' && next[lastIdx].name === person.name) {
-                        next[lastIdx] = { ...next[lastIdx], loading: false }
-                    }
-                    return next
-                })
-            })
-    }, [renderItem])
+        fetchPersonFilmography(person.name, filmographyFallbackFor(renderItem, role))
+            .then(res => applyPersonResult(person.name, res))
+            .catch(() => markPersonLoadFailed(person.name))
+    }, [renderItem, applyPersonResult, markPersonLoadFailed])
 
     const handleSelectFilmFromFilmography = (film: FilmographyItem) => {
         const newItem: DetailItem = {
@@ -743,29 +990,38 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         // Helper: fetch TMDB enrichment (ratings + rich cast with photos)
         const enrichFromTmdb = async (tmdbNumericId: number, mediaType: 'movie' | 'tv') => {
             const result = await traceAsync('tmdb-enrich', () => fetchTmdbDetailsAsMeta(tmdbNumericId, mediaType))
-            if (!active || !result.meta) return
+            const m = result.meta
+            if (!active || !m) return
+            if (m.imdbRating) {
+                const tmdbScore = parseFloat(m.imdbRating)
+                if (!isNaN(tmdbScore) && tmdbScore > 0 && !ratings.some(r => r.source === 'tmdb')) {
+                    ratings.push({ source: 'tmdb', value: tmdbScore.toFixed(1) })
+                    setProviderRatings([...ratings])
+                }
+            }
             setMeta(prev => {
                 const merged: CinemetaMeta = prev ? { ...prev } : {} as CinemetaMeta
-                if (result.meta!.cast && result.meta!.cast.length > 0) merged.cast = result.meta!.cast
-                if (result.meta!.crew && result.meta!.crew.length > 0) merged.crew = result.meta!.crew
-                if (result.meta!.imdbRating) merged.imdbRating = result.meta!.imdbRating
-                if (result.meta!.background && !merged.background) merged.background = result.meta!.background
-                if (result.meta!.poster && !merged.poster) merged.poster = result.meta!.poster
-                if (result.meta!.name && !merged.name) merged.name = result.meta!.name
-                if (result.meta!.description && !merged.description) merged.description = result.meta!.description
-                if (result.meta!.genre && !merged.genre) merged.genre = result.meta!.genre
-                if (result.meta!.runtime && !merged.runtime) merged.runtime = result.meta!.runtime
-                if (result.meta!.released && !merged.released) merged.released = result.meta!.released
-                if (result.meta!.year && !merged.year) merged.year = result.meta!.year
-                if (result.meta!.director && !merged.director) merged.director = result.meta!.director
-                if (result.meta!.certification) merged.certification = result.meta!.certification
-                if (result.meta!.videoList) merged.videoList = result.meta!.videoList
-                if (result.meta!.relatedList) merged.relatedList = result.meta!.relatedList
-                if (result.meta!.reviewsList) merged.reviewsList = result.meta!.reviewsList
-                if (result.meta!.status) merged.status = result.meta!.status
-                if (result.meta!.originalLanguage) merged.originalLanguage = result.meta!.originalLanguage
-                if (result.meta!.productionCompanies) merged.productionCompanies = result.meta!.productionCompanies
-                if (result.meta!.networks) merged.networks = result.meta!.networks
+                if (m.cast && m.cast.length > 0) merged.cast = m.cast
+                if (m.crew && m.crew.length > 0) merged.crew = m.crew
+                if (m.background && !merged.background) merged.background = m.background
+                if (m.poster && !merged.poster) merged.poster = m.poster
+                if (m.name && !merged.name) merged.name = m.name
+                if (m.description && !merged.description) merged.description = m.description
+                if (m.genre && !merged.genre) merged.genre = m.genre
+                if (m.runtime && !merged.runtime) merged.runtime = m.runtime
+                if (m.released && !merged.released) merged.released = m.released
+                if (m.year && !merged.year) merged.year = m.year
+                if (m.director && !merged.director) merged.director = m.director
+                if (m.certification) merged.certification = m.certification
+                if (m.videoList) merged.videoList = m.videoList
+                if (m.relatedList) merged.relatedList = m.relatedList
+                if (m.reviewsList) merged.reviewsList = m.reviewsList
+                if (m.status) merged.status = m.status
+                if (m.originalLanguage) merged.originalLanguage = m.originalLanguage
+                if (m.productionCompanies) merged.productionCompanies = m.productionCompanies
+                if (m.networks) merged.networks = m.networks
+                if (m.galleryBackdrops) merged.galleryBackdrops = m.galleryBackdrops
+                if (m.watchProviders) merged.watchProviders = m.watchProviders
                 return merged
             })
             // Trailer: prefer TMDB key if available
@@ -802,7 +1058,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             fetchAdditionalRatings(result.imdbId)
                                 .then(extra => {
                                     if (active && extra.length > 0) {
-                                        setProviderRatings(prev => mergeProviderRatings(prev, extra))
+                                        setProviderRatings(prev => mergeRatingsKeepExisting(prev, extra))
                                     }
                                 })
                                 .catch(() => { })
@@ -830,7 +1086,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 fetchAdditionalRatings(cinemetaId)
                                     .then(extra => {
                                         if (active && extra.length > 0) {
-                                            setProviderRatings(prev => mergeProviderRatings(prev, extra))
+                                            setProviderRatings(prev => mergeRatingsKeepExisting(prev, extra))
                                         }
                                     })
                                     .catch(() => { })
@@ -865,7 +1121,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     fetchAdditionalRatings(String(match.id))
                                         .then(extra => {
                                             if (active && extra.length > 0) {
-                                                setProviderRatings(prev => mergeProviderRatings(prev, extra))
+                                                setProviderRatings(prev => mergeRatingsKeepExisting(prev, extra))
                                             }
                                         })
                                         .catch(() => { })
@@ -910,7 +1166,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             })
                 .catch(() => { })
 
-            // Kick off PMDB and additional ratings (MDBList / OMDB / RT / Metacritic) in parallel
+            // Kick off PMDB and additional ratings (MDBList / RT / Metacritic) in parallel
             traceAsync('pmdb', () => getPmdbRatingFromImdb(renderItem.itemId, renderItem.type))
                 .then(r => {
                     if (import.meta.env?.DEV) console.log('[trace] pmdb result:', r ? `score=${r.score}` : 'null')
@@ -951,6 +1207,9 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             cinemetaPromise
                 .then(result => {
                     if (!active) return
+                    if (result?.tmdbId && (renderItem.type === 'series' || renderItem.type === 'anime' || renderItem.type === 'episode')) {
+                        setSeriesTmdbId(result.tmdbId!)
+                    }
                     setMeta(prev => {
                         if (!prev) return result
                         return {
@@ -1055,7 +1314,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             >
                 {currentEntry?.kind === 'person' ? (
                     /* ══ PERSON FILMOGRAPHY VIEW (Separated Movies, Series & Anime) ══════════════════ */
-                    <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-background text-foreground">
+                    <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-card text-card-foreground">
                         {/* Person Header */}
                         <div className={cn('relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-8 sm:py-5', isLight ? 'bg-muted/50 text-foreground' : 'bg-card text-white')}>
                             {/* Close button — top-right, frosted glass */}
@@ -1274,8 +1533,64 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             )}
                         </div>
                     </div>
+                ) : currentEntry?.kind === 'episode' ? (
+                    <EpisodeDetailPage
+                        seriesName={currentEntry.seriesName}
+                        seriesImdbId={currentEntry.seriesImdbId}
+                        seasonNumber={currentEntry.seasonNumber}
+                        episodeNumber={currentEntry.episodeNumber}
+                        episodeName={currentEntry.episodeName}
+                        episodeOverview={currentEntry.episodeOverview}
+                        airDate={currentEntry.airDate}
+                        still={currentEntry.still}
+                        seriesTmdbId={currentEntry.seriesTmdbId}
+                        isLight={isLight}
+                        maxEpisodesInSeason={episodeSeasonBounds?.maxEpisodes || null}
+                        hasPrevSeason={episodeSeasonBounds?.hasPrev ?? false}
+                        hasNextSeason={episodeSeasonBounds?.hasNext ?? false}
+                        onPersonClick={handlePersonClick}
+                        onGoBack={handleGoBack}
+                        onClose={() => onOpenChange(false)}
+                        onNavigateEpisode={(season, episode) => {
+                            const applyNav = (s: number, e: number) => {
+                                setNavStack(prev => {
+                                    const next = [...prev]
+                                    const lastIdx = next.length - 1
+                                    if (lastIdx >= 0 && next[lastIdx].kind === 'episode') {
+                                        const cur = next[lastIdx]
+                                        next[lastIdx] = {
+                                            ...cur,
+                                            seasonNumber: s,
+                                            episodeNumber: e,
+                                            episodeName: `Loading S${s}E${e}...`,
+                                            episodeOverview: undefined,
+                                            airDate: undefined,
+                                            still: undefined,
+                                        }
+                                    }
+                                    return next
+                                })
+                            }
+                            if (episode < 0) {
+                                const targetSeason = season
+                                const tid = currentEntry?.kind === 'episode' ? currentEntry.seriesTmdbId : null
+                                if (tid) {
+                                    fetchSeasonEpisodes(tid, targetSeason)
+                                        .then(eps => {
+                                            const last = eps.length > 0 ? Math.max(...eps.map(x => x.episodeNumber)) : 1
+                                            applyNav(targetSeason, last)
+                                        })
+                                        .catch(() => applyNav(targetSeason, 1))
+                                } else {
+                                    applyNav(targetSeason, 1)
+                                }
+                            } else {
+                                applyNav(season, episode)
+                            }
+                        }}
+                    />
                 ) : currentEntry?.kind === 'account' ? (
-                    <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-background text-foreground">
+                    <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-card text-card-foreground">
                         <div className={cn('relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-8 sm:py-5', isLight ? 'bg-muted/50 text-foreground' : 'bg-card text-white')}>
                             <button
                                 type="button"
@@ -1653,6 +1968,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     activeItem={activeItem}
                                     isLight={isLight}
                                     loading={loading}
+                                    onEpisodeClick={handleEpisodeClick}
                                 />
 
                                 {/* ── WHERE TO WATCH ───────────────────────────────────── */}

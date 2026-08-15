@@ -3,7 +3,7 @@ import path from 'path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'url'
 
-const ENABLED = process.env.AIOMAN_TRACE === '1'
+const ENABLED = ['1', 'true', 'yes', 'on'].includes((process.env.AIOMAN_TRACE ?? '').toLowerCase())
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TRACE_FILE = path.resolve(process.env.DATA_DIR || './data', 'trace.log')
 

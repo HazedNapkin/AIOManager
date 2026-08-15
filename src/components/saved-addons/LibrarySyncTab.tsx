@@ -9,7 +9,7 @@ import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip } from '@/components/ui/tooltip'
-import { cn, getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
+import { cn, getLatestAddonVersion, isNewerVersion, getSyncScopeLabel } from '@/lib/utils'
 import type { Account } from '@/types/account'
 import type { Profile } from '@/types/profile'
 import type { SavedAddon, SavedAddonManifestChangeSummary } from '@/types/saved-addon'
@@ -195,7 +195,15 @@ export function LibrarySyncTab({
                         <Tooltip content={addon.installUrl} side="top">
                           <p className="truncate font-mono text-xs text-muted-foreground/80">{hostOf(addon.installUrl)}</p>
                         </Tooltip>
-                        <p className="text-xs text-muted-foreground">v{addon.manifest.version} · {deployedAccounts.length} account{deployedAccounts.length !== 1 ? 's' : ''}</p>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <span>v{addon.manifest.version}</span>
+                          <span>·</span>
+                          <span>{deployedAccounts.length} account{deployedAccounts.length !== 1 ? 's' : ''}</span>
+                          <span>·</span>
+                          <span className={cn(addon.syncAccountIds?.length === 0 ? "text-destructive" : "")}>
+                            {getSyncScopeLabel(addon.syncAccountIds)}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
                         {isReadyToUpdate ? (

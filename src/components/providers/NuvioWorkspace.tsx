@@ -309,7 +309,15 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
     const [switching, setSwitching] = useState(false)
     const [pending, setPending] = useState<NuvioProfile | null>(null)
 
-    const nuvioSessionDriver = useMemo(() => nuvioDriverFor(connection), [connection.id, connection.credentials?.baseUrl, connection.credentials?.publishableKey])
+    const connectionBaseUrl = connection.credentials?.baseUrl
+    const connectionPublishableKey = connection.credentials?.publishableKey
+    // Value-keyed so the driver identity stays stable across connection object churn.
+    const nuvioSessionDriver = useMemo(() => {
+        const creds: Record<string, string> = {}
+        if (connectionBaseUrl !== undefined) creds.baseUrl = connectionBaseUrl
+        if (connectionPublishableKey !== undefined) creds.publishableKey = connectionPublishableKey
+        return nuvioDriverFor({ credentials: creds })
+    }, [connectionBaseUrl, connectionPublishableKey])
 
     const currentId = connection.credentials?.profileId || ''
     const matches = (p: NuvioProfile) => p.id === currentId || String(p.index) === String(currentId)

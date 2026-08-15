@@ -24,6 +24,10 @@ export async function mergeAddons(
 
   await mapConcurrent(savedAddons, 5, async (savedAddon) => {
     const installUrl = savedAddon.installUrl
+    // mergeAddons runs once per target account; without this guard a deploy to A
+    // accounts re-fetches every manifest A times and exhausts the meta-proxy rate
+    // limit. The 10-min TTL cache the merge loop reads from is authority enough.
+    if (getCachedManifest(installUrl)) return
     try {
       const fresh = await fetchAddonManifest(installUrl, accountId)
       if (fresh?.manifest?.id && fresh?.manifest?.name && fresh?.manifest?.version) {
@@ -62,76 +66,46 @@ export async function mergeAddons(
         continue
       }
 
-      try {
-        const cached = getCachedManifest(installUrl)
-        const manifestToApply = (cached?.id && cached?.name && cached?.version)
-          ? cached
-          : savedAddon.manifest
+      const cached = getCachedManifest(installUrl)
+      const manifestToApply = (cached?.id && cached?.name && cached?.version)
+        ? cached
+        : savedAddon.manifest
 
-        const updatedDescriptor: AddonDescriptor = {
-          transportUrl: installUrl,
-          manifest: manifestToApply,
-          flags: existing.flags,
-          metadata: { ...existing.metadata, ...effectiveMetadata },
-          catalogOverrides: savedAddon.catalogOverrides || existing.catalogOverrides,
-          note: existing.note,
-        }
-
-        updatedAddons[existingIndex] = updatedDescriptor
-        result.updated.push({
-          addonId,
-          oldUrl: existing.transportUrl,
-          newUrl: installUrl,
-        })
-      } catch (error) {
-        if (import.meta.env.DEV) console.warn(`[Merger] Update fetch failed for ${savedAddon.name}, keeping current/cached`, error)
-
-        updatedAddons[existingIndex] = {
-          ...updatedAddons[existingIndex],
-          metadata: effectiveMetadata
-        }
-
-        result.skipped.push({
-          addonId,
-          reason: 'fetch-failed',
-        })
+      const updatedDescriptor: AddonDescriptor = {
+        transportUrl: installUrl,
+        manifest: manifestToApply,
+        flags: existing.flags,
+        metadata: { ...existing.metadata, ...effectiveMetadata },
+        catalogOverrides: savedAddon.catalogOverrides || existing.catalogOverrides,
+        note: existing.note,
       }
+
+      updatedAddons[existingIndex] = updatedDescriptor
+      result.updated.push({
+        addonId,
+        oldUrl: existing.transportUrl,
+        newUrl: installUrl,
+      })
     } else {
-      try {
-        const cached = getCachedManifest(installUrl)
-        const manifestToApply = (cached?.id && cached?.name && cached?.version)
-          ? cached
-          : savedAddon.manifest
+      const cached = getCachedManifest(installUrl)
+      const manifestToApply = (cached?.id && cached?.name && cached?.version)
+        ? cached
+        : savedAddon.manifest
 
-        const newDescriptor: AddonDescriptor = {
-          transportUrl: installUrl,
-          manifest: manifestToApply,
-          metadata: effectiveMetadata,
-          catalogOverrides: savedAddon.catalogOverrides,
-        }
-
-        updatedAddons.push(newDescriptor)
-
-        result.added.push({
-          addonId,
-          name: manifestToApply.name,
-          installUrl: installUrl,
-        })
-      } catch (error) {
-        if (import.meta.env.DEV) console.warn(`[Merger] Fresh fetch failed for ${savedAddon.name}, using cached`, error)
-
-        updatedAddons.push({
-          transportUrl: installUrl,
-          manifest: savedAddon.manifest,
-          metadata: effectiveMetadata
-        })
-
-        result.added.push({
-          addonId,
-          name: savedAddon.manifest.name,
-          installUrl,
-        })
+      const newDescriptor: AddonDescriptor = {
+        transportUrl: installUrl,
+        manifest: manifestToApply,
+        metadata: effectiveMetadata,
+        catalogOverrides: savedAddon.catalogOverrides,
       }
+
+      updatedAddons.push(newDescriptor)
+
+      result.added.push({
+        addonId,
+        name: manifestToApply.name,
+        installUrl: installUrl,
+      })
     }
   }
 

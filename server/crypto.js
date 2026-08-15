@@ -43,6 +43,9 @@ export function decrypt(encryptedData, secrets) {
     if (!secrets) throw new Error('Encryption secret is required')
 
     if (!encryptedData || typeof encryptedData !== 'string' || !encryptedData.includes(':')) return encryptedData
+    // Plaintext URL passthrough: legacy rows store unencrypted URLs (often with a port, which
+    // would otherwise split into exactly 3 colon-parts and be misread as IV:ciphertext:tag).
+    if (encryptedData.startsWith('http')) return encryptedData
 
     const parts = encryptedData.split(':')
     if (parts.length !== 3) return encryptedData

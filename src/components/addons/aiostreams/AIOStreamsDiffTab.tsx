@@ -254,7 +254,7 @@ export function AIOStreamsDiffTab({
         } finally {
             setLoading(false)
         }
-    }, [selectedTarget, password, sourcePresets])
+    }, [selectedTarget, password, sourcePresets, selectedTargetKey])
 
     const counts = useMemo(
         () => diffEntries ? summarizeEntries(diffEntries) : null,

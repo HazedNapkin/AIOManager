@@ -374,7 +374,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <BorderBeam duration={14} />
                             <CardHeader>
                                 <CardTitle className="text-lg font-bold tracking-tight">Welcome Back</CardTitle>
-                                <CardDescription>
+                                <CardDescription className="text-foreground/80">
                                     {isLocked && auth.isAuthenticated
                                         ? 'Your session ended. Sign in again to continue.'
                                         : 'Enter your UUID and password to sign in.'}
@@ -382,7 +382,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-muted-foreground uppercase">UUID</Label>
+                                    <Label className="text-xs font-medium text-foreground/80 uppercase">UUID</Label>
                                     <div className="relative">
                                         <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
@@ -403,7 +403,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-muted-foreground uppercase">Password</Label>
+                                    <Label className="text-xs font-medium text-foreground/80 uppercase">Password</Label>
                                     <div className="relative">
                                         <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
@@ -475,7 +475,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 {isLocked && auth.isAuthenticated && (
                                     <Button
                                         variant="link"
-                                        className="text-xs text-muted-foreground"
+                                        className="text-xs text-foreground/80"
                                         onClick={() => setShowSwitchConfirm(true)}
                                     >
                                         Switch account

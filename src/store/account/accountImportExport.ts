@@ -338,33 +338,33 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             }
         })
 
-        const readEncryptionKey = localDecryptionKey ?? getEncryptionKey()
-        const writeEncryptionKey = getEncryptionKey()
+        const getReadEncryptionKey = () => localDecryptionKey ?? getEncryptionKey()
+        const getWriteEncryptionKey = () => getEncryptionKey()
         const currentAccounts = [...store.getState().accounts]
 
         const localDecrypted = await Promise.all(
             currentAccounts.map(async (acc) => {
                 let password: string | undefined
                 try {
-                    if (acc.password) password = await decrypt(acc.password, readEncryptionKey)
+                    if (acc.password) password = await decrypt(acc.password, getReadEncryptionKey())
                 } catch {
                     password = undefined
                 }
                 try {
-                    return { id: acc.id, key: await decrypt(getStremioAuthKey(acc), readEncryptionKey), password }
+                    return { id: acc.id, key: await decrypt(getStremioAuthKey(acc), getReadEncryptionKey()), password }
                 } catch (e) {
                     // Top-level authKey may be empty for connection-based accounts;
                     // fall back to the authKey stored in Stremio connection credentials.
                     const stremioConn = (acc.connections || []).find((c) => c.platform === 'stremio')
-                    if (stremioConn?.credentials?.authKey && readEncryptionKey) {
+                    if (stremioConn?.credentials?.authKey && getReadEncryptionKey()) {
                         try {
-                            return { id: acc.id, key: await decrypt(stremioConn.credentials.authKey, readEncryptionKey), password }
+                            return { id: acc.id, key: await decrypt(stremioConn.credentials.authKey, getReadEncryptionKey()), password }
                         } catch {}
                     }
                     const connWithCreds = (acc.connections || []).find(c => c.credentials?.authKey)
-                    if (connWithCreds && readEncryptionKey) {
+                    if (connWithCreds && getReadEncryptionKey()) {
                         try {
-                            return { id: acc.id, key: await decrypt(connWithCreds.credentials.authKey, readEncryptionKey), password }
+                            return { id: acc.id, key: await decrypt(connWithCreds.credentials.authKey, getReadEncryptionKey()), password }
                         } catch {}
                     }
                     return { id: acc.id, key: null, password }
@@ -379,8 +379,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             if (!secrets?.key) return account
             return {
                 ...account,
-                authKey: await encrypt(secrets.key, writeEncryptionKey),
-                password: secrets.password ? await encrypt(secrets.password, writeEncryptionKey) : account.password,
+                authKey: await encrypt(secrets.key, getWriteEncryptionKey()),
+                password: secrets.password ? await encrypt(secrets.password, getWriteEncryptionKey()) : account.password,
             }
         }
 
@@ -421,10 +421,10 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     ...matchedAccount,
                     name: ra.name || matchedAccount.name,
                     authKey: mergedAuthKey
-                        ? await encrypt(mergedAuthKey, writeEncryptionKey)
+                        ? await encrypt(mergedAuthKey, getWriteEncryptionKey())
                         : matchedAccount.authKey,
                     password: mergedPassword
-                        ? await encrypt(mergedPassword, writeEncryptionKey)
+                        ? await encrypt(mergedPassword, getWriteEncryptionKey())
                         : matchedAccount.password,
                     accentColor: ra.accentColor || matchedAccount.accentColor,
                     emoji: ra.emoji || matchedAccount.emoji,
@@ -488,8 +488,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     ...ra,
                     addons: importedAddons,
                     deletedAddons: reconcileTombstones(importedTombstones, importedAddons),
-                    authKey: ra.rawKey ? await encrypt(ra.rawKey, writeEncryptionKey) : '',
-                    password: ra.password ? await encrypt(ra.password, writeEncryptionKey) : undefined,
+                    authKey: ra.rawKey ? await encrypt(ra.rawKey, getWriteEncryptionKey()) : '',
+                    password: ra.password ? await encrypt(ra.password, getWriteEncryptionKey()) : undefined,
                     connections: mergeConnections(undefined, ra.connections, mode),
                 } as Account
                 reconciledAccounts.push(importedAccount)
@@ -545,12 +545,12 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 const restoredBackup = localDecryptionKey
                     ? await Promise.all(backup.map(async (account) => {
                         try {
-                            const rawAuthKey = await decrypt(getStremioAuthKey(account), readEncryptionKey)
-                            const rawPassword = account.password ? await decrypt(account.password, readEncryptionKey).catch(() => undefined) : undefined
+                            const rawAuthKey = await decrypt(getStremioAuthKey(account), getReadEncryptionKey())
+                            const rawPassword = account.password ? await decrypt(account.password, getReadEncryptionKey()).catch(() => undefined) : undefined
                             return {
                                 ...account,
-                                authKey: await encrypt(rawAuthKey, writeEncryptionKey),
-                                password: rawPassword ? await encrypt(rawPassword, writeEncryptionKey) : account.password,
+                                authKey: await encrypt(rawAuthKey, getWriteEncryptionKey()),
+                                password: rawPassword ? await encrypt(rawPassword, getWriteEncryptionKey()) : account.password,
                             }
                         } catch {
                             return account

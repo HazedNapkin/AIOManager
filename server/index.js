@@ -3,6 +3,7 @@ import cors from '@fastify/cors'
 import fastifyStatic from '@fastify/static'
 import fastifyCompress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
+import swagger from '@fastify/swagger'
 import { hashApiKey } from './api-keys.js'
 import db from './db.js'
 import fs from 'fs'
@@ -21,6 +22,7 @@ import { createReconciler } from './providers/reconciler.js'
 import { registerProviderRoutes } from './routes/providers.js'
 import { registerMetadataKeysRoutes } from './routes/metadata-keys.js'
 import { registerMetadataProxyRoutes } from './routes/metadata-proxy.js'
+import { registerCommandsRoutes } from './routes/commands.js'
 import { registerWatchlistRoutes } from './routes/watchlist.js'
 
 import { traceClientBatch, traceEnabled } from './utils/trace.js'
@@ -56,6 +58,31 @@ await fastify.register(rateLimit, {
 })
 
 await fastify.register(fastifyCompress, { global: true })
+
+// OpenAPI contract: routes that declare JSON schemas are reflected into the spec at
+// /openapi.json. Deliberately exposed in ALL environments (not just dev): the spec
+// itself is not sensitive (every documented route still requires sync auth), and the
+// client build + CI drift check consume it from a running instance unauthenticated.
+await fastify.register(swagger, {
+    openapi: {
+        openapi: '3.1.0',
+        info: {
+            title: 'AIOManager API',
+            description: 'Hybrid sync server for AIOManager. Served same-origin under /api/*.',
+            version: VERSION
+        },
+        servers: [{ url: '/' }],
+        tags: [
+            { name: 'metadata-keys', description: 'User-scoped metadata provider API key storage' },
+            { name: 'metadata', description: 'Metadata proxy and API key testing' },
+            { name: 'commands', description: 'Server-side bulk account command queue (jobs with per-account results)' }
+        ]
+    }
+})
+
+// @fastify/swagger only generates the spec (fastify.swagger()); the JSON is served
+// here. Must come after the swagger plugin registration and before other routes.
+fastify.get('/openapi.json', { schema: { hide: true } }, async () => fastify.swagger())
 
 fastify.addHook('onRequest', async (request) => {
     request.startTime = Date.now()
@@ -247,8 +274,9 @@ const start = async () => {
         registerActivityRoutes(fastify, activityEngine)
         registerHydraRoutes(fastify, reconciler)
         registerProviderRoutes(fastify, reconciler)
-    registerMetadataKeysRoutes(fastify)
-    registerMetadataProxyRoutes(fastify)
+        registerMetadataKeysRoutes(fastify)
+        registerMetadataProxyRoutes(fastify)
+        registerCommandsRoutes(fastify)
 
         await fastify.listen({ port: PORT, host: '0.0.0.0' })
         fastify.log.info({ category: 'Server' }, `Listening on port ${PORT}`)

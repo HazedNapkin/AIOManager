@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -20,6 +21,8 @@ import {
     CardFooter,
 } from '@/components/ui/card'
 import { useAccountStore, getAccountEmail } from '@/store/accountStore'
+import { useAddonStore } from '@/store/addonStore'
+import { normalizeUrl } from '@/lib/addon-storage'
 import { useVaultStore } from '@/store/vaultStore'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -37,10 +40,12 @@ import {
     getSectionSummary,
     getConfigStats,
 } from '@/lib/aiostreams-utils'
+import { extractAddonParams, buildVariantUrl, extractVariantsFromConfig, getVariantSelectorLocation, NO_SELECTION } from '@/lib/addon-params'
 import { AIOStreamsSyncTab, TargetOption, MissingTargetAccount } from '@/components/addons/aiostreams/AIOStreamsSyncTab'
 import { AIOStreamsActionsTab } from '@/components/addons/aiostreams/AIOStreamsActionsTab'
 import { AIOStreamsDiffTab } from '@/components/addons/aiostreams/AIOStreamsDiffTab'
 import { PresetsEditor } from '@/components/addons/aiostreams/PresetsEditor'
+import { BulkAccountPicker } from '@/components/accounts/BulkAccountPicker'
 import { cn } from '@/lib/utils'
 import {
     ArrowLeft, Loader2, AlertTriangle, ExternalLink,
@@ -577,6 +582,18 @@ function SectionHeader({ title, description }: { title: string; description: str
     )
 }
 
+function resolveLinkedSavedAddonId(accountId: string, oldUrl: string): string | null {
+    const { accountStates, library } = useAddonStore.getState()
+    const viaAccountState = accountStates[accountId]?.installedAddons.find(
+        (installed) => installed.savedAddonId && normalizeUrl(installed.installUrl) === normalizeUrl(oldUrl)
+    )
+    if (viaAccountState?.savedAddonId && library[viaAccountState.savedAddonId]) return viaAccountState.savedAddonId
+    const viaLibraryUrl = Object.values(library).find(
+        (savedAddon) => normalizeUrl(savedAddon.installUrl) === normalizeUrl(oldUrl)
+    )
+    return viaLibraryUrl?.id ?? null
+}
+
 function SectionContent({
     activeSection,
     sourceConfig,
@@ -625,6 +642,74 @@ function SectionContent({
     const stats = useMemo(() => getConfigStats(sourceConfig), [sourceConfig])
     const sections = useMemo(() => getConfigSections(sourceConfig), [sourceConfig])
     const [presetsSaving, setPresetsSaving] = useState(false)
+    const { toast } = useToast()
+    const [variantSwapping, setVariantSwapping] = useState(false)
+    const [bulkVariantExpanded, setBulkVariantExpanded] = useState(false)
+    const [bulkVariantSelected, setBulkVariantSelected] = useState<Set<string>>(new Set())
+
+    const availableVariants = useMemo(() => extractVariantsFromConfig(sourceConfig), [sourceConfig])
+    const currentVariant = useMemo(() => extractAddonParams(transportUrl).params.variant || '', [transportUrl])
+
+    const handleVariantSwap = async (value: string) => {
+        const variantId = value === NO_SELECTION ? null : value
+        const variantLocation = getVariantSelectorLocation(sourceConfig)
+        const newUrl = buildVariantUrl(transportUrl, variantId, variantLocation)
+        if (newUrl === transportUrl) return
+
+        const otherTargets: { accountId: string; oldUrl: string; newUrl: string }[] = []
+        for (const accId of bulkVariantSelected) {
+            const acc = useAccountStore.getState().accounts.find(a => a.id === accId)
+            if (!acc) continue
+            const matched = acc.addons.find(a => {
+                if (!isAIOStreamsAddon(a)) return false
+                const p = parseAIOStreamsUrl(a.transportUrl)
+                return p?.baseUrl === baseUrl && p.uuid === uuid
+            })
+            if (!matched) continue
+            const theirNewUrl = buildVariantUrl(matched.transportUrl, variantId, variantLocation)
+            if (theirNewUrl === matched.transportUrl) continue
+            otherTargets.push({ accountId: acc.id, oldUrl: matched.transportUrl, newUrl: theirNewUrl })
+        }
+
+        setVariantSwapping(true)
+        try {
+            await useAccountStore.getState().replaceTransportUrl(transportUrl, newUrl, accountId)
+            if (otherTargets.length === 0) {
+                toast({ title: 'Variant updated', description: variantId ? `Switched to ${variantId}` : 'Switched to base config' })
+            } else {
+                let success = 0
+                let fail = 0
+                const results = await Promise.allSettled(otherTargets.map(t =>
+                    useAccountStore.getState().replaceTransportUrl(t.oldUrl, t.newUrl, t.accountId)
+                ))
+                for (const r of results) {
+                    if (r.status === 'fulfilled') success++
+                    else fail++
+                }
+                const total = 1 + success
+                if (fail === 0) {
+                    toast({ title: 'Variant updated across accounts', description: `${variantId ? `Switched to ${variantId}` : 'Switched to base config'} — ${total} account${total !== 1 ? 's' : ''}` })
+                } else {
+                    toast({ title: 'Variant partially updated', description: `${total} succeeded, ${fail} failed`, variant: 'destructive' })
+                }
+                setBulkVariantSelected(new Set())
+            }
+
+            // Sync the linked library entry so normalizeUrl(account URL) === normalizeUrl(library installUrl) and syncAccountState linkage survives.
+            const linkedSavedAddonId = resolveLinkedSavedAddonId(accountId, transportUrl)
+            if (linkedSavedAddonId) {
+                try {
+                    await useAddonStore.getState().updateSavedAddon(linkedSavedAddonId, { installUrl: newUrl })
+                } catch (err) {
+                    if (import.meta.env.DEV) console.warn('[AIOStreamsPage] Saved-addon library URL sync failed after variant swap:', err)
+                }
+            }
+        } catch (err) {
+            toast({ title: 'Failed to switch variant', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
+        } finally {
+            setVariantSwapping(false)
+        }
+    }
 
     const configSize = useMemo(() => {
         const json = JSON.stringify(sourceConfig)
@@ -747,6 +832,39 @@ function SectionContent({
                                 <code className="flex-1 text-xs font-mono bg-muted/30 px-3 py-2 rounded-lg truncate">{installUrl}</code>
                                 <CopyButton value={installUrl} variant="outline" className="h-9 w-9 shrink-0" iconSize={14} />
                             </div>
+                        </div>
+                    )}
+
+                    {availableVariants.length > 0 && (
+                        <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5" /> Active Variant
+                            </h3>
+                            <p className="text-xs text-muted-foreground">
+                                Switch the variant applied at request time. Updates the addon URL in place.
+                            </p>
+                            <Select value={currentVariant || NO_SELECTION} onValueChange={handleVariantSwap} disabled={variantSwapping}>
+                                <SelectTrigger className="w-full">
+                                    <SelectValue placeholder="Base config (no variant)" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={NO_SELECTION}>Base config (no variant)</SelectItem>
+                                    {availableVariants.map(v => (
+                                        <SelectItem key={v.id} value={v.id}>{v.name || v.id}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            {sameUserAccounts.length > 0 && (
+                                <BulkAccountPicker
+                                    label={`Also apply to ${sameUserAccounts.length} other account${sameUserAccounts.length !== 1 ? 's' : ''}`}
+                                    accounts={sameUserAccounts}
+                                    expanded={bulkVariantExpanded}
+                                    onExpandedChange={setBulkVariantExpanded}
+                                    selected={bulkVariantSelected}
+                                    onSelectedChange={setBulkVariantSelected}
+                                    disabled={variantSwapping}
+                                />
+                            )}
                         </div>
                     )}
 

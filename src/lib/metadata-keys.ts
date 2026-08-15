@@ -1,5 +1,6 @@
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
+import { typedClient } from '@/api/typed-client'
 
 export type MetadataKeyFormat = 'v3' | 'v4' | 'unknown'
 
@@ -37,13 +38,11 @@ export function maskKeyValue(): string {
 }
 
 export async function listMetadataKeys(): Promise<ConfiguredProvider[]> {
-    const res = await fetch('/api/metadata-keys', { headers: await authHeaders() })
-    const json = await res.json()
-    if (!res.ok) {
-        throw new Error(json?.error?.message || json?.error || 'Failed to load keys')
+    const { data: json, error, response } = await typedClient.GET('/api/metadata-keys')
+    if (error || !response.ok) {
+        throw new Error(error?.error || 'Failed to load keys')
     }
-    const providers = Array.isArray(json.providers) ? json.providers : []
-    return providers.map((p: Partial<ConfiguredProvider> & { keyFormat?: string }) => ({
+    return json.providers.map((p) => ({
         provider: String(p.provider ?? ''),
         keyFormat: (p.keyFormat === 'v3' || p.keyFormat === 'v4' ? p.keyFormat : 'unknown') as MetadataKeyFormat,
         updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,

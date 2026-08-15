@@ -34,7 +34,7 @@ export function useAIOStreamsInstances() {
         const parsed = parseAIOStreamsUrl(addon.transportUrl)
         if (!parsed) continue
 
-        const storedPassword = getStoredAIOStreamsPassword(parsed.baseUrl, parsed.uuid)
+        const storedPassword = vaultLocked ? null : getStoredAIOStreamsPassword(parsed.baseUrl, parsed.uuid)
         if (storedPassword === null) {
           hasLocked = true
         }

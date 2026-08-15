@@ -51,7 +51,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
       setActiveAddon(addon)
       setNavStack([])
     }
-  }, [open, addon?.slug, addon?.uuid])
+  }, [open, addon])
 
   const handleInternalNav = useCallback((next: DiscoverAddon) => {
     setActiveAddon(prev => {
@@ -102,7 +102,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
       .catch(() => { if (active) setDetail(null) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [open, navAddon?.slug, navAddon?.uuid])
+  }, [open, navAddon])
 
   useEffect(() => {
     if (!open || !navAddon) return

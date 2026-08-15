@@ -22,10 +22,13 @@ import { useUIStore } from '@/store/uiStore'
 import { useProfileStore } from '@/store/profileStore'
 import { AddonDescriptor } from '@/types/addon'
 import { useState, useMemo } from 'react'
-import { Search, Filter, Check, AlertCircle, Package, LayoutGrid, List, ShieldCheck, Loader2 } from 'lucide-react'
+import { Search, Filter, Check, AlertCircle, Package, LayoutGrid, List, ShieldCheck, Loader2, Tag, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AddonTag } from './AddonTag'
 import { AddonIcon } from '@/components/ui/addon-icon'
+import { extractAddonParams, getAddonParamType } from '@/lib/addon-params'
+import { AddonParamSelector } from '@/components/ui/addon-param-selector'
+import { ChevronDown, RotateCcw, Settings2 } from 'lucide-react'
 
 interface InstallSavedAddonDialogProps {
   accountId: string
@@ -52,6 +55,8 @@ export function InstallSavedAddonDialog({
   const [selectedSavedAddonIds, setSelectedSavedAddonIds] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [urlOverrides, setUrlOverrides] = useState<Record<string, string>>({})
+  const [overrideOpenId, setOverrideOpenId] = useState<string | null>(null)
 
   const viewMode = useUIStore(s => s.libraryViewMode)
   const setViewMode = useUIStore(s => s.setLibraryViewMode)
@@ -131,6 +136,8 @@ export function InstallSavedAddonDialog({
       }
       setError(null)
       setSearchTerm('')
+      setUrlOverrides({})
+      setOverrideOpenId(null)
       onOpenChange(false)
     }
   }
@@ -149,7 +156,9 @@ export function InstallSavedAddonDialog({
 
       const bulkResult = await bulkApplySavedAddons(
         Array.from(selectedSavedAddonIds),
-        accountsToApply
+        accountsToApply,
+        undefined,
+        Object.keys(urlOverrides).length > 0 ? urlOverrides : undefined
       )
 
 
@@ -353,6 +362,12 @@ export function InstallSavedAddonDialog({
                         viewMode === 'grid' ? "mt-auto justify-between w-full" : "justify-end shrink-0"
                       )}>
                         <div className="flex flex-wrap justify-end gap-1">
+                          {(() => { const p = extractAddonParams(addon.installUrl).params; if (!p.tag && !p.variant) return null; return (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
+                              {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
+                              {p.tag || p.variant}
+                            </span>
+                          ) })()}
                           {addon.tags.slice(0, viewMode === 'grid' ? 2 : 3).map(tag => (
                             <AddonTag key={tag} tag={tag} />
                           ))}
@@ -367,6 +382,42 @@ export function InstallSavedAddonDialog({
                           </Badge>
                         )}
                       </div>
+
+                      {isSelected && getAddonParamType(addon.installUrl, addon.manifest) && (
+                        <div className={cn(viewMode === 'grid' ? "mt-2 w-full" : "mt-2 w-full")}>
+                          <button
+                            type="button"
+                            onClick={() => setOverrideOpenId(overrideOpenId === addon.id ? null : addon.id)}
+                            className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                          >
+                            <Settings2 className="h-3 w-3" />
+                            {urlOverrides[addon.id] ? 'Params overridden' : 'Override params'}
+                            {urlOverrides[addon.id] && (
+                              <RotateCcw
+                                className="h-3 w-3"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setUrlOverrides(prev => {
+                                    const next = { ...prev }
+                                    delete next[addon.id]
+                                    return next
+                                  })
+                                }}
+                              />
+                            )}
+                            <ChevronDown className={cn('h-3 w-3 transition-transform', overrideOpenId === addon.id && 'rotate-180')} />
+                          </button>
+                          {overrideOpenId === addon.id && (
+                            <AddonParamSelector
+                              url={urlOverrides[addon.id] || addon.installUrl}
+                              onUrlChange={(newUrl) => setUrlOverrides(prev => ({ ...prev, [addon.id]: newUrl }))}
+                              manifest={addon.manifest}
+                              compact
+                              className="mt-2"
+                            />
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })

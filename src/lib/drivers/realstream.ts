@@ -5,7 +5,7 @@ const PROGRESS_PATH = '/api/collections/progress/records'
 const AUTH_TIMEOUT_MS = 30000
 const DEFAULT_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000
 
-import { trace } from '@/lib/trace'
+import { trace } from '../trace.ts'
 
 const USER_FIELD = 'user'
 const ADDON_TYPE = 'stremio'
@@ -25,6 +25,8 @@ export interface RealStreamProgressItem {
     position?: number
     duration?: number
     last_watched?: number
+    title?: string
+    posterPath?: string
 }
 
 interface RealStreamError extends Error {
@@ -58,17 +60,52 @@ function deriveAddonName(url?: string): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RsRecord = Record<string, any>
 
-function mapProgressRecord(r: RsRecord): RealStreamProgressItem {
-    const contentId = String(r.itemId ?? r.content_id ?? r.item_id ?? '')
+// Maps a raw RealStream progress entry (live-verified PocketBase schema, 2026-08-14) onto the
+// Nuvio-contract shape consumed by transformNuvioProgressToActivityItem:
+//   seasonNumber/episodeNumber  — episode coordinates (NOT season/episode)
+//   mediaType                   — 'tv' | 'movie' (NOT 'series')
+//   currentTime/duration        — SECONDS; the activity pipeline expects MILLISECONDS
+//   posterPath                  — full URL whose path embeds the imdb id (…/poster/series/tt1234567)
+//   uniqueId                    — stable per-item id, 'tv_<tmdb>_s1e2' | 'movie_<tmdb>'
+//   tmdbId                      — JSON number exceeding Number.MAX_SAFE_INTEGER; precision-lossy
+//                                 after parsing, so it must never be used to build identifiers
+//                                 (the true value survives only inside the uniqueId string).
+export function mapProgressRecord(r: RsRecord): RealStreamProgressItem {
+    const rawType = r.mediaType ?? r.media_type ?? r.type
+    const t = rawType != null ? String(rawType).toLowerCase() : ''
+    const seasonNum = r.seasonNumber ?? r.season_number ?? r.season
+    const episodeNum = r.episodeNumber ?? r.episode_number ?? r.episode
+    const season = seasonNum != null ? Number(seasonNum) : null
+    const episode = episodeNum != null ? Number(episodeNum) : null
+    const isMovie = t ? t === 'movie' : (season == null && episode == null)
+    const posterPath = r.posterPath ?? r.poster_path ?? ''
+    const title = r.title ?? r.name ?? ''
+    // content_id must stay a bare imdb id: cinemeta lookups (and the tt-prefix guard) reject
+    // anything else. Episode identity belongs in video_id + season/episode, exactly like Nuvio.
+    const imdbMatch = posterPath.match(/(tt\d{7,})/i)
+    let contentId = ''
+    if (imdbMatch) {
+        contentId = imdbMatch[1]
+    } else if (title) {
+        contentId = `rs:${encodeURIComponent(title)}`
+    } else {
+        contentId = String(r.uniqueId ?? r.unique_id ?? r.id ?? '')
+    }
+    const uniqueId = r.uniqueId ?? r.unique_id ?? contentId
+    if (import.meta.env?.DEV && !imdbMatch) {
+        console.warn('[RS] No IMDb ID found in posterPath, using fallback:', contentId, 'title:', title)
+    }
     return {
         content_id: contentId,
-        content_type: r.type ?? r.content_type ?? r.itemType ?? undefined,
-        video_id: r.videoId ?? r.video_id ?? undefined,
-        season: r.season != null ? Number(r.season) : null,
-        episode: r.episode != null ? Number(r.episode) : null,
-        position: Number(r.progress ?? r.position ?? r.current_time ?? 0) || 0,
-        duration: Number(r.duration ?? r.total_duration ?? 0) || 0,
-        last_watched: Number(r.timestamp ?? r.last_watched ?? r.updated ?? r.created ?? Date.now()) || Date.now(),
+        content_type: isMovie ? 'movie' : 'series',
+        video_id: uniqueId,
+        season,
+        episode,
+        position: Math.round((Number(r.currentTime ?? r.current_time ?? r.progress ?? r.position ?? 0) || 0) * 1000),
+        duration: Math.round((Number(r.duration ?? r.total_duration ?? r.runtime ?? 0) || 0) * 1000),
+        last_watched: Number(r.lastWatched ?? r.last_watched ?? r.timestamp ?? r.updated ?? r.created ?? Date.now()) || Date.now(),
+        title: title || undefined,
+        posterPath: posterPath || undefined,
     }
 }
 
@@ -141,6 +178,13 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
         return Array.isArray(data?.items) ? data.items : []
     }
 
+    const listProgressRecords = async (accessToken: string, userId: string) => {
+        if (!userId) throw new Error('RealStream progress requires a userId')
+        const filter = encodeURIComponent(`${USER_FIELD}='${userId}'`)
+        const resp = await request('GET', `${PROGRESS_PATH}?filter=${filter}&perPage=200`, accessToken)
+        return Array.isArray(resp?.items) ? resp.items : []
+    }
+
     return {
         async refreshAccessToken(accessToken: string): Promise<RealStreamTokens> {
             const start = Date.now()
@@ -188,11 +232,63 @@ export function createRealStreamDriver(options: { baseUrl?: string } = {}) {
         },
 
         async readWatchProgress(accessToken: string, userId: string): Promise<RealStreamProgressItem[]> {
-            if (!userId) throw new Error('RealStream readWatchProgress requires a userId')
-            const filter = encodeURIComponent(`${USER_FIELD}='${userId}'`)
-            const data = await request('GET', `${PROGRESS_PATH}?filter=${filter}&perPage=200`, accessToken)
-            const items = Array.isArray(data?.items) ? data.items : []
-            return items.map((r: RsRecord) => mapProgressRecord(r))
+            const records = await listProgressRecords(accessToken, userId)
+            const allEntries: RsRecord[] = []
+            for (const record of records) {
+                if (Array.isArray(record?.data)) {
+                    for (const entry of record.data) {
+                        allEntries.push(entry as RsRecord)
+                    }
+                }
+            }
+            return allEntries.map((r: RsRecord) => mapProgressRecord(r))
+        },
+
+        // PocketBase models progress as one record per user whose `data` array holds every entry,
+        // so deletion is read-filter-PATCH per record. Entries match by their raw uniqueId (what
+        // mapProgressRecord surfaces as video_id), with a content+season+episode fallback for
+        // callers that only hold the logical identity.
+        async deleteWatchProgress(
+            accessToken: string,
+            userId: string,
+            entries: Array<{ videoId: string; contentId?: string; season?: number | null; episode?: number | null }>,
+        ): Promise<{ removed: number }> {
+            const start = Date.now()
+            trace('realstreamDriver', 'deleteWatchProgress.start', { userId, count: entries.length })
+            try {
+                if (!userId) throw new Error('RealStream deleteWatchProgress requires a userId')
+                const wanted = (entries || []).filter(e => e && (e.videoId || e.contentId))
+                if (wanted.length === 0) {
+                    trace('realstreamDriver', 'deleteWatchProgress.success', { userId, removed: 0, skipped: true, timing: Date.now() - start })
+                    return { removed: 0 }
+                }
+                const matches = (raw: RsRecord): boolean => wanted.some(w => {
+                    if (w.videoId && String(raw.uniqueId ?? raw.unique_id ?? '') === w.videoId) return true
+                    if (w.contentId && w.season != null && w.episode != null) {
+                        const posterTt = String(raw.posterPath ?? raw.poster_path ?? '').match(/(tt\d{7,})/i)
+                        const rawSeason = raw.seasonNumber ?? raw.season_number ?? raw.season
+                        const rawEpisode = raw.episodeNumber ?? raw.episode_number ?? raw.episode
+                        return posterTt?.[1] === w.contentId
+                            && Number(rawSeason) === Number(w.season)
+                            && Number(rawEpisode) === Number(w.episode)
+                    }
+                    return false
+                })
+                const records = await listProgressRecords(accessToken, userId)
+                let removed = 0
+                for (const record of records) {
+                    if (!Array.isArray(record?.data)) continue
+                    const kept = record.data.filter((raw: RsRecord) => !matches(raw))
+                    if (kept.length === record.data.length) continue
+                    removed += record.data.length - kept.length
+                    await request('PATCH', `${PROGRESS_PATH}/${record.id}`, accessToken, { data: kept })
+                }
+                trace('realstreamDriver', 'deleteWatchProgress.success', { userId, removed, timing: Date.now() - start })
+                return { removed }
+            } catch (err) {
+                trace('realstreamDriver', 'deleteWatchProgress.error', { userId, error: (err as RealStreamError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async writeAddons(accessToken: string, addons: Array<RsRecord>, userId: string) {
