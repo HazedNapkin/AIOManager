@@ -139,8 +139,8 @@ if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {
         root: distPath,
         prefix: '/',
-        setHeaders: (reply, path) => {
-            if (path.endsWith('.html')) reply.header('Cache-Control', 'no-cache')
+        setHeaders: (res, path) => {
+            if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache')
         }
     })
 
