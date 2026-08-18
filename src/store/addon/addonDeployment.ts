@@ -342,8 +342,7 @@ export async function applyTagToAccounts(
 export async function bulkApplySavedAddons(
   savedAddonIds: string[],
   accountIds: Array<{ id: string; authKey: string }>,
-  allowProtected = true,
-  urlOverrides?: Record<string, string>
+  allowProtected = true
 ): Promise<BulkResult> {
   const useAddonStore = await getStore()
   useAddonStore.setState({ loading: true, error: null })
@@ -354,8 +353,7 @@ export async function bulkApplySavedAddons(
         const saved = useAddonStore.getState().library[id]
         if (!saved) return null
         originalsById.set(id, saved)
-        const override = urlOverrides?.[id]
-        return override ? { ...saved, installUrl: override } : saved
+        return saved
       })
       .filter(Boolean) as SavedAddon[]
 

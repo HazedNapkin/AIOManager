@@ -69,7 +69,7 @@ interface WatchEventState {
     reset: () => void
 }
 
-interface ServerActivityEvent {
+export interface ServerActivityEvent {
     id: string
     accountId: string
     accountName: string
@@ -125,12 +125,54 @@ function collapseDayDuplicates(events: WatchEvent[]): WatchEvent[] {
     return byKey.size === events.length ? events : Array.from(byKey.values()).sort((a, b) => b.event_ts - a.event_ts)
 }
 
-async function persistWatchEvents(events: WatchEvent[], snapshot: Snapshot) {
+const PERSIST_DEBOUNCE_MS = 300
+let _persistTimer: ReturnType<typeof setTimeout> | null = null
+let _pendingDeleted: Record<string, number> | null = null
+
+async function persistWatchEventsNow() {
+    _persistTimer = null
+    const { events, snapshot } = useWatchEventStore.getState()
+    const deleted = _pendingDeleted
+    _pendingDeleted = null
     try {
         await localforage.setItem(STORAGE_KEY, { events, snapshot })
     } catch (e) {
         if (import.meta.env.DEV) console.error('[watchEventStore] persist failed:', e)
     }
+    if (deleted) {
+        try {
+            await localforage.setItem(DELETED_EVENTS_KEY, deleted)
+        } catch (e) {
+            if (import.meta.env.DEV) console.error('[watchEventStore] persist tombstones failed:', e)
+        }
+    }
+}
+
+function persistWatchEvents() {
+    if (_persistTimer !== null) return
+    _persistTimer = setTimeout(persistWatchEventsNow, PERSIST_DEBOUNCE_MS)
+}
+
+function cancelPendingPersist() {
+    if (_persistTimer !== null) {
+        clearTimeout(_persistTimer)
+        _persistTimer = null
+    }
+    _pendingDeleted = null
+}
+
+if (typeof window !== 'undefined') {
+    const flushPersist = () => {
+        if (_persistTimer !== null) {
+            clearTimeout(_persistTimer)
+            _persistTimer = null
+            void persistWatchEventsNow()
+        }
+    }
+    window.addEventListener('pagehide', flushPersist)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushPersist()
+    })
 }
 
 const DELETED_EVENTS_KEY = 'aio_watch_events_deleted_v1'
@@ -158,11 +200,8 @@ function capDeletedEvents(deleted: Record<string, number>): Record<string, numbe
 }
 
 async function persistDeletedEvents(deleted: Record<string, number>) {
-    try {
-        await localforage.setItem(DELETED_EVENTS_KEY, deleted)
-    } catch (e) {
-        if (import.meta.env.DEV) console.error('[watchEventStore] persist tombstones failed:', e)
-    }
+    _pendingDeleted = deleted
+    persistWatchEvents()
 }
 
 export const useWatchEventStore = create<WatchEventState>((set, get) => ({
@@ -184,7 +223,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const deleted = deletedEventKeys ?? get().deletedEventKeys
         const capped = filterTombstonedEvents(capEvents(collapseDayDuplicates(cleaned)), deleted)
         set({ events: capped, snapshot, deletedEventKeys: deleted, initialized: true })
-        persistWatchEvents(capped, snapshot)
+        persistWatchEvents()
         if (deletedEventKeys) persistDeletedEvents(deleted)
     },
 
@@ -206,7 +245,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 })
                 const collapsed = filterTombstonedEvents(collapseDayDuplicates(cleaned), deleted)
                 set({ events: collapsed, snapshot: stored.snapshot || {}, deletedEventKeys: deleted, initialized: true })
-                if (collapsed.length !== stored.events.length) persistWatchEvents(collapsed, stored.snapshot || {})
+                if (collapsed.length !== stored.events.length) persistWatchEvents()
             } else {
                 set({ deletedEventKeys: deleted, initialized: true })
             }
@@ -228,7 +267,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const capped = capDeletedEvents(deleted)
         const events = filterTombstonedEvents(state.events, capped)
         set({ events, deletedEventKeys: capped })
-        persistWatchEvents(events, state.snapshot)
+        persistWatchEvents()
         persistDeletedEvents(capped)
     },
 
@@ -481,7 +520,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             snapshot: nextSnapshot,
         })
 
-        persistWatchEvents(visibleEvents, nextSnapshot)
+        persistWatchEvents()
         return newEvents
     },
 
@@ -557,7 +596,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const sorted = deduped.sort((a, b) => b.event_ts - a.event_ts)
         const capped = filterTombstonedEvents(capEvents(sorted), get().deletedEventKeys)
         set({ events: capped })
-        persistWatchEvents(capped, cur.snapshot)
+        persistWatchEvents()
         return newEvents.length
     },
 
@@ -568,6 +607,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
     }),
 
     reset: () => {
+        cancelPendingPersist()
         set({ events: [], snapshot: {}, deletedEventKeys: {}, initialized: false })
         localforage.removeItem(STORAGE_KEY).catch(() => {})
         localforage.removeItem(DELETED_EVENTS_KEY).catch(() => {})
@@ -638,29 +678,32 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const sorted = Array.from(eventsById.values()).sort((a, b) => b.event_ts - a.event_ts)
         const capped = capEvents(sorted)
         const newSnapshot = { ...state.snapshot }
+        const snapshotAcc = new Map<string, Record<string, SnapshotItem>>()
         for (const e of sorted) {
-            if (!newSnapshot[e.accountId]) newSnapshot[e.accountId] = {}
-            const existing = newSnapshot[e.accountId][e.itemId]
-            if (!existing || e.event_ts >= (existing as SnapshotItem).mtime) {
-                newSnapshot[e.accountId] = {
-                    ...newSnapshot[e.accountId],
-                    [e.itemId]: {
-                        mtime: e.event_ts,
-                        video_id: e.video_id || e.itemId,
-                        overallTimeWatched: e.time_watched || 0,
-                        timeWatched: e.time_watched || 0,
-                        timeOffset: e.time_watched_delta || 0,
-                        duration: e.duration || 0,
-                        season: e.season,
-                        episode: e.episode,
-                    } as SnapshotItem
-                }
+            let acc = snapshotAcc.get(e.accountId)
+            if (!acc) {
+                acc = { ...(newSnapshot[e.accountId] || {}) }
+                snapshotAcc.set(e.accountId, acc)
+            }
+            const existing = acc[e.itemId]
+            if (!existing || e.event_ts >= existing.mtime) {
+                acc[e.itemId] = {
+                    mtime: e.event_ts,
+                    video_id: e.video_id || e.itemId,
+                    overallTimeWatched: e.time_watched || 0,
+                    timeWatched: e.time_watched || 0,
+                    timeOffset: e.time_watched_delta || 0,
+                    duration: e.duration || 0,
+                    season: e.season,
+                    episode: e.episode,
+                } as SnapshotItem
             }
         }
+        for (const [accountId, acc] of snapshotAcc) newSnapshot[accountId] = acc
 
         const visibleEvents = filterTombstonedEvents(capped, get().deletedEventKeys)
         set({ events: visibleEvents, snapshot: newSnapshot })
-        persistWatchEvents(visibleEvents, newSnapshot)
+        persistWatchEvents()
     },
 
     mergeExternalWatchEvents: (accountId, platform, items) => {
@@ -745,6 +788,6 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const sorted = surviving.sort((a, b) => b.event_ts - a.event_ts)
         const capped = filterTombstonedEvents(capEvents(sorted), state.deletedEventKeys)
         set({ events: capped })
-        persistWatchEvents(capped, state.snapshot)
+        persistWatchEvents()
     },
 }))

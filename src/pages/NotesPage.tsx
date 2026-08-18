@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNotesStore, type Note, type NoteMeta, extractTags } from '@/store/notesStore'
 import { Textarea } from '@/components/ui/textarea'
@@ -11,12 +12,14 @@ import {
     Plus, Trash2, Pin, StickyNote, Search, X, Network, ChevronLeft,
     Undo2, Redo2, Bold, Italic, List, ListOrdered, SquareTerminal, Check, Copy,
     Hash, Type, Heading1, Heading2, Heading3, Code, Quote, Keyboard, RotateCcw, Trash,
-    Table, Minus, Download, HelpCircle, ListChecks
+    Table, Minus, Download, HelpCircle, ListChecks, PanelLeftClose, PanelLeftOpen, Upload, Link, Link2
 } from 'lucide-react'
 import { cn, inlineFormat, escapeHtml } from '@/lib/utils'
+import { useUIStore } from '@/store/uiStore'
+import { toast } from '@/hooks/use-toast'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { formatDistanceToNow, format } from 'date-fns'
-import { zipSync, strToU8 } from 'fflate'
+import { zipSync, strToU8, unzipSync } from 'fflate'
 const SLASH_COMMANDS = [
     { label: 'Heading 1', icon: Heading1, prefix: '# ' },
     { label: 'Heading 2', icon: Heading2, prefix: '## ' },
@@ -59,6 +62,25 @@ function findBacklinks(notes: NoteMeta[], title: string): NoteMeta[] {
     if (!title || title === 'Untitled') return []
     const lower = title.toLowerCase()
     return notes.filter(n => n.wikilinks.some(w => w.toLowerCase() === lower))
+}
+
+const MAX_IMPORT_MD_BYTES = 2 * 1024 * 1024
+const MAX_IMPORT_ZIP_ENTRIES = 200
+const MAX_IMPORT_ZIP_TOTAL_BYTES = 20 * 1024 * 1024
+
+async function importMarkdownFile(
+    name: string,
+    bytes: Uint8Array,
+    createNote: (title: string, content: string) => Promise<Note>
+): Promise<boolean> {
+    if (bytes.length === 0 || bytes.length > MAX_IMPORT_MD_BYTES) return false
+    const text = new TextDecoder().decode(bytes)
+    if (text.includes('\u0000')) return false
+    const heading = text.match(/^#\s+(.+)$/m)
+    const fallback = (name.split('/').pop() || '').replace(/\.(md|markdown)$/i, '')
+    const title = (heading?.[1] || fallback).trim() || 'Imported note'
+    await createNote(title, text)
+    return true
 }
 
 function noteDay(iso: string): string {
@@ -599,6 +621,14 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
     const [slashPos, setSlashPos] = useState({ top: 0, left: 0 })
     const [showHelp, setShowHelp] = useState(false)
     const helpRef = useRef<HTMLDivElement>(null)
+    const helpPopoverRef = useRef<HTMLDivElement>(null)
+    const [helpPos, setHelpPos] = useState<{ top: number; left: number } | null>(null)
+
+    useEffect(() => {
+        if (!showHelp || !helpRef.current) return
+        const r = helpRef.current.getBoundingClientRect()
+        setHelpPos({ top: r.top, left: r.right })
+    }, [showHelp])
     
     const [wikilinkOpen, setWikilinkOpen] = useState(false)
     const [wikilinkQuery, setWikilinkQuery] = useState('')
@@ -685,7 +715,8 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
 
     useEffect(() => {
         const handler = (e: MouseEvent) => {
-            if (helpRef.current && !helpRef.current.contains(e.target as Node)) setShowHelp(false)
+            if (helpRef.current && !helpRef.current.contains(e.target as Node)
+                && helpPopoverRef.current && !helpPopoverRef.current.contains(e.target as Node)) setShowHelp(false)
         }
         if (showHelp) document.addEventListener('mousedown', handler)
         return () => document.removeEventListener('mousedown', handler)
@@ -788,6 +819,31 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
         const newVal = content.slice(0, s) + before + selected + after + content.slice(e)
         setContent(newVal); pushHistory(newVal); autosave(title, newVal)
         setTimeout(() => { ta.selectionStart = s + before.length; ta.selectionEnd = s + before.length + selected.length; ta.focus() }, 0)
+    }, [content, pushHistory, autosave, title])
+
+    const insertLink = useCallback(() => {
+        const ta = textareaRef.current; if (!ta) return
+        const s = ta.selectionStart, e = ta.selectionEnd
+        const selected = content.slice(s, e)
+        const newVal = content.slice(0, s) + `[${selected}]()` + content.slice(e)
+        setContent(newVal); pushHistory(newVal); autosave(title, newVal)
+        setTimeout(() => { ta.selectionStart = ta.selectionEnd = s + selected.length + 3; ta.focus() }, 0)
+    }, [content, pushHistory, autosave, title])
+
+    const insertWikilink = useCallback(() => {
+        const ta = textareaRef.current; if (!ta) return
+        const s = ta.selectionStart, e = ta.selectionEnd
+        const selected = content.slice(s, e)
+        const newVal = content.slice(0, s) + '[[' + selected + content.slice(e)
+        setContent(newVal); pushHistory(newVal); autosave(title, newVal)
+        const caret = s + 2 + selected.length
+        setTimeout(() => {
+            ta.selectionStart = ta.selectionEnd = caret
+            ta.focus()
+            const { top, left } = getCaretCoordinates(ta, caret)
+            setWikilinkOpen(true); setWikilinkQuery(selected); setWikilinkIndex(0)
+            setWikilinkPos({ top: top + 24, left: Math.max(left, 24) })
+        }, 0)
     }, [content, pushHistory, autosave, title])
 
     const handleSave = useCallback(() => {
@@ -1174,7 +1230,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                             <button onClick={() => setViewMode('preview')}
                                     className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow]', viewMode === 'preview' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Preview</button>
                             <button onClick={() => setViewMode('edit')}
-                                    className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow]', viewMode === 'edit' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Source</button>
+                                    className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow]', viewMode === 'edit' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Edit</button>
                             <button onClick={() => setViewMode('split')}
                                     className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow] hidden md:block', viewMode === 'split' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Split</button>
                         </div>
@@ -1204,8 +1260,12 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <TB label="Inline code (Ctrl+E)" icon={Code} onClick={() => wrapSel('`', '`')} />
                 <TB label="Strikethrough" icon={Type} onClick={() => wrapSel('~~', '~~')} />
                 <div className="w-px h-4 bg-border mx-1 shrink-0" />
+                <TB label="Insert link" icon={Link} onClick={insertLink} />
+                <TB label="Link to note ([[)" icon={Link2} onClick={insertWikilink} />
+                <div className="w-px h-4 bg-border mx-1 shrink-0" />
                 <TB label="Heading 1" icon={Heading1} onClick={() => insertAt('# ')} />
                 <TB label="Heading 2" icon={Heading2} onClick={() => insertAt('## ')} />
+                <TB label="Heading 3" icon={Heading3} onClick={() => insertAt('### ')} />
                 <TB label="Blockquote" icon={Quote} onClick={() => insertAt('> ')} />
                 <div className="w-px h-4 bg-border mx-1 shrink-0" />
                 <TB label="Bullet list" icon={List} onClick={() => insertAt('- ')} />
@@ -1252,8 +1312,15 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                             <HelpCircle className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
-                    {showHelp && (
-                        <div className="absolute right-0 bottom-full mb-1 w-64 bg-popover border border-border/40 rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                    {showHelp && helpPos && createPortal(
+                        <div
+                            ref={helpPopoverRef}
+                            className="fixed w-64 bg-popover border border-border/40 rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+                            style={{
+                                left: Math.max(8, Math.min(helpPos.left - 256, window.innerWidth - 264)),
+                                top: Math.min(helpPos.top + 32, window.innerHeight - 470),
+                            }}
+                        >
                             <div className="px-3 py-2 text-[13px] font-medium text-foreground/60 border-b border-border/40 bg-muted/30">Markdown Syntax</div>
                             <div className="p-3 space-y-2.5 max-h-[400px] overflow-y-auto">
                                 <div className="space-y-1">
@@ -1308,7 +1375,8 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                                     </div>
                                 </div>
                             </div>
-                        </div>
+                        </div>,
+                        document.body
                     )}
                 </div>
                 <Tooltip content="Shortcuts" side="top">
@@ -1496,6 +1564,9 @@ export function NotesPage() {
     const [selectionMode, setSelectionMode] = useState(false)
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const searchRef = useRef<HTMLInputElement>(null)
+    const importInputRef = useRef<HTMLInputElement>(null)
+    const sidebarCollapsed = useUIStore(s => s.notesSidebarCollapsed)
+    const setSidebarCollapsed = useUIStore(s => s.setNotesSidebarCollapsed)
 
     const sorted = useMemo(() => [...notes].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1
@@ -1629,6 +1700,53 @@ export function NotesPage() {
         URL.revokeObjectURL(url)
     }, [])
 
+    const handleImportFiles = useCallback(async (files: File[]) => {
+        const createNote = useNotesStore.getState().createNote
+        let imported = 0
+        let skipped = 0
+
+        for (const file of files) {
+            if (/\.zip$/i.test(file.name)) {
+                let entries: Record<string, Uint8Array>
+                try {
+                    entries = unzipSync(new Uint8Array(await file.arrayBuffer()))
+                } catch {
+                    skipped++
+                    continue
+                }
+                const mdNames = Object.keys(entries).filter(n => /\.(md|markdown)$/i.test(n)).sort()
+                if (mdNames.length === 0) {
+                    toast({ variant: 'destructive', title: 'No notes found', description: `${file.name} contains no .md files.` })
+                    continue
+                }
+                if (mdNames.length > MAX_IMPORT_ZIP_ENTRIES) {
+                    toast({ variant: 'destructive', title: 'Archive too large', description: `${file.name} has ${mdNames.length} entries (max ${MAX_IMPORT_ZIP_ENTRIES}).` })
+                    continue
+                }
+                const totalBytes = mdNames.reduce((sum, n) => sum + entries[n].length, 0)
+                if (totalBytes > MAX_IMPORT_ZIP_TOTAL_BYTES) {
+                    toast({ variant: 'destructive', title: 'Archive too large', description: `Uncompressed content exceeds ${Math.floor(MAX_IMPORT_ZIP_TOTAL_BYTES / (1024 * 1024))} MB.` })
+                    continue
+                }
+                for (const name of mdNames) {
+                    if (await importMarkdownFile(name, entries[name], createNote)) imported++
+                    else skipped++
+                }
+            } else if (/\.(md|markdown)$/i.test(file.name)) {
+                if (await importMarkdownFile(file.name, new Uint8Array(await file.arrayBuffer()), createNote)) imported++
+                else skipped++
+            } else {
+                skipped++
+            }
+        }
+
+        if (imported > 0) {
+            toast({ title: 'Import complete', description: `Imported ${imported} note${imported !== 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} skipped` : ''}.` })
+        } else if (skipped > 0) {
+            toast({ variant: 'destructive', title: 'Nothing imported', description: 'Use .md files or a notes backup ZIP (max 2 MB per note).' })
+        }
+    }, [])
+
     const toggleSelection = useCallback((id: string) => {
         setSelectedIds(prev => {
             const next = new Set(prev)
@@ -1657,9 +1775,11 @@ export function NotesPage() {
             )}
         <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-16rem)] min-h-[500px]">
             <div className={cn(
-                'flex flex-col w-full md:w-[300px] min-h-0 flex-1 md:flex-none md:shrink-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden',
-                showEditor && selected ? 'hidden md:flex' : 'flex'
+                'flex flex-col w-full md:w-[300px] min-h-0 flex-1 md:flex-none md:shrink-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden transition-[width] duration-200',
+                showEditor && selected ? 'hidden md:flex' : 'flex',
+                sidebarCollapsed && 'md:w-[52px]'
             )}>
+            <div className={cn('flex flex-col min-h-0 flex-1', sidebarCollapsed && 'md:hidden')}>
                 <div className="flex items-center gap-2 px-3 pt-4 pb-2 shrink-0">
                     <div className="flex-1 min-w-0">
                         <h1 className="text-lg font-bold tracking-tight">
@@ -1847,12 +1967,69 @@ export function NotesPage() {
                     </div>
                 )}
                 {!selectionMode && (
-                    <div className="mt-auto px-3 py-2 border-t border-border/40 shrink-0">
-                        <Button variant="ghost" onClick={() => handleExportZip()} className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-foreground">
-                            <Download className="h-3.5 w-3.5" /> Backup All (ZIP)
-                        </Button>
+                    <div className="mt-auto px-3 py-2 border-t border-border/40 shrink-0 flex items-center justify-between gap-2">
+                        <input
+                            ref={importInputRef}
+                            type="file"
+                            accept=".md,.markdown,.zip"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                                const files = Array.from(e.target.files || [])
+                                if (files.length > 0) handleImportFiles(files)
+                                e.target.value = ''
+                            }}
+                        />
+                        <div className="flex items-center gap-1 min-w-0">
+                            <Tooltip content="Import .md files or a notes backup ZIP" side="top">
+                                <Button variant="ghost" onClick={() => importInputRef.current?.click()} className="justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                                    <Upload className="h-3.5 w-3.5" /> Import
+                                </Button>
+                            </Tooltip>
+                            <Button variant="ghost" onClick={() => handleExportZip()} className="justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                                <Download className="h-3.5 w-3.5" /> Backup All (ZIP)
+                            </Button>
+                        </div>
+                        <Tooltip content="Collapse sidebar" side="right">
+                            <Button variant="ghost" onClick={() => setSidebarCollapsed(true)}
+                                className="hidden md:inline-flex h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground">
+                                <PanelLeftClose className="h-4 w-4" />
+                            </Button>
+                        </Tooltip>
                     </div>
                 )}
+            </div>
+            {sidebarCollapsed && (
+                <div className="hidden md:flex flex-col items-center gap-2 px-2 py-4 min-h-0 flex-1">
+                    {view !== 'trash' && (
+                        <>
+                            <Tooltip content="New note" side="right">
+                                <Button variant="default" onClick={handleCreate}
+                                    className="h-8 w-8 shrink-0 p-0 shadow-sm rounded-lg">
+                                    <Plus className="h-4 w-4" />
+                                </Button>
+                            </Tooltip>
+                            <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="right">
+                                <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
+                                    className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
+                                    <Network className="h-4 w-4" />
+                                </Button>
+                            </Tooltip>
+                            <span className="mt-1 rounded-full bg-muted px-1.5 text-[10px] font-bold leading-4 text-muted-foreground tabular-nums">
+                                {notes.length}
+                            </span>
+                        </>
+                    )}
+                    <div className="mt-auto">
+                        <Tooltip content="Expand sidebar" side="right">
+                            <Button variant="ghost" onClick={() => setSidebarCollapsed(false)}
+                                className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
+                                <PanelLeftOpen className="h-4 w-4" />
+                            </Button>
+                        </Tooltip>
+                    </div>
+                </div>
+            )}
             </div>
 
             <div className={cn(

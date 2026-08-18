@@ -9,6 +9,8 @@ import { maskContext } from '../utils/log-helpers.js'
 import { proxyQueue, proxyQueueKeyCounts, serverState } from '../state.js'
 import { trace } from '../utils/trace.js'
 
+const AUTOPILOT_BODY_LIMIT = 1024 * 1024 * 5
+
 export function registerAutopilotRoutes(fastify, autopilotEngine) {
     async function upsertCredential(owner, accountId, accountName, encryptedAuthKey, credentialType = 'stremio', connectionId = null) {
         if (!encryptedAuthKey && !connectionId) return
@@ -363,7 +365,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             })
     }
 
-    fastify.post('/api/autopilot/sync', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    fastify.post('/api/autopilot/sync', { bodyLimit: AUTOPILOT_BODY_LIMIT, config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: (req) => 'apsync:' + req.ip } } }, async (request, reply) => {
         const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = request.body
         const start = Date.now()
         trace('autopilot', 'sync.start', { ruleId: id, accountId })

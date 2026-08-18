@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAccountStore } from '@/store/accountStore'
-import { BULK_ACTIONS } from '@/components/accounts/bulk-actions/registry'
+import type { BulkActionDefinition } from '@/components/accounts/bulk-actions/registry'
 import { useNavigate } from 'react-router-dom'
 import {
     LayoutDashboard,
@@ -43,6 +43,7 @@ export function CommandPalette() {
     const [open, setOpen] = useState(false)
     const [query, setQuery] = useState('')
     const [selectedIndex, setSelectedIndex] = useState(0)
+    const [bulkActions, setBulkActions] = useState<BulkActionDefinition[]>([])
     const inputRef = useRef<HTMLInputElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const navigate = useNavigate()
@@ -236,7 +237,7 @@ export function CommandPalette() {
             }
         )
 
-        for (const def of BULK_ACTIONS) {
+        for (const def of bulkActions) {
             items.push({
                 id: `bulk-${def.id}`,
                 label: def.title,
@@ -251,7 +252,7 @@ export function CommandPalette() {
         }
 
         return items
-    }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules, navigate])
+    }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules, navigate, bulkActions])
 
     const filtered = useMemo(() => {
         if (!query.trim()) return allItems
@@ -277,6 +278,15 @@ export function CommandPalette() {
     useEffect(() => {
         setSelectedIndex(0)
     }, [query])
+
+    useEffect(() => {
+        if (!open || bulkActions.length > 0) return
+        let cancelled = false
+        import('@/components/accounts/bulk-actions/registry')
+            .then(m => { if (!cancelled) setBulkActions(m.BULK_ACTIONS) })
+            .catch(() => {})
+        return () => { cancelled = true }
+    }, [open, bulkActions.length])
 
     useEffect(() => {
         if (open) {

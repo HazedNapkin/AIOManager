@@ -68,128 +68,160 @@ function mergeConnections(
     return merged
 }
 
-export async function exportAccounts(includeCredentialsValue: boolean) {
+async function buildExportData(includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
     const store = await getStore()
-    try {
-        const manifestMap: Record<string, AddonDescriptor['manifest']> = {}
-        const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
+    const manifestMap: Record<string, AddonDescriptor['manifest']> = {}
+    const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
 
-        const processAddons = (addons: AddonDescriptor[]) => {
-            return addons.map((addon: AddonDescriptor) => {
-                let exportAddon = addon
-                if (addon.metadata?.customName) {
-                    const hostName = getHostnameIdentifier(addon.transportUrl)
-                    if (hostName && addon.metadata.customName === hostName) {
-                        const { customName: _cn, ...restMeta } = addon.metadata
-                        exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
-                    }
+    const processAddons = (addons: AddonDescriptor[]) => {
+        return addons.map((addon: AddonDescriptor) => {
+            let exportAddon = addon
+            if (addon.metadata?.customName) {
+                const hostName = getHostnameIdentifier(addon.transportUrl)
+                if (hostName && addon.metadata.customName === hostName) {
+                    const { customName: _cn, ...restMeta } = addon.metadata
+                    exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
                 }
-                const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
-                const key = getManifestKey(sanitized)
-                if (!manifestMap[key]) manifestMap[key] = sanitized
-                return {
-                    transportUrl: exportAddon.transportUrl,
-                    transportName: exportAddon.transportName,
-                    manifestId: key,
-                    manifest: sanitized,
-                    flags: exportAddon.flags,
-                    metadata: exportAddon.metadata,
-                    catalogOverrides: exportAddon.catalogOverrides,
-                    syncToLibrary: exportAddon.syncToLibrary,
-                    note: exportAddon.note,
-                }
-            })
-        }
-
-        const exportedAccounts = await Promise.all(
-            store.getState().accounts.map(async (acc) => ({
-                id: acc.id,
-                name: acc.name,
-                email: acc.email,
-                authKey: includeCredentialsValue ? await decrypt(getStremioAuthKey(acc), getEncryptionKey()!) : undefined,
-                password:
-                    includeCredentialsValue && acc.password
-                        ? await decrypt(acc.password, getEncryptionKey()!)
-                        : undefined,
-                accentColor: acc.accentColor,
-                emoji: acc.emoji,
-                avatar: acc.avatar,
-                note: acc.note,
-                profiles: acc.profiles,
-                activeProfileId: acc.activeProfileId,
-                deletedAddons: acc.deletedAddons,
-                addons: processAddons(acc.addons),
-                connections: (acc.connections || []).map(c => ({
-                    id: c.id,
-                    platform: c.platform,
-                    connectionType: c.connectionType,
-                    driverType: c.driverType,
-                    enabled: c.enabled,
-                    credentials: includeCredentialsValue ? c.credentials : {},
-                    profileMapping: c.profileMapping,
-                    capabilities: c.capabilities,
-                    pluginList: c.pluginList,
-                    driverConfig: c.driverConfig,
-                    displayName: c.displayName,
-                })),
-                primaryConnectionId: acc.primaryConnectionId,
-                apiKey: includeCredentialsValue ? acc.apiKey : undefined,
-                hideLastWatched: acc.hideLastWatched,
-                hideAddonPreview: acc.hideAddonPreview,
-                hidePlatformLogos: acc.hidePlatformLogos,
-            }))
-        )
-        const { useVaultStore } = await import('@/store/vaultStore')
-        if (useVaultStore.getState().isLocked) {
-            const { useAuthStore } = await import('@/store/authStore')
-            if (useAuthStore.getState().encryptionKey) {
-                await useVaultStore.getState().initialize()
             }
-        }
+            const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
+            const key = getManifestKey(sanitized)
+            if (!manifestMap[key]) manifestMap[key] = sanitized
+            return {
+                transportUrl: exportAddon.transportUrl,
+                transportName: exportAddon.transportName,
+                manifestId: key,
+                manifest: sanitized,
+                flags: exportAddon.flags,
+                metadata: exportAddon.metadata,
+                catalogOverrides: exportAddon.catalogOverrides,
+                syncToLibrary: exportAddon.syncToLibrary,
+                note: exportAddon.note,
+            }
+        })
+    }
 
-        const { useNotesStore } = await import('@/store/notesStore')
-        const allNotes = await useNotesStore.getState().getAllNotesWithContent()
-        const notesTrash = useNotesStore.getState().trash || []
+    const exportedAccounts = await Promise.all(
+        store.getState().accounts.map(async (acc) => ({
+            id: acc.id,
+            name: acc.name,
+            email: acc.email,
+            authKey: includeCredentialsValue ? await decrypt(getStremioAuthKey(acc), getEncryptionKey()!) : undefined,
+            password:
+                includeCredentialsValue && acc.password
+                    ? await decrypt(acc.password, getEncryptionKey()!)
+                    : undefined,
+            accentColor: acc.accentColor,
+            emoji: acc.emoji,
+            avatar: acc.avatar,
+            note: acc.note,
+            profiles: acc.profiles,
+            activeProfileId: acc.activeProfileId,
+            deletedAddons: acc.deletedAddons,
+            addons: processAddons(acc.addons),
+            connections: (acc.connections || []).map(c => ({
+                id: c.id,
+                platform: c.platform,
+                connectionType: c.connectionType,
+                driverType: c.driverType,
+                enabled: c.enabled,
+                credentials: includeCredentialsValue ? c.credentials : {},
+                profileMapping: c.profileMapping,
+                capabilities: c.capabilities,
+                pluginList: c.pluginList,
+                driverConfig: c.driverConfig,
+                displayName: c.displayName,
+            })),
+            primaryConnectionId: acc.primaryConnectionId,
+            apiKey: includeCredentialsValue ? acc.apiKey : undefined,
+            hideLastWatched: acc.hideLastWatched,
+            hideAddonPreview: acc.hideAddonPreview,
+            hidePlatformLogos: acc.hidePlatformLogos,
+        }))
+    )
 
-        const apiKeys: Record<string, string> = {}
-        for (const acc of store.getState().accounts) {
-            if (includeCredentialsValue && acc.apiKey) apiKeys[acc.id] = acc.apiKey
-        }
+    const apiKeys: Record<string, string> = {}
+    for (const acc of store.getState().accounts) {
+        if (includeCredentialsValue && acc.apiKey) apiKeys[acc.id] = acc.apiKey
+    }
 
-        const data: Record<string, unknown> = {
+    const addonStoreModule = await import('@/store/addonStore')
+    const { useAddonStore } = addonStoreModule
+
+    if (forSync) {
+        return {
             version: '2.0.0',
-            exportedAt: new Date().toISOString(),
             manifests: manifestMap,
             accounts: exportedAccounts,
             apiKeys,
-            profiles: useProfileStore.getState().profiles.map((p) => ({
-                ...p,
-                createdAt: new Date(p.createdAt).toISOString(),
-                updatedAt: new Date(p.updatedAt).toISOString(),
-            })),
-            identity: {
-                name: (await import('@/store/syncStore')).useSyncStore.getState().auth.name,
-            },
-            addons: JSON.parse((await import('@/store/addonStore')).useAddonStore.getState().exportLibrary()),
-            accountStates: (await import('@/store/addonStore')).useAddonStore.getState().accountStates,
-            failover: {
-                rules: (await import('@/store/failoverStore')).useFailoverStore.getState().rules,
-                webhook: (await import('@/store/failoverStore')).useFailoverStore.getState().webhook
-            },
-            settings: readSyncedSettings(),
+            accountStates: useAddonStore.getState().accountStates,
             changelog: store.getState().changelog.slice(0, 100),
-            vault: useVaultStore.getState().keys,
-            vaultTombstones: useVaultStore.getState().tombstones,
-            watchEvents: (await import('@/store/watchEventStore')).useWatchEventStore.getState().events,
-            watchSnapshot: (await import('@/store/watchEventStore')).useWatchEventStore.getState().snapshot,
-            notes: allNotes,
-            notesTrash,
-            customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
         }
+    }
 
+    const { useVaultStore } = await import('@/store/vaultStore')
+    if (useVaultStore.getState().isLocked) {
+        const { useAuthStore } = await import('@/store/authStore')
+        if (useAuthStore.getState().encryptionKey) {
+            await useVaultStore.getState().initialize()
+        }
+    }
+
+    const { useNotesStore } = await import('@/store/notesStore')
+    const allNotes = await useNotesStore.getState().getAllNotesWithContent()
+    const notesTrash = useNotesStore.getState().trash || []
+
+    const data: Record<string, unknown> = {
+        version: '2.0.0',
+        exportedAt: new Date().toISOString(),
+        manifests: manifestMap,
+        accounts: exportedAccounts,
+        apiKeys,
+        profiles: useProfileStore.getState().profiles.map((p) => ({
+            ...p,
+            createdAt: new Date(p.createdAt).toISOString(),
+            updatedAt: new Date(p.updatedAt).toISOString(),
+        })),
+        identity: {
+            name: (await import('@/store/syncStore')).useSyncStore.getState().auth.name,
+        },
+        addons: (() => {
+            const lib = useAddonStore.getState().exportLibrary()
+            return typeof lib === 'string' ? JSON.parse(lib) : lib
+        })(),
+        accountStates: useAddonStore.getState().accountStates,
+        failover: {
+            rules: (await import('@/store/failoverStore')).useFailoverStore.getState().rules,
+            webhook: (await import('@/store/failoverStore')).useFailoverStore.getState().webhook
+        },
+        settings: readSyncedSettings(),
+        changelog: store.getState().changelog.slice(0, 100),
+        vault: useVaultStore.getState().keys,
+        vaultTombstones: useVaultStore.getState().tombstones,
+        watchEvents: (await import('@/store/watchEventStore')).useWatchEventStore.getState().events,
+        watchSnapshot: (await import('@/store/watchEventStore')).useWatchEventStore.getState().snapshot,
+        notes: allNotes,
+        notesTrash,
+        customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
+    }
+
+    return data
+}
+
+export async function exportAccounts(includeCredentialsValue: boolean) {
+    try {
+        const data = await buildExportData(includeCredentialsValue, false)
         return JSON.stringify(data, null, 2)
     } catch (error) {
         if (import.meta.env.DEV) console.error('Failed to export accounts:', error)
+        throw error
+    }
+}
+
+export async function exportAccountsForSync(): Promise<Record<string, unknown>> {
+    try {
+        return await buildExportData(true, true)
+    } catch (error) {
+        if (import.meta.env.DEV) console.error('Failed to export accounts for sync:', error)
         throw error
     }
 }
@@ -199,6 +231,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
     store.setState({ error: null })
     setAccountLoading('__import__')
     let mutexReleases: Array<() => void> = []
+    let restorePreImport: (() => void) | null = null
     try {
         mutexReleases = await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id)))
         let data: Record<string, unknown>
@@ -214,16 +247,87 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         if (!localDecryptionKey) getEncryptionKey()
 
         const { useAddonStore } = await import('@/store/addonStore')
+        const { useFailoverStore } = await import('@/store/failoverStore')
+        const { useProfileStore } = await import('@/store/profileStore')
+        const { useVaultStore } = await import('@/store/vaultStore')
+        const { useWatchEventStore } = await import('@/store/watchEventStore')
+        const { useNotesStore } = await import('@/store/notesStore')
+        // Snapshots are gated on the payload keys their sub-imports are gated on (the
+        // unconditional importLibrary/importRules calls keep unconditional snapshots);
+        // null means the slice can't have been mutated, so restore skips it too.
+        const willImportAccounts = data.accounts !== undefined || Array.isArray(data.changelog)
+        const willImportWatch = Array.isArray(data.watchEvents) && (data.watchEvents as unknown[]).length > 0
+        const willImportVault = Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)
+        const willImportNotes = Array.isArray(data.notes) && (data.notes as unknown[]).length > 0
+        const preImport = {
+            accounts: willImportAccounts ? structuredClone(store.getState().accounts) : null,
+            changelog: willImportAccounts ? structuredClone(store.getState().changelog) : null,
+            addonLibrary: structuredClone(useAddonStore.getState().library),
+            addonAccountStates: structuredClone(useAddonStore.getState().accountStates),
+            failoverRules: structuredClone(useFailoverStore.getState().rules),
+            failoverWebhook: structuredClone(useFailoverStore.getState().webhook),
+            profiles: structuredClone(useProfileStore.getState().profiles),
+            vaultKeys: willImportVault ? structuredClone(useVaultStore.getState().keys) : null,
+            vaultTombstones: willImportVault ? structuredClone(useVaultStore.getState().tombstones) : null,
+            watchEvents: willImportWatch ? structuredClone(useWatchEventStore.getState().events) : null,
+            watchSnapshot: willImportWatch ? structuredClone(useWatchEventStore.getState().snapshot) : null,
+            watchDeleted: willImportWatch ? structuredClone(useWatchEventStore.getState().deletedEventKeys) : null,
+            notesIndex: willImportNotes ? structuredClone(useNotesStore.getState().notes) : null,
+            notesTrash: willImportNotes ? structuredClone(useNotesStore.getState().trash) : null,
+            settings: readSyncedSettings(),
+        }
+        // Memory-first (infallible), then best-effort disk re-persist: the sub-imports below
+        // persist each slice to localforage as they run, so a late throw + reload would
+        // otherwise resurrect the partial import. A failed persist self-heals on that
+        // store's next action since memory already holds the restored state.
+        restorePreImport = () => {
+            if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, changelog: preImport.changelog ?? undefined })
+            useAddonStore.setState({ library: preImport.addonLibrary, accountStates: preImport.addonAccountStates })
+            useFailoverStore.setState({ rules: preImport.failoverRules, webhook: preImport.failoverWebhook })
+            useProfileStore.setState({ profiles: preImport.profiles })
+            if (preImport.vaultKeys !== null) useVaultStore.setState({ keys: preImport.vaultKeys ?? undefined, tombstones: preImport.vaultTombstones ?? undefined })
+            if (preImport.watchEvents !== null) useWatchEventStore.setState({ events: preImport.watchEvents ?? undefined, snapshot: preImport.watchSnapshot ?? undefined, deletedEventKeys: preImport.watchDeleted ?? undefined })
+            if (preImport.notesIndex !== null) useNotesStore.setState({ notes: preImport.notesIndex ?? undefined, trash: preImport.notesTrash ?? undefined })
+            applySyncedSettings(preImport.settings, true)
+            void (async () => {
+                const { default: localforage } = await import('localforage')
+                const { persistAccounts } = await import('../accountStore')
+                const notesModule = await import('@/store/notesStore')
+                const results = await Promise.allSettled([
+                    preImport.accounts !== null ? persistAccounts(store.getState().accounts) : Promise.resolve(),
+                    localforage.setItem('aioman:addon-library', useAddonStore.getState().library),
+                    localforage.setItem('aioman:account-addons', useAddonStore.getState().accountStates),
+                    localforage.setItem('aioman:failover-rules', useFailoverStore.getState().rules),
+                    localforage.setItem('aioman:profiles', useProfileStore.getState().profiles),
+                    preImport.watchEvents !== null
+                        ? localforage.setItem('aio_watch_events_v2', { events: useWatchEventStore.getState().events, snapshot: useWatchEventStore.getState().snapshot })
+                        : Promise.resolve(),
+                    preImport.changelog !== null ? localforage.setItem(CHANGELOG_KEY, store.getState().changelog) : Promise.resolve(),
+                    preImport.notesIndex !== null ? localforage.setItem(notesModule.NOTES_INDEX_KEY, useNotesStore.getState().notes) : Promise.resolve(),
+                    preImport.notesTrash !== null ? localforage.setItem(notesModule.NOTES_TRASH_KEY, useNotesStore.getState().trash) : Promise.resolve(),
+                    (async () => {
+                        const { useAuthStore } = await import('@/store/authStore')
+                        const { encrypt } = await import('@/lib/crypto')
+                        const key = useAuthStore.getState().encryptionKey
+                        if (!key) return
+                        await localforage.setItem('aioman:key-vault', await encrypt(JSON.stringify(useVaultStore.getState().keys), key))
+                        await localforage.setItem('aioman:key-vault:tombstones', useVaultStore.getState().tombstones)
+                        await localforage.setItem('aioman:failover-rules:webhook', await encrypt(JSON.stringify(useFailoverStore.getState().webhook), key))
+                    })(),
+                ])
+                const failed = results.filter(r => r.status === 'rejected').length
+                if (failed > 0 && import.meta.env.DEV) console.warn(`[Import] Rollback re-persist: ${failed} slice(s) failed (memory state is correct)`)
+            })()
+        }
+
         await useAddonStore.getState().importLibrary(data as Record<string, unknown>, mode === 'merge', false, true)
 
         if (data.accountStates) {
             await useAddonStore.getState().importAccountStates(data.accountStates as Record<string, import('@/types/saved-addon').AccountAddonState>)
         }
 
-        const { useFailoverStore } = await import('@/store/failoverStore')
-        await useFailoverStore.getState().importRules(data, mode)
+        await useFailoverStore.getState().importRules(data, mode, true)
 
-        const { useProfileStore } = await import('@/store/profileStore')
         let scavengedProfiles = data.profiles || data['stremio-manager:profiles']
         if (scavengedProfiles && !Array.isArray(scavengedProfiles) && typeof scavengedProfiles === 'object') {
             scavengedProfiles = Object.values(scavengedProfiles)
@@ -241,7 +345,6 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         }
 
         if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
-            const { useVaultStore } = await import('@/store/vaultStore')
             await useVaultStore.getState().initialize()
             await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('@/store/vaultStore').VaultTombstone[])
         }
@@ -260,7 +363,6 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         }
 
         if (Array.isArray(data.watchEvents) && data.watchEvents.length > 0) {
-            const { useWatchEventStore } = await import('@/store/watchEventStore')
             const current = useWatchEventStore.getState().events
             const currentIds = new Set(current.map(e => e.id))
             const incomingEvents = data.watchEvents as Record<string, unknown>[]
@@ -582,7 +684,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             }))
         }
 
-        store.setState({ accounts: finalAccounts })
+        store.setState({ accounts: finalAccounts, hydrated: true })
         persistAccounts(finalAccounts)
 
         if (!isSilent) {
@@ -591,6 +693,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         }
         store.getState().syncAllAccounts().catch(e => { if (import.meta.env.DEV) console.error(e) })
     } catch (error) {
+        try { restorePreImport?.() } catch (rollbackErr) {
+            if (import.meta.env.DEV) console.error('[Import] Rollback to pre-import state failed:', rollbackErr)
+        }
         store.setState({ error: (error as Error).message })
         throw error
     } finally {

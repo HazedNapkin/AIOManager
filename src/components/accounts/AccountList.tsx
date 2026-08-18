@@ -588,6 +588,7 @@ export function AccountList() {
         ]}
       />
 
+      <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
       {accountsView === 'list' ? (
         <div className="flex flex-col gap-2">
           {filteredAccounts.length === 0 && searchQuery ? (
@@ -649,6 +650,7 @@ export function AccountList() {
           )}
         </StaggerContainer>
       )}
+      </div>
 
       <AccountReorderDialog
         accounts={accounts}

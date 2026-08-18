@@ -16,6 +16,7 @@ interface UIStore {
   libraryViewMode: 'grid' | 'list'
   accountsView: 'grid' | 'list'
   addonListView: 'grid' | 'list'
+  notesSidebarCollapsed: boolean
 
   openAddAccountDialog: (account?: Account) => void
   closeAddAccountDialog: () => void
@@ -29,6 +30,7 @@ interface UIStore {
   setLibraryViewMode: (mode: 'grid' | 'list') => void
   setAccountsView: (mode: 'grid' | 'list') => void
   setAddonListView: (mode: 'grid' | 'list') => void
+  setNotesSidebarCollapsed: (collapsed: boolean) => void
   initialize: () => void
   editingAccount: Account | null
   selectedAccountId: string | null
@@ -58,6 +60,7 @@ function migratePrivacyLevel(newKey: string, oldKey: string): number {
 const VIEW_MODE_KEY = 'aioman:library-view-mode'
 const ACCOUNTS_VIEW_KEY = 'aioman:accounts-view'
 const ADDON_LIST_VIEW_KEY = 'aioman:addon-list-view'
+const NOTES_SIDEBAR_COLLAPSED_KEY = 'aioman:notes-sidebar-collapsed'
 
 const syncSettings = () => {
   triggerSync()
@@ -98,6 +101,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
       const stored = localStorage.getItem(ADDON_LIST_VIEW_KEY)
       return stored === 'grid' || stored === 'list' ? stored as 'grid' | 'list' : 'grid'
     } catch { return 'grid' }
+  })(),
+  notesSidebarCollapsed: (() => {
+    try { return localStorage.getItem(NOTES_SIDEBAR_COLLAPSED_KEY) === 'true' } catch { return false }
   })(),
 
   editingAccount: null,
@@ -146,6 +152,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
     set({ addonListView: mode })
     localStorage.setItem(ADDON_LIST_VIEW_KEY, mode)
     syncSettings()
+  },
+  setNotesSidebarCollapsed: (collapsed) => {
+    set({ notesSidebarCollapsed: collapsed })
+    localStorage.setItem(NOTES_SIDEBAR_COLLAPSED_KEY, String(collapsed))
   },
   initialize: () => {
     // Privacy mode and viewMode are now eagerly loaded at store creation.

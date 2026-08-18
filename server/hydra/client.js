@@ -1,5 +1,6 @@
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { resilientFetch } from '../utils/api-resilience.js'
+import { normalizeHydraAddonInput } from '../utils/addon-shape.js'
 
 const DEFAULT_TIMEOUT = 15000
 const HEALTH_TIMEOUT = 8000
@@ -46,10 +47,23 @@ export async function createHydraClient(config) {
         },
 
         async writeAddons(addons) {
+            const flat = (addons || []).map(a => {
+                const n = normalizeHydraAddonInput(a)
+                if (!n) return null
+                return {
+                    transportUrl: n.transportUrl,
+                    name: n.manifest.name,
+                    version: n.manifest.version,
+                    logo: n.manifest.logo,
+                    enabled: n.flags.enabled,
+                    types: n.manifest.types,
+                    resources: n.manifest.resources,
+                }
+            }).filter(Boolean)
             const r = await resilientFetch(`${base}/hydra/addons`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', ...makeHeaders() },
-                body: JSON.stringify({ addons }),
+                body: JSON.stringify({ addons: flat }),
                 timeout: DEFAULT_TIMEOUT,
             })
             if (!r.ok) throw new Error(`Hydra writeAddons failed: ${r.status}`)

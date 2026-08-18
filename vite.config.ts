@@ -61,7 +61,7 @@ export default defineConfig(({ mode }) => {
             rollupOptions: {
                 output: {
                     manualChunks: {
-                        'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+                        'vendor-react': ['react', 'react-dom', 'react-router-dom', 'clsx', 'tailwind-merge'],
                         'vendor-radix': ['@radix-ui/react-checkbox', '@radix-ui/react-select', '@radix-ui/react-tabs', '@radix-ui/react-tooltip', '@radix-ui/react-popover', '@radix-ui/react-alert-dialog', '@radix-ui/react-progress', '@radix-ui/react-scroll-area'],
                         'vendor-motion': ['framer-motion'],
                         'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', '@dnd-kit/modifiers'],

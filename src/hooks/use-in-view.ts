@@ -16,7 +16,6 @@ export function useInView<T extends HTMLElement>(threshold = 0.1) {
         let raf1 = 0
         let raf2 = 0
         let obs: IntersectionObserver | null = null
-        let interval: ReturnType<typeof setInterval> | null = null
 
         const trigger = () => {
             if (raf1) cancelAnimationFrame(raf1)
@@ -25,17 +24,9 @@ export function useInView<T extends HTMLElement>(threshold = 0.1) {
             })
         }
 
-        const check = (): boolean => {
-            const rect = el.getBoundingClientRect()
-            if (rect.width === 0 || rect.height === 0) return false
-            if (rect.top < window.innerHeight + 50 && rect.bottom > -50) {
-                trigger()
-                return true
-            }
-            return false
-        }
-
-        if (check()) {
+        const rect = el.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight + 50 && rect.bottom > -50) {
+            trigger()
             return () => {
                 cancelAnimationFrame(raf1)
                 cancelAnimationFrame(raf2)
@@ -46,21 +37,14 @@ export function useInView<T extends HTMLElement>(threshold = 0.1) {
             if (entry.isIntersecting && entry.target.getBoundingClientRect().height > 0) {
                 setInView(true)
                 obs!.disconnect()
-                if (interval) clearInterval(interval)
             }
         }, { threshold, rootMargin: '50px' })
         obs.observe(el)
-
-        interval = setInterval(() => {
-            if (!check()) return
-            if (interval) clearInterval(interval)
-        }, 200)
 
         return () => {
             cancelAnimationFrame(raf1)
             cancelAnimationFrame(raf2)
             if (obs) obs.disconnect()
-            if (interval) clearInterval(interval)
         }
     }, [threshold])
 

@@ -6,12 +6,29 @@ types.setTypeParser(types.builtins.INT8, (val) => parseInt(val, 10))
 
 let _sqliteTxQueue = Promise.resolve()
 
+const SQLITE_STMT_CACHE_MAX = 500
+
 class DB {
     constructor() {
         this.type = process.env.DB_TYPE || 'sqlite'
         this.client = null
         this.pool = null
         this.isHealthy = false
+        this._stmtCache = new Map()
+    }
+
+    _prepare(sql) {
+        const sqliteSql = sql.replace(/\$\d+/g, '?')
+        let stmt = this._stmtCache.get(sqliteSql)
+        if (!stmt) {
+            stmt = this.client.prepare(sqliteSql)
+            this._stmtCache.set(sqliteSql, stmt)
+            if (this._stmtCache.size > SQLITE_STMT_CACHE_MAX) {
+                const oldest = this._stmtCache.keys().next().value
+                if (oldest !== undefined) this._stmtCache.delete(oldest)
+            }
+        }
+        return stmt
     }
 
     async init() {
@@ -106,8 +123,7 @@ class DB {
             const res = await this.pool.query(sql, params)
             return res.rows
         } else {
-            const sqliteSql = sql.replace(/\$\d+/g, '?')
-            return this.client.prepare(sqliteSql).all(params)
+            return this._prepare(sql).all(params)
         }
     }
 
@@ -116,8 +132,7 @@ class DB {
             const res = await this.pool.query(sql, params)
             return res.rows[0]
         } else {
-            const sqliteSql = sql.replace(/\$\d+/g, '?')
-            return this.client.prepare(sqliteSql).get(params)
+            return this._prepare(sql).get(params)
         }
     }
 
@@ -126,8 +141,7 @@ class DB {
             const res = await this.pool.query(sql, params)
             return { changes: res.rowCount }
         } else {
-            const sqliteSql = sql.replace(/\$\d+/g, '?')
-            const info = this.client.prepare(sqliteSql).run(params)
+            const info = this._prepare(sql).run(params)
             return { changes: info.changes }
         }
     }
@@ -155,19 +169,9 @@ class DB {
                 this.client.exec('BEGIN')
                 try {
                     const sqliteFns = {
-                        query: (sql, params = []) => {
-                            const sqliteSql = sql.replace(/\$\d+/g, '?')
-                            return this.client.prepare(sqliteSql).all(params)
-                        },
-                        get: (sql, params = []) => {
-                            const sqliteSql = sql.replace(/\$\d+/g, '?')
-                            return this.client.prepare(sqliteSql).get(params)
-                        },
-                        run: (sql, params = []) => {
-                            const sqliteSql = sql.replace(/\$\d+/g, '?')
-                            const info = this.client.prepare(sqliteSql).run(params)
-                            return { changes: info.changes }
-                        },
+                        query: (sql, params = []) => this._prepare(sql).all(params),
+                        get: (sql, params = []) => this._prepare(sql).get(params),
+                        run: (sql, params = []) => ({ changes: this._prepare(sql).run(params).changes }),
                     }
                     const result = await fn(sqliteFns)
                     this.client.exec('COMMIT')
@@ -209,6 +213,7 @@ class DB {
                 this.client.close()
                 this.client = null
             }
+            this._stmtCache.clear()
         }
         this.isHealthy = false
     }

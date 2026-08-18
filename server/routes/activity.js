@@ -4,6 +4,7 @@ import { encrypt } from '../crypto.js'
 import { FALLBACK_KEYS, PRIMARY_KEY } from '../keys.js'
 import { getCachedAuth, setCachedAuth, hashAuthPassword } from '../state.js'
 import { timingSafeEqual } from '../auth.js'
+import { listStremioCredentialedAccountIds } from '../lib/stremio-credentials.js'
 
 async function validateSyncAuth(request, reply) {
     const syncUser = request.headers['x-sync-user']
@@ -47,12 +48,17 @@ export function registerActivityRoutes(fastify, activityEngine) {
 
         const limit = Math.min(Math.max(parseInt(request.query.limit || '500', 10), 1), 5000)
         const offset = Math.max(parseInt(request.query.offset || '0', 10), 0)
+        const since = parseInt(request.query.since || '0', 10)
         const accountId = request.query.accountId
         const eventType = request.query.type
 
         let sql = 'SELECT * FROM activity_events WHERE sync_user = $1'
         const params = [syncUser]
 
+        if (since > 0) {
+            params.push(since)
+            sql += ` AND event_ts >= $${params.length}`
+        }
         if (accountId) {
             params.push(accountId)
             sql += ` AND account_id = $${params.length}`
@@ -172,7 +178,7 @@ export function registerActivityRoutes(fastify, activityEngine) {
         }
 
         if (!activityEngine.isEnabled()) {
-            return { synced: 0, skipped: accounts.length, disabled: true }
+            return { synced: 0, skipped: accounts.length, disabled: true, serverStremioCredentialedAccounts: await listStremioCredentialedAccountIds(syncUser) }
         }
 
         const capped = accounts.slice(0, 200)
@@ -245,6 +251,6 @@ export function registerActivityRoutes(fastify, activityEngine) {
             }
         })
 
-        return { synced: upserted, skipped, pruned }
+        return { synced: upserted, skipped, pruned, serverStremioCredentialedAccounts: await listStremioCredentialedAccountIds(syncUser) }
     })
 }

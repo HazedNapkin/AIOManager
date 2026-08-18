@@ -6,8 +6,11 @@ import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { VERSION } from '../config.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
+import { resilientFetch } from '../utils/api-resilience.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
 import { normalizeAddonUrl } from '../utils/addon-url.js'
+import { normalizeHydraAddonInput } from '../utils/addon-shape.js'
+import { getLatestStremioCredential } from '../lib/stremio-credentials.js'
 
 const HYDRA_SPEC_VERSION = '1.0.0'
 const MAX_ADDON_URL_LENGTH = 2048
@@ -63,6 +66,7 @@ async function lookupAccountByApiKey(request, reply) {
 // upstream and adds 300-800ms latency. Short TTL cache, keyed by (account, owner); any local
 // write path that can change the result (sync push, canonical write, rule write) busts it.
 const CANONICAL_TTL_MS = 30_000
+const CANONICAL_CACHE_MAX = 2500
 const canonicalCache = new Map()
 const canonicalInFlight = new Map()
 const canonicalGeneration = new Map()
@@ -71,12 +75,20 @@ export function invalidateCanonicalAddons(accountId, syncUser) {
     const key = `${syncUser}:${accountId}`
     canonicalCache.delete(key)
     canonicalGeneration.set(key, (canonicalGeneration.get(key) ?? 0) + 1)
+    if (canonicalGeneration.size > CANONICAL_CACHE_MAX * 2) {
+        const oldest = canonicalGeneration.keys().next().value
+        if (oldest !== undefined && !canonicalInFlight.has(oldest)) canonicalGeneration.delete(oldest)
+    }
 }
 
 async function getCanonicalAddonsCached(accountId, syncUser) {
     const key = `${syncUser}:${accountId}`
     const cached = canonicalCache.get(key)
-    if (cached && Date.now() - cached.at < CANONICAL_TTL_MS) return cached.value
+    if (cached && Date.now() - cached.at < CANONICAL_TTL_MS) {
+        canonicalCache.delete(key)
+        canonicalCache.set(key, cached)
+        return cached.value
+    }
     if (canonicalInFlight.has(key)) return canonicalInFlight.get(key)
 
     const generation = canonicalGeneration.get(key) ?? 0
@@ -86,6 +98,13 @@ async function getCanonicalAddonsCached(accountId, syncUser) {
             // A read that raced an invalidation is stale; serve it but don't cache it.
             if ((canonicalGeneration.get(key) ?? 0) === generation) {
                 canonicalCache.set(key, { value, at: Date.now() })
+                if (canonicalCache.size > CANONICAL_CACHE_MAX) {
+                    const oldestKey = canonicalCache.keys().next().value
+                    if (oldestKey !== undefined) {
+                        canonicalCache.delete(oldestKey)
+                        canonicalGeneration.delete(oldestKey)
+                    }
+                }
             }
             return value
         } finally {
@@ -99,10 +118,7 @@ async function getCanonicalAddonsCached(accountId, syncUser) {
 async function getCanonicalAddons(accountId, syncUser) {
     // Stremio accounts are served Stremio-first (the most mature path). Filter to the Stremio
     // credential so a Nuvio/Hydra credential row doesn't get mis-used as a Stremio authKey.
-    const cred = await db.get(
-        "SELECT auth_key FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND (credential_type = 'stremio' OR credential_type IS NULL) ORDER BY updated_at DESC LIMIT 1",
-        [accountId, syncUser]
-    )
+    const cred = await getLatestStremioCredential(accountId, syncUser)
     if (cred?.auth_key) {
         const mixed = await db.get(
             "SELECT 1 FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND credential_type IN ('nuvio', 'realstream', 'hydra') LIMIT 1",
@@ -158,31 +174,42 @@ function computeAddonsVersion(hydraAddons) {
 }
 
 function toHydraAddon(raw) {
-    if (!raw || typeof raw !== 'object') return null
-    const manifest = raw.manifest || raw
+    const normalized = normalizeHydraAddonInput(raw)
+    if (!normalized) return null
     return {
-        transportUrl: raw.transportUrl || raw.url || '',
-        name: manifest.name || raw.name || '',
-        version: manifest.version || '',
-        logo: manifest.logo || '',
-        enabled: (raw.flags?.enabled ?? raw.enabled) !== false,
-        types: manifest.types || [],
-        resources: manifest.resources || []
+        transportUrl: normalized.transportUrl,
+        id: normalized.manifest.id,
+        name: normalized.manifest.name,
+        version: normalized.manifest.version,
+        logo: normalized.manifest.logo,
+        enabled: normalized.flags.enabled,
+        types: normalized.manifest.types,
+        resources: normalized.manifest.resources
     }
+}
+
+const CANONICAL_ONLY_WARNING = 'Written to the AIOManager store only; changes propagate to your Stremio when a logged-in AIOManager client syncs.'
+
+async function stremioCredentialMode(accountId, syncUser) {
+    const cred = await getLatestStremioCredential(accountId, syncUser)
+    return cred?.auth_key ? 'stremio' : 'canonical'
+}
+
+function propagationFields(mode) {
+    return mode === 'stremio'
+        ? { propagatedTo: ['stremio'] }
+        : { propagatedTo: [], warning: CANONICAL_ONLY_WARNING }
 }
 
 async function writeCanonicalAddons(account, addons) {
     const accountId = account.account_id
     const syncUser = account.sync_user || ''
+    const cred = await getLatestStremioCredential(accountId, syncUser)
 
     // Stremio Hubs write through to Stremio (the mature path). Filter to the Stremio
     // credential so a Nuvio/Hydra cred isn't mis-used as a Stremio authKey. The same
     // bug class fixed on the read side in getCanonicalAddons. Scoped to sync_user so a
     // poisoned api-key mapping can't push to another user's Stremio collection.
-    const cred = await db.get(
-        "SELECT auth_key FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND (credential_type = 'stremio' OR credential_type IS NULL) ORDER BY updated_at DESC LIMIT 1",
-        [accountId, syncUser]
-    )
     if (cred?.auth_key) {
         const mixed = await db.get(
             "SELECT 1 FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND credential_type IN ('nuvio', 'realstream', 'hydra') LIMIT 1",
@@ -197,7 +224,7 @@ async function writeCanonicalAddons(account, addons) {
         const driver = createStremioDriver()
         await driver.writeAddons(authKey, addons)
         invalidateCanonicalAddons(accountId, syncUser)
-        return
+        return 'stremio'
     }
 
     // Non-Stremio Hub (Nuvio-only / local-only): the inbound write lands in the
@@ -225,15 +252,17 @@ async function writeCanonicalAddons(account, addons) {
         )
     })
     invalidateCanonicalAddons(accountId, syncUser)
+    return 'canonical'
 }
 
 async function validateManifest(manifestUrl) {
     if (!(await isSafeUrlResolved(manifestUrl))) {
         return { valid: false, errors: ['Unsafe or private manifest URL'] }
     }
-    const res = await enqueueProxyRequest(manifestUrl, () => fetch(manifestUrl, {
+    const res = await enqueueProxyRequest(manifestUrl, () => resilientFetch(manifestUrl, {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(10000)
+        timeout: 10000,
+        retries: 1
     }))
     if (!res.ok) {
         return { valid: false, errors: [`Manifest fetch returned HTTP ${res.status}`] }
@@ -339,7 +368,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
             const norm = normalizeAddonUrl(url)
             if (current.some(a => normalizeAddonUrl(a.transportUrl || a.url || '') === norm)) {
                 const addons = current.map(toHydraAddon).filter(Boolean)
-                return { addons }
+                return { addons, ...propagationFields(await stremioCredentialMode(account.account_id, account.sync_user || '')) }
             }
 
             const { valid, manifest } = await validateManifest(url)
@@ -350,9 +379,9 @@ export function registerHydraRoutes(fastify, reconciler = null) {
 
             const newAddon = { transportUrl: url, manifest }
             const updated = [...current, newAddon]
-            await writeCanonicalAddons(account, updated)
+            const mode = await writeCanonicalAddons(account, updated)
 
-            return { addons: updated.map(toHydraAddon).filter(Boolean) }
+            return { addons: updated.map(toHydraAddon).filter(Boolean), ...propagationFields(mode) }
         } catch {
             reply.code(500)
             return { error: 'internal_error', message: 'Failed to install addon' }
@@ -381,8 +410,8 @@ export function registerHydraRoutes(fastify, reconciler = null) {
                 return { error: 'not_found', message: 'Addon not installed' }
             }
 
-            await writeCanonicalAddons(account, filtered)
-            return { addons: filtered.map(toHydraAddon).filter(Boolean) }
+            const mode = await writeCanonicalAddons(account, filtered)
+            return { addons: filtered.map(toHydraAddon).filter(Boolean), ...propagationFields(mode) }
         } catch {
             reply.code(500)
             return { error: 'internal_error', message: 'Failed to remove addon' }
@@ -427,20 +456,11 @@ export function registerHydraRoutes(fastify, reconciler = null) {
                 }
             }
 
-            const normalized = addons.map(a => ({
-                transportUrl: a.transportUrl || a.url,
-                manifest: {
-                    id: a.id || '',
-                    name: a.name || '',
-                    version: a.version || '',
-                    logo: a.logo || '',
-                    types: a.types || [],
-                    resources: a.resources || []
-                },
-                enabled: a.enabled !== false
-            }))
-            await writeCanonicalAddons(account, normalized)
-            return { addons: normalized.map(toHydraAddon).filter(Boolean) }
+            // Tolerant of both wire shapes: spec-flat ({transportUrl, name, ...}) and the
+            // AIOManager descriptor shape ({transportUrl, manifest: {...}, flags: {...}}).
+            const normalized = addons.map(normalizeHydraAddonInput)
+            const mode = await writeCanonicalAddons(account, normalized)
+            return { addons: normalized.map(toHydraAddon).filter(Boolean), ...propagationFields(mode) }
         } catch {
             reply.code(500)
             return { error: 'internal_error', message: 'Failed to replace addon collection' }
@@ -461,8 +481,9 @@ export function registerHydraRoutes(fastify, reconciler = null) {
 
         try {
             const start = Date.now()
-            const res = await enqueueProxyRequest(rawUrl, () => fetch(rawUrl, {
-                signal: AbortSignal.timeout(8000)
+            const res = await enqueueProxyRequest(rawUrl, () => resilientFetch(rawUrl, {
+                timeout: 8000,
+                retries: 1
             }))
             const latencyMs = Date.now() - start
             return { healthy: res.ok, latencyMs }
@@ -508,7 +529,10 @@ export function registerHydraRoutes(fastify, reconciler = null) {
             }
 
             const target = normalizeAddonUrl(fetchUrl)
-            const matchIdx = current.findIndex(a => normalizeAddonUrl(a.transportUrl || a.url || '') === target)
+            let matchIdx = current.findIndex(a => normalizeAddonUrl(a.transportUrl || a.url || '') === target)
+            if (matchIdx < 0 && manifest?.id) {
+                matchIdx = current.findIndex(a => (a.manifest?.id || a.id) === manifest.id)
+            }
 
             let updated
             if (matchIdx >= 0) {
@@ -523,7 +547,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
                 updated = [...current, { transportUrl: fetchUrl, manifest }]
             }
 
-            await writeCanonicalAddons(account, updated)
+            const mode = await writeCanonicalAddons(account, updated)
 
             if (reconciler) {
                 try {
@@ -537,7 +561,7 @@ export function registerHydraRoutes(fastify, reconciler = null) {
                 }
             }
 
-            return { addons: updated.map(toHydraAddon).filter(Boolean) }
+            return { addons: updated.map(toHydraAddon).filter(Boolean), ...propagationFields(mode) }
         } catch {
             reply.code(500)
             return { error: 'internal_error', message: 'Failed to reinstall addon' }
@@ -630,22 +654,24 @@ export function registerHydraRoutes(fastify, reconciler = null) {
             }
         }
 
-        results.push(await testEndpoint('GET /hydra/status', 'GET', '/hydra/status'))
-
         const apiKey = request.headers['x-api-key']
         const authHeaders = apiKey ? { 'X-API-Key': apiKey } : {}
         const testManifestUrl = 'https://example.com/test-hydra-compliance/manifest.json'
 
-        results.push(await testEndpoint('GET /hydra/addons', 'GET', '/hydra/addons', authHeaders))
-
-        results.push(await testEndpoint('POST /hydra/addons', 'POST', '/hydra/addons', authHeaders, { url: testManifestUrl }))
-
         const encodedUrl = encodeURIComponent(testManifestUrl)
-        results.push(await testEndpoint('DELETE /hydra/addons', 'DELETE', `/hydra/addons?url=${encodedUrl}`, authHeaders))
+        const [statusRes, listRes, postDeleteRes, reinstallRes, validateRes] = await Promise.all([
+            testEndpoint('GET /hydra/status', 'GET', '/hydra/status'),
+            testEndpoint('GET /hydra/addons', 'GET', '/hydra/addons', authHeaders),
+            (async () => {
+                const post = await testEndpoint('POST /hydra/addons', 'POST', '/hydra/addons', authHeaders, { url: testManifestUrl })
+                const del = await testEndpoint('DELETE /hydra/addons', 'DELETE', `/hydra/addons?url=${encodedUrl}`, authHeaders)
+                return [post, del]
+            })(),
+            testEndpoint('POST /hydra/reinstall', 'POST', '/hydra/reinstall', authHeaders, { addonUrl: testManifestUrl }),
+            testEndpoint('POST /hydra/validate', 'POST', '/hydra/validate', authHeaders, { manifestUrl: testManifestUrl }),
+        ])
 
-        results.push(await testEndpoint('POST /hydra/reinstall', 'POST', '/hydra/reinstall', authHeaders, { addonUrl: testManifestUrl }))
-
-        results.push(await testEndpoint('POST /hydra/validate', 'POST', '/hydra/validate', authHeaders, { manifestUrl: testManifestUrl }))
+        results.push(statusRes, listRes, ...postDeleteRes, reinstallRes, validateRes)
 
         return { results, totalTests: results.length, passed: results.filter(r => r.pass).length }
     })

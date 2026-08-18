@@ -1,5 +1,3 @@
-export type AddonParamType = 'aiometadata' | 'aiostreams' | null
-
 export const NO_SELECTION = '__none__'
 
 export interface AddonParams {
@@ -13,34 +11,12 @@ export interface VariantInfo {
     enabled?: boolean
 }
 
-interface ManifestLike {
-    id?: string
-    name?: string
-}
-
-const AIOMETADATA_MANIFEST_IDS = ['aio-metadata', 'aiometadata']
-const AIOSTREAMS_MANIFEST_IDS = ['community.aiostreams', 'aiostreams']
 const AIOMETADATA_URL_PATTERNS = ['aiometadata', 'aio-metadata', 'aiometedata']
 const AIOSTREAMS_URL_PATTERNS = ['aiostreams', 'aio-streams']
 
 function urlLooksLikeAio(url: string): boolean {
     const lower = url.toLowerCase()
     return AIOMETADATA_URL_PATTERNS.some(p => lower.includes(p)) || AIOSTREAMS_URL_PATTERNS.some(p => lower.includes(p))
-}
-
-export function getAddonParamType(url: string, manifest?: ManifestLike | null): AddonParamType {
-    if (manifest) {
-        const id = manifest.id?.toLowerCase() || ''
-        const name = manifest.name?.toLowerCase() || ''
-        if (AIOMETADATA_MANIFEST_IDS.some(k => id.includes(k)) || name.includes('aiometadata')) return 'aiometadata'
-        if (AIOSTREAMS_MANIFEST_IDS.some(k => id.includes(k)) || name.includes('aiostreams')) return 'aiostreams'
-        return null
-    }
-
-    const lower = url.toLowerCase()
-    if (AIOMETADATA_URL_PATTERNS.some(p => lower.includes(p))) return 'aiometadata'
-    if (AIOSTREAMS_URL_PATTERNS.some(p => lower.includes(p))) return 'aiostreams'
-    return null
 }
 
 export function extractAddonParams(url: string): { base: string; params: AddonParams } {
@@ -149,11 +125,6 @@ export function buildVariantUrl(
         result = applyVariantToBase(result, variantId.trim(), location)
     }
     return result
-}
-
-export function hasAddonParams(url: string): boolean {
-    const { params } = extractAddonParams(url)
-    return params.tag !== null || params.variant !== null
 }
 
 export function extractVariantsFromConfig(config: Record<string, unknown>): VariantInfo[] {

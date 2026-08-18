@@ -7,6 +7,7 @@ import { timingSafeEqual } from '../auth.js'
 import { hashApiKey } from '../api-keys.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
 import { invalidateCanonicalAddons } from './hydra.js'
+import { listStremioCredentialedAccountIds } from '../lib/stremio-credentials.js'
 import { isRegistrationsClosed } from '../config.js'
 import { trace } from '../utils/trace.js'
 
@@ -21,6 +22,28 @@ function buildMultiRowPlaceholders(numRows, numCols) {
         rows.push(`(${cols.join(', ')})`)
     }
     return rows.join(', ')
+}
+
+const KV_HISTORY_KEEP = 3
+
+async function archiveCurrentKV(tx, key, authUser) {
+    try {
+        const now = Date.now()
+        await tx.run(
+            `INSERT INTO kv_store_history (key, value, password, updated_at, content_hash, archived_at)
+             SELECT key, value, password, updated_at, content_hash, $1 FROM kv_store WHERE key = $2`,
+            [now, key]
+        )
+        await tx.run(
+            `DELETE FROM kv_store_history WHERE key = $1 AND archived_at NOT IN (
+                 SELECT archived_at FROM kv_store_history WHERE key = $1 ORDER BY archived_at DESC LIMIT $2
+             )`,
+            [key, KV_HISTORY_KEEP]
+        )
+        trace('syncRoute', 'kv.archived', { accountId: key, by: authUser || 'system' })
+    } catch (err) {
+        trace('syncRoute', 'kv.archive.failed', { accountId: key, error: err && err.message })
+    }
 }
 
 export function registerSyncRoutes(fastify) {
@@ -53,7 +76,7 @@ export function registerSyncRoutes(fastify) {
         }
 
         try {
-            const row = await db.get('SELECT value, password FROM kv_store WHERE key = $1', [id])
+            const row = await db.get('SELECT value, password, content_hash FROM kv_store WHERE key = $1', [id])
 
             if (!row) {
                 trace('syncRoute', 'pull.error', { accountId: id, error: 'not-found' })
@@ -72,6 +95,13 @@ export function registerSyncRoutes(fastify) {
                     return { error: 'Unauthorized: Invalid credentials' }
                 }
                 setCachedAuth('sync:' + id, password)
+            }
+
+            if (row.content_hash && request.headers['if-none-match'] === row.content_hash) {
+                trace('syncRoute', 'pull.not_modified', { accountId: id, timing: Date.now() - start })
+                reply.status(304)
+                reply.header('ETag', row.content_hash)
+                return reply.send()
             }
 
             const decryptedValueStr = decrypt(row.value, FALLBACK_KEYS)
@@ -99,6 +129,7 @@ export function registerSyncRoutes(fastify) {
             }
             const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
             trace('syncRoute', 'pull.success', { accountId: id, bytes: payloadBytes, timing: Date.now() - start })
+            if (row.content_hash) reply.header('ETag', row.content_hash)
             return syncData && typeof syncData === 'object' ? syncData : {}
         } catch (err) {
             fastify.log.error({ category: 'Sync' }, `[${id}] GET Error: ${err.message}`)
@@ -137,16 +168,24 @@ export function registerSyncRoutes(fastify) {
             return { error: 'Missing ID or Password header' }
         }
 
-        const contentHash = crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex')
+        const bodyStr = JSON.stringify(data)
+        const contentHash = crypto.createHash('sha256').update(bodyStr).digest('hex')
         const clientSyncedAt = data.syncedAt ? new Date(data.syncedAt).getTime() : 0
+        // contentHint is the client's hash of its logical state (pre-syncedAt stamp); unlike
+        // content_hash (over the random-IV envelope, never stable), a match proves the logical
+        // content is unchanged so archive/rewrite/apiKeys churn and the updated_at bump skip.
+        const clientHint = typeof data.contentHint === 'string' ? data.contentHint.slice(0, 64) : null
         const serverTime = new Date().toISOString()
         data.syncedAt = serverTime
+        const storedStr = JSON.stringify(data)
+
+        const serverStremioCredentialedAccounts = await listStremioCredentialedAccountIds(id)
 
         return await db.tx(async (tx) => {
             const row = await tx.get(
                 db.type === 'postgres'
-                    ? 'SELECT password, content_hash, updated_at FROM kv_store WHERE key = $1 FOR UPDATE'
-                    : 'SELECT password, content_hash, updated_at FROM kv_store WHERE key = $1',
+                    ? 'SELECT password, content_hash, content_hint, updated_at FROM kv_store WHERE key = $1 FOR UPDATE'
+                    : 'SELECT password, content_hash, content_hint, updated_at FROM kv_store WHERE key = $1',
                 [id]
             )
 
@@ -162,36 +201,43 @@ export function registerSyncRoutes(fastify) {
                     setCachedAuth('sync:' + id, password)
                 }
 
+                if (clientHint && row.content_hint === clientHint) {
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hint-match', timing: Date.now() - postStart })
+                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
+                }
+
                 if (row.content_hash === contentHash) {
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', timing: Date.now() - postStart })
-                    return { success: true, syncedAt: serverTime, skipped: true }
+                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 const serverUpdated = row.updated_at || 0
                 if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', timing: Date.now() - postStart })
-                    return { success: true, conflict: true, syncedAt: serverTime }
+                    return { success: true, conflict: true, syncedAt: serverTime, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
                 }
 
-                const encryptedVal = encrypt(JSON.stringify(data), PRIMARY_KEY)
+                await archiveCurrentKV(tx, id, id)
+
+                const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
                 const encryptedPass = encrypt(password, PRIMARY_KEY)
                 await tx.run(`
-                    UPDATE kv_store 
-                    SET value = $1, password = $2, updated_at = $3, content_hash = $4
-                    WHERE key = $5
-                `, [encryptedVal, encryptedPass, Date.now(), contentHash, id])
+                    UPDATE kv_store
+                    SET value = $1, password = $2, updated_at = $3, content_hash = $4, content_hint = $5
+                    WHERE key = $6
+                `, [encryptedVal, encryptedPass, Date.now(), contentHash, clientHint, id])
             } else {
                 if (isRegistrationsClosed()) {
                     reply.status(403);
                     return { error: 'Registrations are closed on this instance.' }
                 }
-                const encryptedVal = encrypt(JSON.stringify(data), PRIMARY_KEY)
+                const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
                 const encryptedPass = encrypt(password, PRIMARY_KEY)
                 await tx.run(`
-                    INSERT INTO kv_store (key, value, password, updated_at, content_hash)
-                    VALUES ($1, $2, $3, $4, $5)
-                `, [id, encryptedVal, encryptedPass, Date.now(), contentHash])
+                    INSERT INTO kv_store (key, value, password, updated_at, content_hash, content_hint)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                `, [id, encryptedVal, encryptedPass, Date.now(), contentHash, clientHint])
             }
 
             const apiKeys = data.apiKeys
@@ -254,14 +300,73 @@ export function registerSyncRoutes(fastify) {
             for (const [accountId] of canonicalWrites) {
                 invalidateCanonicalAddons(accountId, id)
             }
-            trace('syncRoute', 'push.success', { accountId: id, bytes: JSON.stringify(data).length, timing: Date.now() - postStart })
-            return { success: true, syncedAt: serverTime }
+            trace('syncRoute', 'push.success', { accountId: id, bytes: storedStr.length, timing: Date.now() - postStart })
+            return { success: true, syncedAt: serverTime, contentHash, serverStremioCredentialedAccounts }
         })
         } catch (err) {
             fastify.log.error({ category: 'Sync' }, `POST /api/sync error: ${err.message}`)
             trace('syncRoute', 'push.error', { accountId: request.params?.id, error: err.message, timing: Date.now() - postStart })
             reply.status(500)
             return { error: 'Internal sync error' }
+        }
+    })
+
+    fastify.post('/api/sync/:id/restore', {
+        config: { rateLimit: { max: 5, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const restoreStart = Date.now()
+        const { id } = request.params
+        const password = request.headers['x-sync-password']
+        trace('syncRoute', 'restore.start', { accountId: id })
+
+        if (!id || !password) {
+            reply.status(400)
+            return { error: 'Missing ID or Password header' }
+        }
+
+        try {
+            const row = await db.get('SELECT password FROM kv_store WHERE key = $1', [id])
+            if (!row) {
+                reply.status(401)
+                return { error: 'Unauthorized: Invalid credentials' }
+            }
+
+            const cachedPw = getCachedAuth('sync:' + id)
+            if (!(cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password)))) {
+                const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+                if (!decryptedPassword || !timingSafeEqual(decryptedPassword, password)) {
+                    reply.status(401)
+                    return { error: 'Unauthorized: Invalid credentials' }
+                }
+                setCachedAuth('sync:' + id, password)
+            }
+
+            const result = await db.tx(async (tx) => {
+                const archived = await tx.get(
+                    'SELECT value, password, content_hash, updated_at FROM kv_store_history WHERE key = $1 ORDER BY archived_at DESC LIMIT 1',
+                    [id]
+                )
+                if (!archived) return { restored: false }
+
+                await tx.run(
+                    `UPDATE kv_store SET value = $1, password = $2, updated_at = $3, content_hash = $4, content_hint = NULL WHERE key = $5`,
+                    [archived.value, archived.password, archived.updated_at, archived.content_hash, id]
+                )
+                return { restored: true }
+            })
+
+            invalidateCachedAuth('sync:' + id)
+            trace('syncRoute', 'restore.done', { accountId: id, restored: result?.restored, timing: Date.now() - restoreStart })
+            if (!result?.restored) {
+                reply.status(404)
+                return { error: 'No previous cloud version is available to restore' }
+            }
+            return { success: true, restored: true }
+        } catch (err) {
+            fastify.log.error({ category: 'Sync' }, `POST /api/sync/${id}/restore error: ${err.message}`)
+            trace('syncRoute', 'restore.error', { accountId: id, error: err.message, timing: Date.now() - restoreStart })
+            reply.status(500)
+            return { error: 'Internal restore error' }
         }
     })
 
@@ -319,6 +424,7 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM failover_history WHERE rule_id IN (SELECT id FROM autopilot_rules WHERE owner_sync_user = $1)', [id])
             await tx.run('DELETE FROM autopilot_rules WHERE owner_sync_user = $1', [id])
             await tx.run('DELETE FROM kv_store WHERE key = $1', [id])
+            await tx.run('DELETE FROM kv_store_history WHERE key = $1', [id])
         })
         invalidateCachedAuth('sync:' + id)
         trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })

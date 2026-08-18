@@ -12,13 +12,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
+import { useSyncStore } from '@/store/syncStore'
+import { isSplitBrainAccount } from '@/lib/canonical-visibility'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
-import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
+import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play, ShieldAlert } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
 import { STICKY_NOTE_MAX_LENGTH } from '@/lib/constants'
@@ -80,6 +81,8 @@ export const AccountCard = memo(function AccountCard({
   const navigate = useNavigate()
   const preventNavRef = useRef(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const serverStremioCredentialedAccounts = useSyncStore(s => s.serverStremioCredentialedAccounts)
+  const isSplitBrain = isSplitBrainAccount(account, !!getStremioAuthKey(account), serverStremioCredentialedAccounts)
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteValue, setNoteValue] = useState(account.note || '')
   const [noteHistory, setNoteHistory] = useState<string[]>([account.note || ''])
@@ -170,7 +173,9 @@ export const AccountCard = memo(function AccountCard({
   }, [account.id, handleNoteClose])
   const { toast } = useToast()
   useRelativeTime()
-  const { syncAccount, repairAccount, loading } = useAccounts()
+  const syncAccount = useAccountStore((state) => state.syncAccount)
+  const repairAccount = useAccountStore((state) => state.repairAccount)
+  const loading = useAccountStore((state) => state.loadingAccounts.has(account.id))
   const { openAddAccountDialog, isAddAccountDialogOpen, privacyLevelNames } = useUIStore(
     useShallow((state) => ({
       openAddAccountDialog: state.openAddAccountDialog,
@@ -618,6 +623,13 @@ export const AccountCard = memo(function AccountCard({
 
 
         <div className="mt-auto flex items-center gap-1.5 px-4 pb-4 pt-1 text-xs text-muted-foreground/60">
+          {isSplitBrain && (
+            <Tooltip content="This account has an API key and a client-side Stremio credential, but the server has no stored credential — external Hydra writes only reach the server store until an AIOManager client syncs." side="top">
+              <span aria-label="Split-brain sync" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
+                <ShieldAlert className="w-3 h-3" />
+              </span>
+            </Tooltip>
+          )}
           {(Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000 && (
             <Tooltip content="Sync recommended (Last sync > 24h ago)" side="top">
               <AlertTriangle className="w-3 h-3 text-warning shrink-0" />

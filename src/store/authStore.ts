@@ -10,6 +10,7 @@ import {
   saveSessionKey,
   loadSessionKey,
   clearSessionKey,
+  clearSyncKeyCache,
 } from '@/lib/crypto'
 import { wipeAllData } from '@/lib/storage-reset'
 import { resetAllStores } from '@/lib/store-coordinator'
@@ -124,6 +125,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   lock: () => {
     clearSessionKey()
+    clearSyncKeyCache()
     import('@/store/accountStore').then(({ clearAuthKeyCache }) => {
       clearAuthKeyCache()
     })

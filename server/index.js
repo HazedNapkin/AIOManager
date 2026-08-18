@@ -30,7 +30,8 @@ import { traceClientBatch, traceEnabled } from './utils/trace.js'
 const fastify = Fastify({
     logger: loggerConfig,
     disableRequestLogging: true,
-    bodyLimit: parseInt(process.env.MAX_SYNC_PAYLOAD_SIZE || '104857600')
+    bodyLimit: parseInt(process.env.MAX_SYNC_PAYLOAD_SIZE || '104857600'),
+    trustProxy: process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1'
 })
 
 ensureDataDirectory(fastify)
@@ -53,6 +54,16 @@ await fastify.register(rateLimit, {
         // Critical on shared/proxied instances where every consumer can share one source IP.
         const apiKey = request.headers['x-api-key']
         if (apiKey) return `k:${hashApiKey(apiKey)}`
+        if (request.url?.startsWith('/api/sync/')) {
+            const rawId = request.url.split('?')[0].split('/')[3]
+            // Decode so percent-encoding variants of the same id can't split rate-limit
+            // buckets; malformed sequences fall back to the raw segment.
+            let id = null
+            try { id = rawId ? decodeURIComponent(rawId) : null } catch { id = rawId || null }
+            // id+ip hybrid: per-id stops cross-account NAT starvation, the ip component stops
+            // anyone who knows the id from exhausting the bucket pre-auth (401s still count).
+            return id ? `sync:${id}:${request.ip}` : request.ip
+        }
         return request.headers['x-sync-user'] || request.ip
     }
 })
@@ -127,7 +138,10 @@ fastify.get('/logo.png', async (_request, reply) => {
 if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {
         root: distPath,
-        prefix: '/'
+        prefix: '/',
+        setHeaders: (reply, path) => {
+            if (path.endsWith('.html')) reply.header('Cache-Control', 'no-cache')
+        }
     })
 
     fastify.setNotFoundHandler((request, reply) => {
@@ -135,6 +149,7 @@ if (fs.existsSync(distPath)) {
             reply.status(404);
             return { error: `API route ${request.method}:${request.url} not found` }
         }
+        reply.header('Cache-Control', 'no-cache')
         return reply.sendFile('index.html')
     })
 

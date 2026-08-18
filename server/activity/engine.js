@@ -4,6 +4,7 @@ import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { STREMIO_API } from '../config.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
+import { resilientFetch } from '../utils/api-resilience.js'
 import { trace } from '../utils/trace.js'
 
 function envBool(name, fallback = false) {
@@ -216,21 +217,16 @@ async function fetchLibrary(authKey, deadline = 0, log = null) {
     if (deadline && Date.now() >= deadline) return null
     const accountIdHint = authKey ? authKey.substring(0, 4) + '***' : 'empty'
     try {
-        const res = await enqueueProxyRequest(STREMIO_API, () => {
-            const controller = new AbortController()
-            let timeout
-            try {
-                const remainingBudget = deadline ? Math.max(1000, deadline - Date.now()) : ACTIVITY_FETCH_TIMEOUT_MS
-                const timeoutMs = Math.min(ACTIVITY_FETCH_TIMEOUT_MS, remainingBudget)
-                timeout = setTimeout(() => controller.abort(), timeoutMs)
-                return fetch(`${STREMIO_API}/datastoreGet`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type: 'DatastoreGet', authKey, collection: 'libraryItem', all: true }),
-                    signal: controller.signal
-                }).finally(() => { clearTimeout(timeout) })
-            } catch (e) { clearTimeout(timeout); throw e }
-        })
+        const remainingBudget = deadline ? Math.max(1000, deadline - Date.now()) : ACTIVITY_FETCH_TIMEOUT_MS
+        const timeoutMs = Math.min(ACTIVITY_FETCH_TIMEOUT_MS, remainingBudget)
+        const res = await enqueueProxyRequest(STREMIO_API, () => resilientFetch(`${STREMIO_API}/datastoreGet`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'DatastoreGet', authKey, collection: 'libraryItem', all: true }),
+            idempotent: true,
+            retries: deadline ? 0 : 1,
+            timeout: timeoutMs
+        }))
         if (!res.ok) {
             if (log) log.warn({ category: 'Activity' }, `Library fetch failed for ${accountIdHint}: HTTP ${res.status}`)
             return null

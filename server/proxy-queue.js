@@ -1,27 +1,29 @@
 import { DOMAIN_THROTTLE_MS, MAX_QUEUE_PER_KEY, MAX_QUEUE_SIZE, PROXY_CONCURRENCY_LIMIT } from './config.js'
 import { domainLastRequestTime, proxyQueue, proxyQueueKeyCounts, serverState } from './state.js'
 
+const MAX_SCAN = 200
+
+const runQueuedTask = async (request) => {
+    try {
+        const result = await request.task()
+        request.resolve(result)
+    } catch (err) {
+        request.reject(err)
+    } finally {
+        if (request.queueKey) {
+            const count = proxyQueueKeyCounts.get(request.queueKey) || 1
+            const newCount = count - 1
+            if (newCount <= 0) { proxyQueueKeyCounts.delete(request.queueKey) } else { proxyQueueKeyCounts.set(request.queueKey, newCount) }
+        }
+        serverState.activeProxyRequests--
+        processQueue()
+    }
+}
+
 export const processQueue = async () => {
     if (proxyQueue.length === 0 || serverState.activeProxyRequests >= PROXY_CONCURRENCY_LIMIT) return
 
-    const request = proxyQueue.shift()
-    const { task, resolve, reject, url, throttleMs = DOMAIN_THROTTLE_MS } = request
-
-    let origin = ''
-    try {
-        origin = new URL(url).origin
-    } catch (e) { origin = url }
-
     const now = Date.now()
-    const lastRequest = domainLastRequestTime.get(origin) || 0
-    const waitTime = Math.max(0, throttleMs - (now - lastRequest))
-
-    if (waitTime > 0) {
-        proxyQueue.push(request)
-        setTimeout(processQueue, 100)
-        return
-    }
-
     if (domainLastRequestTime.size > 1000 && now - serverState.domainLastPruneTime > 30000) {
         serverState.domainLastPruneTime = now
         const pruneThreshold = now - (5 * 60 * 1000)
@@ -33,22 +35,30 @@ export const processQueue = async () => {
             keys.forEach(k => domainLastRequestTime.delete(k))
         }
     }
-    domainLastRequestTime.set(origin, now)
-    serverState.activeProxyRequests++
 
-    try {
-        const result = await task()
-        resolve(result)
-    } catch (err) {
-        reject(err)
-    } finally {
-        if (request.queueKey) {
-            const count = proxyQueueKeyCounts.get(request.queueKey) || 1
-            const newCount = count - 1
-            if (newCount <= 0) { proxyQueueKeyCounts.delete(request.queueKey) } else { proxyQueueKeyCounts.set(request.queueKey, newCount) }
+    let minThrottleWait = Infinity
+    for (let i = 0; i < proxyQueue.length && i < MAX_SCAN;) {
+        if (serverState.activeProxyRequests >= PROXY_CONCURRENCY_LIMIT) return
+
+        const request = proxyQueue[i]
+        const origin = request.origin
+
+        const lastRequest = domainLastRequestTime.get(origin) || 0
+        const waitTime = Math.max(0, (request.throttleMs ?? DOMAIN_THROTTLE_MS) - (Date.now() - lastRequest))
+        if (waitTime > 0) {
+            if (waitTime < minThrottleWait) minThrottleWait = waitTime
+            i++
+            continue
         }
-        serverState.activeProxyRequests--
-        processQueue()
+
+        proxyQueue.splice(i, 1)
+        domainLastRequestTime.set(origin, Date.now())
+        serverState.activeProxyRequests++
+        runQueuedTask(request)
+    }
+
+    if (minThrottleWait !== Infinity) {
+        setTimeout(processQueue, Math.max(Math.min(minThrottleWait, 60000), 10))
     }
 }
 
@@ -70,7 +80,11 @@ export const enqueueProxyRequest = (url, task, options = null) => {
             }
             proxyQueueKeyCounts.set(queueKey, current + 1)
         }
-        proxyQueue.push({ url, task, resolve, reject, queueKey, throttleMs })
+        let origin = ''
+        try {
+            origin = new URL(url).origin
+        } catch (e) { origin = url }
+        proxyQueue.push({ url, origin, task, resolve, reject, queueKey, throttleMs })
         processQueue()
     })
 }

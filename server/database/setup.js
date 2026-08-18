@@ -3,6 +3,20 @@ import db from '../db.js'
 import { DATA_DIR, isReadOnlyReplica } from '../config.js'
 import { domainLastRequestTime, globalHealthCache, proxyQueue, serverState } from '../state.js'
 
+export async function migrateKvStoreColumns(log = console) {
+    const kvTableInfo = await db.query(`PRAGMA table_info(kv_store)`)
+    const hasContentHash = kvTableInfo.some(col => col.name === 'content_hash')
+    const hasContentHint = kvTableInfo.some(col => col.name === 'content_hint')
+    if (!hasContentHash) {
+        await db.run(`ALTER TABLE kv_store ADD COLUMN content_hash TEXT`)
+        log.info({ category: 'Database' }, 'Migrated: Added content_hash column to kv_store')
+    }
+    if (!hasContentHint) {
+        await db.run(`ALTER TABLE kv_store ADD COLUMN content_hint TEXT`)
+        log.info({ category: 'Database' }, 'Migrated: Added content_hint column to kv_store')
+    }
+}
+
 export async function initializeDatabase(fastify) {
     const dbPath = path.join(DATA_DIR, 'aio.db')
     if (db.type === 'sqlite') {
@@ -20,6 +34,7 @@ export async function initializeDatabase(fastify) {
         await db.pragma('cache_size = -32000')
         await db.pragma('auto_vacuum = INCREMENTAL')
         await db.pragma('busy_timeout = 5000')
+        await db.pragma('mmap_size = 268435456')
 
         // Schedule VACUUM weekly instead of on every startup (prevents blocking request handling)
         const VACUUM_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
@@ -49,8 +64,23 @@ export async function initializeDatabase(fastify) {
         value TEXT,
         password TEXT,
         updated_at BIGINT,
-        content_hash TEXT
+        content_hash TEXT,
+        content_hint TEXT
       );
+
+      -- Previous sync blobs, captured on every overwrite. The server can't validate
+      -- client-encrypted payloads (zero-knowledge), so a bad push overwrites the only
+      -- readable copy; history keeps the last few versions restorable with just the
+      -- account password (POST /api/sync/:id/restore).
+      CREATE TABLE IF NOT EXISTS kv_store_history (
+        key TEXT,
+        value TEXT,
+        password TEXT,
+        updated_at BIGINT,
+        content_hash TEXT,
+        archived_at BIGINT
+      );
+      CREATE INDEX IF NOT EXISTS idx_kv_store_history_key ON kv_store_history (key, archived_at DESC);
 
       CREATE TABLE IF NOT EXISTS autopilot_rules (
         id TEXT PRIMARY KEY,
@@ -567,6 +597,7 @@ export async function initializeDatabase(fastify) {
             try { await db.run(`ALTER TABLE autopilot_rules ALTER COLUMN stabilization TYPE TEXT USING stabilization::TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
             try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hash TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hint TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
             try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
@@ -660,12 +691,7 @@ export async function initializeDatabase(fastify) {
                     }
                 } catch (e) { fastify.log.warn({ category: 'Database' }, `SQLite migration platform backfill: ${e.message}`) }
             }
-            const kvTableInfo = await db.query(`PRAGMA table_info(kv_store)`)
-            const hasContentHash = kvTableInfo.some(col => col.name === 'content_hash')
-            if (!hasContentHash) {
-                await db.run(`ALTER TABLE kv_store ADD COLUMN content_hash TEXT`)
-                fastify.log.info({ category: 'Database' }, 'Migrated: Added content_hash column to kv_store')
-            }
+            await migrateKvStoreColumns(fastify.log)
             const fhTableInfo = await db.query(`PRAGMA table_info(failover_history)`)
             const hasLatencyMs = fhTableInfo.some(col => col.name === 'latency_ms')
             if (!hasLatencyMs) {

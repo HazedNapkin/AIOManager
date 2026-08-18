@@ -1386,6 +1386,7 @@ export function AddonList({ accountId }: AddonListProps) {
               action={<Button variant="outline" onClick={() => setSearchQuery('')}>Clear Search</Button>}
             />
           ) : (
+            <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
             <>
             <StaggerContainer className={effectiveAddonListView === 'list' ? 'flex flex-col gap-2' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}>
               {filteredAddons.slice(0, visibleCount).map((addon) => {
@@ -1439,6 +1440,7 @@ export function AddonList({ accountId }: AddonListProps) {
               </div>
             )}
             </>
+            </div>
           )}
         </TabsContent>
 

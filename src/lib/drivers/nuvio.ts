@@ -233,6 +233,12 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
             const res = await rpc('sync_pull_collections', { p_profile_id: idx }, accessToken)
             const obj = Array.isArray(res) ? res[0] : res
             const list = obj?.collections_json
+            if (typeof list === 'string') {
+                try {
+                    const parsed = JSON.parse(list)
+                    return Array.isArray(parsed) ? parsed : []
+                } catch { return [] }
+            }
             return Array.isArray(list) ? list : []
         },
 

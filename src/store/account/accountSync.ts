@@ -7,6 +7,7 @@ import {
 import { mergeAddons, normalizeAddonUrl, hasFallbackAddonName } from '@/lib/utils'
 import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
+import { fingerprintAddonList } from '@/lib/addon-fingerprint'
 import { mapConcurrent } from '@/lib/concurrency'
 import { isSyncEligibleConnection } from '@/types/connection'
 import { useAuthStore } from '@/store/authStore'
@@ -298,9 +299,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length })
 
     const prevAddons = currentAccount.addons
-    const addonsChanged = prevAddons.length !== finalAddons.length
-        ? true
-        : JSON.stringify(prevAddons) !== JSON.stringify(finalAddons)
+    const addonsChanged = fingerprintAddonList(prevAddons) !== fingerprintAddonList(finalAddons)
     trace('sync.core', 'flags', { accountId: id, addonsChanged, discoveryChanged, forceRefresh })
     let updatedProfiles = currentAccount.profiles
     if (addonsChanged && currentAccount.activeProfileId && updatedProfiles) {
@@ -388,8 +387,10 @@ export async function syncAccount(id: string, forceRefresh = false) {
     syncMutexes.set(id, new Promise<void>((r) => { resolveMutex = r }))
     store.setState({ error: null })
     setAccountLoading(id)
+    let coreOk = false
     try {
         await syncAccountCore(id, forceRefresh)
+        coreOk = true
         triggerSync()
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to sync account'
@@ -405,6 +406,18 @@ export async function syncAccount(id: string, forceRefresh = false) {
         resolveMutex()
         syncMutexes.delete(id)
     }
+    if (coreOk) {
+        deferCanonicalFold()
+    }
+}
+
+function deferCanonicalFold() {
+    setTimeout(() => {
+        import('./accountCanonical')
+            .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
+            .then(changed => { if (changed) triggerSync() })
+            .catch(() => {})
+    }, 0)
 }
 
 export async function syncAllAccounts(silent = false) {
@@ -475,6 +488,8 @@ export async function syncAllAccounts(silent = false) {
         if (!silent && hasAnyChange) {
             triggerSync()
         }
+
+        deferCanonicalFold()
     } finally {
         clearAllAccountLoading()
         _syncAllRunning = false

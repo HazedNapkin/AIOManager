@@ -13,6 +13,11 @@ import { trace } from '@/lib/trace'
 
 const CACHE_KEY = 'aio_library_cache_v3'
 const OLD_CACHE_KEY = 'aio_library_cache'
+
+let _lastPersistedLibraryContent: string | null = null
+function invalidatePersistedLibraryFingerprint() {
+    _lastPersistedLibraryContent = null
+}
 const DELETED_ITEMS_KEY = 'aio_library_deleted'
 const CACHE_TTL = 5 * 60 * 1000
 const LIBRARY_FETCH_CONCURRENCY = 5
@@ -92,7 +97,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
         set({ items: newItems, deletedItemIds: newDeleted })
 
         removeItemsLock = removeItemsLock.then(async () => {
-            await localforage.removeItem(CACHE_KEY)
+            await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
             const existing = await localforage.getItem<Record<string, DeletedEntry>>(DELETED_ITEMS_KEY)
             const entries = existing || {}
             itemIds.forEach(id => { entries[id] = { deletedAt: now } })
@@ -107,19 +112,19 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
         const newMtimes = { ...lastMtimeByAccount }
         delete newMtimes[accountId]
         set({ items: filtered, lastMtimeByAccount: newMtimes, isStale: true })
-        localforage.removeItem(CACHE_KEY).catch(() => {})
+        localforage.removeItem(CACHE_KEY).then(() => invalidatePersistedLibraryFingerprint()).catch(() => {})
     },
 
     invalidate: () => {
         bumpCacheGeneration()
         set({ items: [], lastMtimeByAccount: {}, isStale: true })
-        localforage.removeItem(CACHE_KEY).catch(() => {})
+        localforage.removeItem(CACHE_KEY).then(() => invalidatePersistedLibraryFingerprint()).catch(() => {})
     },
 
     clear: async () => {
         bumpCacheGeneration()
         set({ items: [], lastFetched: 0, lastMtimeByAccount: {}, isStale: true, deletedItemIds: new Set() })
-        await localforage.removeItem(CACHE_KEY)
+        await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
         await localforage.removeItem(DELETED_ITEMS_KEY)
     },
 
@@ -129,7 +134,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
         const storedVersion = localStorage.getItem('aio-cache-version')
         if (storedVersion !== String(CACHE_VERSION)) {
-            await localforage.removeItem(CACHE_KEY)
+            await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
             localStorage.setItem('aio-cache-version', String(CACHE_VERSION))
             set({ items: [], lastMtimeByAccount: {} })
         }
@@ -239,7 +244,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             }
                         } catch (e) {
                             if (import.meta.env.DEV) console.error('[LibraryCache] Failed to decrypt cache:', e)
-                            localforage.removeItem(CACHE_KEY)
+                            localforage.removeItem(CACHE_KEY).then(() => invalidatePersistedLibraryFingerprint()).catch(() => {})
                         }
                     }
                 }
@@ -288,6 +293,19 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 const executing = new Set<Promise<void>>()
                 let completedCount = 0
 
+                const [
+                    { useWatchEventStore },
+                    { fetchConnectionToken },
+                    { nuvioDriverFor, realStreamDriverFor },
+                    { getCachedNuvioToken, setCachedNuvioToken, invalidateNuvioToken },
+                ] = await Promise.all([
+                    import('@/store/watchEventStore'),
+                    import('@/api/connection'),
+                    import('@/lib/drivers/factory'),
+                    import('@/lib/nuvio-token-cache'),
+                ])
+                await useWatchEventStore.getState().load()
+
                 for (let i = 0; i < accounts.length; i++) {
                     const account = accounts[i]
                     const p = (async () => {
@@ -306,8 +324,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                                 const oldMtime = get().lastMtimeByAccount[account.id]
                                 if (oldMtime && latestMtime === oldMtime && nuvioConns.length === 0) {
-                                    const { useWatchEventStore } = await import('@/store/watchEventStore')
-                                    await useWatchEventStore.getState().load()
                                     const newEvents = useWatchEventStore.getState().diffAndRecord(
                                         account.id, libraryItems, account, accounts
                                     )
@@ -328,8 +344,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         }
                                     })
 
-                                    const { useWatchEventStore } = await import('@/store/watchEventStore')
-                                    await useWatchEventStore.getState().load()
                                     const newEvents = useWatchEventStore.getState().diffAndRecord(
                                         account.id, libraryItems, account, accounts
                                     )
@@ -369,10 +383,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                         }
 
                         if (nuvioConns.length > 0) {
-                            const { fetchConnectionToken } = await import('@/api/connection')
-                            const { nuvioDriverFor } = await import('@/lib/drivers/factory')
-                            const { getCachedNuvioToken, setCachedNuvioToken, invalidateNuvioToken } = await import('@/lib/nuvio-token-cache')
-                            for (const conn of nuvioConns) {
+                            await mapConcurrent(nuvioConns, 3, async (conn) => {
                                 try {
                                     let token = getCachedNuvioToken(conn.id)
                                     if (!token) {
@@ -431,8 +442,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         ...watchedActivities.filter((a): a is ActivityItem => a !== null && !seenIds.has(a.uniqueItemId)),
                                     ]
                                     if (nuvioActivities.length > 0) {
-                                        const { useWatchEventStore } = await import('@/store/watchEventStore')
-                                        await useWatchEventStore.getState().load()
                                         useWatchEventStore.getState().mergeExternalWatchEvents(account.id, 'nuvio', nuvioActivities.map(a => ({
                                             itemId: a.itemId,
                                             video_id: a.uniqueItemId,
@@ -460,13 +469,11 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         accountItems.push(...existingNuvio)
                                     }
                                 }
-                            }
+                            })
                         }
                         const realstreamConns = (account.connections || []).filter(c => c.enabled && c.platform === 'realstream')
                         if (realstreamConns.length > 0) {
-                            const { fetchConnectionToken } = await import('@/api/connection')
-                            const { realStreamDriverFor } = await import('@/lib/drivers/factory')
-                            for (const conn of realstreamConns) {
+                            await mapConcurrent(realstreamConns, 3, async (conn) => {
                                 try {
                                     const userId = conn.credentials?.userId || ''
                                     if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
@@ -509,8 +516,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     }
                                     const realstreamActivities = progressActivities.filter((a): a is ActivityItem => a !== null)
                                     if (realstreamActivities.length > 0) {
-                                        const { useWatchEventStore } = await import('@/store/watchEventStore')
-                                        await useWatchEventStore.getState().load()
                                         useWatchEventStore.getState().mergeExternalWatchEvents(account.id, 'realstream', realstreamActivities.map(a => ({
                                             itemId: a.itemId,
                                             video_id: a.uniqueItemId,
@@ -537,7 +542,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         accountItems.push(...existingRealStream)
                                     }
                                 }
-                            }
+                            })
                         }
                         if (!fetchedByAccount.has(account.id)) {
                             fetchedByAccount.set(account.id, accountItems)
@@ -612,12 +617,16 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 trace('libraryCache', 'ensureLoaded.load.complete', { accountCount: accounts.length, items: filteredFinal.length, timing: Date.now() - loadStart })
 
                 if (encryptionKey) {
-                    const encrypted = await encrypt(JSON.stringify({
-                        items: filteredFinal,
-                        lastFetched: now,
-                        lastMtimeByAccount: newMtimes
-                    }), encryptionKey)
-                    await localforage.setItem(CACHE_KEY, encrypted)
+                    const content = JSON.stringify({ items: filteredFinal, lastMtimeByAccount: newMtimes })
+                    if (content !== _lastPersistedLibraryContent) {
+                        _lastPersistedLibraryContent = content
+                        const encrypted = await encrypt(JSON.stringify({
+                            items: filteredFinal,
+                            lastFetched: now,
+                            lastMtimeByAccount: newMtimes
+                        }), encryptionKey)
+                        await localforage.setItem(CACHE_KEY, encrypted)
+                    }
                 }
                 } catch (err) {
                     loadFailed = true

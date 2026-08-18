@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Film, Tv } from 'lucide-react'
 import { cn, sanitizePosterUrl } from '@/lib/utils'
 import { isProxyableUrl, getCinemetaPosterUrl } from '@/lib/cinemeta-utils'
@@ -29,14 +29,9 @@ export function Poster({
     fallback = true,
     ...props
 }: PosterProps) {
-    const [currentSrc, setCurrentSrc] = useState<string | undefined>()
-    const [hasError, setHasError] = useState(false)
     const [attempt, setAttempt] = useState(0)
-    const [sources, setSources] = useState<string[]>([])
 
-    useEffect(() => {
-        setHasError(false)
-        setAttempt(0)
+    const sources = useMemo(() => {
         const cleanSrc = sanitizePosterUrl(src)
         const effectiveSrc = typeof cleanSrc === 'string' && cleanSrc.trim() ? cleanSrc : undefined
         const cinemetaItemId = getCinemetaItemId(itemId)
@@ -57,29 +52,20 @@ export function Poster({
             } catch {}
         }
         const providedSrc = (!hasEmbeddedFallback && typeof effectiveSrc === 'string') ? proxyUrl(effectiveSrc) : undefined
-        const nextSources = [cinemetaSrc, ...extractedFallbacks, providedSrc].filter(
+        return [...extractedFallbacks, providedSrc, cinemetaSrc].filter(
             (url, index, arr): url is string => Boolean(url) && arr.indexOf(url) === index
         )
-
-        setSources(nextSources)
-        setCurrentSrc(nextSources[0])
     }, [src, itemId, fallback])
 
-    const handleError = () => {
-        const nextAttempt = attempt + 1
-        if (nextAttempt < sources.length) {
-            setAttempt(nextAttempt)
-            setCurrentSrc(sources[nextAttempt])
-            return
-        }
+    useEffect(() => { setAttempt(0) }, [sources])
 
-        if (attempt < sources.length) {
-            setAttempt(sources.length)
-            setHasError(true)
-        }
+    const currentSrc = sources[attempt]
+
+    const handleError = () => {
+        setAttempt(attempt + 1)
     }
 
-    if (hasError || !currentSrc) {
+    if (!currentSrc) {
         return (
             <div className={cn(
                 "w-full h-full flex items-center justify-center bg-muted/40 transition-[transform,opacity,box-shadow]",

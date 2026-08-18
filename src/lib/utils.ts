@@ -1,6 +1,5 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { inflateSync, strFromU8 } from 'fflate'
 import type { AddonDescriptor } from '@/types/addon'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { normalizeAddonUrl as _normalizeAddonUrl } from '@/lib/addon-url'
@@ -427,11 +426,6 @@ export function getTimeAgo(date: Date): string {
   }
   if (seconds < 10) return 'just now'
   return Math.floor(seconds) + 's ago'
-}
-
-export function decompressSyncPayload(base64String: string): string {
-  const bytes = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
-  return strFromU8(inflateSync(bytes))
 }
 
 export function escapeHtml(text: string): string {

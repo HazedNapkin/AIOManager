@@ -1,10 +1,9 @@
 import crypto from 'crypto'
 import db from '../db.js'
 import { verifyAuth } from '../auth.js'
-import { decrypt } from '../crypto.js'
-import { FALLBACK_KEYS } from '../keys.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { maskContext } from '../utils/log-helpers.js'
+import { resolveStremioAuthKey } from '../lib/stremio-credentials.js'
 
 // Phase 1b proof commands. Registry ids from src/components/accounts/bulk-actions/registry.ts
 // are the command names; only the subset the server can execute on its own is wired here.
@@ -52,17 +51,6 @@ async function runWithConcurrency(items, limit, worker) {
     }
     await Promise.all(Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, lane))
     return results
-}
-
-async function resolveStremioAuthKey(accountId, syncUser) {
-    const row = await db.get(
-        `SELECT auth_key FROM server_credentials
-         WHERE account_id = $1 AND sync_user = $2 AND credential_type = 'stremio'
-         ORDER BY updated_at DESC LIMIT 1`,
-        [accountId, syncUser]
-    )
-    if (!row?.auth_key) return null
-    return decrypt(row.auth_key, FALLBACK_KEYS) || null
 }
 
 async function applyProtection(fastify, syncUser, accountId, isProtected) {

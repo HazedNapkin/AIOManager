@@ -276,6 +276,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             const cached = manifestCache.get(url)
             if (cached && Date.now() - cached.ts < MANIFEST_CACHE_TTL) {
                 if (cached.contentType) reply.type(cached.contentType)
+                reply.header('Cache-Control', 'public, max-age=300')
                 return cached.buffer
             }
         }
@@ -359,6 +360,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 }
                 if (!hasUpstreamAuth && !skipCache) {
                     manifestCache.set(url, { buffer, contentType: contentType || null, ts: Date.now() })
+                    reply.header('Cache-Control', 'public, max-age=300')
                 }
 
                 return buffer
@@ -1397,6 +1399,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         if (cacheHit) {
             reply.header('X-Cache', 'HIT')
             reply.header('Cache-TTL-Ms', ttl - (Date.now() - cached.ts))
+            reply.header('Cache-Control', 'public, max-age=600')
             trace('discover-proxy', 'response', { url: targetUrl, cacheHit: true, timing: Date.now() - start })
             return reply.send(cached.data)
         }
@@ -1438,6 +1441,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                     }
                 }
                 reply.header('X-Cache', 'MISS')
+                reply.header('Cache-Control', 'public, max-age=600')
                 trace('discover-proxy', 'response', { url: targetUrl, cacheHit: false, timing: Date.now() - start })
                 reply.send(data)
             }

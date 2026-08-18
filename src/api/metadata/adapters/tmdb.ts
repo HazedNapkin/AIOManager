@@ -719,17 +719,21 @@ export async function searchCinemeta(query: string, signal?: AbortSignal): Promi
             `https://v3-cinemeta.strem.io/catalog/movie/top/search=${q}.json`,
             `https://v3-cinemeta.strem.io/catalog/series/top/search=${q}.json`,
         ]
-        for (const url of endpoints) {
+        const tryEndpoint = async (url: string): Promise<SearchResult[] | null> => {
             try {
                 const res = await fetch(url, { signal })
-                if (!res.ok) continue
+                if (!res.ok) return null
                 const data = await res.json()
                 if (Array.isArray(data?.metas) && data.metas.length > 0) {
                     return data.metas.map(mapMeta).filter((x: SearchResult | null): x is SearchResult => x !== null).slice(0, 20)
                 }
-            } catch { continue }
+                return null
+            } catch { return null }
         }
-        return []
+        const combined = await tryEndpoint(endpoints[0])
+        if (combined) return combined
+        const [movies, series] = await Promise.all([tryEndpoint(endpoints[1]), tryEndpoint(endpoints[2])])
+        return movies ?? series ?? []
     } catch {
         return []
     }

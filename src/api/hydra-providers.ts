@@ -140,20 +140,40 @@ export async function realstreamSignup(
     return res.json()
 }
 
+let canonicalCache: { canonical: Record<string, CanonicalEntry>; serverStremioCredentialedAccounts: string[] | null; etag: string | null } | null = null
+
+export function _clearCanonicalCache() {
+    canonicalCache = null
+}
+
+export interface CanonicalFetchResult {
+    canonical: Record<string, CanonicalEntry>
+    serverStremioCredentialedAccounts: string[] | null
+}
+
 /**
- * Read the server-readable canonical addon lists this sync user owns, keyed by account.
- * Used by the inbound reconcile to detect external (e.g. AIOStreams) writes before a push.
- * Best-effort: returns {} on any failure so it never blocks a sync.
+ * Read the server-readable canonical addon lists this sync user owns, keyed by account,
+ * plus which accounts the server can read via a stored Stremio credential. Used by the
+ * inbound reconcile to detect external (e.g. AIOStreams) writes before a push.
+ * Best-effort: returns empty values on any failure so it never blocks a sync.
  */
-export async function fetchCanonical(): Promise<Record<string, CanonicalEntry>> {
+export async function fetchCanonical(): Promise<CanonicalFetchResult> {
     const base = getServerUrl().replace(/\/+$/, '')
+    const headers = await getAuthHeaders()
+    if (canonicalCache?.etag) headers['If-None-Match'] = canonicalCache.etag
     const res = await resilientFetch(`${base}/providers/canonical`, {
-        headers: await getAuthHeaders(),
+        headers,
         timeout: 10000,
     })
-    if (!res.ok) return {}
+    if (res.status === 304 && canonicalCache) {
+        return { canonical: canonicalCache.canonical, serverStremioCredentialedAccounts: canonicalCache.serverStremioCredentialedAccounts }
+    }
+    if (!res.ok) return { canonical: {}, serverStremioCredentialedAccounts: null }
     const body = await res.json().catch(() => ({}))
-    return (body.canonical || {}) as Record<string, CanonicalEntry>
+    const canonical = (body.canonical || {}) as Record<string, CanonicalEntry>
+    const serverStremioCredentialedAccounts = Array.isArray(body.serverStremioCredentialedAccounts) ? body.serverStremioCredentialedAccounts as string[] : null
+    canonicalCache = { canonical, serverStremioCredentialedAccounts, etag: res.headers.get('etag') }
+    return { canonical, serverStremioCredentialedAccounts }
 }
 
 export interface HydraSubscriber {

@@ -851,7 +851,7 @@ export function ActivityPage() {
                     count={filteredInProgress.length}
                     countLabel="active"
                 >
-                            {filteredInProgress.map((item, i) => {
+                            {filteredInProgress.slice(0, 24).map((item, i) => {
                                 const account = accountById.get(item.accountId)
                                 return (
                                     <motion.div

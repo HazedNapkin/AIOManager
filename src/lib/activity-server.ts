@@ -1,10 +1,10 @@
 import { deriveSyncToken } from '@/lib/crypto'
-import { useSyncStore } from '@/store/syncStore'
-import { useWatchEventStore } from '@/store/watchEventStore'
+import { useSyncStore, learnServerCredentialedAccounts } from '@/store/syncStore'
+import { useWatchEventStore, type ServerActivityEvent } from '@/store/watchEventStore'
 
 const DEFAULT_SERVER = '/api'
 const STATUS_CACHE_MS = 60_000
-const SERVER_EVENT_PAGE_LIMIT = 2000
+const SERVER_EVENT_PAGE_LIMIT = 5000
 const SERVER_EVENT_MAX_PAGES = 50
 const SERVER_EVENT_MAX_TIME_MS = 30_000
 const SERVER_REQUEST_TIMEOUT_MS = 10_000
@@ -59,6 +59,24 @@ async function getActivityServerStatus(apiPath: string, syncToken: string, syncU
     }
 }
 
+const ACTIVITY_CURSOR_KEY = 'aio-activity-cursor-v1'
+const ACTIVITY_CURSOR_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const MERGE_FLUSH_LIMIT = 25_000
+
+function readActivityCursor(): number {
+    try {
+        const raw = localStorage.getItem(ACTIVITY_CURSOR_KEY)
+        if (!raw) return 0
+        const c = JSON.parse(raw) as { ts: number; at: number }
+        if (!c.ts || Date.now() - c.at > ACTIVITY_CURSOR_MAX_AGE_MS) return 0
+        return c.ts
+    } catch { return 0 }
+}
+
+function writeActivityCursor(ts: number) {
+    try { localStorage.setItem(ACTIVITY_CURSOR_KEY, JSON.stringify({ ts, at: Date.now() })) } catch {}
+}
+
 export async function fetchAndMergeServerEvents(): Promise<number> {
     const { auth, serverUrl } = useSyncStore.getState()
     if (!auth.isAuthenticated || !auth.password) return 0
@@ -68,14 +86,19 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
     const status = await getActivityServerStatus(apiPath, syncToken, auth.id)
     if (!status?.engineEnabled) return 0
 
+    const since = readActivityCursor()
     let totalMerged = 0
+    let maxTs = since
     let offset = 0
+    let pullComplete = false
     const startTime = Date.now()
+    const batch: ServerActivityEvent[] = []
 
     for (let page = 0; page < SERVER_EVENT_MAX_PAGES && Date.now() - startTime < SERVER_EVENT_MAX_TIME_MS; page++) {
         try {
+            const sinceParam = since > 0 ? `&since=${since}` : ''
             const res = await fetchWithTimeout(
-                `${apiPath}/activity/events?limit=${SERVER_EVENT_PAGE_LIMIT}&offset=${offset}`,
+                `${apiPath}/activity/events?limit=${SERVER_EVENT_PAGE_LIMIT}&offset=${offset}${sinceParam}`,
                 {
                     headers: {
                         'x-sync-password': syncToken,
@@ -86,19 +109,28 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
             if (!res.ok) break
 
             const data = await res.json()
-            const events = data.events || []
+            const events = (data.events || []) as ServerActivityEvent[]
 
-            if (events.length === 0) break
+            if (events.length === 0) { pullComplete = true; break }
 
-            useWatchEventStore.getState().mergeServerEvents(events)
+            batch.push(...events)
             totalMerged += events.length
+            for (const e of events) if (e.timestamp > maxTs) maxTs = e.timestamp
 
-            if (!data.hasMore) break
+            if (batch.length >= MERGE_FLUSH_LIMIT) {
+                useWatchEventStore.getState().mergeServerEvents(batch)
+                batch.length = 0
+            }
+
+            if (!data.hasMore) { pullComplete = true; break }
             offset += events.length
         } catch {
             break
         }
     }
+
+    if (batch.length > 0) useWatchEventStore.getState().mergeServerEvents(batch)
+    if (pullComplete && maxTs > 0) writeActivityCursor(maxTs)
 
     return totalMerged
 }
@@ -144,6 +176,7 @@ export async function pushCredentialsToServer(): Promise<number> {
         })
         if (!res.ok) return 0
         const data = await res.json()
+        learnServerCredentialedAccounts(data.serverStremioCredentialedAccounts)
         return data.synced || 0
     } catch {
         return 0

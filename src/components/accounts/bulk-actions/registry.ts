@@ -154,8 +154,7 @@ export type BulkExecuteContext = {
   bulkApplySavedAddons: (
     savedAddonIds: string[],
     accountIds: BulkAccountTarget[],
-    allowProtected?: boolean,
-    urlOverrides?: Record<string, string>
+    allowProtected?: boolean
   ) => Promise<BulkResult>
   bulkRemoveAddons: (
     addonIds: string[],

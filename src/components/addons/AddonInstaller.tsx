@@ -14,7 +14,6 @@ import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { ClipboardPaste, Zap, Loader2 } from 'lucide-react'
 import { useTheme } from '@/contexts/ThemeContext'
-import { AddonParamSelector } from '@/components/ui/addon-param-selector'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { useAddonManifest } from '@/hooks/useAddonManifest'
 import { AddonManifest } from '@/types/addon'
@@ -192,18 +191,11 @@ export function AddonInstaller() {
                   )}
                 </div>
                 {previewManifest.description && (
-                  <p className="truncate text-xs text-muted-foreground">{previewManifest.description}</p>
+                  <p className="break-words text-xs text-muted-foreground">{previewManifest.description}</p>
                 )}
               </div>
             </div>
           )}
-
-          <AddonParamSelector
-            url={addonUrl}
-            onUrlChange={setAddonUrl}
-            manifest={previewManifest || undefined}
-            compact
-          />
 
           {error && (
             <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">

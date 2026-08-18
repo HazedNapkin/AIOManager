@@ -189,6 +189,11 @@ class MetadataCache {
             return { value: l1Hit, source: 'l1', stale: false }
         }
 
+        let pending = this.pendingRequests.get(key)
+        if (pending) {
+            return this._awaitPending(pending, key)
+        }
+
         const l2Result = await this._getL2(key, now)
         if (l2Result && !l2Result.expired) {
             this.stats.l2_hits_total++
@@ -196,43 +201,53 @@ class MetadataCache {
             return { value: l2Result.value, source: 'l2', stale: false }
         }
 
-        const pending = this.pendingRequests.get(key)
+        pending = this.pendingRequests.get(key)
         if (pending) {
-            this.stats.dedup_hits_total++
-            const value = await pending
-            return { value, source: 'dedup', stale: false }
+            return this._awaitPending(pending, key)
         }
 
         this.stats.misses_total++
 
         const promise = (async () => {
-            try {
-                const fetched = await fetcher()
-                if (fetched === undefined || fetched === null) {
-                    throw new Error('Fetcher returned empty value')
-                }
-                const expiresAtForStore = expiresAt || (now + jitteredTtl(PERMANENT_TTL))
-                const responseText = typeof fetched === 'string' ? fetched : JSON.stringify(fetched)
-                const storedValue = typeof fetched === 'string' ? JSON.parse(fetched) : fetched
-                this._setL1(key, storedValue, expiresAtForStore)
-                await this._insertL2(key, responseText, expiresAtForStore, now)
-                return storedValue
-            } catch (err) {
-                if (l2Result && l2Result.expired && l2Result.value !== undefined) {
-                    this.stats.stale_served_total++
-                    this._setL1(key, l2Result.value, now + jitteredTtl(60 * 1000))
-                    return { ...((l2Result.value && typeof l2Result.value === 'object') ? l2Result.value : {}), _stale: true }
-                }
-                throw err
+            const fetched = await fetcher()
+            if (fetched === undefined || fetched === null) {
+                throw new Error('Fetcher returned empty value')
             }
+            const expiresAtForStore = expiresAt || (now + jitteredTtl(PERMANENT_TTL))
+            const responseText = typeof fetched === 'string' ? fetched : JSON.stringify(fetched)
+            const storedValue = typeof fetched === 'string' ? JSON.parse(fetched) : fetched
+            this._setL1(key, storedValue, expiresAtForStore)
+            await this._insertL2(key, responseText, expiresAtForStore, now)
+            return storedValue
         })()
 
         this.pendingRequests.set(key, promise)
         try {
             const value = await promise
             return { value, source: 'miss', stale: false }
+        } catch (err) {
+            if (l2Result && l2Result.expired && l2Result.value !== undefined) {
+                this.stats.stale_served_total++
+                return { value: l2Result.value, source: 'stale', stale: true }
+            }
+            throw err
         } finally {
             this.pendingRequests.delete(key)
+        }
+    }
+
+    async _awaitPending(promise, key) {
+        this.stats.dedup_hits_total++
+        try {
+            const value = await promise
+            return { value, source: 'dedup', stale: false }
+        } catch (err) {
+            const l2Fallback = await this._getL2(key, this._now())
+            if (l2Fallback && l2Fallback.value !== undefined) {
+                this.stats.stale_served_total++
+                return { value: l2Fallback.value, source: 'stale', stale: true }
+            }
+            throw err
         }
     }
 

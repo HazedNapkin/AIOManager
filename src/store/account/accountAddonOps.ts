@@ -155,13 +155,14 @@ export async function pushToConnections(accountId: string, options: { addons?: A
             },
         }))
         if (status === 'active') {
-            const accounts = store.getState().accounts.map(acc =>
-                acc.id === accountId
-                    ? { ...acc, connections: acc.connections?.map(c => c.id === connId ? { ...c, lastSync: now, status: 'active' as const } : c) }
-                    : acc
-            )
-            store.setState({ accounts })
-            persistAccounts(accounts)
+            store.setState(s => ({
+                accounts: s.accounts.map(acc =>
+                    acc.id === accountId
+                        ? { ...acc, connections: acc.connections?.map(c => c.id === connId ? { ...c, lastSync: now, status: 'active' as const } : c) }
+                        : acc
+                )
+            }))
+            persistAccounts(store.getState().accounts)
         }
     }
 
@@ -567,9 +568,9 @@ export async function bulkDeleteAddons(accountId: string, keptAddons: AddonDescr
 
 export async function toggleAddonProtection(accountId: string, transportUrl: string, isProtected: boolean, targetIndex?: number) {
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return
     const releaseMutex = await acquireSyncMutex(accountId)
+    const account = getAccountById(store.getState().accounts, accountId)
+    if (!account) { releaseMutex(); return }
     const prevAccounts = store.getState().accounts
     try {
         const updatedAddons = account.addons.map((addon, index) =>
@@ -595,11 +596,10 @@ export async function toggleAddonProtection(accountId: string, transportUrl: str
 
 export async function toggleAddonEnabled(accountId: string, transportUrl: string, isEnabled: boolean, silent = false, targetIndex?: number, isAutopilot = false) {
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return
-
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return
         const updatedAddons = account.addons.map((addon, index) =>
             (targetIndex !== undefined ? index === targetIndex : normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl))
                 ? {
@@ -630,11 +630,10 @@ export async function toggleAddonEnabled(accountId: string, transportUrl: string
 
 export async function bulkToggleAddonEnabled(accountId: string, addonUrls: string[], isEnabled: boolean) {
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
-
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return
         const targetUrls = new Set(addonUrls.map(u => normalizeAddonUrl(u)))
 
         const updatedAddons = account.addons.map((addon) =>

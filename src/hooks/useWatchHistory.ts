@@ -1,9 +1,28 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useDeferredValue } from 'react'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
 import { ActivityItem } from '@/types/activity'
 import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail } from '@/lib/activity-utils'
+
+const GENRE_CACHE_STORAGE_KEY = 'aio-genre-map-v1'
+let _genreCache: Map<string, string[]> | null = null
+
+function loadGenreCache(): Map<string, string[]> {
+    if (_genreCache) return _genreCache
+    try {
+        const raw = localStorage.getItem(GENRE_CACHE_STORAGE_KEY)
+        _genreCache = raw ? new Map(JSON.parse(raw) as Array<[string, string[]]>) : new Map()
+    } catch {
+        _genreCache = new Map()
+    }
+    return _genreCache
+}
+
+function saveGenreCache(map: Map<string, string[]>) {
+    _genreCache = map
+    try { localStorage.setItem(GENRE_CACHE_STORAGE_KEY, JSON.stringify([...map])) } catch {}
+}
 
 /**
  * A unified watch history entry combining the richness of WatchEvents
@@ -55,11 +74,13 @@ export interface WatchHistoryResult {
 }
 
 export function useWatchHistory(accountId?: string): WatchHistoryResult {
-    const events = useWatchEventStore(s => s.events)
-    const liveItems = useLibraryCache(s => s.items)
+    const rawEvents = useWatchEventStore(s => s.events)
+    const rawLiveItems = useLibraryCache(s => s.items)
+    const events = useDeferredValue(rawEvents)
+    const liveItems = useDeferredValue(rawLiveItems)
     const loading = useLibraryCache(s => s.loading)
     const accounts = useAccountStore(s => s.accounts)
-    const [genreMap, setGenreMap] = useState<Map<string, string[]>>(new Map())
+    const [genreMap, setGenreMap] = useState<Map<string, string[]>>(loadGenreCache)
 
     const eventsKey = `${events.length}:${events.length > 0 ? events[0].id : ''}`
 
@@ -370,6 +391,10 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 const merged = new Map(genreMap)
                 for (const [id, g] of results) merged.set(id, g)
                 for (const id of failed) if (!merged.has(id)) merged.set(id, [])
+                for (const id of merged.keys()) {
+                    if (!seen.has(id)) merged.delete(id)
+                }
+                saveGenreCache(merged)
                 setGenreMap(merged)
             }
         })()

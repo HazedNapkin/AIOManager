@@ -1,7 +1,6 @@
 import { Layout } from '@/components/layout/Layout'
 import { ScrollToTop } from '@/components/ScrollToTop'
 import { Toaster } from '@/components/ui/toaster'
-import { WhatsNewModal } from '@/components/WhatsNewModal'
 import { AppRoutes } from '@/routes'
 import { useAccountStore, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
@@ -26,10 +25,13 @@ const ReplaySharePage = lazy(() => import('@/pages/ReplaySharePage').then(m => (
 const AccountForm = lazy(() => import('@/components/accounts/AccountForm').then(m => ({ default: m.AccountForm })))
 const AddonInstaller = lazy(() => import('@/components/addons/AddonInstaller').then(m => ({ default: m.AddonInstaller })))
 const KeybindingsHelp = lazy(() => import('@/components/KeybindingsHelp').then(m => ({ default: m.KeybindingsHelp })))
+const WhatsNewModal = lazy(() => import('@/components/WhatsNewModal').then(m => ({ default: m.WhatsNewModal })))
 
 function App() {
   const navigate = useNavigate()
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [deferredModalsMounted, setDeferredModalsMounted] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setDeferredModalsMounted(true), 150); return () => clearTimeout(t) }, [])
   const initializeAccounts = useAccountStore((state) => state.initialize)
   const initializeAddons = useAddonStore((state) => state.initialize)
   const initializeAuth = useAuthStore((state) => state.initialize)
@@ -58,17 +60,18 @@ function App() {
 
   useEffect(() => {
     const init = async () => {
-      // Probe IndexedDB availability - blocked in Firefox private mode and some strict setups
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const req = indexedDB.open('__aio_probe__')
-          req.onsuccess = () => { req.result.close(); indexedDB.deleteDatabase('__aio_probe__'); resolve() }
-          req.onerror = () => reject(req.error)
-          req.onblocked = () => reject(new Error('blocked'))
-        })
-      } catch {
-        setStorageUnavailable(true)
-      }
+      const storageProbe = (async () => {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const req = indexedDB.open('__aio_probe__')
+            req.onsuccess = () => { req.result.close(); indexedDB.deleteDatabase('__aio_probe__'); resolve() }
+            req.onerror = () => reject(req.error)
+            req.onblocked = () => reject(new Error('blocked'))
+          })
+        } catch {
+          setStorageUnavailable(true)
+        }
+      })()
 
       try {
         initializeUI()
@@ -91,6 +94,7 @@ function App() {
           })
         }
 
+        await storageProbe
         startFailoverAutomation()
         setIsInitialized(true)
       } catch (error) {
@@ -355,7 +359,7 @@ function App() {
         {accountFormSeen && <Suspense fallback={null}><AccountForm /></Suspense>}
         {addonInstallerSeen && <Suspense fallback={null}><AddonInstaller /></Suspense>}
 
-        <WhatsNewModal />
+        {deferredModalsMounted && <Suspense fallback={null}><WhatsNewModal /></Suspense>}
         {keybindingsSeen && <Suspense fallback={null}><KeybindingsHelp isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} /></Suspense>}
       </Layout>
       <Toaster />

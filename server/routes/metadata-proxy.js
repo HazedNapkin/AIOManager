@@ -5,6 +5,7 @@ import { verifyAuth } from '../auth.js'
 import { metadataCache, jitteredTtl } from '../lib/metadata-cache.js'
 import { loadUserKey } from '../lib/user-key-cache.js'
 import { maskContext } from '../utils/log-helpers.js'
+import { resilientFetch } from '../utils/api-resilience.js'
 
 const TMDB_V3_API_BASE = 'https://api.themoviedb.org/3'
 const SUPPORTED_PROVIDERS = new Set(['tmdb'])
@@ -160,27 +161,22 @@ function buildCacheKey(provider, pathParts, query) {
     return `${provider}:${resource}:${(pathParts || []).slice(1).join(':') || 'root'}:${query || ''}`
 }
 
-async function fetchUpstream(requestDescriptor, signal) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 15_000)
-    try {
-        if (signal) {
-            signal.addEventListener('abort', () => controller.abort(), { once: true })
-        }
-        const response = await fetch(requestDescriptor.url, {
-            ...requestDescriptor.init,
-            signal: controller.signal,
-        })
-        const text = await response.text()
-        if (!response.ok) {
-            const err = new Error(`upstream status ${response.status}`)
-            err.status = response.status
-            throw err
-        }
-        return text
-    } finally {
-        clearTimeout(timeout)
+const UPSTREAM_TIMEOUT_MS = 15_000
+const UPSTREAM_RETRIES = 1
+
+async function fetchUpstream(requestDescriptor) {
+    const response = await resilientFetch(requestDescriptor.url, {
+        ...requestDescriptor.init,
+        timeout: UPSTREAM_TIMEOUT_MS,
+        retries: UPSTREAM_RETRIES,
+    })
+    const text = await response.text()
+    if (!response.ok) {
+        const err = new Error(`upstream status ${response.status}`)
+        err.status = response.status
+        throw err
     }
+    return text
 }
 
 export function registerMetadataProxyRoutes(fastify) {
@@ -245,12 +241,7 @@ export function registerMetadataProxyRoutes(fastify) {
             return { error: safeMessage }
         }
 
-        const value = result && result.value
-        if (value && typeof value === 'object' && value._stale === true) {
-            const { _stale, ...clean } = value
-            return clean
-        }
-        return value
+        return (result && result.value !== undefined) ? result.value : null
     })
 
     fastify.get('/api/admin/cache-stats', {
@@ -357,23 +348,17 @@ export function registerMetadataProxyRoutes(fastify) {
     const PMDB_BASE = 'https://publicmetadb.com/api/external'
     const RATE_LIMIT_PMDB = { max: 300, timeWindow: '1 minute' }
 
-    const auxCache = new Map()
-    const AUX_CACHE_TTL_STABLE = 24 * 60 * 60 * 1000
     const AUX_CACHE_TTL_DEFAULT = 6 * 60 * 60 * 1000
-    const AUX_CACHE_TTL_VOLATILE = 30 * 60 * 1000
-    const AUX_CACHE_TTL_NULL = 60 * 1000
-    const AUX_CACHE_MAX = 2000
 
-    function auxCacheGet(key) {
-        const entry = auxCache.get(key)
-        if (!entry) return null
-        if (Date.now() > entry.expiresAt) { auxCache.delete(key); return null }
-        auxCache.delete(key); auxCache.set(key, entry)
-        return entry.value
+    async function auxMetadataGet(cacheKey, fetcher, ttl = AUX_CACHE_TTL_DEFAULT) {
+        const result = await metadataCache.get(cacheKey, fetcher, { ttl })
+        return { value: result && result.value, hit: result ? result.source !== 'miss' && result.source !== 'stale' : false }
     }
-    function auxCacheSet(key, value, ttl) {
-        if (auxCache.size >= AUX_CACHE_MAX) { const o = auxCache.keys().next().value; if (o) auxCache.delete(o) }
-        auxCache.set(key, { value, expiresAt: Date.now() + (ttl || AUX_CACHE_TTL_DEFAULT) })
+
+    function makeUpstreamError(prefix, status) {
+        const err = new Error(`${prefix} upstream error (${status})`)
+        err.status = status
+        return err
     }
 
     fastify.get('/api/metadata/pmdb/*', {
@@ -409,40 +394,33 @@ export function registerMetadataProxyRoutes(fastify) {
             ? `${PMDB_BASE}/${cleanPath}?${queryString}`
             : `${PMDB_BASE}/${cleanPath}`
 
-        const cacheKey = `${authUser}:${url}`
-        const cached = auxCacheGet(cacheKey)
-        if (cached) {
-            reply.header('Content-Type', 'application/json')
-            reply.header('X-Cache', 'HIT')
-            return cached
-        }
-
+        const cacheKey = `pmdb:${authUser}:${url}`
         try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            if (request.socket && !request.socket.destroyed) {
-                request.socket.once('close', () => controller.abort())
-            }
-            const response = await fetch(url, {
-                headers: {
-                    Authorization: `Bearer ${keyRecord.key}`,
-                    Accept: 'application/json',
-                },
-                signal: controller.signal,
+            const { value, hit } = await auxMetadataGet(cacheKey, async () => {
+                const controller = new AbortController()
+                if (request.socket && !request.socket.destroyed) {
+                    request.socket.once('close', () => controller.abort())
+                }
+                const response = await resilientFetch(url, {
+                    headers: {
+                        Authorization: `Bearer ${keyRecord.key}`,
+                        Accept: 'application/json',
+                    },
+                    signal: controller.signal,
+                    timeout: UPSTREAM_TIMEOUT_MS,
+                    retries: UPSTREAM_RETRIES,
+                })
+                const text = await response.text()
+                if (!response.ok) throw makeUpstreamError('PMDB', response.status)
+                return text
             })
-            clearTimeout(timeout)
-            const text = await response.text()
-            if (!response.ok) {
-                reply.status(response.status)
-                return { error: `PMDB upstream error (${response.status})` }
-            }
-            auxCacheSet(`${authUser}:${url}`, text)
             reply.header('Content-Type', 'application/json')
-            return text
+            if (hit) reply.header('X-Cache', 'HIT')
+            return value
         } catch (err) {
-            const status = err?.name === 'AbortError' ? 504 : 502
+            const status = err?.status || (err?.name === 'AbortError' ? 504 : 502)
             reply.status(status)
-            return { error: 'PMDB request failed' }
+            return { error: `PMDB upstream error (${status})` }
         }
     })
 
@@ -545,22 +523,31 @@ export function registerMetadataProxyRoutes(fastify) {
             url = `${MDBLIST_BASE}/${cleanPath}?${queryParts.join('&')}`
         }
 
-        const cachedMdb = auxCacheGet(url)
-        if (cachedMdb) { reply.header('Content-Type', 'application/json'); reply.header('X-Cache', 'HIT'); return cachedMdb }
+        const mdbKeyQuery = Object.keys(incomingQuery)
+            .filter(k => k && incomingQuery[k] !== undefined && incomingQuery[k] !== null)
+            .sort()
+            .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(String(incomingQuery[k]))}`)
+            .join('&')
+        const cacheKey = `mdblist:${authUser}:${pathParts.map(encodeURIComponent).join('/')}:${mdbKeyQuery}`
 
         try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
-            clearTimeout(timeout)
-            const text = await response.text()
-            if (!response.ok) { reply.status(response.status); return { error: `MDBList upstream error (${response.status})` } }
-            auxCacheSet(url, text)
+            const { value, hit } = await auxMetadataGet(cacheKey, async () => {
+                const response = await resilientFetch(url, {
+                    headers: { Accept: 'application/json' },
+                    timeout: UPSTREAM_TIMEOUT_MS,
+                    retries: UPSTREAM_RETRIES,
+                })
+                const text = await response.text()
+                if (!response.ok) throw makeUpstreamError('MDBList', response.status)
+                return text
+            })
             reply.header('Content-Type', 'application/json')
-            return text
+            if (hit) reply.header('X-Cache', 'HIT')
+            return value
         } catch (err) {
-            reply.status(err?.name === 'AbortError' ? 504 : 502)
-            return { error: 'MDBList request failed' }
+            const status = err?.status || (err?.name === 'AbortError' ? 504 : 502)
+            reply.status(status)
+            return { error: `MDBList upstream error (${status})` }
         }
     })
 
@@ -588,25 +575,25 @@ export function registerMetadataProxyRoutes(fastify) {
             ? `${TVDB_BASE}/${cleanPath}?${queryString}`
             : `${TVDB_BASE}/${cleanPath}`
 
-        const cachedTvdb = auxCacheGet(url)
-        if (cachedTvdb) { reply.header('Content-Type', 'application/json'); reply.header('X-Cache', 'HIT'); return cachedTvdb }
-
+        const cacheKey = `tvdb:${authUser}:${url}`
         try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const response = await fetch(url, {
-                signal: controller.signal,
-                headers: { Authorization: `Bearer ${keyRecord.key}`, Accept: 'application/json' },
+            const { value, hit } = await auxMetadataGet(cacheKey, async () => {
+                const response = await resilientFetch(url, {
+                    headers: { Authorization: `Bearer ${keyRecord.key}`, Accept: 'application/json' },
+                    timeout: UPSTREAM_TIMEOUT_MS,
+                    retries: UPSTREAM_RETRIES,
+                })
+                const text = await response.text()
+                if (!response.ok) throw makeUpstreamError('TVDB', response.status)
+                return text
             })
-            clearTimeout(timeout)
-            const text = await response.text()
-            if (!response.ok) { reply.status(response.status); return { error: `TVDB upstream error (${response.status})` } }
-            auxCacheSet(url, text)
             reply.header('Content-Type', 'application/json')
-            return text
+            if (hit) reply.header('X-Cache', 'HIT')
+            return value
         } catch (err) {
-            reply.status(err?.name === 'AbortError' ? 504 : 502)
-            return { error: 'TVDB request failed' }
+            const status = err?.status || (err?.name === 'AbortError' ? 504 : 502)
+            reply.status(status)
+            return { error: `TVDB upstream error (${status})` }
         }
     })
 
@@ -629,22 +616,24 @@ export function registerMetadataProxyRoutes(fastify) {
         const cleanPath = pathParts.map(encodeURIComponent).join('/')
         const url = `${FANART_BASE}/${cleanPath}?api_key=${keyRecord.key}`
 
-        const cached = auxCacheGet(url)
-        if (cached) { reply.header('Content-Type', 'application/json'); reply.header('X-Cache', 'HIT'); return cached }
-
         try {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), 15000)
-            const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } })
-            clearTimeout(timeout)
-            const text = await response.text()
-            if (!response.ok) { reply.status(response.status); return { error: `Fanart upstream error (${response.status})` } }
-            auxCacheSet(url, text)
+            const { value, hit } = await auxMetadataGet(`fanart:${authUser}:${cleanPath}`, async () => {
+                const response = await resilientFetch(url, {
+                    headers: { Accept: 'application/json' },
+                    timeout: UPSTREAM_TIMEOUT_MS,
+                    retries: UPSTREAM_RETRIES,
+                })
+                const text = await response.text()
+                if (!response.ok) throw makeUpstreamError('Fanart', response.status)
+                return text
+            })
             reply.header('Content-Type', 'application/json')
-            return text
+            if (hit) reply.header('X-Cache', 'HIT')
+            return value
         } catch (err) {
-            reply.status(err?.name === 'AbortError' ? 504 : 502)
-            return { error: 'Fanart request failed' }
+            const status = err?.status || (err?.name === 'AbortError' ? 504 : 502)
+            reply.status(status)
+            return { error: `Fanart upstream error (${status})` }
         }
     })
 
@@ -666,36 +655,38 @@ export function registerMetadataProxyRoutes(fastify) {
         }
 
         const cacheKey = `comments:${imdbId || tmdbId}:${type || 'movie'}`
-        const cached = auxCacheGet(cacheKey)
-        if (cached) {
-            reply.header('Content-Type', 'application/json')
-            return cached
-        }
 
-        const comments = []
         const mediaPath = (type === 'series' || type === 'anime' || type === 'tv') ? 'shows' : 'movies'
 
-        // Fetch TMDB Reviews
-        const targetTmdbId = tmdbId || (imdbId && !imdbId.startsWith('tt') ? imdbId : null)
-        let tmdbNumericId = targetTmdbId
+        const buildComments = async () => {
+            const comments = []
+            const targetTmdbId = tmdbId || (imdbId && !imdbId.startsWith('tt') ? imdbId : null)
+            let tmdbNumericId = targetTmdbId
 
-        if (!tmdbNumericId && tmdbKeyRecord && imdbId && imdbId.startsWith('tt')) {
-            try {
-                const findRes = await fetch(`https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&api_key=${tmdbKeyRecord.key}`)
-                if (findRes.ok) {
-                    const findData = await findRes.json()
+            if (!tmdbNumericId && tmdbKeyRecord && imdbId && imdbId.startsWith('tt')) {
+                try {
+                    const findReq = buildTmdbRequest(['find', imdbId], 'external_source=imdb_id', tmdbKeyRecord.key, tmdbKeyRecord.format)
+                    const findResult = await metadataCache.get(
+                        buildCacheKey('tmdb', ['find', imdbId], 'external_source=imdb_id'),
+                        () => fetchUpstream(findReq),
+                        { permanent: true }
+                    )
+                    const findData = findResult.value
                     const found = (findData.movie_results && findData.movie_results[0]) || (findData.tv_results && findData.tv_results[0])
                     if (found) tmdbNumericId = found.id
-                }
-            } catch (err) {}
-        }
+                } catch (err) {}
+            }
 
-        if (tmdbNumericId && tmdbKeyRecord) {
-            try {
-                const tmdbType = (type === 'series' || type === 'anime' || type === 'tv') ? 'tv' : 'movie'
-                const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbNumericId}/reviews?api_key=${tmdbKeyRecord.key}`)
-                if (tmdbRes.ok) {
-                    const tmdbData = await tmdbRes.json()
+            if (tmdbNumericId && tmdbKeyRecord) {
+                try {
+                    const tmdbType = (type === 'series' || type === 'anime' || type === 'tv') ? 'tv' : 'movie'
+                    const reviewsReq = buildTmdbRequest([tmdbType, String(tmdbNumericId), 'reviews'], '', tmdbKeyRecord.key, tmdbKeyRecord.format)
+                    const reviewsResult = await metadataCache.get(
+                        buildCacheKey('tmdb', [tmdbType, String(tmdbNumericId), 'reviews'], ''),
+                        () => fetchUpstream(reviewsReq),
+                        { ttl: DEFAULT_TTL_DETAILS_MS }
+                    )
+                    const tmdbData = reviewsResult.value
                     if (Array.isArray(tmdbData.results)) {
                         for (const rv of tmdbData.results.slice(0, 20)) {
                             if (rv.content && rv.content.trim()) {
@@ -715,13 +706,21 @@ export function registerMetadataProxyRoutes(fastify) {
                             }
                         }
                     }
-                }
+                } catch (err) {}
+            }
+
+            return comments
+        }
+
+        let comments = []
+        if (tmdbKeyRecord) {
+            try {
+                const aggregate = await auxMetadataGet(cacheKey, buildComments)
+                comments = aggregate.value
             } catch (err) {}
         }
 
-        const json = JSON.stringify(comments)
-        if (tmdbKeyRecord) auxCacheSet(cacheKey, json)
         reply.header('Content-Type', 'application/json')
-        return json
+        return comments
     })
 }

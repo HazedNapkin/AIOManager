@@ -175,8 +175,7 @@ export interface AddonStore {
   bulkApplySavedAddons: (
     savedAddonIds: string[],
     accountIds: Array<{ id: string; authKey: string }>,
-    allowProtected?: boolean,
-    urlOverrides?: Record<string, string>
+    allowProtected?: boolean
   ) => Promise<BulkResult>
   bulkApplyTag: (
     tag: string,
@@ -225,7 +224,7 @@ export interface AddonStore {
   toggleAutoRestore: (id: string, enabled: boolean) => Promise<void>
   lastHealthCheck?: number
 
-  exportLibrary: () => string
+  exportLibrary: (forSync?: boolean) => string | Record<string, unknown>
   importLibrary: (json: string | Record<string, unknown>, merge: boolean, isSilent?: boolean, isImmediate?: boolean) => Promise<void>
 
   checkAllHealth: () => Promise<void>
@@ -937,8 +936,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     await localforage.setItem('aioman:account-addons', currentStates)
   },
 
-  bulkApplySavedAddons: async (savedAddonIds, accountIds, allowProtected?, urlOverrides?) => {
-    return bulkApplySavedAddons(savedAddonIds, accountIds, allowProtected, urlOverrides)
+  bulkApplySavedAddons: async (savedAddonIds, accountIds, allowProtected?) => {
+    return bulkApplySavedAddons(savedAddonIds, accountIds, allowProtected)
   },
 
   bulkApplyTag: async (tag, accountIds) => {
@@ -985,9 +984,10 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     return syncAllAccountStates(accounts)
   },
 
-  exportLibrary: () => {
+  exportLibrary: (forSync = false) => {
     const library = get().library
     const savedAddons = Object.values(library).map(({ originalManifest: _originalManifest, ...rest }) => rest)
+    if (forSync) return { version: '1.0', savedAddons }
     return JSON.stringify(
       {
         version: '1.0',

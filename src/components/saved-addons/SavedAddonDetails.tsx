@@ -5,9 +5,7 @@ import { Label } from '@/components/ui/label'
 import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { normalizeTagName } from '@/lib/addon-validator'
-import { mapConcurrent } from '@/lib/concurrency'
 import { useAddonStore } from '@/store/addonStore'
-import { SAVED_ADDON_ACCOUNT_CONCURRENCY } from '@/store/addon/addonDeployment'
 import { useProfileStore } from '@/store/profileStore'
 import { useUIStore } from '@/store/uiStore'
 import { Switch } from '@/components/ui/switch'
@@ -19,9 +17,7 @@ import { useState, useEffect } from 'react'
 import { useToast } from '@/hooks/use-toast'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
 import { ManifestJSONEditor } from '@/components/addons/ManifestJSONEditor'
-import { AddonParamSelector } from '@/components/ui/addon-param-selector'
 import type { AddonDescriptor } from '@/types/addon'
-import { getAddonParamType, extractAddonParams } from '@/lib/addon-params'
 
 export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }: { savedAddon: SavedAddon; deployedAccounts?: Account[]; onClose: () => void }) {
   const updateSavedAddon = useAddonStore(s => s.updateSavedAddon)
@@ -61,16 +57,6 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
   }, [savedAddon])
 
   const [formError, setFormError] = useState<string | null>(null)
-  const [addonUrl, setAddonUrl] = useState(savedAddon.installUrl)
-
-  useEffect(() => {
-    setAddonUrl(savedAddon.installUrl)
-  }, [savedAddon.installUrl])
-
-  const addonType = getAddonParamType(savedAddon.installUrl, savedAddon.manifest)
-  const originalParams = extractAddonParams(savedAddon.installUrl).params
-  const currentParams = extractAddonParams(addonUrl).params
-  const urlChanged = addonType !== null && (originalParams.tag !== currentParams.tag || originalParams.variant !== currentParams.variant)
 
   const hasChanges =
     formData.name !== (savedAddon.metadata?.customName || '') ||
@@ -79,7 +65,6 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
     formData.customDescription !== (savedAddon.metadata?.customDescription || '') ||
     formData.syncWithInstalled !== (savedAddon.syncWithInstalled ?? false) ||
     formData.profileId !== currentProfileId ||
-    urlChanged ||
     JSON.stringify(syncAccountIds ?? null) !== JSON.stringify(Array.isArray(savedAddon.syncAccountIds) ? savedAddon.syncAccountIds : null)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -93,7 +78,6 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         .filter(Boolean)
 
       const name = formData.name.trim()
-      const urlDirty = urlChanged && addonUrl !== savedAddon.installUrl
 
       await updateSavedAddon(savedAddon.id, {
         name: name || savedAddon.manifest.name,
@@ -101,43 +85,12 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         syncWithInstalled: formData.syncWithInstalled,
         syncAccountIds,
         profileId: formData.profileId === 'unassigned' ? null : formData.profileId,
-        ...(formData.syncWithInstalled && urlDirty ? { installUrl: addonUrl } : {}),
         metadata: {
           customName: name || undefined,
           customLogo: formData.customLogo.trim() || undefined,
           customDescription: formData.customDescription.trim() || undefined
         }
       })
-
-      // The store's updateSavedAddon installUrl branch already does the scoped
-      // fan-out, but only while syncWithInstalled is on — mirror its tri-state
-      // target resolution here so non-sync edits don't broadcast to all accounts.
-      if (urlDirty && !formData.syncWithInstalled) {
-        if (syncAccountIds === null) {
-          await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, undefined, undefined)
-        } else if (syncAccountIds.length === 0) {
-          await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, '__none__', undefined)
-        } else {
-          const { fetchAddonManifest } = await import('@/api/addons')
-          const descriptor = await fetchAddonManifest(addonUrl, 'System-Check')
-          const failedTargets: Array<{ accountId: string; error: string }> = []
-          await mapConcurrent(syncAccountIds, SAVED_ADDON_ACCOUNT_CONCURRENCY, async (targetAccountId) => {
-            try {
-              await replaceTransportUrlUniversally(savedAddon.id, savedAddon.installUrl, addonUrl, targetAccountId, descriptor)
-            } catch (error) {
-              failedTargets.push({ accountId: targetAccountId, error: error instanceof Error ? error.message : 'Unknown error' })
-            }
-          })
-          if (failedTargets.length > 0) {
-            const accountName = (accountId: string) => {
-              const account = deployedAccounts.find(a => a.id === accountId)
-              return account?.name || account?.email || accountId
-            }
-            const failedSummary = failedTargets.map(failed => `${accountName(failed.accountId)}: ${failed.error}`).join(', ')
-            throw new Error(`New URL applied to ${syncAccountIds.length - failedTargets.length} of ${syncAccountIds.length} sync targets. Failed (${failedTargets.length}) — ${failedSummary}.`)
-          }
-        }
-      }
 
       onClose()
     } catch (err) {
@@ -347,15 +300,6 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
             </Select>
           </div>
         </div>
-
-        {addonType && (
-          <AddonParamSelector
-            url={addonUrl}
-            onUrlChange={setAddonUrl}
-            manifest={savedAddon.manifest}
-            className="rounded-xl border border-border/40 bg-muted/20 p-3"
-          />
-        )}
 
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-0.5">

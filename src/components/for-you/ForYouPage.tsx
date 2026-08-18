@@ -390,7 +390,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                         }
                     } catch {}
                 }))
-                if (i + BATCH < needsResolve.length) await new Promise(r => setTimeout(r, 200))
             }
             if (cacheDirty) saveImdbTmdbCache(cache)
             for (const id of watchedIds) { if (cache[id]) watchedTmdbIds.add(cache[id]) }
@@ -729,6 +728,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
 
             {subTab === 'accounts' ? (
                 <div className="space-y-4 pt-2">
+                    <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
                     <div className="grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         {accountStats.map(({ account, topGenres }) => (
                             <div
@@ -762,6 +762,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                 )}
                             </div>
                         ))}
+                    </div>
                     </div>
                 </div>
             ) : (

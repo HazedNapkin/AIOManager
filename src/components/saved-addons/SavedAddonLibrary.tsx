@@ -3,7 +3,6 @@ import { ACCOUNT_CONTEXT_LIBRARY_UPDATE } from '@/lib/account-contexts'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useUIStore } from '@/store/uiStore'
@@ -513,28 +512,17 @@ export function SavedAddonLibrary() {
             <TabsTrigger value="library" className="h-8 px-4 text-xs">
               Library
             </TabsTrigger>
-            <Tooltip content="Browse community addons from stremio-addons.net.">
-              <TooltipTrigger asChild>
-                <TabsTrigger value="discover" className="h-8 px-4 text-xs">
-                  <Compass className="h-3.5 w-3.5" />
-                  Discover
-                </TabsTrigger>
-              </TooltipTrigger>
-            </Tooltip>
-            <Tooltip content="Track which library addons are synced to installed accounts.">
-              <TooltipTrigger asChild>
-                <TabsTrigger
-                  value="sync"
-                  className="h-8 px-4 text-xs"
-                >
-                  <Link2 className="h-3.5 w-3.5" />
-                  Sync
-                  {syncOverviewData.length > 0 && (
-                    <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
-                  )}
-                </TabsTrigger>
-              </TooltipTrigger>
-            </Tooltip>
+            <TabsTrigger value="discover" className="h-8 px-4 text-xs">
+              <Compass className="h-3.5 w-3.5" />
+              Discover
+            </TabsTrigger>
+            <TabsTrigger value="sync" className="h-8 px-4 text-xs">
+              <Link2 className="h-3.5 w-3.5" />
+              Sync
+              {syncOverviewData.length > 0 && (
+                <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
+              )}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
 

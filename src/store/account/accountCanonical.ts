@@ -1,8 +1,11 @@
 import { threeWayMergeCanonical, type CanonicalAddon } from '@/lib/canonical-merge'
 import { getCanonicalBase } from '@/lib/canonical-base'
 import { fetchCanonical } from '@/api/hydra-providers'
+import { serverHasStremioCredential } from '@/lib/canonical-visibility'
+import { learnServerCredentialedAccounts } from '../syncStore'
 import {
     getAccountById,
+    getStremioAuthKey,
     persistAccounts,
     syncMutexes,
 } from '../accountStore'
@@ -36,14 +39,19 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
 
     let remote: Record<string, { addons: AddonDescriptor[]; updatedAt: number }>
     try {
-        remote = await fetchCanonical()
+        const result = await fetchCanonical()
+        remote = result.canonical
+        learnServerCredentialedAccounts(result.serverStremioCredentialedAccounts)
     } catch {
         return false // best-effort; never block the push on it
     }
+    const { useSyncStore } = await import('../syncStore')
+    const serverCredentialed = useSyncStore.getState().serverStremioCredentialedAccounts
 
     let anyChanged = false
 
     for (const account of targets) {
+        if (serverHasStremioCredential(account.id, serverCredentialed, !!getStremioAuthKey(account))) continue
         const remoteAddons = (remote[account.id]?.addons || []) as unknown as CanonicalAddon[]
 
         while (syncMutexes.has(account.id)) { await syncMutexes.get(account.id) }

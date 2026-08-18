@@ -1,4 +1,5 @@
 import { triggerSync } from '@/lib/sync-trigger'
+import { mapConcurrent } from '@/lib/concurrency'
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { useAccountStore, getCachedAuthKey, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
@@ -627,6 +628,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         rules = rules.filter(r => r.accountId !== accountId || allServerRuleIds.has(r.id))
                     }
 
+                    const processedRules: FailoverRule[] = []
                     for (const serverRule of serverStates as Record<string, unknown>[]) {
                         const sr = serverRule as Record<string, unknown>
                         const existsIndex = rules.findIndex(r => r.id === (sr.id as string))
@@ -656,10 +658,12 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         } else {
                             rules.push(processedRule)
                         }
+                        processedRules.push(processedRule)
+                    }
 
-                        if (await reconcileAccountAddonsWithActiveRule(processedRule)) {
-                            needsSync = true
-                        }
+                    const reconcileResults = await mapConcurrent(processedRules, 3, (rule) => reconcileAccountAddonsWithActiveRule(rule))
+                    if (reconcileResults.some(Boolean)) {
+                        needsSync = true
                     }
                 }
             }

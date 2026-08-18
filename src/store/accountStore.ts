@@ -332,6 +332,7 @@ export interface AccountStore {
       loadingAccounts: Set<string>
       error: string | null
       changelog: AddonChangelogEntry[]
+      hydrated: boolean
 
       initialize: () => Promise<void>
       updateLatestVersions: (versions: Record<string, string>) => void
@@ -349,6 +350,7 @@ export interface AccountStore {
       reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
       bulkDeleteAddons: (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => Promise<void>
       exportAccounts: (includeCredentials: boolean) => Promise<string>
+      exportAccountsForSync: () => Promise<Record<string, unknown>>
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
             id: string,
@@ -415,6 +417,7 @@ export interface ProfileSwitchResult {
 
 export const useAccountStore = create<AccountStore>((set, get) => ({
       accounts: [],
+      hydrated: false,
       loadingAccounts: new Set<string>(),
       error: null,
       changelog: [],
@@ -524,6 +527,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   if (storedChangelog && Array.isArray(storedChangelog)) {
                         set({ changelog: storedChangelog })
                   }
+                  set({ hydrated: true })
             } catch (error) {
                   if (import.meta.env.DEV) console.error('Failed to load accounts from storage:', error)
                   set({ error: 'Failed to load saved accounts' })
@@ -910,6 +914,11 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return exportAccounts(includeCredentials)
       },
 
+      exportAccountsForSync: async () => {
+            const { exportAccountsForSync } = await import('./account/accountImportExport')
+            return exportAccountsForSync()
+      },
+
       importAccounts: async (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => {
             const { importAccounts } = await import('./account/accountImportExport')
             return importAccounts(json, isSilent, mode, localDecryptionKey)
@@ -1104,6 +1113,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   loadingAccounts: new Set<string>(),
                   error: null,
                   changelog: [],
+                  hydrated: false,
             })
             resetAuthKeyHashes()
             await localforage.removeItem(STORAGE_KEY)

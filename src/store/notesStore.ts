@@ -5,8 +5,8 @@ import { encrypt, decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 
 const OLD_STORAGE_KEY = 'aiom-notes'
-const INDEX_KEY = 'aiom-notes-index'
-const TRASH_KEY = 'aiom-notes-trash'
+export const NOTES_INDEX_KEY = 'aiom-notes-index'
+export const NOTES_TRASH_KEY = 'aiom-notes-trash'
 const TRASH_TTL = 30 * 24 * 60 * 60 * 1000
 const MAX_NOTE_CONTENT = 50000
 const MAX_NOTE_TITLE = 200
@@ -100,7 +100,7 @@ function noteTime(note: Pick<Note, 'updatedAt'> | Pick<NoteMeta, 'updatedAt'> | 
 }
 
 async function persistIndex(metas: NoteMeta[]) {
-    await localforage.setItem(INDEX_KEY, metas)
+    await localforage.setItem(NOTES_INDEX_KEY, metas)
 }
 
 async function persistNote(note: Note) {
@@ -114,7 +114,7 @@ async function removeNoteKey(id: string) {
 
 async function persistTrash(trash: Note[]) {
     try {
-        await localforage.setItem(TRASH_KEY, trash)
+        await localforage.setItem(NOTES_TRASH_KEY, trash)
     } catch (err) {
         if (import.meta.env.DEV) console.error('[NotesStore] Failed to persist trash:', err)
         throw err
@@ -145,7 +145,7 @@ async function migrateFromOldFormat(): Promise<{ metas: NoteMeta[]; notes: Note[
         await persistNote(note)
     }
 
-    await localforage.setItem(INDEX_KEY, metas)
+    await localforage.setItem(NOTES_INDEX_KEY, metas)
     await localforage.removeItem(OLD_STORAGE_KEY)
     return { metas, notes }
 }
@@ -157,7 +157,7 @@ async function migratePlaintextNotes(): Promise<void> {
     const key = getEncryptionKey()
     if (!key) return
     try {
-        const index = await localforage.getItem<NoteMeta[]>(INDEX_KEY)
+        const index = await localforage.getItem<NoteMeta[]>(NOTES_INDEX_KEY)
         if (!index || !Array.isArray(index)) {
             migrationDone = true
             return
@@ -267,7 +267,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             if (migrated) {
                 metas = migrated.metas
             } else {
-                const stored = await localforage.getItem<NoteMeta[]>(INDEX_KEY)
+                const stored = await localforage.getItem<NoteMeta[]>(NOTES_INDEX_KEY)
                 metas = stored && Array.isArray(stored) ? stored : []
             }
             set({ notes: metas })
@@ -289,7 +289,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
                 }
             } catch (e) { if (import.meta.env.DEV) console.error(e) }
 
-            const storedTrash = await localforage.getItem<Note[]>(TRASH_KEY)
+            const storedTrash = await localforage.getItem<Note[]>(NOTES_TRASH_KEY)
             if (storedTrash && Array.isArray(storedTrash)) {
                 const now = Date.now()
                 const pruned = storedTrash.filter(n => now - new Date(n.updatedAt).getTime() < TRASH_TTL)

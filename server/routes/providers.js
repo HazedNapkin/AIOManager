@@ -3,6 +3,7 @@ import db from '../db.js'
 import { encrypt, decrypt } from '../crypto.js'
 import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
+import { listStremioCredentialedAccountIds, stremioCredentialVersion } from '../lib/stremio-credentials.js'
 
 // An authenticated user "owns" an accountId iff they have a stored credential or canonical row for
 // it. Used to reject cross-tenant access (the sync/status endpoints take an accountId from the URL,
@@ -408,6 +409,24 @@ export function registerProviderRoutes(fastify, reconciler) {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
+        const version = await db.get(
+            'SELECT COUNT(*) AS n, MAX(updated_at) AS max_ts FROM account_canonical_addons WHERE sync_user = $1',
+            [authUser]
+        )
+        // The response also tells the client which accounts the server can read via a
+        // server-side Stremio credential (those are excluded from client canonical pushes),
+        // so the ETag must cover credential changes too or a 304 would pin a stale set.
+        // Deliberately Stremio-scoped: Nuvio/RealStream credentials never gate canonical
+        // membership, and their access tokens are auto-refreshed server-side — including
+        // them would bust every client's cache on each token rotation for no semantic change.
+        const credVersion = await stremioCredentialVersion(authUser)
+        const etag = `canonical:${authUser}:${version?.n || 0}:${version?.max_ts || 0}:${credVersion?.n || 0}:${credVersion?.max_ts || 0}`
+        if (request.headers['if-none-match'] === etag) {
+            reply.status(304)
+            reply.header('ETag', etag)
+            return reply.send()
+        }
+
         const rows = await db.query(
             'SELECT account_id, addon_list, updated_at FROM account_canonical_addons WHERE sync_user = $1',
             [authUser]
@@ -426,6 +445,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             }
             canonical[row.account_id] = { addons, updatedAt: row.updated_at || 0 }
         }
-        return { canonical }
+        reply.header('ETag', etag)
+        return { canonical, serverStremioCredentialedAccounts: await listStremioCredentialedAccountIds(authUser) }
     })
 }

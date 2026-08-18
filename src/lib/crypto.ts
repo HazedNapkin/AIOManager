@@ -166,6 +166,22 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
   }
 }
 
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[])
+  }
+  return btoa(binary)
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
 export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   const encoder = new TextEncoder()
   const dataBuffer = encoder.encode(String(data))
@@ -178,16 +194,12 @@ export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   combined.set(iv, 0)
   combined.set(new Uint8Array(ciphertext), iv.length)
 
-  let binary = ''
-  for (let i = 0; i < combined.length; i++) {
-    binary += String.fromCharCode(combined[i])
-  }
-  return btoa(binary)
+  return bytesToBase64(combined)
 }
 
 export async function decrypt(encrypted: string, key: CryptoKey): Promise<string> {
   if (!encrypted) return ''
-  const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0))
+  const combined = base64ToBytes(encrypted)
 
   const iv = combined.slice(0, IV_LENGTH)
   const ciphertext = combined.slice(IV_LENGTH)
@@ -331,20 +343,50 @@ export function restoreLocalAuthSecrets(snapshot: LocalAuthSecretsSnapshot): voi
 
 const SYNC_KEY_SALT = new TextEncoder().encode('aiomanager-sync-key-v2')
 
+const syncKeyCache = new Map<string, CryptoKey>()
+const SYNC_KEY_CACHE_MAX = 2
+
+async function syncKeyCacheKey(password: string, salt: Uint8Array): Promise<string> {
+  let saltKey = ''
+  for (let i = 0; i < salt.length; i++) saltKey += String.fromCharCode(salt[i])
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${String(password)}|${btoa(saltKey)}`))
+  return 'k:' + Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function cacheSyncKey(cacheKey: string, key: CryptoKey): void {
+  if (syncKeyCache.has(cacheKey)) syncKeyCache.delete(cacheKey)
+  syncKeyCache.set(cacheKey, key)
+  while (syncKeyCache.size > SYNC_KEY_CACHE_MAX) {
+    const oldest = syncKeyCache.keys().next().value
+    if (oldest === undefined) break
+    syncKeyCache.delete(oldest)
+  }
+}
+
+export function clearSyncKeyCache(): void {
+  syncKeyCache.clear()
+}
+
 // Migration target: src/lib/crypto-envelope.ts defines the versioned v2 envelope
 // ('v2.<salt>.<iv>.<ct>', self-contained salt/IV) whose decryptEnvelope dual-reads both
 // legacy shapes below. syncStore should move to encryptEnvelope/decryptEnvelope in a
 // later release (after the pilot soaks); this module stays untouched for legacy reads.
 
 export async function deriveSyncEncryptionKey(password: string, salt?: Uint8Array): Promise<CryptoKey> {
-  const bits = await runPbkdf2(String(password), salt ?? SYNC_KEY_SALT, PBKDF2_ITERATIONS, 256)
-  return crypto.subtle.importKey(
+  const effectiveSalt = salt ?? SYNC_KEY_SALT
+  const cacheKey = await syncKeyCacheKey(password, effectiveSalt)
+  const cached = syncKeyCache.get(cacheKey)
+  if (cached) return cached
+  const bits = await runPbkdf2(String(password), effectiveSalt, PBKDF2_ITERATIONS, 256)
+  const key = await crypto.subtle.importKey(
     'raw',
     bits,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
   )
+  cacheSyncKey(cacheKey, key)
+  return key
 }
 
 export async function encryptSyncPayload(plaintext: string, password: string, salt?: Uint8Array): Promise<string> {

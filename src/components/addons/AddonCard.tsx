@@ -184,7 +184,7 @@ export const AddonCard = React.memo(function AddonCard({
   const profiles = useProfileStore((state) => state.profiles)
   const initProfiles = useProfileStore((state) => state.initialize)
   const createProfile = useProfileStore((state) => state.createProfile)
-  const accounts = useAccountStore(state => state.accounts)
+  const currentAccount = useAccountStore(state => state.accounts.find(a => a.id === accountId))
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
   const { toast } = useToast()
   const { isLight } = useTheme()
@@ -305,7 +305,7 @@ export const AddonCard = React.memo(function AddonCard({
   }
 
   const handleDeployToAll = async () => {
-    const targetAccountIds = accounts
+    const targetAccountIds = useAccountStore.getState().accounts
       .filter(acc => acc.id !== accountId)
       .map(acc => acc.id)
 
@@ -359,7 +359,6 @@ export const AddonCard = React.memo(function AddonCard({
     setSaveName(addon.manifest.name || '')
     setSaveTags('')
 
-    const currentAccount = accounts.find(a => a.id === accountId)
     const customName = currentAccount?.name?.trim()
     const emailName = currentAccount?.email?.split('@')[0]?.trim()
 

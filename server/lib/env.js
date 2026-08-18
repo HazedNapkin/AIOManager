@@ -158,6 +158,8 @@ const FIELDS = {
         { defaultLabel: 'localhost development origins (3000/5173/4173)' }),
     SSRF_ALLOW_PRIVATE: bool(false,
         'Allow the metadata proxy to fetch addon manifests from private/internal IP ranges (Docker networks, DNS rewrites, reverse proxies). Only enable on trusted self-hosted instances behind a firewall.'),
+    TRUST_PROXY: bool(false,
+        'Trust X-Forwarded-For headers from the reverse proxy (Traefik/nginx/NPM). Required behind a proxy for per-client rate limiting to see real client IPs; without it all proxied clients share one rate-limit bucket.'),
     CUSTOM_HTML: optionalString(
         'Raw HTML injected at the top of the login/configuration page (hosted-instance banners, announcements).'),
     REGISTRATIONS_CLOSED: bool(false,
@@ -242,7 +244,7 @@ const FIELDS = {
 export const ENV_GROUPS = [
     { title: 'ESSENTIAL SETUP', vars: ['PORT', 'NODE_ENV', 'DATA_DIR', 'MAX_SYNC_PAYLOAD_SIZE'] },
     { title: 'DATABASE', note: 'Pool settings are ignored when DB_TYPE=sqlite.', vars: ['DB_TYPE', 'DATABASE_URL', 'DB_SSL_REJECT_UNAUTHORIZED', 'DB_POOL_SIZE', 'DB_CONNECTION_TIMEOUT', 'DB_MAX_RETRIES', 'READ_ONLY_REPLICA'] },
-    { title: 'SECURITY', vars: ['ENCRYPTION_KEY', 'CORS_ORIGINS', 'SSRF_ALLOW_PRIVATE', 'CUSTOM_HTML', 'REGISTRATIONS_CLOSED', 'UNIFIED_ENFORCEMENT'] },
+    { title: 'SECURITY', vars: ['ENCRYPTION_KEY', 'CORS_ORIGINS', 'SSRF_ALLOW_PRIVATE', 'TRUST_PROXY', 'CUSTOM_HTML', 'REGISTRATIONS_CLOSED', 'UNIFIED_ENFORCEMENT'] },
     { title: 'LOGGING', vars: ['LOG_LEVEL', 'LOG_PRETTY_PRINT'] },
     { title: 'PROXY & IMAGE CACHING', vars: ['PROXY_CONCURRENCY_LIMIT', 'AIOSTREAMS_USER_API_THROTTLE_MS', 'IMAGE_PROXY_TIMEOUT_MS', 'IMAGE_PROXY_QUEUE_LIMIT', 'IMAGE_PROXY_THROTTLE_MS', 'IMAGE_CACHE_TTL_MS', 'IMAGE_CACHE_MAX_BYTES', 'IMAGE_CACHE_MAX_ITEM_BYTES'] },
     { title: 'ACTIVITY ENGINE (OPT-IN)', note: 'Safe defaults shown — only relevant when you explicitly opt into server-side activity capture via ACTIVITY_ENGINE_ENABLED. Events are kept permanently so Activity can behave like Replay.', vars: ['ACTIVITY_ENGINE_ENABLED', 'ACTIVITY_SCAN_INTERVAL_MS', 'ACTIVITY_SCAN_JITTER_MS', 'ACTIVITY_INITIAL_DELAY_MS', 'ACTIVITY_CYCLE_BUDGET_MS', 'ACTIVITY_MAX_ACCOUNTS_PER_CYCLE', 'ACTIVITY_MAX_EVENTS_PER_CYCLE', 'ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE', 'ACTIVITY_BATCH_SIZE', 'ACTIVITY_FETCH_TIMEOUT_MS', 'ACTIVITY_HASH_CACHE_TTL_MS', 'ACTIVITY_HASH_CACHE_MAX'] },
