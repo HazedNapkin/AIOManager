@@ -59,12 +59,14 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
         let release!: () => void
         syncMutexes.set(account.id, new Promise<void>(r => { release = r }))
         let didChange = false
+        let mergedCount = -1
         try {
             const current = getAccountById(store.getState().accounts, account.id)
             if (!current) continue
             const base = getCanonicalBase(account.id) as unknown as CanonicalAddon[] | null
             const local = (current.addons || []) as unknown as CanonicalAddon[]
             const { addons: merged, changed } = threeWayMergeCanonical(base, local, remoteAddons)
+            mergedCount = merged.length
             if (!changed) continue
             if (merged.length > 0 && local.length === 0) markFoldedHub(account.id)
             const updated = { ...current, addons: merged as unknown as AddonDescriptor[], lastSync: new Date() }
@@ -77,6 +79,7 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
             release()
             syncMutexes.delete(account.id)
         }
+        console.info(`[Fold] ${account.id}: remote=${remoteAddons.length} local→merged=${mergedCount} changed=${didChange}`)
 
         if (didChange) {
             import('./accountAddonOps')

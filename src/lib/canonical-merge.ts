@@ -68,12 +68,12 @@ function sortDeep(value: unknown): unknown {
  * Merge an inbound `remote` canonical list with the client's `local` addons against the
  * `base` (the canonical this client last reconciled to; pass null/[] if none recorded).
  *
- * First-run safety: with no recorded base we assume `remote` IS the common ancestor. No
- * inbound writer can have diverged the canonical before this feature is live (the server
- * only wrote it from this same client), so remote == the client's last push. Treating it
- * as the base honours client-side deletes (local-missing entries) instead of resurrecting
- * them (the more user-visible failure) at the cost of first-window inbound adds, of
- * which there are none before the feature ships. Once base is recorded both work.
+ * First-run safety: with no recorded base the client has never folded this Hub, so a
+ * populated remote is external inbound content (API-key writers) — NOT evidence of the
+ * client's own last push. Every remote entry is treated as an inbound add and folded in;
+ * local deletes can only exist once a base exists to compare against. (The previous
+ * first-run behaviour treated remote as the ancestor, which silently swallowed every
+ * external write to a fold-virgin Hub — the exact data the feature exists to carry.)
  */
 export function threeWayMergeCanonical(
     base: CanonicalAddon[] | null | undefined,
@@ -82,7 +82,20 @@ export function threeWayMergeCanonical(
     opts: ThreeWayMergeOptions = {},
 ): ThreeWayMergeResult {
     const inboundDeletesShrink = opts.inboundDeletesShrink ?? false
-    const effectiveBase = base && base.length ? base : remote
+    const hasRecordedBase = !!(base && base.length)
+    if (!hasRecordedBase) {
+        const localMap = new Map<string, CanonicalAddon>()
+        for (const a of local) { const k = keyOf(a); if (k) localMap.set(k, a) }
+        const result: CanonicalAddon[] = [...local]
+        for (const a of remote) {
+            const k = keyOf(a)
+            if (!k || localMap.has(k)) continue
+            localMap.set(k, a)
+            result.push(a)
+        }
+        return { addons: result, changed: stable(result) !== stable(local) }
+    }
+    const effectiveBase = base
 
     const localMap = new Map<string, CanonicalAddon>()
     for (const a of local) { const k = keyOf(a); if (k) localMap.set(k, a) }

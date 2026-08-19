@@ -347,6 +347,9 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     }
 
     trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || discoveryChanged) })
+    // Manual syncs (forceRefresh) always push to connections — an outbound Hydra push
+    // must fire even when local state is unchanged, or the target never converges.
+    // Passive syncs only push when discovery changed something.
     if ((forceRefresh || discoveryChanged) && updatedAccount.connections?.some(c => c.enabled)) {
         pushPromises.push(
             (async () => {

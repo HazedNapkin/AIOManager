@@ -272,7 +272,7 @@ export const AccountListRow = memo(function AccountListRow({
                             e.stopPropagation()
                             try {
                                 toast({ title: 'Syncing...', description: `Refreshing ${displayName}` })
-                                await syncAccount(account.id)
+                                await syncAccount(account.id, true)
                                 toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` })
                             } catch (err) {
                                 toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` })
@@ -318,7 +318,7 @@ export const AccountListRow = memo(function AccountListRow({
                             e.stopPropagation()
                             try {
                                 toast({ title: 'Syncing...', description: `Refreshing ${displayName}` })
-                                await syncAccount(account.id)
+                                await syncAccount(account.id, true)
                                 toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` })
                             } catch (err) {
                                 toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` })

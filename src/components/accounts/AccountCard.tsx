@@ -400,7 +400,7 @@ export const AccountCard = memo(function AccountCard({
                         e.stopPropagation();
                         try {
                           toast({ title: 'Syncing...', description: `Refreshing ${displayName}` });
-                          await syncAccount(account.id);
+                          await syncAccount(account.id, true);
                           toast({ title: 'Sync Complete', description: `Successfully synced ${displayName}` });
                         } catch (err) {
                           toast({ variant: 'destructive', title: 'Sync Failed', description: `Could not sync ${displayName}: ${err instanceof Error ? err.message : 'unknown error'}` });
@@ -577,7 +577,7 @@ export const AccountCard = memo(function AccountCard({
                   onClick={async (e) => {
                       e.stopPropagation()
                       try {
-                          await syncAccount(account.id)
+                          await syncAccount(account.id, true)
                       } catch {
                           handleEdit()
                       }
