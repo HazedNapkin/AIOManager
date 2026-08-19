@@ -347,10 +347,6 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     }
 
     trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || discoveryChanged) })
-    // Manual syncs (forceRefresh) always fire the reconcile POST — the server resolves
-    // connections from its own credentials when the client's list is empty or lost, so
-    // an outbound Hydra push fires even on an unchanged account with no local
-    // connection objects. Passive syncs only push when discovery changed something.
     if (forceRefresh || (discoveryChanged && updatedAccount.connections?.some(c => c.enabled))) {
         pushPromises.push(
             (async () => {

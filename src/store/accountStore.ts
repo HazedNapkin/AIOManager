@@ -594,6 +594,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         avatar,
                         profiles: [],
                         apiKey: safeUUID(),
+                        createdAt: Date.now(),
                         connections: [{
                               id: stremioConnectionId,
                               platform: 'stremio',
@@ -694,6 +695,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         avatar,
                         profiles: [],
                         apiKey: safeUUID(),
+                        createdAt: Date.now(),
                         connections: [{
                               id: stremioConnectionId,
                               platform: 'stremio',
@@ -753,6 +755,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         avatar,
                         profiles: [],
                         apiKey: safeUUID(),
+                        createdAt: Date.now(),
                   }
                   const accounts = [...get().accounts, account]
                   set({ accounts })

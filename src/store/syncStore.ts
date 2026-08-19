@@ -103,7 +103,7 @@ interface SyncState {
     register: (password: string, name?: string) => Promise<void>
     login: (id: string, password: string, isSilent?: boolean, bypassGuard?: boolean) => Promise<void>
     logout: () => void
-    syncToRemote: (isAuto?: boolean, isDebounced?: boolean) => Promise<boolean>
+    syncToRemote: (isAuto?: boolean, isDebounced?: boolean, forceFull?: boolean) => Promise<boolean>
     syncFromRemote: (isSilent?: boolean) => Promise<void>
     refreshFromCloud: () => Promise<void>
     forcePushState: () => Promise<void>
@@ -328,16 +328,13 @@ export const useSyncStore = create<SyncState>()(
                     })
 
                     if (res.status === 304) {
-                        set({ lastSyncedAt: new Date().toISOString(), isInitialSyncCompleted: true })
+                        set({ isInitialSyncCompleted: true })
                         setTimeout(() => {
                             import('@/lib/activity-server').then(m => {
                                 m.pushCredentialsToServer().catch(() => {})
                                 m.fetchAndMergeServerEvents().catch(() => {})
                             }).catch(() => {})
                         }, 2000)
-                        // ETag match only proves the BLOB is unchanged; canonical rows
-                        // (external pushes to connection-less Hubs) live outside it. Fold
-                        // on every login path, not just the 200 pull.
                         setTimeout(() => {
                             import('@/store/account/accountCanonical')
                                 .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
@@ -791,7 +788,7 @@ export const useSyncStore = create<SyncState>()(
                 toast({ title: "Logged Out", description: "See you next time." })
             },
 
-            syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false): Promise<boolean> => {
+            syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false, forceFull: boolean = false): Promise<boolean> => {
                 const { auth, serverUrl, isSyncing, isInitialSyncCompleted } = get()
                 const { isLocked } = useAuthStore.getState()
                 if (!auth.isAuthenticated || isSyncing || isLocked) return false
@@ -936,7 +933,7 @@ export const useSyncStore = create<SyncState>()(
 
                     forceCanonicalRepublish = consumeForceFlag()
                     const stateHash = await computeHash(stringifiedState)
-                    if (!forceCanonicalRepublish && _lastPushedHash !== null && stateHash === _lastPushedHash) {
+                    if (!forceCanonicalRepublish && !forceFull && _lastPushedHash !== null && stateHash === _lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
                             get().addLogEntry({ type: 'push', status: 'success', message: 'No local changes to push - checking cloud.', isAuto: false })
@@ -975,10 +972,6 @@ export const useSyncStore = create<SyncState>()(
                     const canonicalPayload = useAccountStore.getState().accounts.reduce<Record<string, AddonDescriptor[]>>((map, a) => {
                         if (!serverHasStremioCredential(a.id, knownServerAccounts, !!getStremioAuthKey(a))) {
                             map[a.id] = a.addons || []
-                            // A folded Hub now pushing empty is a deliberate removal — flag it
-                            // so the server's shrink guard lets the empty list through. The
-                            // marker is only read here; it clears on confirmed push success so
-                            // a failed push retries with the flag still set.
                             if (map[a.id].length === 0 && isFoldedHub(a.id)) emptiedHubs.push(a.id)
                         }
                         return map
@@ -999,7 +992,7 @@ export const useSyncStore = create<SyncState>()(
                             // Hash of the logical state (pre-syncedAt); lets the server skip the
                             // archive/rewrite/apiKeys churn when the content is byte-identical
                             // to what it already holds, since the envelope hash is IV-random.
-                            contentHint: forceCanonicalRepublish ? undefined : stateHash,
+                            contentHint: (forceCanonicalRepublish || forceFull) ? undefined : stateHash,
                             apiKeys: useAccountStore.getState().accounts.reduce<Record<string, string>>((map, a) => {
                                 if (a.apiKey) map[a.id] = a.apiKey
                                 return map
@@ -1037,6 +1030,7 @@ export const useSyncStore = create<SyncState>()(
 
                     _lastPushedHash = stateHash
                     _lastSyncedAccountCount = accountCount
+                    import('@/store/account/accountImportExport').then(({ setLastPushedAt }) => setLastPushedAt(Date.now())).catch(() => {})
                     if (typeof resData.contentHash === 'string') {
                         set({ lastSyncedCloudEtag: resData.contentHash })
                     }
@@ -1102,16 +1096,14 @@ export const useSyncStore = create<SyncState>()(
                 const { auth } = get()
                 if (!auth.isAuthenticated) return
 
-                set({ lastActionTimestamp: Date.now() + 10000 })
-
                     ; get().addLogEntry({
                         type: 'force-push',
                         status: 'success',
-                        message: 'Force push initiated (timestamp inflated)',
+                        message: 'Force push initiated',
                         isAuto: false
                     })
 
-                await get().syncToRemote(false)
+                await get().syncToRemote(false, false, true)
             },
 
             forceMirrorState: async () => {

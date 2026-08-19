@@ -28,6 +28,12 @@ import type { AccountStore } from '../accountStore'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
+let _lastPushedAt: number | null = null
+
+export function setLastPushedAt(ts: number | null) {
+    _lastPushedAt = ts
+}
+
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
@@ -133,6 +139,7 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
             })),
             primaryConnectionId: acc.primaryConnectionId,
             apiKey: includeCredentialsValue ? acc.apiKey : undefined,
+            createdAt: acc.createdAt,
             hideLastWatched: acc.hideLastWatched,
             hideAddonPreview: acc.hideAddonPreview,
             hidePlatformLogos: acc.hidePlatformLogos,
@@ -437,6 +444,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 hideAddonPreview: acc.hideAddonPreview as boolean | undefined,
                 hidePlatformLogos: acc.hidePlatformLogos as boolean | undefined,
                 apiKey: acc.apiKey as string | undefined,
+                createdAt: acc.createdAt as number | undefined,
                 lastSync: new Date(),
                 status: 'active' as const,
             }
@@ -609,9 +617,19 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                         .map(migrateLocalAccountSecrets)
                 )
 
+        const lastPushMs = _lastPushedAt
+        const freshLocalAccounts = mode === 'mirror'
+            ? currentAccounts.filter(a =>
+                !processedLocalIds.has(a.id) &&
+                a.createdAt !== undefined &&
+                (lastPushMs === null || a.createdAt > lastPushMs))
+            : []
+
         let finalAccounts: typeof currentAccounts
         if (mode === 'mirror') {
-            finalAccounts = reconciledAccounts
+            finalAccounts = freshLocalAccounts.length > 0
+                ? [...reconciledAccounts, ...freshLocalAccounts]
+                : reconciledAccounts
         } else {
             const reconciledById = new Map(reconciledAccounts.map(a => [a.id, a]))
             const localById = new Map(localOnlyAccounts.map(a => [a.id, a]))
@@ -633,6 +651,10 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 if (!seenIds.has(acc.id)) { ordered.push(acc); seenIds.add(acc.id) }
             }
             finalAccounts = ordered
+        }
+
+        if (freshLocalAccounts.length > 0) {
+            console.warn(`[Import] Mirror merge spared ${freshLocalAccounts.length} account(s) created after the last confirmed push (never synced, so the cloud cannot have seen them): ${freshLocalAccounts.map(a => `${a.name} (${a.id})`).join(', ')}`)
         }
 
         if (currentAccounts.length > 0 && finalAccounts.length < currentAccounts.length) {

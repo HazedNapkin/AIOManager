@@ -30,13 +30,6 @@ async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
     const existingKeyAccounts = new Set(
         (await tx.query('SELECT DISTINCT account_id FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.account_id),
     )
-    // Wipe-without-insert guard: DELETE-all + reinsert from the pushed map means a
-    // client whose store lost an account's apiKey (stale pull overwriting a regen,
-    // import, rehydration race) silently unregisters a working key — both old and
-    // new keys then 401 forever. If the account is still in the pushed blob but
-    // its key vanished from the map, retain the stored key: nothing in the UI
-    // ever removes a key (regen REPLACES it in the same push), so a missing key
-    // for a present account is always client-side divergence, never intent.
     if (pushedAccounts) {
         const presentIds = new Set(pushedAccounts.map(a => a && a.id).filter(Boolean))
         const retained = [...existingKeyAccounts].filter(accId => presentIds.has(accId) && !(accId in apiKeys))
@@ -69,9 +62,6 @@ async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
         if (chunk.length === 0) continue
         const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
         const params = chunk.flat()
-        // Plain INSERT: the DELETE above clears cross-push rows and the
-        // batch is deduped in-memory, so no conflict clause is needed — the
-        // upsert must not hard-depend on idx_api_keys_user_hash existing.
         const sql = `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
         await tx.run(sql, params)
     }
@@ -232,10 +222,6 @@ export function registerSyncRoutes(fastify) {
 
         const serverStremioCredentialedAccounts = await listStremioCredentialedAccountIds(id)
 
-        // Key-set delta vs stored hashes: the hint/hash skip paths must not starve key
-        // registration — a key generated after the blob's last state change never lands
-        // otherwise (fresh accounts 401 forever). Delta-gated so unchanged pushes skip
-        // with zero churn.
         const pushedKeyHashes = new Set()
         if (data.apiKeys && typeof data.apiKeys === 'object') {
             for (const apiKey of Object.values(data.apiKeys)) {

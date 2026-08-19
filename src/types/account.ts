@@ -37,6 +37,7 @@ export interface Account {
   connections?: Connection[]
   primaryConnectionId?: string
   apiKey?: string
+  createdAt?: number
   // Normalized transportUrl -> deletedAt(ms). Stops a deleted addon from being resurrected by
   // an inbound Stremio/cloud sync. See lib/addon-tombstones.ts.
   deletedAddons?: Record<string, number>

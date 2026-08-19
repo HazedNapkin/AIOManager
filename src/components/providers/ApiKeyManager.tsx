@@ -37,8 +37,6 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
         )
         useAccountStore.setState({ accounts: updated })
         persistAccounts(updated)
-        // persistAccounts is local-only; without a triggered push the server keeps
-        // registering the OLD key's hash and the new key 401s until an unrelated edit.
         triggerSync()
         setConfirmRegenerate(false)
         toast({ title: 'API key regenerated', description: 'Update any services using the old key.' })
