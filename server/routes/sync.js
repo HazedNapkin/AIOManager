@@ -26,6 +26,57 @@ function buildMultiRowPlaceholders(numRows, numCols) {
 
 const KV_HISTORY_KEEP = 3
 
+async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
+    const existingKeyAccounts = new Set(
+        (await tx.query('SELECT DISTINCT account_id FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.account_id),
+    )
+    // Wipe-without-insert guard: DELETE-all + reinsert from the pushed map means a
+    // client whose store lost an account's apiKey (stale pull overwriting a regen,
+    // import, rehydration race) silently unregisters a working key — both old and
+    // new keys then 401 forever. If the account is still in the pushed blob but
+    // its key vanished from the map, retain the stored key: nothing in the UI
+    // ever removes a key (regen REPLACES it in the same push), so a missing key
+    // for a present account is always client-side divergence, never intent.
+    if (pushedAccounts) {
+        const presentIds = new Set(pushedAccounts.map(a => a && a.id).filter(Boolean))
+        const retained = [...existingKeyAccounts].filter(accId => presentIds.has(accId) && !(accId in apiKeys))
+        if (retained.length > 0) {
+            const retainedParams = [id, ...retained]
+            await tx.run(
+                `DELETE FROM account_api_keys WHERE sync_user = $1 AND account_id NOT IN (${retained.map((_, i) => `$${i + 2}`).join(',')})`,
+                retainedParams,
+            )
+        } else {
+            await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+        }
+    } else {
+        await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+    }
+    const apiKeyRows = []
+    const seenHashes = new Map()
+    for (const [accountId, apiKey] of Object.entries(apiKeys)) {
+        if (typeof apiKey !== 'string' || !apiKey) continue
+        const h = hashApiKey(apiKey)
+        const existing = seenHashes.get(h)
+        if (existing !== undefined) apiKeyRows[existing] = null
+        seenHashes.set(h, apiKeyRows.length)
+        apiKeyRows.push([accountId, id, h, Date.now()])
+    }
+    const dedupedRows = apiKeyRows.filter(Boolean)
+    const API_KEY_CHUNK = 100
+    for (let i = 0; i < dedupedRows.length; i += API_KEY_CHUNK) {
+        const chunk = dedupedRows.slice(i, i + API_KEY_CHUNK)
+        if (chunk.length === 0) continue
+        const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
+        const params = chunk.flat()
+        // Plain INSERT: the DELETE above clears cross-push rows and the
+        // batch is deduped in-memory, so no conflict clause is needed — the
+        // upsert must not hard-depend on idx_api_keys_user_hash existing.
+        const sql = `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
+        await tx.run(sql, params)
+    }
+}
+
 async function archiveCurrentKV(tx, key, authUser) {
     try {
         const now = Date.now()
@@ -181,6 +232,25 @@ export function registerSyncRoutes(fastify) {
 
         const serverStremioCredentialedAccounts = await listStremioCredentialedAccountIds(id)
 
+        // Key-set delta vs stored hashes: the hint/hash skip paths must not starve key
+        // registration — a key generated after the blob's last state change never lands
+        // otherwise (fresh accounts 401 forever). Delta-gated so unchanged pushes skip
+        // with zero churn.
+        const pushedKeyHashes = new Set()
+        if (data.apiKeys && typeof data.apiKeys === 'object') {
+            for (const apiKey of Object.values(data.apiKeys)) {
+                if (typeof apiKey === 'string' && apiKey) pushedKeyHashes.add(hashApiKey(apiKey))
+            }
+        }
+        const storedKeyHashes = new Set(
+            (await db.query('SELECT api_key_hash FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.api_key_hash),
+        )
+        let keysChanged = false
+        for (const h of pushedKeyHashes) { if (!storedKeyHashes.has(h)) { keysChanged = true; break } }
+        if (!keysChanged) {
+            for (const h of storedKeyHashes) { if (!pushedKeyHashes.has(h)) { keysChanged = true; break } }
+        }
+
         return await db.tx(async (tx) => {
             const row = await tx.get(
                 db.type === 'postgres'
@@ -202,19 +272,22 @@ export function registerSyncRoutes(fastify) {
                 }
 
                 if (clientHint && row.content_hint === clientHint) {
-                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hint-match', timing: Date.now() - postStart })
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hint-match', keysChanged, timing: Date.now() - postStart })
+                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
                     return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 if (row.content_hash === contentHash) {
-                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', timing: Date.now() - postStart })
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', keysChanged, timing: Date.now() - postStart })
+                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
                     return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 const serverUpdated = row.updated_at || 0
                 if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
-                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', timing: Date.now() - postStart })
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', keysChanged, timing: Date.now() - postStart })
+                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
                     return { success: true, conflict: true, syncedAt: serverTime, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
                 }
 
@@ -242,56 +315,7 @@ export function registerSyncRoutes(fastify) {
 
             const apiKeys = data.apiKeys
             if (apiKeys && typeof apiKeys === 'object') {
-                const existingKeyAccounts = new Set(
-                    (await tx.query('SELECT DISTINCT account_id FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.account_id),
-                )
-                // Wipe-without-insert guard: DELETE-all + reinsert from the pushed map means a
-                // client whose store lost an account's apiKey (stale pull overwriting a regen,
-                // import, rehydration race) silently unregisters a working key — both old and
-                // new keys then 401 forever. If the account is still in the pushed blob but
-                // its key vanished from the map, retain the stored key: nothing in the UI
-                // ever removes a key (regen REPLACES it in the same push), so a missing key
-                // for a present account is always client-side divergence, never intent.
-                const pushedAccounts = Array.isArray(data.accounts) ? data.accounts : null
-                if (pushedAccounts) {
-                    const presentIds = new Set(pushedAccounts.map(a => a && a.id).filter(Boolean))
-                    const retained = [...existingKeyAccounts].filter(accId => presentIds.has(accId) && !(accId in apiKeys))
-                    if (retained.length > 0) {
-                        fastify.log.warn({ category: 'Sync' }, `API-key wipe guard: retained stored key(s) for ${retained.length} account(s) still present but keyless in the push (${retained.join(', ').slice(0, 200)}).`)
-                        const retainedParams = [id, ...retained]
-                        await tx.run(
-                            `DELETE FROM account_api_keys WHERE sync_user = $1 AND account_id NOT IN (${retained.map((_, i) => `$${i + 2}`).join(',')})`,
-                            retainedParams,
-                        )
-                    } else {
-                        await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
-                    }
-                } else {
-                    await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
-                }
-                const apiKeyRows = []
-                const seenHashes = new Map()
-                for (const [accountId, apiKey] of Object.entries(apiKeys)) {
-                    if (typeof apiKey !== 'string' || !apiKey) continue
-                    const h = hashApiKey(apiKey)
-                    const existing = seenHashes.get(h)
-                    if (existing !== undefined) apiKeyRows[existing] = null
-                    seenHashes.set(h, apiKeyRows.length)
-                    apiKeyRows.push([accountId, id, h, Date.now()])
-                }
-                const dedupedRows = apiKeyRows.filter(Boolean)
-                const API_KEY_CHUNK = 100
-                for (let i = 0; i < dedupedRows.length; i += API_KEY_CHUNK) {
-                    const chunk = dedupedRows.slice(i, i + API_KEY_CHUNK)
-                    if (chunk.length === 0) continue
-                    const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
-                    const params = chunk.flat()
-                    // Plain INSERT: the DELETE above clears cross-push rows and the
-                    // batch is deduped in-memory, so no conflict clause is needed — the
-                    // upsert must not hard-depend on idx_api_keys_user_hash existing.
-                    const sql = `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
-                    await tx.run(sql, params)
-                }
+                await registerApiKeys(tx, id, apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
             }
 
             // Server-readable canonical addon lists: the Hydra inbound source for Hubs the
