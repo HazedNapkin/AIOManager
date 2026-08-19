@@ -52,6 +52,7 @@ export async function createHydraClient(config) {
                 if (!n) return null
                 return {
                     transportUrl: n.transportUrl,
+                    id: n.manifest.id,
                     name: n.manifest.name,
                     version: n.manifest.version,
                     logo: n.manifest.logo,

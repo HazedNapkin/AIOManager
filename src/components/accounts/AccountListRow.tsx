@@ -13,15 +13,13 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
-import { AlertTriangle, ShieldCheck, ShieldAlert, ArrowUpCircle, Pencil, RefreshCw, ChevronRight, StickyNote, AlertCircle, MoreVertical, RotateCw, Trash, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
+import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRight, StickyNote, AlertCircle, MoreVertical, RotateCw, Trash, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useUIStore } from '@/store/uiStore'
-import { useSyncStore } from '@/store/syncStore'
-import { isSplitBrainAccount } from '@/lib/canonical-visibility'
 import { useToast } from '@/hooks/use-toast'
 
 interface AccountListRowProps {
@@ -96,8 +94,6 @@ export const AccountListRow = memo(function AccountListRow({
 
     const timeStr = getTimeAgo(new Date(account.lastSync))
     const isStale = (Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000
-    const serverStremioCredentialedAccounts = useSyncStore(s => s.serverStremioCredentialedAccounts)
-    const isSplitBrain = isSplitBrainAccount(account, !!getStremioAuthKey(account), serverStremioCredentialedAccounts)
     const hasAccentColor = account.accentColor && account.accentColor !== 'none'
     const accentColor = hasAccentColor ? account.accentColor! : null
 
@@ -166,13 +162,6 @@ export const AccountListRow = memo(function AccountListRow({
                         <Tooltip content="A session token was rejected. Re-authenticate this account to refresh it." side="top">
                             <span aria-label="Session expired" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
                                 <AlertCircle className="h-3 w-3" />
-                            </span>
-                        </Tooltip>
-                    )}
-                    {isSplitBrain && (
-                        <Tooltip content="This account has an API key and a client-side Stremio credential, but the server has no stored credential — external Hydra writes only reach the server store until an AIOManager client syncs." side="top">
-                            <span aria-label="Split-brain sync" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
-                                <ShieldAlert className="h-3 w-3" />
                             </span>
                         </Tooltip>
                     )}

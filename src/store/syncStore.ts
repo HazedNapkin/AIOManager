@@ -335,6 +335,15 @@ export const useSyncStore = create<SyncState>()(
                                 m.fetchAndMergeServerEvents().catch(() => {})
                             }).catch(() => {})
                         }, 2000)
+                        // ETag match only proves the BLOB is unchanged; canonical rows
+                        // (external pushes to connection-less Hubs) live outside it. Fold
+                        // on every login path, not just the 200 pull.
+                        setTimeout(() => {
+                            import('@/store/account/accountCanonical')
+                                .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
+                                .then(changed => { if (changed) get().syncToRemote(true).catch(() => {}) })
+                                .catch(() => {})
+                        }, 2500)
                         get().addLogEntry({
                             type: 'pull',
                             status: 'success',
@@ -961,8 +970,17 @@ export const useSyncStore = create<SyncState>()(
                     // in a server-side canonical island. Null = never learned: legacy
                     // assumption. Captured to become the merge base on a CONFIRMED push.
                     const knownServerAccounts = get().serverStremioCredentialedAccounts
+                    const { isFoldedHub, clearFoldedHub } = await import('@/lib/folded-hubs')
+                    const emptiedHubs: string[] = []
                     const canonicalPayload = useAccountStore.getState().accounts.reduce<Record<string, AddonDescriptor[]>>((map, a) => {
-                        if (!serverHasStremioCredential(a.id, knownServerAccounts, !!getStremioAuthKey(a))) map[a.id] = a.addons || []
+                        if (!serverHasStremioCredential(a.id, knownServerAccounts, !!getStremioAuthKey(a))) {
+                            map[a.id] = a.addons || []
+                            // A folded Hub now pushing empty is a deliberate removal — flag it
+                            // so the server's shrink guard lets the empty list through. The
+                            // marker is only read here; it clears on confirmed push success so
+                            // a failed push retries with the flag still set.
+                            if (map[a.id].length === 0 && isFoldedHub(a.id)) emptiedHubs.push(a.id)
+                        }
                         return map
                     }, {})
 
@@ -987,6 +1005,7 @@ export const useSyncStore = create<SyncState>()(
                                 return map
                             }, {}),
                             canonicalAddons: canonicalPayload,
+                            emptiedHubs,
                         })
                     })
 
@@ -1022,6 +1041,7 @@ export const useSyncStore = create<SyncState>()(
                         set({ lastSyncedCloudEtag: resData.contentHash })
                     }
                     adoptPushResponseCredentials(forceCanonicalRepublish, resData.serverStremioCredentialedAccounts)
+                    for (const hubId of emptiedHubs) clearFoldedHub(hubId)
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the

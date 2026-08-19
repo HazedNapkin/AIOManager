@@ -242,21 +242,54 @@ export function registerSyncRoutes(fastify) {
 
             const apiKeys = data.apiKeys
             if (apiKeys && typeof apiKeys === 'object') {
-                await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+                const existingKeyAccounts = new Set(
+                    (await tx.query('SELECT DISTINCT account_id FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.account_id),
+                )
+                // Wipe-without-insert guard: DELETE-all + reinsert from the pushed map means a
+                // client whose store lost an account's apiKey (stale pull overwriting a regen,
+                // import, rehydration race) silently unregisters a working key — both old and
+                // new keys then 401 forever. If the account is still in the pushed blob but
+                // its key vanished from the map, retain the stored key: nothing in the UI
+                // ever removes a key (regen REPLACES it in the same push), so a missing key
+                // for a present account is always client-side divergence, never intent.
+                const pushedAccounts = Array.isArray(data.accounts) ? data.accounts : null
+                if (pushedAccounts) {
+                    const presentIds = new Set(pushedAccounts.map(a => a && a.id).filter(Boolean))
+                    const retained = [...existingKeyAccounts].filter(accId => presentIds.has(accId) && !(accId in apiKeys))
+                    if (retained.length > 0) {
+                        fastify.log.warn({ category: 'Sync' }, `API-key wipe guard: retained stored key(s) for ${retained.length} account(s) still present but keyless in the push (${retained.join(', ').slice(0, 200)}).`)
+                        const retainedParams = [id, ...retained]
+                        await tx.run(
+                            `DELETE FROM account_api_keys WHERE sync_user = $1 AND account_id NOT IN (${retained.map((_, i) => `$${i + 2}`).join(',')})`,
+                            retainedParams,
+                        )
+                    } else {
+                        await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+                    }
+                } else {
+                    await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])
+                }
                 const apiKeyRows = []
+                const seenHashes = new Map()
                 for (const [accountId, apiKey] of Object.entries(apiKeys)) {
                     if (typeof apiKey !== 'string' || !apiKey) continue
-                    apiKeyRows.push([accountId, id, hashApiKey(apiKey), Date.now()])
+                    const h = hashApiKey(apiKey)
+                    const existing = seenHashes.get(h)
+                    if (existing !== undefined) apiKeyRows[existing] = null
+                    seenHashes.set(h, apiKeyRows.length)
+                    apiKeyRows.push([accountId, id, h, Date.now()])
                 }
+                const dedupedRows = apiKeyRows.filter(Boolean)
                 const API_KEY_CHUNK = 100
-                for (let i = 0; i < apiKeyRows.length; i += API_KEY_CHUNK) {
-                    const chunk = apiKeyRows.slice(i, i + API_KEY_CHUNK)
+                for (let i = 0; i < dedupedRows.length; i += API_KEY_CHUNK) {
+                    const chunk = dedupedRows.slice(i, i + API_KEY_CHUNK)
                     if (chunk.length === 0) continue
                     const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
                     const params = chunk.flat()
-                    const sql = db.type === 'postgres'
-                        ? `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders} ON CONFLICT (sync_user, api_key_hash) DO UPDATE SET account_id = EXCLUDED.account_id, created_at = EXCLUDED.created_at`
-                        : `INSERT OR REPLACE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
+                    // Plain INSERT: the DELETE above clears cross-push rows and the
+                    // batch is deduped in-memory, so no conflict clause is needed — the
+                    // upsert must not hard-depend on idx_api_keys_user_hash existing.
+                    const sql = `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
                     await tx.run(sql, params)
                 }
             }
@@ -268,11 +301,45 @@ export function registerSyncRoutes(fastify) {
             const canonicalWrites = []
             if (canonicalAddons && typeof canonicalAddons === 'object') {
                 const now = Date.now()
+                const emptyCanonicalIds = new Set()
                 const canonicalRows = []
                 for (const [accountId, addons] of Object.entries(canonicalAddons)) {
                     if (!accountId || !Array.isArray(addons)) continue
                     canonicalRows.push([accountId, id, now])
+                    if (addons.length === 0) emptyCanonicalIds.add(accountId)
                     canonicalWrites.push([accountId, addons])
+                }
+                // Shrink guard (mirror of the client fold's inbound-deletes-don't-shrink):
+                // a client that never folded an external push has local=[] for an account
+                // whose server store is populated; pushing that empty list would destroy
+                // the external write. An empty incoming list never overwrites a non-empty
+                // store UNLESS the client flags the hub in emptiedHubs — the fold marks a
+                // hub once it merges external content in, so a later empty push from a
+                // marked hub is a deliberate full removal, not a fold-starved client.
+                const emptiedHubs = Array.isArray(data.emptiedHubs)
+                    ? new Set(data.emptiedHubs.filter(h => typeof h === 'string'))
+                    : new Set()
+                if (emptyCanonicalIds.size > 0) {
+                    for (const accountId of emptyCanonicalIds) {
+                        if (emptiedHubs.has(accountId)) continue
+                        const row = await tx.get(
+                            'SELECT addon_list FROM account_canonical_addons WHERE account_id = $1 AND sync_user = $2',
+                            [accountId, id],
+                        )
+                        if (row?.addon_list) {
+                            const decrypted = decrypt(row.addon_list, FALLBACK_KEYS)
+                            if (decrypted) {
+                                try {
+                                    const parsed = JSON.parse(decrypted)
+                                    if (Array.isArray(parsed) && parsed.length > 0) {
+                                        const idx = canonicalWrites.findIndex(([aid]) => aid === accountId)
+                                        if (idx >= 0) canonicalWrites.splice(idx, 1)
+                                        fastify.log.warn({ category: 'Sync' }, `Canonical shrink guard: kept ${parsed.length} stored addon(s) for account ${accountId} (push carried an empty list — likely unfolded external write).`)
+                                    }
+                                } catch {}
+                            }
+                        }
+                    }
                 }
                 const CANONICAL_CHUNK = 100
                 for (let i = 0; i < canonicalRows.length; i += CANONICAL_CHUNK) {

@@ -4,9 +4,12 @@ import { CopyButton } from '@/components/ui/copy-button'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { StatusChip } from '@/components/ui/status-chip'
 import { Account } from '@/types/account'
-import { useAccountStore, persistAccounts } from '@/store/accountStore'
+import { useAccountStore, persistAccounts, getStremioAuthKey } from '@/store/accountStore'
+import { useSyncStore } from '@/store/syncStore'
+import { isSplitBrainAccount } from '@/lib/canonical-visibility'
+import { triggerSync } from '@/lib/sync-trigger'
 import { toast } from '@/hooks/use-toast'
-import { useState, memo } from 'react'
+import { useState, memo, useEffect } from 'react'
 import { Key, RefreshCw, Eye, EyeOff } from 'lucide-react'
 
 interface ApiKeyManagerProps {
@@ -17,6 +20,14 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
     const [showKey, setShowKey] = useState(false)
     const [confirmRegenerate, setConfirmRegenerate] = useState(false)
     const apiKey = account.apiKey
+    const serverStremioCredentialedAccounts = useSyncStore(s => s.serverStremioCredentialedAccounts)
+    const isSplitBrain = isSplitBrainAccount(account, !!getStremioAuthKey(account), serverStremioCredentialedAccounts)
+
+    useEffect(() => {
+        if (isSplitBrain) {
+            console.warn(`[ApiKeyManager] Account ${account.id} is split-brain: API key active but no server-side Stremio credential — external Hydra writes only reach the server store until an AIOManager client syncs.`)
+        }
+    }, [isSplitBrain, account.id])
 
     const handleRegenerateKey = () => {
         const newKey = crypto.randomUUID()
@@ -26,6 +37,9 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
         )
         useAccountStore.setState({ accounts: updated })
         persistAccounts(updated)
+        // persistAccounts is local-only; without a triggered push the server keeps
+        // registering the OLD key's hash and the new key 401s until an unrelated edit.
+        triggerSync()
         setConfirmRegenerate(false)
         toast({ title: 'API key regenerated', description: 'Update any services using the old key.' })
     }

@@ -3,6 +3,7 @@ import { getCanonicalBase } from '@/lib/canonical-base'
 import { fetchCanonical } from '@/api/hydra-providers'
 import { serverHasStremioCredential } from '@/lib/canonical-visibility'
 import { learnServerCredentialedAccounts } from '../syncStore'
+import { markFoldedHub } from '@/lib/folded-hubs'
 import {
     getAccountById,
     getStremioAuthKey,
@@ -65,6 +66,7 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
             const local = (current.addons || []) as unknown as CanonicalAddon[]
             const { addons: merged, changed } = threeWayMergeCanonical(base, local, remoteAddons)
             if (!changed) continue
+            if (merged.length > 0 && local.length === 0) markFoldedHub(account.id)
             const updated = { ...current, addons: merged as unknown as AddonDescriptor[], lastSync: new Date() }
             const next = store.getState().accounts.map(a => (a.id === account.id ? updated : a))
             store.setState({ accounts: next })

@@ -607,7 +607,16 @@ export async function initializeDatabase(fastify) {
 
             try { await db.run(`ALTER TABLE failover_history ADD COLUMN IF NOT EXISTS latency_ms INTEGER`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
-            try { await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`) } catch (e) { fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}. Duplicate rows may exist.`) }
+            try {
+                const pruned = await db.run(`DELETE FROM account_api_keys a USING account_api_keys b WHERE a.sync_user = b.sync_user AND a.api_key_hash = b.api_key_hash AND a.ctid < b.ctid`)
+                if (pruned?.changes > 0) fastify.log.warn({ category: 'Database' }, `account_api_keys: removed ${pruned.changes} duplicate row(s) before creating the unique index.`)
+                await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
+            } catch (e) {
+                // The API-key push path hard-depends on this table's integrity; a silent
+                // failure here means keys silently stop registering. Fail the boot.
+                fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}`)
+                throw e
+            }
 
             fastify.log.info({ category: 'Database' }, 'Postgres Migration: Verified columns and types for encryption support.')
         } else {
@@ -714,8 +723,13 @@ export async function initializeDatabase(fastify) {
                 await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_connection ON autopilot_rules (connection_id)`)
             } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try {
+                const pruned = await db.run(`DELETE FROM account_api_keys WHERE rowid NOT IN (SELECT MAX(rowid) FROM account_api_keys GROUP BY sync_user, api_key_hash)`)
+                if (pruned?.changes > 0) fastify.log.warn({ category: 'Database' }, `account_api_keys: removed ${pruned.changes} duplicate row(s) before creating the unique index.`)
                 await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
-            } catch (e) { fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}. Duplicate rows may exist.`) }
+            } catch (e) {
+                fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}`)
+                throw e
+            }
         }
 
         // Backfill any rules that lack a stats row. Idempotent and cheap when fully populated.
