@@ -39,7 +39,15 @@ export function registerProviderRoutes(fastify, reconciler) {
         }
 
         try {
-            const resolvedConnections = connections || await reconciler.resolveConnections(accountId, authUser)
+            // An empty array is truthy, so the old `connections || resolve` took a
+            // client-sent [] at face value and silently no-opped even when the server
+            // holds valid credentials (e.g. the client lost the connection object in a
+            // re-login). Resolve from server_credentials whenever the client sends
+            // nothing usable; reconcile-trigger semantics never mean "push to nobody".
+            const clientConnections = Array.isArray(connections) ? connections.filter(c => c && c.id) : null
+            const resolvedConnections = (clientConnections && clientConnections.length > 0)
+                ? clientConnections
+                : await reconciler.resolveConnections(accountId, authUser)
 
             if (!resolvedConnections || resolvedConnections.length === 0) {
                 return { synced: true, changes: [], connectionStates: {} }

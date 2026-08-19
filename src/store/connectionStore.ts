@@ -240,7 +240,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
         try {
             const { useAccountStore } = await import('./accountStore')
-            await useAccountStore.getState().syncAccount(accountId)
+            await useAccountStore.getState().syncAccount(accountId, true)
             await get().refreshConnectionStates(accountId)
             const { useSyncStore } = await import('./syncStore')
             useSyncStore.setState({ lastSyncedAt: new Date().toISOString() })
