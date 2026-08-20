@@ -199,6 +199,7 @@ export function Header() {
   const isSyncing = useSyncStore(s => s.isSyncing)
   const isRefreshingFromCloud = useSyncStore(s => s.isRefreshingFromCloud)
   const lastSyncedAt = useSyncStore(s => s.lastSyncedAt)
+  const lastSyncCheckedAt = useSyncStore(s => s.lastSyncCheckedAt)
   const syncHistory = useSyncStore(s => s.history)
   const syncToRemote = useSyncStore(s => s.syncToRemote)
   const rules = useFailoverStore(s => s.rules)
@@ -225,9 +226,10 @@ export function Header() {
   const addonCount = useMemo(() => Object.keys(library).length, [library])
 
   const syncTimeAgo = useMemo(() => {
-    if (!lastSyncedAt) return ''
-    return formatDistanceToNow(new Date(lastSyncedAt), { addSuffix: true })
-  }, [lastSyncedAt])
+    const display = lastSyncCheckedAt || lastSyncedAt
+    if (!display) return ''
+    return formatDistanceToNow(new Date(display), { addSuffix: true })
+  }, [lastSyncCheckedAt, lastSyncedAt])
 
   const recentSyncError = useMemo(() => {
     const lastError = syncHistory.find(h => h.status === 'error')
@@ -236,13 +238,14 @@ export function Header() {
 
   const syncDotColor = useMemo(() => {
     const isOnline = auth.isAuthenticated
-    if (!isOnline || (!isSyncing && !isRefreshingFromCloud && !lastSyncedAt)) return 'bg-red-500'
+    if (!isOnline || (!isSyncing && !isRefreshingFromCloud && !lastSyncCheckedAt && !lastSyncedAt)) return 'bg-red-500'
     if (isSyncing || isRefreshingFromCloud) return 'bg-yellow-500 animate-pulse'
     if (recentSyncError) return 'bg-red-500'
-    const lastSync = lastSyncedAt ? new Date(lastSyncedAt).getTime() : 0
+    const lastCheck = lastSyncCheckedAt || lastSyncedAt
+    const lastSync = lastCheck ? new Date(lastCheck).getTime() : 0
     if (Date.now() - lastSync > 5 * 60 * 1000) return 'bg-yellow-500'
     return 'bg-green-500'
-  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, recentSyncError])
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncCheckedAt, lastSyncedAt, recentSyncError])
 
   const [syncLabel, setSyncLabel] = useState('')
   useEffect(() => {
@@ -250,13 +253,13 @@ export function Header() {
       if (!auth.isAuthenticated) { setSyncLabel('Offline'); return }
       if (isSyncing) { setSyncLabel('Syncing'); return }
       if (isRefreshingFromCloud) { setSyncLabel('Refreshing'); return }
-      if (lastSyncedAt) { setSyncLabel(syncTimeAgo); return }
+      if (lastSyncCheckedAt || lastSyncedAt) { setSyncLabel(syncTimeAgo); return }
       setSyncLabel('Offline')
     }
     update()
     const interval = setInterval(update, 60000)
     return () => clearInterval(interval)
-  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncedAt, syncTimeAgo])
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncCheckedAt, lastSyncedAt, syncTimeAgo])
 
   const formatExpDate = useCallback((isoDate: string | null | undefined) => {
     if (!isoDate) return null

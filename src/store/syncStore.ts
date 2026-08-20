@@ -89,6 +89,7 @@ interface SyncState {
     }
     serverUrl: string
     lastSyncedAt: string | null
+    lastSyncCheckedAt: string | null
     isSyncing: boolean
     isRefreshingFromCloud: boolean  // true only during the post-unlock pull - separate from write syncs
     isInitialSyncCompleted: boolean // Safety flag to prevent stale devices from pushing before they've pulled
@@ -149,6 +150,7 @@ export const useSyncStore = create<SyncState>()(
             },
             serverUrl: '',
             lastSyncedAt: null,
+            lastSyncCheckedAt: null,
             isSyncing: false,
             isRefreshingFromCloud: false,
             isInitialSyncCompleted: false,
@@ -328,9 +330,13 @@ export const useSyncStore = create<SyncState>()(
                     })
 
                     if (res.status === 304) {
-                        set({ isInitialSyncCompleted: true })
+                        set({ isInitialSyncCompleted: true, lastSyncCheckedAt: new Date().toISOString() })
                         if (!useAccountStore.getState().hydrated) {
                             await useAccountStore.getState().initialize()
+                        }
+                        const { useWatchEventStore } = await import('@/store/watchEventStore')
+                        if (!useWatchEventStore.getState().initialized) {
+                            await useWatchEventStore.getState().load()
                         }
                         setTimeout(() => {
                             import('@/lib/activity-server').then(m => {
@@ -642,6 +648,7 @@ export const useSyncStore = create<SyncState>()(
                     set({
                         auth: { id, password, name: (syncData.name as string) || '', isAuthenticated: true },
                         lastSyncedAt: (syncData.syncedAt as string) || new Date().toISOString(),
+                        lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
                         isInitialSyncCompleted: true,
                         lastSyncedCloudEtag: responseEtag ?? null
@@ -776,6 +783,7 @@ export const useSyncStore = create<SyncState>()(
                 set({
                     auth: { id: '', password: '', name: '', isAuthenticated: false },
                     lastSyncedAt: null,
+                    lastSyncCheckedAt: null,
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
                     serverStremioCredentialedAccounts: null
@@ -813,14 +821,18 @@ export const useSyncStore = create<SyncState>()(
 
                 const { useWatchEventStore } = await import('@/store/watchEventStore')
                 if (!useWatchEventStore.getState().initialized) {
-                    if (isAuto) {
-                        if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for watch history hydration")
-                        return false
-                    }
-                    await get().refreshFromCloud()
+                    await useWatchEventStore.getState().load()
                     if (!useWatchEventStore.getState().initialized) {
-                        if (import.meta.env.DEV) console.log("[Sync] Push cancelled: watch history is not hydrated")
-                        return false
+                        if (isAuto) {
+                            if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for watch history hydration")
+                            return false
+                        }
+                        await get().refreshFromCloud()
+                        if (!useWatchEventStore.getState().initialized) {
+                            if (!isAuto) get().addLogEntry({ type: 'push', status: 'error', message: 'Push skipped: watch history could not be loaded.', isAuto: false })
+                            trace('sync', 'push.guard-reject', { accountId: auth.id, reason: 'watch-store-unhydrated' })
+                            return false
+                        }
                     }
                 }
 
@@ -1277,6 +1289,7 @@ export const useSyncStore = create<SyncState>()(
                     auth: { id: '', password: '', name: '', isAuthenticated: false },
                     serverUrl: '',
                     lastSyncedAt: null,
+                    lastSyncCheckedAt: null,
                     isSyncing: false,
                     isRefreshingFromCloud: false,
                     lastActionTimestamp: 0,
