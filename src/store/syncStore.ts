@@ -1094,16 +1094,27 @@ export const useSyncStore = create<SyncState>()(
 
             forcePushState: async () => {
                 const { auth } = get()
-                if (!auth.isAuthenticated) return
+                if (!auth.isAuthenticated) {
+                    get().addLogEntry({ type: 'force-push', status: 'error', message: 'Force push failed: not signed in.', isAuto: false })
+                    return
+                }
 
-                    ; get().addLogEntry({
-                        type: 'force-push',
-                        status: 'success',
-                        message: 'Force push initiated',
-                        isAuto: false
-                    })
+                const deadline = Date.now() + 20000
+                while (get().isSyncing && Date.now() < deadline) {
+                    await new Promise(r => setTimeout(r, 200))
+                }
+                if (get().isSyncing) {
+                    get().addLogEntry({ type: 'force-push', status: 'error', message: 'Force push cancelled: another sync stayed in progress for 20s.', isAuto: false })
+                    return
+                }
 
-                await get().syncToRemote(false, false, true)
+                const ok = await get().syncToRemote(false, false, true)
+                get().addLogEntry({
+                    type: 'force-push',
+                    status: ok ? 'success' : 'error',
+                    message: ok ? 'Force push completed.' : 'Force push failed — check the push error entry above for the reason.',
+                    isAuto: false
+                })
             },
 
             forceMirrorState: async () => {
