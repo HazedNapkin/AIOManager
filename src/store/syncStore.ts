@@ -329,6 +329,9 @@ export const useSyncStore = create<SyncState>()(
 
                     if (res.status === 304) {
                         set({ isInitialSyncCompleted: true })
+                        if (!useAccountStore.getState().hydrated) {
+                            await useAccountStore.getState().initialize()
+                        }
                         setTimeout(() => {
                             import('@/lib/activity-server').then(m => {
                                 m.pushCredentialsToServer().catch(() => {})
@@ -789,9 +792,19 @@ export const useSyncStore = create<SyncState>()(
             },
 
             syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false, forceFull: boolean = false): Promise<boolean> => {
+                if (!useAccountStore.getState().hydrated) {
+                    await useAccountStore.getState().initialize()
+                }
                 const { auth, serverUrl, isSyncing, isInitialSyncCompleted } = get()
                 const { isLocked } = useAuthStore.getState()
-                if (!auth.isAuthenticated || isSyncing || isLocked) return false
+                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated) {
+                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : 'account state not hydrated'
+                    if (!isAuto) {
+                        get().addLogEntry({ type: 'push', status: 'error', message: `Push skipped: ${reason}.`, isAuto: false })
+                        trace('sync', 'push.guard-reject', { accountId: auth.id, reason })
+                    }
+                    return false
+                }
 
                 if (!useAccountStore.getState().hydrated) {
                     if (import.meta.env.DEV) console.log("[Sync] Skipping push: account store not hydrated yet")
