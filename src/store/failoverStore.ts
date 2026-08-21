@@ -6,6 +6,7 @@ import localforage from 'localforage'
 import { useAccountStore, getCachedAuthKey, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { decrypt, encrypt, loadSessionKey } from '@/lib/crypto'
 import { normalizeAddonUrl } from '@/lib/utils'
+import { findScopedChecksAtRisk } from '@/lib/failover-scope'
 import { resilientFetch } from '@/lib/api-resilience'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/hooks/use-toast'
@@ -415,6 +416,68 @@ const getDeletedRuleIds = async (): Promise<string[]> => {
     } catch { return [] }
 }
 
+const SCOPE_BACKUP_KEY = 'aioman:failover-scope-backups'
+const SCOPE_DECISIONS_KEY = 'aioman:failover-scope-decisions'
+const SCOPE_BACKUP_MAX_RULES = 200
+
+export interface FailoverScopeBackup {
+    checks: CustomCheckEntry[]
+    savedAt: number
+}
+
+export const readScopeBackups = async (): Promise<Record<string, FailoverScopeBackup>> => {
+    try {
+        const raw = await localforage.getItem<Record<string, FailoverScopeBackup>>(SCOPE_BACKUP_KEY)
+        return raw && typeof raw === 'object' ? raw : {}
+    } catch { return {} }
+}
+
+const writeScopeBackup = async (ruleId: string, checks: CustomCheckEntry[]) => {
+    try {
+        const backups = await readScopeBackups()
+        const existing = backups[ruleId]
+        if (existing && checks.every(c => existing.checks.some(b => b.url === c.url))) return
+        const merged = existing
+            ? existing.checks.filter(c => !checks.some(n => n.url === c.url)).concat(checks)
+            : checks
+        const next: Record<string, FailoverScopeBackup> = { ...backups, [ruleId]: { checks: merged.slice(0, 5), savedAt: Date.now() } }
+        const ruleIds = Object.keys(next)
+        if (ruleIds.length > SCOPE_BACKUP_MAX_RULES) {
+            for (const id of ruleIds.slice(0, ruleIds.length - SCOPE_BACKUP_MAX_RULES)) delete next[id]
+        }
+        await localforage.setItem(SCOPE_BACKUP_KEY, next)
+    } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}
+
+export const clearScopeBackup = async (ruleId: string) => {
+    try {
+        const backups = await readScopeBackups()
+        if (backups[ruleId]) {
+            delete backups[ruleId]
+            await localforage.setItem(SCOPE_BACKUP_KEY, backups)
+        }
+    } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}
+
+export const readScopeDecisions = async (): Promise<string[]> => {
+    try {
+        return (await localforage.getItem<string[]>(SCOPE_DECISIONS_KEY)) || []
+    } catch { return [] }
+}
+
+export const recordScopeDecision = async (ruleId: string) => {
+    try {
+        const decided = await readScopeDecisions()
+        if (!decided.includes(ruleId)) await localforage.setItem(SCOPE_DECISIONS_KEY, [...decided, ruleId])
+    } catch (e) { if (import.meta.env.DEV) console.error(e) }
+}
+
+// Invariant: snapshot-only — the merge below must proceed unaltered (background syncs never block).
+const preserveScopedChecksAtRisk = (localRule: FailoverRule, incomingChecks: CustomCheckEntry[] | undefined) => {
+    const atRisk = findScopedChecksAtRisk(localRule.customCheckUrls, incomingChecks)
+    if (atRisk.length > 0) void writeScopeBackup(localRule.id, atRisk)
+}
+
 const parseAutopilotCycleStats = (value: unknown): AutopilotCycleStats | undefined => {
     if (!value || typeof value !== 'object') return undefined
     const v = value as Record<string, unknown>
@@ -638,6 +701,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
 
                         let mergedRule: FailoverRule
                         if (existsIndex !== -1) {
+                            preserveScopedChecksAtRisk(rules[existsIndex], processedRule.customCheckUrls)
                             mergedRule = { ...rules[existsIndex], ...processedRule }
                             rules[existsIndex] = mergedRule
                         } else {
@@ -1058,6 +1122,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 })
                 const existing = currentRules.find(r => r.id === migratedRule.id)
                 if (existing) {
+                    preserveScopedChecksAtRisk(existing, migratedRule.customCheckUrls)
                     finalRules.push({
                         ...existing,
                         ...migratedRule,
@@ -1101,6 +1166,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             })
             const index = currentRules.findIndex(r => r.id === migratedRule.id)
             if (index !== -1) {
+                preserveScopedChecksAtRisk(currentRules[index], migratedRule.customCheckUrls)
                 currentRules[index] = {
                     ...currentRules[index],
                     ...migratedRule,

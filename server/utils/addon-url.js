@@ -6,17 +6,22 @@
 
 /**
  * Normalizes an addon URL for consistent comparison and deduplication.
- * Handles stremio:// protocols, trailing slashes, manifest.json suffixes, and case normalization.
- * 
+ * Scheme-less input is treated as https, stremio:// maps to https://, http:// upgrades to
+ * https://, and manifest.json suffixes, trailing slashes, and query strings are stripped.
+ * The result is a comparison key — never construct a fetch URL from it.
+ *
  * @param {string} url - The addon URL to normalize
  * @returns {string} Normalized URL or empty string if input is falsy
  */
 export function normalizeAddonUrl(url) {
     if (!url) return ''
     let normalized = String(url).trim()
+    if (!/^(?:https?|stremio):\/\//i.test(normalized)) normalized = `https://${normalized}`
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
+    normalized = normalized.replace(/^http:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
+    normalized = normalized.replace(/\?.*$/, '')
     return normalized.toLowerCase()
 }
 

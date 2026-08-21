@@ -11,7 +11,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAccountStore } from "@/store/accountStore"
-import { useFailoverStore } from "@/store/failoverStore"
+import { useFailoverStore, readScopeBackups, readScopeDecisions, recordScopeDecision, clearScopeBackup } from "@/store/failoverStore"
+import type { FailoverScopeBackup } from "@/store/failoverStore"
 import type { AddonDescriptor } from "@/types/addon"
 import { SquircleOverlay } from "@/components/ui/squircle-overlay"
 import { AddonIcon } from "@/components/ui/addon-icon"
@@ -29,7 +30,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
-import { ArrowRight, ChevronDown, CircleDot, AlertTriangle, Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, GripVertical, MoreVertical, Shield, Star } from "lucide-react"
+import { ArrowRight, ChevronDown, CircleDot, AlertTriangle, Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, GripVertical, MoreVertical, Shield, Star, ArrowRightLeft } from "lucide-react"
 import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react"
 import {
     DndContext,
@@ -63,6 +64,8 @@ import { EmptyState } from "@/components/common/EmptyState"
 import { FailoverEmptyState } from "@/components/common/PageEmptyStates"
 import { RuleConfidenceLayer } from "@/components/accounts/RuleConfidenceLayer"
 import { normalizeAddonUrl } from "@/lib/utils"
+import { findClosestChainAddon, findStaleScopeEntries, getUrlHostname, isSameCheckUrl, restoreScopedChecks, validateCustomCheckScopes } from "@/lib/failover-scope"
+import type { ScopeValidationError } from "@/lib/failover-scope"
 
 async function testWebhook(
     url: string | undefined,
@@ -350,6 +353,11 @@ export function FailoverManager({
     const [urlTestResults, setUrlTestResults] = useState<Record<number, { status: 'ok' | 'fail' | 'checking'; code?: number; error?: string }>>({})
     const [expandedChecks, setExpandedChecks] = useState<Set<number>>(new Set())
     const [localActiveFailoverTab, setLocalActiveFailoverTab] = useState<FailoverView>("rules")
+    const [scopeError, setScopeError] = useState<ScopeValidationError | null>(null)
+    const [replacementPicker, setReplacementPicker] = useState<{ checkIndex: number; unmatchedUrl: string; closestUrl?: string } | null>(null)
+    const [scopeBackups, setScopeBackups] = useState<Record<string, FailoverScopeBackup>>({})
+    const [scopeDecidedRuleIds, setScopeDecidedRuleIds] = useState<string[]>([])
+    const checkRowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
     const activeFailoverTab = activeView ?? localActiveFailoverTab
     const handleFailoverTabChange = useCallback((value: string) => {
         const next = value as FailoverView
@@ -369,6 +377,8 @@ export function FailoverManager({
         setCustomChecks([])
         setUrlTestResults({})
         setExpandedChecks(new Set())
+        setScopeError(null)
+        setReplacementPicker(null)
         setEditingRuleId(null)
         setIsRuleDialogOpen(false)
     }
@@ -376,6 +386,18 @@ export function FailoverManager({
     useEffect(() => {
         setWebhookUrl(webhook.url)
     }, [webhook.url])
+
+    useEffect(() => {
+        if (!isRuleDialogOpen || !editingRuleId) return
+        let cancelled = false
+        void (async () => {
+            const [backups, decided] = await Promise.all([readScopeBackups(), readScopeDecisions()])
+            if (cancelled) return
+            setScopeBackups(backups)
+            setScopeDecidedRuleIds(decided)
+        })()
+        return () => { cancelled = true }
+    }, [isRuleDialogOpen, editingRuleId])
 
     const handleSaveWebhook = () => {
         if (webhook.url && webhookUrl && webhook.url !== webhookUrl) {
@@ -452,6 +474,15 @@ export function FailoverManager({
             .map(c => ({ url: c.url.trim(), appliesTo: c.appliesTo }))
             .filter(c => c.url.length > 0)
             .slice(0, 5)
+
+        const scopeIssue = validateCustomCheckScopes(filteredChain, filteredCustomChecks)
+        if (scopeIssue) {
+            setScopeError(scopeIssue)
+            setExpandedChecks(prev => new Set(prev).add(scopeIssue.checkIndex))
+            checkRowRefs.current.get(scopeIssue.checkIndex)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            return
+        }
+        setScopeError(null)
 
         if (editingRuleId) {
             const existingRule = rules.find(r => r.id === editingRuleId)
@@ -536,6 +567,57 @@ export function FailoverManager({
             else next.add(index)
             return next
         })
+    }
+
+    const chainUrls = chain.filter(url => !!url)
+    const staleUrlsByCheck = customChecks.map(c => findStaleScopeEntries(chainUrls, c.appliesTo))
+    const hasEmptyScopeCheck = customChecks.some(c => c.url.trim().length > 0 && c.appliesTo.length === 0)
+    const activeScopeBackup = editingRuleId ? scopeBackups[editingRuleId] : undefined
+    const restorableBackupChecks = activeScopeBackup?.checks.filter(b =>
+        b.appliesTo.length > 0 && customChecks.some(c => c.appliesTo.length === 0 && isSameCheckUrl(b.url, c.url))
+    ) || []
+    const showRestoreModal = !!editingRuleId && isRuleDialogOpen && restorableBackupChecks.length > 0 && !scopeDecidedRuleIds.includes(editingRuleId)
+    const showLegacyBanner = !!editingRuleId && isRuleDialogOpen && !activeScopeBackup && hasEmptyScopeCheck
+
+    const applyReplacement = (checkIndex: number, pickedUrl: string) => {
+        const staleUrl = replacementPicker?.unmatchedUrl
+        if (!staleUrl) return
+        setCustomChecks(prev => prev.map((c, i) => {
+            if (i !== checkIndex) return c
+            const withoutStale = c.appliesTo.filter(u => u !== staleUrl)
+            return { ...c, appliesTo: withoutStale.includes(pickedUrl) || withoutStale.length >= 10 ? withoutStale : [...withoutStale, pickedUrl] }
+        }))
+        setReplacementPicker(null)
+        setScopeError(null)
+    }
+
+    const focusFirstEmptyScopeCheck = () => {
+        const index = customChecks.findIndex(c => c.url.trim().length > 0 && c.appliesTo.length === 0)
+        if (index === -1) return
+        setExpandedChecks(prev => new Set(prev).add(index))
+        checkRowRefs.current.get(index)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+
+    const handleScopeDecision = async (choice: 'restore' | 'keep' | 'dismiss') => {
+        const ruleId = editingRuleId
+        if (!ruleId) return
+        if (choice === 'restore') {
+            const restored = restoreScopedChecks(customChecks, restorableBackupChecks)
+            setCustomChecks(restored)
+            const initialExpanded = new Set<number>()
+            restored.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
+            setExpandedChecks(initialExpanded)
+            await updateRule(ruleId, { customCheckUrls: restored })
+            await clearScopeBackup(ruleId)
+            setScopeBackups(prev => {
+                const next = { ...prev }
+                delete next[ruleId]
+                return next
+            })
+            toast({ title: 'Scope Restored', description: 'The original addon associations are back on this rule.' })
+        }
+        await recordScopeDecision(ruleId)
+        setScopeDecidedRuleIds(prev => prev.includes(ruleId) ? prev : [...prev, ruleId])
     }
     const testCustomCheckUrl = async (index: number) => {
         const url = customChecks[index]?.url.trim()
@@ -993,12 +1075,74 @@ export function FailoverManager({
                                     <p className="text-xs text-muted-foreground/60">Monitor a provider or service your addons depend on. If the URL goes down, all associated addons are skipped and the chain moves on. Associate a provider API URL with the addons that depend on it. Do NOT put your addon instance URLs here.</p>
                                 </div>
 
+                                {showLegacyBanner && (
+                                    <div className="rounded-xl border border-warning/25 bg-warning/[0.07] px-3 py-2.5 flex items-start gap-2.5">
+                                        <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+                                        <p className="text-xs leading-relaxed text-foreground/80 flex-1 pt-0.5">
+                                            Saved before a recent fix, this check's scope may have been widened to all addons. Review the addons it applies to.
+                                        </p>
+                                        <Button size="sm" variant="outline" className="h-7 px-3 text-xs shrink-0" onClick={focusFirstEmptyScopeCheck}>
+                                            Review
+                                        </Button>
+                                    </div>
+                                )}
+
+                                {scopeError && customChecks[scopeError.checkIndex]?.appliesTo.includes(scopeError.unmatchedUrl) && (() => {
+                                    const { checkIndex, unmatchedUrl, closestUrl } = scopeError
+                                    const checkHostname = getUrlHostname(customChecks[checkIndex].url)
+                                    const staleName = getAddonNameForUrl(unmatchedUrl)
+                                    const closestName = closestUrl ? getAddonNameForUrl(closestUrl) : undefined
+                                    return (
+                                        <div role="alert" className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 space-y-2.5">
+                                            <div className="flex items-start gap-2 text-destructive">
+                                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                                                <p className="text-sm leading-relaxed">
+                                                    Custom check for <span className="font-semibold">{checkHostname}</span> is scoped to '{staleName}', which isn't in this failover chain.
+                                                    {closestName && <span> Closest match: '{closestName}'.</span>}
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 pl-6">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-8"
+                                                    onClick={() => {
+                                                        toggleAddonForCheck(checkIndex, unmatchedUrl)
+                                                        setScopeError(null)
+                                                    }}
+                                                >
+                                                    Remove association
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-8"
+                                                    onClick={() => {
+                                                        setReplacementPicker({ checkIndex, unmatchedUrl, closestUrl })
+                                                        setExpandedChecks(prev => new Set(prev).add(checkIndex))
+                                                    }}
+                                                >
+                                                    Pick replacement
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )
+                                })()}
+
                                 {customChecks.map((check, index) => {
                                     const result = urlTestResults[index]
                                     const isExpanded = expandedChecks.has(index)
                                     const unassigned = getUnassignedAddons(index)
+                                    const staleUrls = staleUrlsByCheck[index] || []
                                     return (
-                                        <div key={index} className="rounded-xl border border-border/40 bg-muted/10 p-3 space-y-2">
+                                        <div
+                                            key={index}
+                                            ref={(el) => {
+                                                if (el) checkRowRefs.current.set(index, el)
+                                                else checkRowRefs.current.delete(index)
+                                            }}
+                                            className="rounded-xl border border-border/40 bg-muted/10 p-3 space-y-2"
+                                        >
                                             <div className="flex gap-2 items-center">
                                                 <Input
                                                     placeholder="https://api.torbox.app/v1/api/user/me"
@@ -1054,6 +1198,11 @@ export function FailoverManager({
                                                             ? `${check.appliesTo.length} addon${check.appliesTo.length !== 1 ? 's' : ''}`
                                                             : 'all'}
                                                     </span>
+                                                    {staleUrls.length > 0 && (
+                                                        <span className="normal-case font-mono text-[10px] text-warning">
+                                                            ({staleUrls.length} not in chain)
+                                                        </span>
+                                                    )}
                                                 </button>
                                                 {isExpanded && (
                                                     <div className="space-y-1.5">
@@ -1066,8 +1215,9 @@ export function FailoverManager({
                                                                 const addon = getAddonForUrl(addonUrl)
                                                                 const addonName = addon?.metadata?.customName || identifyAddon(addonUrl, addon?.manifest).name
                                                                 const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
+                                                                const isStale = staleUrls.includes(addonUrl)
                                                                 return (
-                                                                    <div key={addonUrl} className="bg-muted/30 rounded-xl px-3 py-2 flex items-center gap-2">
+                                                                    <div key={addonUrl} className={`rounded-xl px-3 py-2 flex items-center gap-2 ${isStale ? 'border border-warning/25 bg-warning/[0.08]' : 'bg-muted/30'}`}>
                                                                         <AddonIcon
                                                                             name={addonName}
                                                                             logo={addonLogo}
@@ -1076,18 +1226,103 @@ export function FailoverManager({
                                                                             imageClassName="p-0.5"
                                                                         />
                                                                         <span className="text-sm truncate flex-1">{addonName}</span>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
-                                                                            onClick={() => toggleAddonForCheck(index, addonUrl)}
-                                                                            aria-label="Remove addon"
-                                                                        >
-                                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                                        </button>
+                                                                        {isStale && (
+                                                                            <Tooltip content="Doesn't apply while this addon is out of the chain; reactivates automatically if it returns.">
+                                                                                <StatusChip variant="warning" size="sm" className="cursor-help shrink-0">
+                                                                                    Not in chain — inactive
+                                                                                </StatusChip>
+                                                                            </Tooltip>
+                                                                        )}
+                                                                        {isStale ? (
+                                                                            <>
+                                                                                <Tooltip content="Remove this dormant association">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
+                                                                                        onClick={() => toggleAddonForCheck(index, addonUrl)}
+                                                                                        aria-label="Remove association"
+                                                                                    >
+                                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                                    </button>
+                                                                                </Tooltip>
+                                                                                <Tooltip content="Replace with an addon from this chain">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        className="text-foreground/60 hover:text-foreground transition-colors shrink-0 px-1"
+                                                                                        onClick={() => setReplacementPicker({
+                                                                                            checkIndex: index,
+                                                                                            unmatchedUrl: addonUrl,
+                                                                                            closestUrl: findClosestChainAddon(addonUrl, chainUrls),
+                                                                                        })}
+                                                                                        aria-label="Replace association"
+                                                                                    >
+                                                                                        <ArrowRightLeft className="w-3.5 h-3.5" />
+                                                                                    </button>
+                                                                                </Tooltip>
+                                                                            </>
+                                                                        ) : (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
+                                                                                onClick={() => toggleAddonForCheck(index, addonUrl)}
+                                                                                aria-label="Remove addon"
+                                                                            >
+                                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                                            </button>
+                                                                        )}
                                                                     </div>
                                                                 )
                                                             })
                                                         )}
+                                                        {replacementPicker?.checkIndex === index && chainUrls.length > 0 && (() => {
+                                                            const staleName = getAddonNameForUrl(replacementPicker.unmatchedUrl)
+                                                            return (
+                                                                <div className="space-y-1">
+                                                                    <Select
+                                                                        key={`replace-${index}-${replacementPicker.unmatchedUrl}`}
+                                                                        defaultOpen
+                                                                        onValueChange={(val) => applyReplacement(index, val)}
+                                                                    >
+                                                                        <SelectTrigger className="w-full bg-primary/5 border border-primary/30 hover:bg-primary/10 text-foreground h-9 rounded-xl gap-2 font-normal">
+                                                                            <ArrowRightLeft className="w-3.5 h-3.5 text-primary" />
+                                                                            <SelectValue placeholder={`Replace ${staleName} with…`} />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {chainUrls.map(url => {
+                                                                                const addon = getAddonForUrl(url)
+                                                                                const addonName = addon?.metadata?.customName || identifyAddon(url, addon?.manifest).name
+                                                                                const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
+                                                                                const isSuggested = !!replacementPicker.closestUrl && url === replacementPicker.closestUrl
+                                                                                return (
+                                                                                    <SelectItem key={url} value={url}>
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <AddonIcon
+                                                                                                name={addonName}
+                                                                                                logo={addonLogo}
+                                                                                                className="h-5 w-5"
+                                                                                                textClassName="text-xs"
+                                                                                                imageClassName="p-0.5"
+                                                                                            />
+                                                                                            <span>{addonName}</span>
+                                                                                            {isSuggested && (
+                                                                                                <StatusChip variant="primary" size="sm">Suggested</StatusChip>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </SelectItem>
+                                                                                )
+                                                                            })}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
+                                                                        onClick={() => setReplacementPicker(null)}
+                                                                    >
+                                                                        Cancel replacement
+                                                                    </button>
+                                                                </div>
+                                                            )
+                                                        })()}
                                                         {unassigned.length > 0 && check.appliesTo.length < 10 && (
                                                             <Select
                                                                 key={`add-${index}-${check.appliesTo.join(',')}`}
@@ -1188,6 +1423,25 @@ export function FailoverManager({
                                 >
                                     {editingRuleId ? "Update Chain" : "Enable Autopilot"}
                                 </Button>
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+
+                    <Dialog open={showRestoreModal} onOpenChange={(open) => { if (!open) void handleScopeDecision('dismiss') }}>
+                        <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                    <AlertTriangle className="w-5 h-5 text-warning" />
+                                    Restore check scope?
+                                </DialogTitle>
+                            </DialogHeader>
+                            <p className="text-sm text-foreground/70 leading-relaxed">
+                                A backup of this rule's original check scope was found on this device. It was widened to all addons by a sync bug that's now fixed.
+                            </p>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-2 pt-2 [&_button]:rounded-full [&_button]:px-4">
+                                <Button variant="ghost" onClick={() => void handleScopeDecision('dismiss')}>Not now</Button>
+                                <Button variant="outline" onClick={() => void handleScopeDecision('keep')}>Keep as global (applies to all addons)</Button>
+                                <Button onClick={() => void handleScopeDecision('restore')}>Restore scope</Button>
                             </div>
                         </DialogContent>
                     </Dialog>

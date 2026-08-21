@@ -35,7 +35,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             fastify.log.warn({ category: 'Autopilot' }, `Failed to upsert credential for ${maskContext(accountId)}: ${credErr.message}`)
         }
     }
-    const { sendNotification, syncStremioLive, getRuleRuntimeState, clearRuleRuntimeState, clearAccountRuleRuntimeState, normalizeAddonUrl } = autopilotEngine
+    const { sendNotification, syncStremioLive, getRuleRuntimeState, clearRuleRuntimeState, clearAccountRuleRuntimeState } = autopilotEngine
     const ENFORCEMENT_DEBOUNCE_MS = 30_000
     const MAX_BATCH_STATE_ACCOUNTS = 500
     const enforcementDebounce = new Map()
@@ -59,18 +59,33 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     const isSafeAutopilotUrl = async (url) =>
         typeof url === 'string' && await isSafeUrlResolved(url.replace(/^stremio:\/\//i, 'https://'))
 
-    const normCustomChecks = (arr, chain = null) => {
+
+    // appliesTo is stored verbatim: the engine never widens non-empty scopes and [] stays born-global.
+    const normCustomChecks = (arr) => {
         if (!Array.isArray(arr)) return []
-        const chainSet = chain ? new Set(chain.map(u => normalizeAddonUrl(u).toLowerCase())) : null
         return arr.map(item => {
             if (typeof item === 'string') return { url: item, appliesTo: [] }
             if (item && typeof item === 'object' && typeof item.url === 'string') {
-                let appliesTo = Array.isArray(item.appliesTo) ? item.appliesTo.filter(u => typeof u === 'string') : []
-                if (chainSet) appliesTo = appliesTo.filter(au => chainSet.has(normalizeAddonUrl(au).toLowerCase()))
+                const appliesTo = Array.isArray(item.appliesTo) ? item.appliesTo.filter(u => typeof u === 'string') : []
                 return { url: item.url, appliesTo }
             }
             return null
         }).filter(Boolean)
+    }
+
+    // appliesTo entries are comparison keys only — format-check, never SSRF-check.
+    const isValidAppliesToEntry = (entry) => {
+        if (typeof entry !== 'string' || !entry.trim()) return false
+        const trimmed = entry.trim()
+        const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):\/\//i)
+        if (schemeMatch && !/^(?:https?|stremio)$/i.test(schemeMatch[1])) return false
+        const candidate = schemeMatch ? trimmed : `https://${trimmed}`
+        try {
+            const { protocol } = new URL(candidate)
+            return protocol === 'http:' || protocol === 'https:' || protocol === 'stremio:'
+        } catch {
+            return false
+        }
     }
 
     const validateRulePayload = async ({ id, accountId, authKey, connectionId, priorityChain, activeUrl, addonList, customCheckUrls }) => {
@@ -99,6 +114,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                 if (!/^https?:\/\//i.test(checkUrl)) return 'customCheckUrls must contain valid http(s) URLs'
                 if (!(await isSafeUrlResolved(checkUrl.replace(/^stremio:\/\//i, 'https://')))) return 'customCheckUrls contains an unsafe URL'
                 if (appliesTo.length > 10) return 'customCheckUrls appliesTo exceeds maximum of 10 addons'
+                if (appliesTo.some(au => !isValidAppliesToEntry(au))) return 'customCheckUrls appliesTo entries must be valid addon URLs'
             }
         }
         return null
@@ -145,7 +161,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             (existingRule.cooldown_ms ?? null) === (cooldown_ms ?? null) &&
             (existingRule.message_template ?? null) === (messageTemplate ?? null) &&
             existingRule.name === name &&
-            JSON.stringify(normCustomChecks(existingCustomCheckUrls, priorityChain)) === JSON.stringify(normCustomChecks(customCheckUrls, priorityChain))
+            JSON.stringify(normCustomChecks(existingCustomCheckUrls)) === JSON.stringify(normCustomChecks(customCheckUrls))
     }
 
     async function upsertRuleRecord({ id, accountId, name, authKey, priorityChain, activeUrl, addonList, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, platform, connectionId, customCheckUrls }, existingRule, authUser) {
@@ -155,7 +171,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         const encryptedActiveUrl = activeUrl ? encrypt(activeUrl, PRIMARY_KEY) : null
         const encryptedAddonList = addonList ? encrypt(JSON.stringify(addonList), PRIMARY_KEY) : null
         const encryptedWebhookUrl = webhookUrl ? encrypt(webhookUrl, PRIMARY_KEY) : null
-        const customCheckNormArr = normCustomChecks(customCheckUrls, priorityChain)
+        const customCheckNormArr = normCustomChecks(customCheckUrls)
         const encryptedCustomChecks = customCheckNormArr.length > 0 ? encrypt(JSON.stringify(customCheckNormArr), PRIMARY_KEY) : null
         const now = Date.now()
         const resolvedOwner = (existingRule?.owner_sync_user) || authUser
