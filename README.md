@@ -241,11 +241,11 @@ AIOManager is not affiliated with Stremio. It is a secondary management tool dev
 
 ## ⭐ Star History
 
-<a href="https://star-history.com/#sonicx161/aiomanager&Date">
+<a href="https://star-history.dera.page/#Sonicx161/AIOManager&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=sonicx161/aiomanager&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=sonicx161/aiomanager&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=sonicx161/aiomanager&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=Sonicx161/AIOManager&type=Date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=Sonicx161/AIOManager&type=Date&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=Sonicx161/AIOManager&type=Date&legend=top-left" />
  </picture>
 </a>
 
