@@ -10,21 +10,27 @@ import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/provi
 import { ApiKeyManager } from '@/components/providers/ApiKeyManager'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useUIStore } from '@/store/uiStore'
-import { getAccountEmail } from '@/store/accountStore'
+import { useAuthStore } from '@/store/authStore'
+import { getAccountEmail, getAccountById, getStremioAuthKey, getCachedAuthKey, useAccountStore } from '@/store/accountStore'
 import { maskEmailLevel } from '@/lib/utils'
+import { parsePremiumExpire, type PremiumStatus } from '@/lib/stremio-premium'
+import { parseNuvioMemberAccess, type NuvioMemberStatus } from '@/lib/nuvio-tier'
+import { trace } from '@/lib/trace'
 import { toast } from '@/hooks/use-toast'
 import { useShallow } from 'zustand/react/shallow'
 import type { Connection } from '@/types/connection'
 import type { Account } from '@/types/account'
 import type { HydraDriverConfig } from '@/types/provider'
 import { RefreshCw, Plus, Zap, Link2, Key, ChevronRight } from 'lucide-react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { PLATFORM_REGISTRY } from '@/lib/platform-registry'
 import type { HydraSubscriber } from '@/api/hydra-providers'
+import { stremioClient } from '@/api/stremio-client'
 import { PlatformLogo } from './ConnectionPrimitives'
 import { ConnectionCard } from './ConnectionCard'
 import { ConnectionEditPanel } from './ConnectionEditPanel'
+import { StremioSupportersBadge, NuvioTierBadge } from './ConnectionMembershipTab'
 import { SubscriberCard } from './SubscriberCard'
 
 interface ConnectionManagerProps {
@@ -52,10 +58,17 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     const [subscribers, setSubscribers] = useState<HydraSubscriber[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [subTab, setSubTab] = useState('connections')
+    const [premiumByAccount, setPremiumByAccount] = useState<Map<string, PremiumStatus>>(new Map())
+    const [nuvioMemberByConnection, setNuvioMemberByConnection] = useState<Map<string, NuvioMemberStatus>>(new Map())
+    const premiumFetchedAccounts = useRef(new Set<string>())
+    const nuvioMemberFetchedConnections = useRef(new Set<string>())
     const accountStates = connectionStates[accountId] || {}
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
     const emailPrivacyLevel = isPrivacyModeEnabled ? privacyLevelEmail : 0
+    const storeAccount = useAccountStore(s => getAccountById(s.accounts, accountId))
+    const statusAccount = account ?? storeAccount
+    const encryptionKeyFromStore = useAuthStore(s => s.encryptionKey)
 
     // Pull live connection status (last sync, errors, expiry-driven state) so the cards can show it
     // without waiting for the next manual sync. Best-effort; the store swallows failures.
@@ -71,6 +84,72 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
             .catch(() => { })
         return () => { cancelled = true }
     }, [accountId])
+
+    useEffect(() => {
+        if (!statusAccount) return
+        const stremioKey = getStremioAuthKey(statusAccount)
+        if (!stremioKey) {
+            trace('connections', 'premium.skip', { accountId, reason: 'no-stremio-key' })
+            return
+        }
+        if (premiumFetchedAccounts.current.has(accountId)) return
+        const { encryptionKey } = useAuthStore.getState()
+        if (!encryptionKey) {
+            trace('connections', 'premium.skip', { accountId, reason: 'locked' })
+            return
+        }
+        let cancelled = false
+        premiumFetchedAccounts.current.add(accountId)
+        ;(async () => {
+            const authKey = await getCachedAuthKey(stremioKey, encryptionKey)
+            const user = await stremioClient.getUser(authKey)
+            const status = parsePremiumExpire((user as Record<string, unknown>).premium_expire)
+            trace('connections', 'premium.result', { accountId, active: status.active, lifetime: status.lifetime, expiresAt: status.expiresAt, cancelled })
+            // Write unconditionally: a cancelled-effect skip would strand the result behind the dedupe marker.
+            setPremiumByAccount(prev => new Map(prev).set(accountId, status))
+        })().catch(err => {
+            // A failed fetch must not latch: release the dedupe marker so the next mount retries.
+            premiumFetchedAccounts.current.delete(accountId)
+            trace('connections', 'premium.error', { accountId, error: err instanceof Error ? err.message : String(err) })
+        })
+        return () => { cancelled = true }
+    }, [accountId, statusAccount, encryptionKeyFromStore])
+
+    useEffect(() => {
+        if (!statusAccount) return
+        const nuvioConns = connections.filter(c => c.enabled && c.platform === 'nuvio')
+        if (nuvioConns.length === 0) return
+        let cancelled = false
+        ;(async () => {
+            const [{ fetchConnectionToken }, { nuvioDriverFor }, { getCachedNuvioToken, setCachedNuvioToken }] = await Promise.all([
+                import('@/api/connection'),
+                import('@/lib/drivers/factory'),
+                import('@/lib/nuvio-token-cache'),
+            ])
+            for (const conn of nuvioConns) {
+                if (nuvioMemberFetchedConnections.current.has(conn.id)) continue
+                nuvioMemberFetchedConnections.current.add(conn.id)
+                try {
+                    let token = getCachedNuvioToken(conn.id)
+                    if (!token) {
+                        token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+                        setCachedNuvioToken(conn.id, token)
+                    }
+                    const rows = await nuvioDriverFor(conn).getMemberAccess(token.accessToken)
+                    const status = parseNuvioMemberAccess(rows)
+                    trace('connections', 'nuvioMember.result', { connectionId: conn.id, supporter: status.supporter, label: status.label, cancelled })
+                    // Written unconditionally (like the premium effect): deps churn cancels the
+                    // effect mid-fetch, but the result is still the freshest data for this connection.
+                    setNuvioMemberByConnection(prev => new Map(prev).set(conn.id, status))
+                } catch (err) {
+                    // A failed fetch must not latch: release the dedupe marker so the next mount retries.
+                    nuvioMemberFetchedConnections.current.delete(conn.id)
+                    trace('connections', 'nuvioMember.error', { connectionId: conn.id, error: err instanceof Error ? err.message : String(err) })
+                }
+            }
+        })().catch(() => { })
+        return () => { cancelled = true }
+    }, [accountId, statusAccount, connections])
 
     const handleRemoveSubscriber = useCallback(async (name: string) => {
         let snapshot: HydraSubscriber[] = []
@@ -302,6 +381,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                             const state = accountStates[conn.id]
                             const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
                             const maskedConnEmail = connEmail ? maskEmailLevel(connEmail, emailPrivacyLevel) : undefined
+                            const premium = conn.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined
+                            const nuvioMember = conn.platform === 'nuvio' ? nuvioMemberByConnection.get(conn.id) : undefined
                             return (
                                 <ConnectionCard
                                     key={conn.id}
@@ -313,6 +394,19 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     onEdit={() => setEditingId(conn.id)}
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
                                     email={maskedConnEmail}
+                                    badge={
+                                        nuvioMember || premium !== undefined ? (
+                                            <>
+                                                {premium?.active && <StremioSupportersBadge />}
+                                                {premium && !premium.active && (
+                                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                                        Free
+                                                    </span>
+                                                )}
+                                                {nuvioMember && <NuvioTierBadge member={nuvioMember} />}
+                                            </>
+                                        ) : undefined
+                                    }
                                 />
                             )
                         })}
@@ -332,6 +426,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     accountId={accountId}
                     connection={editing}
                     status={accountStates[editing.id]?.status || editing.status}
+                    premium={editing.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined}
+                    nuvioMember={editing.platform === 'nuvio' ? nuvioMemberByConnection.get(editing.id) : undefined}
                     onBack={() => setEditingId(null)}
                 />
             ) : hasApiKeyTab ? (

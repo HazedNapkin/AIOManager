@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
 import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
-import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList } from '@/api/metadata/adapters/tmdb'
+import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
 import { addToWatchlist, removeFromWatchlist, getWatchlist } from '@/lib/watchlist'
 import { getPmdbRating } from '@/api/metadata/adapters/pmdb'
@@ -22,7 +22,7 @@ import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, Tv, Sparkles, Languages, Building2, Layers, Users } from 'lucide-react'
 import { RatingBadge, type ProviderRating } from '@/components/activity/detail/RatingBadge'
-import { authedFetch, fetchAdditionalRatings, mergeRatingsKeepExisting } from '@/lib/ratings'
+import { fetchAdditionalRatings, mergeRatingsKeepExisting } from '@/lib/ratings'
 import { CastInitials } from '@/components/activity/detail/CastInitials'
 import { LightboxViewer } from '@/components/activity/detail/LightboxViewer'
 import { ReviewsSection } from '@/components/activity/detail/ReviewsSection'
@@ -36,7 +36,7 @@ import type { RailWatcher } from '@/components/ui/content-rail'
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export type { DetailItem } from '@/components/activity/detail/types'
-import type { DetailItem, TmdbFindResponse, TmdbPersonSearchResponse, TmdbPersonCreditsResponse, FilmographyItem } from '@/components/activity/detail/types'
+import type { DetailItem, TmdbPersonSearchResponse, TmdbPersonCreditsResponse, FilmographyItem } from '@/components/activity/detail/types'
 
 export type { FilmographyItem } from '@/components/activity/detail/types'
 
@@ -81,24 +81,10 @@ async function getPmdbRatingFromImdb(
         }
 
         if (!tmdbId) {
-            const res = await authedFetch(
-                `/api/metadata/tmdb/find/${encodeURIComponent(imdbId)}?external_source=imdb_id`,
+            const data = await proxyFetch<TmdbFindPayload>(
+                `find/${encodeURIComponent(imdbId)}?external_source=imdb_id`,
             )
-            if (!res.ok) return null
-            const data = await res.json()
-            tmdbId =
-                (isTv
-                    ? (Array.isArray(data?.tv_results) && data.tv_results.length > 0
-                        ? data.tv_results[0].id
-                        : null)
-                    : null
-                ) ??
-                (Array.isArray(data?.movie_results) && data.movie_results.length > 0
-                    ? data.movie_results[0].id
-                    : null) ??
-                (!isTv && Array.isArray(data?.tv_results) && data.tv_results.length > 0
-                    ? data.tv_results[0].id
-                    : null)
+            tmdbId = pickTmdbIdFromFind(data, isTv)?.tmdbId ?? null
         }
 
         if (!tmdbId) return null
@@ -1095,13 +1081,21 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             }
                         } else if (renderItem.name) {
                             const searchType = mediaType === 'tv' ? 'series' : 'movie'
-                            const searchRes = await fetch(
-                                `https://v3-cinemeta.strem.io/catalog/search/top/search=${encodeURIComponent(renderItem.name)}.json`
-                            ).catch(() => null)
+                            const nameQuery = encodeURIComponent(renderItem.name)
+                            const [movieSearch, seriesSearch] = await Promise.all([
+                                fetch(`https://v3-cinemeta.strem.io/catalog/movie/top/search=${nameQuery}.json`).catch(() => null),
+                                fetch(`https://v3-cinemeta.strem.io/catalog/series/top/search=${nameQuery}.json`).catch(() => null),
+                            ])
                             if (!active) return
-                            if (!searchRes || !searchRes.ok) { setFailed(true); return }
-                            const searchData = await searchRes.json().catch(() => null)
-                            const metas: Array<{ id?: string; type?: string; name?: string }> = searchData?.metas ?? []
+                            if ((!movieSearch || !movieSearch.ok) && (!seriesSearch || !seriesSearch.ok)) { setFailed(true); return }
+                            const [movieData, seriesData] = await Promise.all([
+                                movieSearch?.ok ? movieSearch.json().catch(() => null) : null,
+                                seriesSearch?.ok ? seriesSearch.json().catch(() => null) : null,
+                            ])
+                            if (!active) return
+                            const movieMetas: Array<{ id?: string; type?: string; name?: string }> = Array.isArray(movieData?.metas) ? movieData.metas : []
+                            const seriesMetas: Array<{ id?: string; type?: string; name?: string }> = Array.isArray(seriesData?.metas) ? seriesData.metas : []
+                            const metas = searchType === 'series' ? [...seriesMetas, ...movieMetas] : [...movieMetas, ...seriesMetas]
                             const match = metas.find(m =>
                                 m.type === searchType &&
                                 String(m.name || '').toLowerCase() === renderItem.name!.toLowerCase()
@@ -1145,24 +1139,15 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             const cinemetaPromise = traceAsync('cinemeta', () => fetchCinemetaDetail(renderItem.itemId, renderItem.type))
 
             // Start TMDB lookup in parallel (with auth headers)
-            const tmdbEnrichPromise = proxyFetch<TmdbFindResponse>(
+            const tmdbEnrichPromise = proxyFetch<TmdbFindPayload>(
                 `find/${encodeURIComponent(renderItem.itemId)}?external_source=imdb_id`
             ).then(data => {
                 if (!data || !active) return
-                const mediaType: 'movie' | 'tv' =
-                    renderItem.type === 'series' || renderItem.type === 'anime' ? 'tv' : 'movie'
-                const movieResult = Array.isArray(data.movie_results) && data.movie_results.length > 0
-                    ? data.movie_results[0]
-                    : null
-                const tvResult = Array.isArray(data.tv_results) && data.tv_results.length > 0
-                    ? data.tv_results[0]
-                    : null
-                const tmdbEntry = mediaType === 'tv'
-                    ? (tvResult ?? movieResult)
-                    : (movieResult ?? tvResult)
-                if (!tmdbEntry?.id) return
-                if (tmdbEntry === tvResult) setSeriesTmdbId(tmdbEntry.id)
-                return enrichFromTmdb(tmdbEntry.id, tmdbEntry === tvResult ? 'tv' : 'movie')
+                const preferTv = renderItem.type === 'series' || renderItem.type === 'anime'
+                const picked = pickTmdbIdFromFind(data, preferTv)
+                if (!picked) return
+                if (picked.via !== 'movie') setSeriesTmdbId(picked.tmdbId)
+                return enrichFromTmdb(picked.tmdbId, picked.mediaType)
             })
                 .catch(() => { })
 

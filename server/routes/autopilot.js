@@ -104,6 +104,19 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         return null
     }
 
+    // The worker owns addon_list/active_url on automatic rules: an open tab's background
+    // echo must never rewrite them or re-enforce a stale copy of them.
+    const engineOwnedSyncFields = (existingRule, { addonList, activeUrl, is_automatic }) => {
+        if (!existingRule || existingRule.is_automatic !== 1 || !is_automatic) return { addonList, activeUrl }
+        try {
+            const storedList = existingRule.addon_list ? JSON.parse(decrypt(existingRule.addon_list, FALLBACK_KEYS) || 'null') : null
+            const storedActive = existingRule.active_url ? decrypt(existingRule.active_url, FALLBACK_KEYS) : null
+            return { addonList: storedList ?? addonList, activeUrl: storedActive ?? activeUrl }
+        } catch {
+            return { addonList, activeUrl }
+        }
+    }
+
     async function checkPlaintextEqual(existingRule, { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name, customCheckUrls }) {
         if (!existingRule) return false
         const existingAuthKey = existingRule.auth_key ? decrypt(existingRule.auth_key, FALLBACK_KEYS) : ''
@@ -293,7 +306,10 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             isAutomatic: rule.is_automatic === 1,
             lastCheck: runtime?.lastCheck ?? rule.last_check,
             stabilization: runtime?.stabilization ?? parseStabilization(rule.stabilization),
-            customCheckUrls: Array.isArray(customCheckUrls) ? customCheckUrls : []
+            customCheckUrls: Array.isArray(customCheckUrls) ? customCheckUrls : [],
+            messageTemplate: rule.message_template || null,
+            platform: rule.platform || null,
+            connectionId: rule.connection_id || null
         }
     }
 
@@ -366,7 +382,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
     }
 
     fastify.post('/api/autopilot/sync', { bodyLimit: AUTOPILOT_BODY_LIMIT, config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: (req) => 'apsync:' + req.ip } } }, async (request, reply) => {
-        const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = request.body
+        let { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = request.body
         const start = Date.now()
         trace('autopilot', 'sync.start', { ruleId: id, accountId })
 
@@ -389,6 +405,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             reply.status(403);
             return { error: 'Forbidden: rule has no owner and cannot be modified' }
         }
+
+        ;({ addonList, activeUrl } = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic }))
 
         const rulePayload = { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name, customCheckUrls }
 
@@ -434,7 +452,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                 results.push({ id: null, ok: false, error: 'Invalid rule payload' })
                 continue
             }
-            const { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = ruleData
+            let { id, accountId, name, authKey, connectionId, platform, priorityChain, activeUrl, is_active, is_automatic, addonList, webhookUrl, cooldown_ms, messageTemplate, customCheckUrls } = ruleData
 
             const validationError = await validateRulePayload({ id, accountId, authKey, connectionId, priorityChain, activeUrl, addonList, customCheckUrls })
             if (validationError) {
@@ -449,6 +467,8 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     results.push({ id, ok: false, error: 'Forbidden' })
                     continue
                 }
+
+                ;({ addonList, activeUrl } = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic }))
 
                 const rulePayload = { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name, customCheckUrls }
 
@@ -500,7 +520,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                 SELECT r.id, r.priority_chain, r.active_url, r.webhook_url, r.is_active, r.is_automatic,
                        COALESCE(s.last_check, r.last_check) AS last_check,
                        COALESCE(s.stabilization, r.stabilization) AS stabilization,
-                       r.name, r.cooldown_ms, r.custom_check_urls
+                       r.name, r.cooldown_ms, r.custom_check_urls, r.message_template, r.platform, r.connection_id
                 FROM autopilot_rules r
                 LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
                 WHERE r.account_id = $1
@@ -711,7 +731,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             `SELECT r.id, r.account_id, r.priority_chain, r.active_url, r.webhook_url, r.is_active, r.is_automatic,
                     COALESCE(s.last_check, r.last_check) AS last_check,
                     COALESCE(s.stabilization, r.stabilization) AS stabilization,
-                    r.name, r.cooldown_ms, r.custom_check_urls
+                    r.name, r.cooldown_ms, r.custom_check_urls, r.message_template, r.platform, r.connection_id
              FROM autopilot_rules r
              LEFT JOIN autopilot_rule_stats s ON s.rule_id = r.id
              WHERE r.owner_sync_user = $1 AND r.account_id IN (${placeholders})`,

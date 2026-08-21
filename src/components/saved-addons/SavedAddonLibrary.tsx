@@ -15,7 +15,7 @@ import {
   User,
   Pencil, Send, Layers,
   ArrowLeft, Link2,
-  Check, Compass, Info
+  Check, Compass, Info, RefreshCw
 } from 'lucide-react'
 import { AnimatedTrashIcon } from '../ui/AnimatedIcons'
 import { OperationProgress } from '@/components/ui/operation-progress'
@@ -228,6 +228,7 @@ export function SavedAddonLibrary() {
     handleBulkDelete,
     handleBulkEdit,
     handleDeployToAccounts,
+    handleReinstallLibraryEntries,
   } = useSavedAddonSelectionActions({
     filteredAddons,
     library,
@@ -603,6 +604,13 @@ export function SavedAddonLibrary() {
               icon: <Send className="h-4 w-4" />,
               tooltip: 'Deploy to accounts',
             },
+            {
+              label: 'Reinstall',
+              onClick: handleReinstallLibraryEntries,
+              variant: 'outline',
+              icon: <RefreshCw className="h-4 w-4" />,
+              tooltip: 'Reinstall the library entries from their source URLs; sync pushes changes to enabled accounts',
+            },
             ...(aioStreamsInstances.length > 0 ? [{
               label: 'Add to AIOStreams',
               onClick: handleOpenInjectDialog,
@@ -911,10 +919,9 @@ export function SavedAddonLibrary() {
               allowProtected={false}
             />
           )}
-        />
+         />
 
-
-        <TagManagerDialog isOpen={showTagManager} onClose={() => setShowTagManager(false)} />
+         <TagManagerDialog isOpen={showTagManager} onClose={() => setShowTagManager(false)} />
 
         <LibraryInjectDialog
           open={showInjectDialog}

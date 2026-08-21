@@ -1,5 +1,5 @@
 import { resilientFetch } from '@/lib/api-resilience'
-import { useSyncStore } from '@/store/syncStore'
+import { useSyncStore, getSyncApiPath } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
 import type { Connection } from '@/types/connection'
 import type { AddonDescriptor } from '@/types/addon'
@@ -12,10 +12,6 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
         'x-sync-user': auth.id,
         'x-sync-password': await deriveSyncToken(auth.password),
     }
-}
-
-function getServerUrl(): string {
-    return useSyncStore.getState().serverUrl || '/api'
 }
 
 export interface ReconcileResult {
@@ -45,7 +41,7 @@ export async function triggerReconciliation(
     addons?: AddonDescriptor[],
     options?: { allowCollectionShrink?: boolean },
 ): Promise<ReconcileResult> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const sanitizedConnections = connections?.map(({ credentials: _creds, ...rest }) => rest)
     const res = await resilientFetch(`${base}/providers/sync/${accountId}`, {
         method: 'POST',
@@ -65,7 +61,7 @@ export async function fetchConnectionToken(
     connectionId: string,
     platform: string,
 ): Promise<{ accessToken: string; expiresAt: number; profileId: string | null }> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/token`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -84,7 +80,7 @@ export async function setConnectionProfile(
     connectionId: string,
     profileId: string,
 ): Promise<void> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/profile`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -98,7 +94,7 @@ export async function setConnectionProfile(
 }
 
 export async function getConnectionStates(accountId: string): Promise<Record<string, ConnectionState>> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/status/${accountId}`, {
         headers: await getAuthHeaders(),
         timeout: 10000,

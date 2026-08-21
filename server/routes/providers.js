@@ -4,6 +4,7 @@ import { encrypt, decrypt } from '../crypto.js'
 import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { listStremioCredentialedAccountIds, stremioCredentialVersion } from '../lib/stremio-credentials.js'
+import { mapNuvioLoginError, nuvioDriverFrom } from './nuvio-route-helpers.js'
 
 // An authenticated user "owns" an accountId iff they have a stored credential or canonical row for
 // it. Used to reject cross-tenant access (the sync/status endpoints take an accountId from the URL,
@@ -267,19 +268,55 @@ export function registerProviderRoutes(fastify, reconciler) {
         return { ok: true }
     })
 
+    // One-click account backup: proxies the Nuvio account-export RPC and sends the raw export
+    // JSON as the response body (the client downloads it directly).
+    fastify.post('/api/providers/nuvio/backup-export', {
+        config: { rateLimit: { max: 5, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
+
+        const { accountId, connectionId } = request.body || {}
+        if (!accountId || !connectionId) { reply.code(400); return { error: 'Missing accountId or connectionId' } }
+
+        const owned = await db.get(
+            "SELECT 1 FROM server_credentials WHERE connection_id = $1 AND sync_user = $2 AND credential_type = 'nuvio' LIMIT 1",
+            [connectionId, authUser]
+        )
+        if (!owned) { reply.code(404); return { error: 'Connection not found' } }
+
+        try {
+            const { refreshNuvioToken } = await import('../providers/token-refresh.js')
+            const bundle = await refreshNuvioToken(connectionId, accountId)
+            if (!bundle?.accessToken) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
+
+            // Security: exports read a stored credential, so the driver comes from the stored bundle only — client baseUrl/publishableKey would let the caller steer the exfil target.
+            const { createNuvioDriver } = await import('../providers/nuvio-driver.js')
+            const driver = createNuvioDriver({
+                baseUrl: bundle.baseUrl || undefined,
+                publishableKey: bundle.publishableKey || undefined,
+            })
+            return reply.send(await driver.exportAccountBackup(bundle.accessToken))
+        } catch (err) {
+            if (err.isAuthError || err._authExpired) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
+            fastify.log.error({ err, connectionId, accountId, category: 'NuvioBackup' }, `Nuvio backup export failed: ${err.message}`)
+            reply.code(502)
+            return { error: 'Nuvio backup export failed' }
+        }
+    })
+
     fastify.post('/api/providers/nuvio/auth', {
         config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
     }, async (request, reply) => {
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
-        const { email, password, publishableKey, baseUrl } = request.body || {}
+        const { email, password, baseUrl } = request.body || {}
         if (!email || !password) { reply.code(400); return { error: 'Missing email or password' } }
         if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
 
         try {
-            const { createNuvioDriver } = await import('../providers/nuvio-driver.js')
-            const driver = createNuvioDriver({ ...(baseUrl ? { baseUrl } : {}), ...(publishableKey ? { publishableKey } : {}) })
+            const driver = await nuvioDriverFrom(request.body)
             const tokens = await driver.authenticate(email, password)
             let profiles = []
             try {
@@ -287,17 +324,93 @@ export function registerProviderRoutes(fastify, reconciler) {
             } catch { }
             return { tokens, profiles: Array.isArray(profiles) ? profiles : [] }
         } catch (err) {
-            if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-                reply.code(504)
-                return { error: 'Nuvio login timed out. Supabase may be cold-starting. Please try again in a few seconds.' }
+            return mapNuvioLoginError(reply, err, {
+                authMessage: 'Invalid email or password',
+                timeoutMessage: 'Nuvio login timed out. Supabase may be cold-starting. Please try again in a few seconds.'
+            })
+        }
+    })
+
+    // TV QR login step 1: the anonToken is returned so clients reuse it for polls (anon grants are rate-limited upstream).
+    fastify.post('/api/providers/nuvio/qr/start', {
+        config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
+
+        const { deviceNonce, deviceName, baseUrl } = request.body || {}
+        if (!deviceNonce) { reply.code(400); return { error: 'Missing deviceNonce' } }
+        if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
+
+        try {
+            const driver = await nuvioDriverFrom(request.body)
+            const anonToken = await driver.getAnonymousToken()
+            // Nuvio allowlists redirect base URLs; only their own tv-login page is a known-valid
+            // target, so client-provided origins are ignored (they can never pass validation).
+            const session = await driver.startTvLoginSession({ deviceNonce, redirectBaseUrl: 'https://nuvio.tv/tv-login', deviceName: deviceName || 'AIOManager' }, anonToken)
+            if (!session?.code) { reply.code(502); return { error: 'Nuvio did not return a login session' } }
+            return {
+                code: session.code,
+                qrContent: session.qr_content,
+                qrImageUrl: session.qr_image_url ?? null,
+                webUrl: session.web_url,
+                expiresAt: session.expires_at,
+                pollIntervalSeconds: session.poll_interval_seconds ?? 5,
+                anonToken
             }
-            if (err.status === 429) {
-                reply.code(429)
-                return { error: 'Too many login attempts. Please wait a few minutes before retrying.' }
+        } catch (err) {
+            return mapNuvioLoginError(reply, err, { authMessage: 'Could not start Nuvio TV login' })
+        }
+    })
+
+    // TV QR login step 2: polls with the client's anonToken; anon JWTs expire mid-flow, so refetch exactly once on 401.
+    fastify.post('/api/providers/nuvio/qr/poll', {
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
+
+        const { code, deviceNonce, anonToken, baseUrl } = request.body || {}
+        if (!code || !deviceNonce) { reply.code(400); return { error: 'Missing code or deviceNonce' } }
+        if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
+
+        try {
+            const driver = await nuvioDriverFrom(request.body)
+
+            let token = anonToken || await driver.getAnonymousToken()
+            try {
+                return { status: await driver.pollTvLoginSession({ code, deviceNonce }, token) }
+            } catch (err) {
+                if (!err.isAuthError || !anonToken) throw err
+                token = await driver.getAnonymousToken()
+                return { status: await driver.pollTvLoginSession({ code, deviceNonce }, token) }
             }
-            const status = err.isAuthError ? 401 : 502
-            reply.code(status)
-            return { error: err.isAuthError ? 'Invalid email or password' : 'Nuvio service unreachable' }
+        } catch (err) {
+            return mapNuvioLoginError(reply, err, { authMessage: 'Could not poll Nuvio TV login', sessionAware: true })
+        }
+    })
+
+    // TV QR login step 3: swaps the approved code for tokens; response shape mirrors nuvio/auth.
+    fastify.post('/api/providers/nuvio/qr/exchange', {
+        config: { rateLimit: { max: 10, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
+
+        const { code, deviceNonce, baseUrl } = request.body || {}
+        if (!code || !deviceNonce) { reply.code(400); return { error: 'Missing code or deviceNonce' } }
+        if (baseUrl && !(await isSafeUrlResolved(baseUrl))) { reply.code(400); return { error: 'Invalid or unsafe baseUrl' } }
+
+        try {
+            const driver = await nuvioDriverFrom(request.body)
+            const { accessToken, refreshToken, expiresAt } = await driver.exchangeTvLogin({ code, deviceNonce })
+            let profiles = []
+            try {
+                profiles = await driver.pullProfiles(accessToken)
+            } catch { }
+            return { tokens: { accessToken, refreshToken, expiresAt }, profiles: Array.isArray(profiles) ? profiles : [] }
+        } catch (err) {
+            return mapNuvioLoginError(reply, err, { authMessage: 'Login session expired or already used', sessionAware: true })
         }
     })
 

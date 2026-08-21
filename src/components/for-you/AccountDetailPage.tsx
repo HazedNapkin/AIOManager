@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Sparkles, Bookmark, LayoutGrid, RefreshCw, Upload } from 'lucide-react'
+import { ArrowLeft, Info, Sparkles, Bookmark, LayoutGrid, RefreshCw, Upload } from 'lucide-react'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import { cn, formatStaleAgo, loadImdbTmdbCache } from '@/lib/utils'
@@ -26,6 +26,8 @@ import { ActivityDetailModal, type DetailItem } from '@/components/activity/Acti
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
 import { PublishToPmdbDialog } from '@/components/for-you/PublishToPmdbDialog'
 import { checkPmdbKeyConfigured, getLastPublishTime } from '@/lib/pmdb-list-publisher'
+import { useTmdbKeyStatus } from '@/hooks/useTmdbKeyStatus'
+import { buildCinemetaFatRails } from '@/lib/cinemeta-rails'
 import { getWatchlist, type WatchlistItem } from '@/lib/watchlist'
 import { bucketize, bucketsToPmdbRails, itemIdFromCanonical, type BucketItem } from '@/lib/rail-buckets'
 
@@ -116,6 +118,9 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
     const [error, setError] = useState<string | null>(null)
     const [reloadKey, setReloadKey] = useState(0)
     const hasRailsRef = useRef(false)
+    const [isColdStart, setIsColdStart] = useState(false)
+    const tmdbKeyStatus = useTmdbKeyStatus()
+    const [popularFallbackNotice, setPopularFallbackNotice] = useState(false)
     const [detailItem, setDetailItem] = useState<DetailItem | null>(null)
     const [catalogOpen, setCatalogOpen] = useState(false)
 
@@ -142,7 +147,9 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
     }, [pmdbDialogOpen, accountId])
 
     useEffect(() => {
+        setPopularFallbackNotice(false)
         if (accountActivity.length < MIN_ITEMS_FOR_RECS) {
+            setIsColdStart(true)
             setRecsLoading(true)
             setError(null)
             let cancelled = false
@@ -162,9 +169,32 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                 })
             return () => { cancelled = true; try { ctrl.abort() } catch {} }
         }
+        if (tmdbKeyStatus === 'checking') {
+            if (!hasRailsRef.current) setRecsLoading(true)
+            return
+        }
+        if (tmdbKeyStatus === 'absent') {
+            let cancelled = false
+            const ctrl = new AbortController()
+            setIsColdStart(true)
+            setRecsLoading(true)
+            setError(null)
+            const watchedImdbIds = new Set(
+                seeds.filter(s => s.itemId.startsWith('tt') && s.progress > 30).map(s => s.itemId)
+            )
+            buildCinemetaFatRails(ctrl.signal, RAIL_SIZE, { watchedImdbIds })
+                .then(rails => { if (!cancelled) setRails(rails) })
+                .catch(err => {
+                    if (cancelled || ctrl.signal.aborted || err?.name === 'AbortError') return
+                    setError('Failed to load popular content')
+                })
+                .finally(() => { if (!cancelled) setRecsLoading(false) })
+            return () => { cancelled = true; try { ctrl.abort() } catch {} }
+        }
         let cancelled = false
         const ctrl = new AbortController()
         const hadRails = hasRailsRef.current
+        setIsColdStart(false)
         if (!hadRails) setRecsLoading(true)
         setError(null)
         const cachedTmdbIds = new Set<string>()
@@ -187,16 +217,31 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                 lovedItems: discoveryPrefs.lovedItems,
             },
         })
-            .then(result => {
+            .then(async result => {
                 if (cancelled) return
                 const allSeedsFailed = result.rails.length === 0 && (result.failedSeedCount ?? 0) > 0
                 if (allSeedsFailed && hadRails) return
-                if (allSeedsFailed && !hadRails) {
-                    setError(result.firstError || 'TMDB recommendation provider returned no results. Check the browser console for details.')
+                if (!allSeedsFailed) {
+                    hasRailsRef.current = true
+                    setRails(result.rails)
                     return
                 }
-                hasRailsRef.current = true
-                setRails(result.rails)
+                try {
+                    const rails = await buildCinemetaFatRails(ctrl.signal, RAIL_SIZE, {
+                        watchedImdbIds: new Set(
+                            seeds.filter(s => s.itemId.startsWith('tt') && s.progress > 30).map(s => s.itemId)
+                        ),
+                    })
+                    if (cancelled || ctrl.signal.aborted) return
+                    if (rails.length > 0) {
+                        setIsColdStart(true)
+                        setPopularFallbackNotice(true)
+                        hasRailsRef.current = true
+                        setRails(rails)
+                        return
+                    }
+                } catch {}
+                setError(result.firstError || 'TMDB recommendation provider returned no results. Check the browser console for details.')
             })
             .catch(err => {
                 if (cancelled || ctrl.signal.aborted) return
@@ -209,7 +254,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
             cancelled = true
             try { ctrl.abort() } catch {}
         }
-    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, reloadKey, tasteProfile,
+    }, [seeds, accountActivity.length, RAIL_SIZE, accountId, reloadKey, tasteProfile, tmdbKeyStatus,
         discoveryPrefs.obscurity, discoveryPrefs.minRating, discoveryPrefs.eraRange, discoveryPrefs.typeMix,
         discoveryPrefs.genreBoosts, discoveryPrefs.excludedGenres, discoveryPrefs.dismissedItems, discoveryPrefs.lovedItems])
 
@@ -380,6 +425,12 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                         />
                     ) : (
                         <div className="space-y-5">
+                            {popularFallbackNotice && (
+                                <div className="flex items-center gap-2 rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                                    <Info className="h-3.5 w-3.5 shrink-0" />
+                                    Personalized recommendations are unavailable right now — showing popular titles instead.
+                                </div>
+                            )}
                             {(() => {
                                 const hasAny = buckets.movies.length > 0 || buckets.series.length > 0 || buckets.anime.length > 0 || enrichedWatchlist.length > 0
                                 if (!hasAny) return null
@@ -416,7 +467,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                                             </ContentRail>
                                         )}
                                         {buckets.movies.length > 0 && (
-                                            <ContentRail title="Movies" subtitle="Recommended for this account" showGridToggle>
+                                            <ContentRail title="Movies" subtitle={isColdStart ? 'Trending now' : 'Recommended for this account'} showGridToggle>
                                                 {buckets.movies.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`mv-${item.id}`}
@@ -432,7 +483,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                                             </ContentRail>
                                         )}
                                         {buckets.series.length > 0 && (
-                                            <ContentRail title="Series" subtitle="Recommended for this account" showGridToggle>
+                                            <ContentRail title="Series" subtitle={isColdStart ? 'Trending now' : 'Recommended for this account'} showGridToggle>
                                                 {buckets.series.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`sr-${item.id}`}
@@ -448,7 +499,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                                             </ContentRail>
                                         )}
                                         {buckets.anime.length > 0 && (
-                                            <ContentRail title="Anime" subtitle="Recommended for this account" showGridToggle>
+                                            <ContentRail title="Anime" subtitle={isColdStart ? 'Trending now' : 'Recommended for this account'} showGridToggle>
                                                 {buckets.anime.map((item, i) => (
                                                     <ContentRailCard
                                                         key={`an-${item.id}`}

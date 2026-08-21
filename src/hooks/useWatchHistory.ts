@@ -4,6 +4,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
 import { ActivityItem } from '@/types/activity'
 import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail } from '@/lib/activity-utils'
+import { trace } from '@/lib/trace'
 
 const GENRE_CACHE_STORAGE_KEY = 'aio-genre-map-v1'
 let _genreCache: Map<string, string[]> | null = null
@@ -80,6 +81,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     const liveItems = useDeferredValue(rawLiveItems)
     const loading = useLibraryCache(s => s.loading)
     const accounts = useAccountStore(s => s.accounts)
+    const deletedEventKeys = useWatchEventStore(s => s.deletedEventKeys)
     const [genreMap, setGenreMap] = useState<Map<string, string[]>>(loadGenreCache)
 
     const eventsKey = `${events.length}:${events.length > 0 ? events[0].id : ''}`
@@ -257,6 +259,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             ? liveItems.filter(i => i.accountId === accountId)
             : liveItems
         ).filter(item => {
+            const deletedTs = deletedEventKeys[`${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
+            if (deletedTs !== undefined && item.timestamp.getTime() <= deletedTs) {
+                trace('useWatchHistory', 'liveonly.tombstoned', { accountId: item.accountId, itemId: item.itemId, source: item.source, name: item.name, ts: item.timestamp.getTime(), deletedTs })
+                return false
+            }
             if (item.source && item.source !== 'stremio') return true
             if (eventItemIds.has(
                 `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`
@@ -351,7 +358,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             hasEventLog: events.length > 0,
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [eventsKey, liveItems, accounts, accountId, genreMap])
+    }, [eventsKey, liveItems, accounts, accountId, genreMap, deletedEventKeys])
 
     useEffect(() => {
         if (!events || events.length === 0) return

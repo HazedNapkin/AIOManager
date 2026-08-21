@@ -1,5 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { mapConcurrent } from '@/lib/concurrency'
+import { rebuildRuleFromServerState, stripUndefinedRuleFields } from '@/lib/failover-state-mapping'
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { useAccountStore, getCachedAuthKey, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
@@ -633,32 +634,17 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         const sr = serverRule as Record<string, unknown>
                         const existsIndex = rules.findIndex(r => r.id === (sr.id as string))
 
-                        const processedRule: FailoverRule = {
-                            id: sr.id as string,
-                            accountId,
-                            name: sr.name as string,
-                            cooldown_ms: sr.cooldownMs as number | undefined,
-                            priorityChain: (sr.priorityChain as string[]) || [],
-                            isActive: sr.isActive !== undefined ? (sr.isActive as boolean) : false,
-                            isAutomatic: sr.isAutomatic != null ? Boolean(sr.isAutomatic) : true,
-                            activeUrl: (sr.activeUrl as string) || ((sr.priorityChain as string[]) || [])[0] as string | undefined,
-                            lastCheck: sr.lastCheck ? new Date(sr.lastCheck as string | number) : undefined,
-                            stabilization: (sr.stabilization as Record<string, number | AutopilotStabilizationEntry>) || {},
-                            status: 'idle'
-                        }
+                        const processedRule = rebuildRuleFromServerState(sr, accountId)
 
-                        if (processedRule.activeUrl) {
-                            const normServerActive = normalizeAddonUrl(processedRule.activeUrl)
-                            const normPrimary = normalizeAddonUrl(processedRule.priorityChain?.[0] || '')
-                            processedRule.status = normServerActive === normPrimary ? 'monitoring' : 'failed-over'
-                        }
-
+                        let mergedRule: FailoverRule
                         if (existsIndex !== -1) {
-                            rules[existsIndex] = { ...rules[existsIndex], ...processedRule }
+                            mergedRule = { ...rules[existsIndex], ...processedRule }
+                            rules[existsIndex] = mergedRule
                         } else {
                             rules.push(processedRule)
+                            mergedRule = processedRule
                         }
-                        processedRules.push(processedRule)
+                        processedRules.push(mergedRule)
                     }
 
                     const reconcileResults = await mapConcurrent(processedRules, 3, (rule) => reconcileAccountAddonsWithActiveRule(rule))
@@ -1052,7 +1038,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             }
             const finalRules: FailoverRule[] = []
             rulesToImport.forEach(newRule => {
-                const migratedRule: FailoverRule = {
+                const migratedRule: FailoverRule = stripUndefinedRuleFields({
                     id: String(newRule.id || crypto.randomUUID()),
                     accountId: String(newRule.accountId || ''),
                     name: typeof newRule.name === 'string' ? newRule.name.slice(0, 200) : undefined,
@@ -1066,20 +1052,23 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                     webhookUrl: typeof newRule.webhookUrl === 'string' ? newRule.webhookUrl : undefined,
                     notifyEnabled: newRule.notifyEnabled != null ? Boolean(newRule.notifyEnabled) : undefined,
                     messageTemplate: typeof newRule.messageTemplate === 'string' ? newRule.messageTemplate.slice(0, 1000) : undefined,
-                }
+                    customCheckUrls: newRule.customCheckUrls ? normalizeCustomChecks(newRule.customCheckUrls) : undefined,
+                    platform: typeof newRule.platform === 'string' ? newRule.platform : undefined,
+                    connectionId: typeof newRule.connectionId === 'string' ? newRule.connectionId : undefined,
+                })
                 const existing = currentRules.find(r => r.id === migratedRule.id)
                 if (existing) {
                     finalRules.push({
                         ...existing,
                         ...migratedRule,
-                        lastCheck: migratedRule.lastCheck ? new Date(migratedRule.lastCheck) : existing.lastCheck,
-                        lastFailover: migratedRule.lastFailover ? new Date(migratedRule.lastFailover) : existing.lastFailover
+                        lastCheck: newRule.lastCheck ? new Date(newRule.lastCheck) : existing.lastCheck,
+                        lastFailover: newRule.lastFailover ? new Date(newRule.lastFailover) : existing.lastFailover
                     })
                 } else {
                     finalRules.push({
                         ...migratedRule,
-                        lastCheck: migratedRule.lastCheck ? new Date(migratedRule.lastCheck) : undefined,
-                        lastFailover: migratedRule.lastFailover ? new Date(migratedRule.lastFailover) : undefined
+                        lastCheck: newRule.lastCheck ? new Date(newRule.lastCheck) : undefined,
+                        lastFailover: newRule.lastFailover ? new Date(newRule.lastFailover) : undefined
                     })
                 }
             })
@@ -1092,7 +1081,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         let updatedCount = 0
         let addedCount = 0
         rulesToImport.forEach(newRule => {
-            const migratedRule: FailoverRule = {
+            const migratedRule: FailoverRule = stripUndefinedRuleFields({
                 id: String(newRule.id || crypto.randomUUID()),
                 accountId: String(newRule.accountId || ''),
                 name: typeof newRule.name === 'string' ? newRule.name.slice(0, 200) : undefined,
@@ -1106,21 +1095,24 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 webhookUrl: typeof newRule.webhookUrl === 'string' ? newRule.webhookUrl : undefined,
                 notifyEnabled: newRule.notifyEnabled != null ? Boolean(newRule.notifyEnabled) : undefined,
                 messageTemplate: typeof newRule.messageTemplate === 'string' ? newRule.messageTemplate.slice(0, 1000) : undefined,
-            }
+                customCheckUrls: newRule.customCheckUrls ? normalizeCustomChecks(newRule.customCheckUrls) : undefined,
+                platform: typeof newRule.platform === 'string' ? newRule.platform : undefined,
+                connectionId: typeof newRule.connectionId === 'string' ? newRule.connectionId : undefined,
+            })
             const index = currentRules.findIndex(r => r.id === migratedRule.id)
             if (index !== -1) {
                 currentRules[index] = {
                     ...currentRules[index],
                     ...migratedRule,
-                    lastCheck: migratedRule.lastCheck ? new Date(migratedRule.lastCheck) : currentRules[index].lastCheck,
-                    lastFailover: migratedRule.lastFailover ? new Date(migratedRule.lastFailover) : currentRules[index].lastFailover
+                    lastCheck: newRule.lastCheck ? new Date(newRule.lastCheck) : currentRules[index].lastCheck,
+                    lastFailover: newRule.lastFailover ? new Date(newRule.lastFailover) : currentRules[index].lastFailover
                 }
                 updatedCount++
             } else {
                 currentRules.push({
                     ...migratedRule,
-                    lastCheck: migratedRule.lastCheck ? new Date(migratedRule.lastCheck) : undefined,
-                    lastFailover: migratedRule.lastFailover ? new Date(migratedRule.lastFailover) : undefined
+                    lastCheck: newRule.lastCheck ? new Date(newRule.lastCheck) : undefined,
+                    lastFailover: newRule.lastFailover ? new Date(newRule.lastFailover) : undefined
                 })
                 addedCount++
             }

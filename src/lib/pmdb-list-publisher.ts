@@ -1,5 +1,5 @@
 import { getSyncAuthHeaders, invalidateSyncAuthCache } from '@/lib/sync-auth'
-import { proxyFetch } from '@/api/metadata/adapters/tmdb'
+import { proxyFetch, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { loadImdbTmdbCache, saveImdbTmdbCache } from '@/lib/utils'
 
 export { invalidateSyncAuthCache as _invalidateAuthCache }
@@ -244,14 +244,10 @@ async function removeListItem(listId: string, itemId: string): Promise<boolean> 
 }
 
 async function resolveImdbToTmdb(imdbId: string, type: string): Promise<number | null> {
-    const data = await proxyFetch<{ movie_results?: Array<{ id: number }>; tv_results?: Array<{ id: number }> }>(
+    const data = await proxyFetch<TmdbFindPayload>(
         `find/${encodeURIComponent(imdbId)}?external_source=imdb_id`
     )
-    if (!data) return null
-    const isMovie = type === 'movie'
-    const results = isMovie ? data.movie_results : data.tv_results
-    const altResults = isMovie ? data.tv_results : data.movie_results
-    return results?.[0]?.id ?? altResults?.[0]?.id ?? null
+    return pickTmdbIdFromFind(data, type !== 'movie')?.tmdbId ?? null
 }
 
 export async function publishRail(

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, User } from 'lucide-react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, User, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
@@ -13,7 +12,9 @@ import { readNuvioLibrary, readNuvioCollections, readNuvioProfiles, renameNuvioP
 import type { NuvioLibraryItem, NuvioCollection, NuvioProfileRow } from '@/lib/nuvio-data'
 import type { Connection, ConnectionStatus } from '@/types/connection'
 import { fetchConnectionToken } from '@/api/connection'
+import { downloadNuvioBackup } from '@/api/nuvio-backup'
 import { nuvioDriverFor } from '@/lib/drivers/factory'
+import { NUVIO_BACKUP_COPY } from './nuvio-backup-copy'
 
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
@@ -229,7 +230,10 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                     {profiles.map(p => (
                         <div
                             key={p.id}
-                            className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5 transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md"
+                            className={cn(
+                                'flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5 transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md',
+                                editId === p.id && 'flex-wrap'
+                            )}
                         >
                             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-[11px] font-bold text-muted-foreground">
                                 {p.profile_index}
@@ -421,65 +425,89 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
     )
 }
 
-export function NuvioConnectionWorkspace({
-    accountId,
-    connection,
-    status,
-}: {
+export function NuvioBackupButton({ accountId, connectionId }: { accountId: string; connectionId: string }) {
+    const [backupBusy, setBackupBusy] = useState(false)
+
+    const doBackup = async () => {
+        setBackupBusy(true)
+        try {
+            await downloadNuvioBackup(accountId, connectionId)
+            toast({ title: 'Backup downloaded' })
+        } catch (e) {
+            toast({ title: 'Backup failed', description: errMsg(e), variant: 'destructive' })
+        } finally {
+            setBackupBusy(false)
+        }
+    }
+
+    return (
+        <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1.5 text-xs" onClick={doBackup} disabled={backupBusy}>
+            {backupBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            Download backup
+        </Button>
+    )
+}
+
+export function NuvioPluginsTab({ accountId, connection }: { accountId: string; connection: Connection }) {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <NuvioPluginsPanel accountId={accountId} connection={connection} />
+        </div>
+    )
+}
+
+export function NuvioProfilesTab({ accountId, connection, status }: {
     accountId: string
     connection: Connection
     status?: ConnectionStatus
 }) {
     const canSwitchProfile = status !== 'expired' && connection.capabilities.includes('profiles')
-    const [tab, setTab] = useState('plugins')
 
     return (
-        <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-            <TabsList>
-                <TabsTrigger value="plugins">Plugins</TabsTrigger>
-                <TabsTrigger value="profiles">Profiles</TabsTrigger>
-                <TabsTrigger value="library">Library</TabsTrigger>
-                <TabsTrigger value="collections">Collections</TabsTrigger>
-            </TabsList>
-
-
-            <TabsContent value="plugins">
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
-                    <NuvioPluginsPanel accountId={accountId} connection={connection} />
-                </div>
-            </TabsContent>
-
-
-            <TabsContent value="profiles">
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
-                    <div className="space-y-6">
-                        {canSwitchProfile && (
-                            <div className="space-y-3">
-                                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sync target</p>
-                                <p className="text-xs text-muted-foreground -mt-1.5">Choose which profile this account's addons push to.</p>
-                                <NuvioProfilePicker accountId={accountId} connection={connection} />
-                            </div>
-                        )}
-                        <div className={cn('space-y-3', canSwitchProfile && 'border-t border-border/40 pt-6')}>
-                            <ProfilesSection accountId={accountId} connection={connection} />
-                        </div>
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <div className="space-y-6">
+                {canSwitchProfile && (
+                    <div className="space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sync target</p>
+                        <p className="text-xs text-muted-foreground -mt-1.5">Choose which profile this account's addons push to.</p>
+                        <NuvioProfilePicker accountId={accountId} connection={connection} />
                     </div>
+                )}
+                <div className={cn('space-y-3', canSwitchProfile && 'border-t border-border/40 pt-6')}>
+                    <ProfilesSection accountId={accountId} connection={connection} />
                 </div>
-            </TabsContent>
+            </div>
+        </div>
+    )
+}
 
+export function NuvioLibraryTab({ accountId, connection }: { accountId: string; connection: Connection }) {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <LibrarySection accountId={accountId} connection={connection} />
+        </div>
+    )
+}
 
-            <TabsContent value="library">
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
-                    <LibrarySection accountId={accountId} connection={connection} />
-                </div>
-            </TabsContent>
+export function NuvioCollectionsTab({ accountId, connection }: { accountId: string; connection: Connection }) {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <CollectionsSection accountId={accountId} connection={connection} />
+        </div>
+    )
+}
 
-
-            <TabsContent value="collections">
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
-                    <CollectionsSection accountId={accountId} connection={connection} />
-                </div>
-            </TabsContent>
-        </Tabs>
+export function NuvioBackupTab({ accountId, connection }: { accountId: string; connection: Connection }) {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            <div className="min-w-0">
+                <p className="text-sm font-semibold">Account backup</p>
+                <p className="text-xs text-muted-foreground">Keep a safety copy of this Nuvio account.</p>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground/80">{NUVIO_BACKUP_COPY}</p>
+            <div className="flex flex-wrap gap-2">
+                <NuvioBackupButton accountId={accountId} connectionId={connection.id} />
+            </div>
+        </div>
     )
 }

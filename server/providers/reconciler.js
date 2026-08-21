@@ -276,24 +276,43 @@ function manifestSignature(m) {
     })
 }
 
-async function writePlatformAddons(driver, connection, addons) {
+// Platform writes replace the full addon list, so two writes racing on one connection
+// land in nondeterministic order (route immediate-enforcement vs worker cycle vs client
+// reconcile). Serialize per connection; different connections still run in parallel.
+const platformWriteQueues = new Map()
+
+function enqueuePlatformWrite(connection, run) {
+    const key = connection.id || connection.platform
+    const prev = platformWriteQueues.get(key) ?? Promise.resolve()
+    const next = prev.catch(() => { }).then(run)
+    platformWriteQueues.set(key, next)
+    next.finally(() => {
+        if (platformWriteQueues.get(key) === next) platformWriteQueues.delete(key)
+    }).catch(() => { })
+    return next
+}
+
+async function writePlatformAddons(driver, connection, addons, source) {
     const c = connection.credentials
     const prepared = (addons || []).map(applyCustomMetadata)
-    if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
-        if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.authKey, prepared)
-    }
-    if (connection.platform === 'nuvio') {
-        if (!c?.accessToken) { const e = new Error('Nuvio credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.accessToken, prepared, c.profileId)
-    }
-    if (connection.platform === 'realstream') {
-        if (!c?.accessToken) { const e = new Error('RealStream credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
-        return driver.writeAddons(c.accessToken, prepared, c.userId)
-    }
-    if (isHydraOutbound(connection)) {
-        return driver.writeAddons(prepared)
-    }
+    trace('reconciler', 'writePlatformAddons', { platform: connection.platform, source, count: prepared.length, urls: prepared.map(a => a.transportUrl || '') })
+    return enqueuePlatformWrite(connection, () => {
+        if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
+            if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
+            return driver.writeAddons(c.authKey, prepared)
+        }
+        if (connection.platform === 'nuvio') {
+            if (!c?.accessToken) { const e = new Error('Nuvio credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
+            return driver.writeAddons(c.accessToken, prepared, c.profileId)
+        }
+        if (connection.platform === 'realstream') {
+            if (!c?.accessToken) { const e = new Error('RealStream credentials not loaded, re-authenticate this connection'); e.isAuthError = true; throw e }
+            return driver.writeAddons(c.accessToken, prepared, c.userId)
+        }
+        if (isHydraOutbound(connection)) {
+            return driver.writeAddons(prepared)
+        }
+    })
 }
 
 function connectionKey(accountId, connectionId) {
@@ -454,7 +473,7 @@ export function createReconciler(fastify) {
                 } catch { /* can't read, assume needs write */ }
 
                 if (needsWrite) {
-                    await writePlatformAddons(driver, connection, canonical)
+                    await writePlatformAddons(driver, connection, canonical, 'reconcile')
                     changes.push({ type: 'restore', url: '', platform: connection.platform, primary: false })
                 }
                 recordSuccess(accountId, connId)
@@ -491,7 +510,7 @@ export function createReconciler(fastify) {
                     if (canon.length === 0) continue
                     const driver = await loadDriver(connection.platform, connection.credentials || {}, connection)
                     if (!driver) continue
-                    await writePlatformAddons(driver, connection, canon)
+                    await writePlatformAddons(driver, connection, canon, 'enforce')
                 }
                 recordSuccess(accountId, connId)
                 synced.push(connection.platform)

@@ -6,6 +6,8 @@ const RPC_TIMEOUT_MS = 30000
 const REST_TIMEOUT_MS = 15000
 
 import { trace } from '@/lib/trace'
+import { mapAvatarRows } from '@/lib/nuvio-avatar'
+import type { NuvioAvatar } from '@/lib/nuvio-avatar'
 
 interface NuvioError extends Error {
     status?: number
@@ -31,10 +33,10 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
     const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
     const publishableKey = options.publishableKey || DEFAULT_PUBLISHABLE_KEY
 
-    const makeHeaders = (accessToken: string): Record<string, string> => ({
+    const makeHeaders = (accessToken?: string): Record<string, string> => ({
         'Content-Type': 'application/json',
         'apikey': publishableKey,
-        'Authorization': `Bearer ${accessToken}`,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     })
 
     const rpc = async (fn: string, body: unknown, accessToken: string, opts: { retries?: number } = {}) => {
@@ -111,7 +113,7 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
 
         async writeAddons(accessToken: string, addons: DriverAddon[], profileId?: string | number) {
             const start = Date.now()
-            trace('nuvioDriver', 'writeAddons.start', { count: addons.length })
+            trace('nuvioDriver', 'writeAddons.start', { count: addons.length, urls: addons.map(a => a.transportUrl || '') })
             try {
                 const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
                 const result = await rpc('sync_push_addons', {
@@ -244,11 +246,11 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
 
         // Rename via a surgical PostgREST PATCH on the profiles row (by uuid), so it can't touch
         // other profiles the way the sync_push_profiles RPC might.
-        async renameProfile(accessToken: string, profileId: string, name: string) {
+        async renameProfile(accessToken: string, profileId: string, name: string, avatarId?: string) {
             const res = await fetch(`${baseUrl}${REST_PATH}/profiles?id=eq.${encodeURIComponent(profileId)}`, {
                 method: 'PATCH',
                 headers: { ...makeHeaders(accessToken), Prefer: 'return=minimal' },
-                body: JSON.stringify({ name }),
+                body: JSON.stringify(avatarId !== undefined ? { name, avatar_id: avatarId } : { name }),
                 signal: AbortSignal.timeout(REST_TIMEOUT_MS),
             })
             if (!res.ok) {
@@ -260,7 +262,7 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
             return null
         },
 
-        async createProfile(accessToken: string, params: { profileIndex: number; name: string; avatarColorHex?: string }) {
+        async createProfile(accessToken: string, params: { profileIndex: number; name: string; avatarColorHex?: string; avatarId?: string }) {
             const existing = await rpc('sync_pull_profiles', {}, accessToken)
             const rows: Array<Record<string, unknown>> = Array.isArray(existing) ? existing : []
             const p_profiles = rows
@@ -279,7 +281,7 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
                 avatar_color_hex: params.avatarColorHex ?? null,
                 uses_primary_addons: false,
                 uses_primary_plugins: false,
-                avatar_id: null,
+                avatar_id: params.avatarId ?? null,
             })
             return rpc('sync_push_profiles', { p_profiles, p_client_max_profiles: 5 }, accessToken, { retries: 0 })
         },
@@ -290,17 +292,65 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
         },
 
         async deleteWatchHistory(accessToken: string, keys: Array<{ content_id: string; season?: number; episode?: number }>, profileId?: string | number) {
+            const start = Date.now()
             const cleaned = (keys || []).filter(k => k && k.content_id)
+            trace('nuvioDriver', 'deleteWatchHistory.start', { keys: cleaned.length })
             if (cleaned.length === 0) return null
             const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
-            return rpc('sync_delete_watched_items', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+            try {
+                const result = await rpc('sync_delete_watched_items', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+                trace('nuvioDriver', 'deleteWatchHistory.success', { keys: cleaned.length, profileIndex: idx, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'deleteWatchHistory.error', { keys: cleaned.length, profileIndex: idx, status: (err as NuvioError)?.status, error: (err as Error)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
 
         async deleteWatchProgress(accessToken: string, progressKeys: string[], profileId?: string | number) {
+            const start = Date.now()
             const cleaned = (progressKeys || []).filter(Boolean)
+            trace('nuvioDriver', 'deleteWatchProgress.start', { keys: cleaned.length })
             if (cleaned.length === 0) return null
             const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
-            return rpc('sync_delete_watch_progress', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+            try {
+                const result = await rpc('sync_delete_watch_progress', { p_profile_id: idx, p_keys: cleaned }, accessToken, { retries: 0 })
+                trace('nuvioDriver', 'deleteWatchProgress.success', { keys: cleaned.length, profileIndex: idx, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'deleteWatchProgress.error', { keys: cleaned.length, profileIndex: idx, status: (err as NuvioError)?.status, error: (err as Error)?.message, timing: Date.now() - start })
+                throw err
+            }
+        },
+
+        async getMemberAccess(accessToken: string): Promise<unknown> {
+            const rows = await rpc('get_my_member_access', {}, accessToken)
+            return Array.isArray(rows) ? rows : []
+        },
+
+        async getAvatarCatalog(): Promise<NuvioAvatar[]> {
+            const start = Date.now()
+            trace('nuvioDriver', 'getAvatarCatalog.start', {})
+            try {
+                const res = await fetch(`${baseUrl}${RPC_PATH}/get_avatar_catalog`, {
+                    method: 'POST',
+                    headers: makeHeaders(),
+                    body: JSON.stringify({}),
+                    signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+                })
+                if (!res.ok) {
+                    const err: NuvioError = new Error(`Nuvio getAvatarCatalog returned ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401
+                    throw err
+                }
+                const result = mapAvatarRows(await res.json())
+                trace('nuvioDriver', 'getAvatarCatalog.success', { count: result.length, timing: Date.now() - start })
+                return result
+            } catch (err) {
+                trace('nuvioDriver', 'getAvatarCatalog.error', { error: (err as NuvioError)?.message, timing: Date.now() - start })
+                throw err
+            }
         },
     }
 }

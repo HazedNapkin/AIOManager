@@ -182,6 +182,7 @@ class MetadataCache {
         const permanent = options.permanent === true
         const baseTtl = permanent ? PERMANENT_TTL : ttl
         const expiresAt = baseTtl > 0 ? now + jitteredTtl(baseTtl) : 0
+        const ttlFromValue = typeof options.ttlFromValue === 'function' ? options.ttlFromValue : null
 
         const l1Hit = this._getL1(key, now)
         if (l1Hit !== null) {
@@ -213,8 +214,14 @@ class MetadataCache {
             if (fetched === undefined || fetched === null) {
                 throw new Error('Fetcher returned empty value')
             }
-            const expiresAtForStore = expiresAt || (now + jitteredTtl(PERMANENT_TTL))
             const responseText = typeof fetched === 'string' ? fetched : JSON.stringify(fetched)
+            let valueTtl = 0
+            if (ttlFromValue) {
+                try { valueTtl = Number(ttlFromValue(responseText)) } catch { valueTtl = 0 }
+            }
+            const expiresAtForStore = valueTtl > 0
+                ? now + jitteredTtl(valueTtl)
+                : (expiresAt || (now + jitteredTtl(PERMANENT_TTL)))
             const storedValue = typeof fetched === 'string' ? JSON.parse(fetched) : fetched
             this._setL1(key, storedValue, expiresAtForStore)
             await this._insertL2(key, responseText, expiresAtForStore, now)
@@ -276,6 +283,41 @@ class MetadataCache {
             return deleted
         } catch (err) {
             logger.warn && logger.warn(`[MetadataCache] cleanup failed: ${err && err.message}`)
+            return 0
+        }
+    }
+
+    async cleanupPoisonedFindRows() {
+        const now = this._now()
+        // One-shot purge of "permanent" empty find rows cached before the hit/empty TTL split; legit permanent hits have non-empty buckets
+        const poisonedCutoff = now + 2 * 365 * 24 * 60 * 60 * 1000
+        try {
+            const res = db.type === 'postgres'
+                ? await db.run(
+                    `DELETE FROM metadata_cache
+                     WHERE key LIKE 'tmdb:find:%'
+                       AND expires_at > $1
+                       AND json_array_length(response::json->'movie_results') = 0
+                       AND json_array_length(response::json->'tv_results') = 0
+                       AND json_array_length(response::json->'tv_episode_results') = 0
+                       AND json_array_length(response::json->'tv_season_results') = 0`,
+                    [poisonedCutoff]
+                )
+                : await db.run(
+                    `DELETE FROM metadata_cache
+                     WHERE key LIKE 'tmdb:find:%'
+                       AND expires_at > $1
+                       AND json_array_length(response, '$.movie_results') = 0
+                       AND json_array_length(response, '$.tv_results') = 0
+                       AND json_array_length(response, '$.tv_episode_results') = 0
+                       AND json_array_length(response, '$.tv_season_results') = 0`,
+                    [poisonedCutoff]
+                )
+            const deleted = Number(res?.changes || 0)
+            this.stats.db_deletes_total += deleted
+            return deleted
+        } catch (err) {
+            logger.warn && logger.warn(`[MetadataCache] poisoned find cleanup failed: ${err && err.message}`)
             return 0
         }
     }

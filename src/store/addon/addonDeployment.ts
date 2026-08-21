@@ -25,6 +25,7 @@ import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
 import { getStremioAuthKey } from '@/lib/account-compat'
+import { getOfficialFlag } from '@/lib/addon-official'
 
 function isStremioPushEnabled(account: Account | undefined | null): boolean {
     if (!account) return true
@@ -103,8 +104,8 @@ const stableStringify = (value: unknown, seen: WeakSet<object> = new WeakSet()):
   }
 }
 
-const getComparableAddonFlags = (flags: AddonDescriptor['flags']) => ({
-  official: flags?.official ?? false,
+const getComparableAddonFlags = (flags: AddonDescriptor['flags'], manifestId: string) => ({
+  official: flags?.official ?? getOfficialFlag(manifestId),
   protected: flags?.protected ?? false,
   enabled: flags?.enabled ?? true,
 })
@@ -137,7 +138,7 @@ const getAddonCollectionFingerprint = (addon: AddonDescriptor) => stableStringif
   transportName: addon.transportName || null,
   transportUrl: getAddonUrlKey(addon.transportUrl),
   manifest: addon.manifest || null,
-  flags: getComparableAddonFlags(addon.flags),
+  flags: getComparableAddonFlags(addon.flags, addon.manifest?.id ?? ''),
   metadata: getComparableAddonMetadata(addon.metadata),
   catalogOverrides: getComparableCatalogOverrides(addon.catalogOverrides),
   syncToLibrary: addon.syncToLibrary ?? false,
@@ -1503,7 +1504,10 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
           ...existing,
           installUrl: addon.transportUrl,
           syncToLibrary: existing.syncToLibrary ?? false,
-          flags: addon.flags,
+          flags: {
+            ...addon.flags,
+            official: getOfficialFlag(addon.manifest?.id || '', addon.flags?.official),
+          },
         })
         continue
       }
@@ -1526,7 +1530,10 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
           installedAt: new Date(),
           installedVia: 'saved-addon',
           appliedTags: syncableSavedAddon.tags,
-          flags: addon.flags,
+          flags: {
+            ...addon.flags,
+            official: getOfficialFlag(addon.manifest?.id || '', addon.flags?.official),
+          },
         })
         continue
       }
@@ -1540,7 +1547,10 @@ export async function syncAccountState(accountId: string, accountAuthKey: string
         installedAt: new Date(),
         installedVia: matchingSavedAddon ? 'saved-addon' : 'manual',
         appliedTags: matchingSavedAddon?.tags,
-        flags: addon.flags,
+        flags: {
+          ...addon.flags,
+          official: getOfficialFlag(addon.manifest?.id || '', addon.flags?.official),
+        },
       })
     }
 

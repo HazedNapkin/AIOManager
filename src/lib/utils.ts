@@ -492,6 +492,33 @@ export function saveImdbTmdbCache(cache: Record<string, string>): void {
     } catch {}
 }
 
+const IMDB_TMDB_UNRESOLVED_KEY = 'aiomanager-imdb-tmdb-unresolved'
+export const IMDB_UNRESOLVED_RETRY_MS = 60 * 60 * 1000
+const IMDB_UNRESOLVED_TTL_MS = 24 * 60 * 60 * 1000
+
+// Negative resolution cache: imdb ids whose TMDB find came back empty. Kept as a parallel
+// map (imdbId -> timestamp) so the positive cache shape stays untouched for other consumers.
+export function loadUnresolvedImdbIds(): Record<string, number> {
+    try {
+        const raw = JSON.parse(localStorage.getItem(IMDB_TMDB_UNRESOLVED_KEY) || '{}') as Record<string, unknown>
+        const now = Date.now()
+        const out: Record<string, number> = {}
+        for (const [id, ts] of Object.entries(raw)) {
+            const t = Number(ts)
+            if (Number.isFinite(t) && now - t < IMDB_UNRESOLVED_TTL_MS) out[id] = t
+        }
+        return out
+    } catch {
+        return {}
+    }
+}
+
+export function saveUnresolvedImdbIds(unresolved: Record<string, number>): void {
+    try {
+        localStorage.setItem(IMDB_TMDB_UNRESOLVED_KEY, JSON.stringify(unresolved))
+    } catch {}
+}
+
 export function sanitizePosterUrl(url: string | undefined): string | undefined {
     if (!url || typeof url !== 'string') return url
     try {

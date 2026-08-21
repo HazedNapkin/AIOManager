@@ -669,51 +669,11 @@ export async function buildColdStartRails(
     return buildCinemetaColdStartRails(signal, railSize)
 }
 
-async function buildCinemetaColdStartRails(
+export async function buildCinemetaColdStartRails(
     signal?: AbortSignal,
-    railSize = 20
+    railSize = 20,
+    watchedImdbIds?: Set<string>
 ): Promise<RankedRail[]> {
-    const CINEMETA = 'https://v3-cinemeta.strem.io'
-
-    async function fetchCatalog(type: 'movie' | 'series'): Promise<ScoredRecommendation[]> {
-        try {
-            const res = await fetch(`${CINEMETA}/catalog/${type}/top.json`, { signal })
-            if (!res.ok) return []
-            const data = await res.json()
-            const metas = Array.isArray(data?.metas) ? data.metas : []
-            return metas.slice(0, railSize).map((m: Record<string, unknown>) => {
-                const imdbId = String(m.id ?? '')
-                const yearStr = typeof m.year === 'string' ? m.year : undefined
-                const rating = typeof m.imdbRating === 'string' ? parseFloat(m.imdbRating) : undefined
-                return {
-                    id: { imdb: imdbId, slug: imdbId },
-                    title: String(m.name ?? 'Unknown'),
-                    type: type === 'series' ? 'series' as const : 'movie' as const,
-                    poster: typeof m.poster === 'string' ? m.poster : undefined,
-                    backdrop: typeof m.background === 'string' ? m.background : undefined,
-                    year: yearStr ? parseInt(yearStr, 10) : undefined,
-                    voteAverage: rating,
-                    voteCount: 0,
-                    score: rating ?? 0,
-                    source: 'cinemeta',
-                }
-            })
-        } catch {
-            return []
-        }
-    }
-
-    const [movies, series] = await Promise.all([
-        fetchCatalog('movie'),
-        fetchCatalog('series'),
-    ])
-
-    const rails: RankedRail[] = []
-    if (movies.length > 0) {
-        rails.push({ title: 'Popular Movies', source: 'trending', items: movies })
-    }
-    if (series.length > 0) {
-        rails.push({ title: 'Popular Series', source: 'trending', items: series })
-    }
-    return rails
+    const { buildCinemetaFatRails } = await import('./cinemeta-rails.ts')
+    return buildCinemetaFatRails(signal, railSize, watchedImdbIds ? { watchedImdbIds } : undefined)
 }

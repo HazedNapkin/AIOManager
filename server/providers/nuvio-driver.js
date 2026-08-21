@@ -7,7 +7,34 @@ const AUTH_TIMEOUT_MS = 30000
 const RPC_TIMEOUT_MS = 30000
 const REST_TIMEOUT_MS = 15000
 
-import { trace } from '../utils/trace.js'
+import { Buffer } from 'node:buffer'
+import { traced } from '../utils/trace.js'
+
+const BACKUP_EXPORT_MAX_BYTES = 50 * 1024 * 1024
+
+// Hard size ceiling: abort oversized upstream bodies instead of materializing them.
+async function readJsonCapped(res, maxBytes) {
+    const declared = Number(res.headers?.get?.('content-length'))
+    if (declared > maxBytes) {
+        try { await res.body?.cancel() } catch { }
+        throw new Error(`Nuvio response exceeded the ${maxBytes}-byte limit (content-length)`)
+    }
+    const reader = res.body?.getReader?.()
+    if (!reader) return res.json()
+    const chunks = []
+    let received = 0
+    for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        received += value.byteLength
+        if (received > maxBytes) {
+            try { await reader.cancel() } catch { }
+            throw new Error(`Nuvio response exceeded the ${maxBytes}-byte limit while streaming`)
+        }
+        chunks.push(Buffer.from(value))
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
 
 export function createNuvioDriver(options = {}) {
     const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
@@ -45,6 +72,7 @@ export function createNuvioDriver(options = {}) {
                 throw err
             }
             if (res.status === 204) return null
+            if (opts.maxBytes > 0) return readJsonCapped(res, opts.maxBytes)
             return res.json()
         }
         throw lastErr
@@ -93,29 +121,27 @@ export function createNuvioDriver(options = {}) {
         capabilities: ['addons', 'plugins', 'profiles', 'history'],
 
         async authenticate(email, password) {
-            const start = Date.now()
-            trace('nuvioServerDriver', 'authenticate.start', {})
-            const res = await fetch(`${baseUrl}${TOKEN_GRANT_PATH}?grant_type=password`, {
-                method: 'POST',
-                headers: makeHeaders(null),
-                body: JSON.stringify({ email, password }),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+            return traced('nuvioServerDriver', 'authenticate', {}, async () => {
+                const res = await fetch(`${baseUrl}${TOKEN_GRANT_PATH}?grant_type=password`, {
+                    method: 'POST',
+                    headers: makeHeaders(null),
+                    body: JSON.stringify({ email, password }),
+                    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                })
+                if (!res.ok) {
+                    const err = new Error(`Nuvio auth failed: ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401 || res.status === 403
+                    try { err.data = await res.json() } catch { }
+                    throw err
+                }
+                const data = await res.json()
+                return {
+                    accessToken: data.access_token,
+                    refreshToken: data.refresh_token,
+                    expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + (data.expires_in || 3600) * 1000
+                }
             })
-            if (!res.ok) {
-                const err = new Error(`Nuvio auth failed: ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401 || res.status === 403
-                try { err.data = await res.json() } catch { }
-                trace('nuvioServerDriver', 'authenticate.error', { status: res.status, isAuthError: err.isAuthError, timing: Date.now() - start })
-                throw err
-            }
-            const data = await res.json()
-            trace('nuvioServerDriver', 'authenticate.success', { timing: Date.now() - start })
-            return {
-                accessToken: data.access_token,
-                refreshToken: data.refresh_token,
-                expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + (data.expires_in || 3600) * 1000
-            }
         },
 
         async register(email, password) {
@@ -149,51 +175,46 @@ export function createNuvioDriver(options = {}) {
         },
 
         async refreshAccessToken(refreshToken) {
-            const start = Date.now()
-            trace('nuvioServerDriver', 'refreshAccessToken.start', {})
-            const res = await fetch(`${baseUrl}${TOKEN_GRANT_PATH}?grant_type=refresh_token`, {
-                method: 'POST',
-                headers: makeHeaders(null),
-                body: JSON.stringify({ refresh_token: refreshToken }),
-                signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+            return traced('nuvioServerDriver', 'refreshAccessToken', {}, async () => {
+                const res = await fetch(`${baseUrl}${TOKEN_GRANT_PATH}?grant_type=refresh_token`, {
+                    method: 'POST',
+                    headers: makeHeaders(null),
+                    body: JSON.stringify({ refresh_token: refreshToken }),
+                    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                })
+                if (!res.ok) {
+                    const err = new Error(`Nuvio token refresh failed: ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401
+                    throw err
+                }
+                const data = await res.json()
+                return {
+                    accessToken: data.access_token,
+                    refreshToken: data.refresh_token,
+                    expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + (data.expires_in || 3600) * 1000
+                }
             })
-            if (!res.ok) {
-                const err = new Error(`Nuvio token refresh failed: ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401
-                trace('nuvioServerDriver', 'refreshAccessToken.error', { status: res.status, isAuthError: err.isAuthError, timing: Date.now() - start })
-                throw err
-            }
-            const data = await res.json()
-            trace('nuvioServerDriver', 'refreshAccessToken.success', { timing: Date.now() - start })
-            return {
-                accessToken: data.access_token,
-                refreshToken: data.refresh_token,
-                expiresAt: data.expires_at ? data.expires_at * 1000 : Date.now() + (data.expires_in || 3600) * 1000
-            }
         },
 
         async readAddons(accessToken, profileId) {
-            const start = Date.now()
-            trace('nuvioServerDriver', 'readAddons.start', {})
-            const idx = await resolveProfileIndex(accessToken, profileId)
-            const query = `select=*&profile_id=eq.${idx}&order=sort_order`
-            const res = await fetch(`${baseUrl}${REST_PATH}/addons?${query}`, {
-                method: 'GET',
-                headers: makeHeaders(accessToken),
-                signal: AbortSignal.timeout(REST_TIMEOUT_MS)
+            return traced('nuvioServerDriver', 'readAddons', {}, async () => {
+                const idx = await resolveProfileIndex(accessToken, profileId)
+                const query = `select=*&profile_id=eq.${idx}&order=sort_order`
+                const res = await fetch(`${baseUrl}${REST_PATH}/addons?${query}`, {
+                    method: 'GET',
+                    headers: makeHeaders(accessToken),
+                    signal: AbortSignal.timeout(REST_TIMEOUT_MS)
+                })
+                if (!res.ok) {
+                    const err = new Error(`Nuvio readAddons returned ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401
+                    throw err
+                }
+                const addons = await res.json()
+                return Array.isArray(addons) ? addons : []
             })
-            if (!res.ok) {
-                const err = new Error(`Nuvio readAddons returned ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401
-                trace('nuvioServerDriver', 'readAddons.error', { status: res.status, profileIndex: idx, timing: Date.now() - start })
-                throw err
-            }
-            const addons = await res.json()
-            const result = Array.isArray(addons) ? addons : []
-            trace('nuvioServerDriver', 'readAddons.success', { count: result.length, profileIndex: idx, timing: Date.now() - start })
-            return result
         },
 
         async readWatchHistory(accessToken, profileId, { page = 1, pageSize = 100000 } = {}) {
@@ -213,25 +234,26 @@ export function createNuvioDriver(options = {}) {
         },
 
         async writeAddons(accessToken, addons, profileId) {
-            const start = Date.now()
-            trace('nuvioServerDriver', 'writeAddons.start', { count: addons.length })
-            try {
+            return traced('nuvioServerDriver', 'writeAddons', { count: addons.length, urls: addons.map(a => a.transportUrl || '') }, async () => {
                 const idx = await resolveProfileIndex(accessToken, profileId, { strict: true })
-                const result = await rpc('sync_push_addons', {
+                const seen = new Set()
+                const deduped = addons.filter(a => {
+                    const url = a.transportUrl || ''
+                    if (seen.has(url)) return false
+                    seen.add(url)
+                    return true
+                })
+                // sync_push_addons upserts row-by-row but rejects the whole payload when it contains the same url twice
+                return rpc('sync_push_addons', {
                     p_profile_id: idx,
-                    p_addons: addons.map((a, i) => ({
+                    p_addons: deduped.map((a, i) => ({
                         url: a.transportUrl || '',
                         name: a.manifest?.name || '',
                         enabled: (a.flags?.enabled ?? a.enabled) !== false,
                         sort_order: i
                     }))
                 }, accessToken)
-                trace('nuvioServerDriver', 'writeAddons.success', { count: addons.length, profileIndex: idx, timing: Date.now() - start })
-                return result
-            } catch (err) {
-                trace('nuvioServerDriver', 'writeAddons.error', { count: addons.length, error: err?.message, timing: Date.now() - start })
-                throw err
-            }
+            })
         },
 
         async readPlugins(accessToken, profileId) {
@@ -282,6 +304,85 @@ export function createNuvioDriver(options = {}) {
                 })),
                 p_client_max_profiles: 5
             }, accessToken)
+        },
+
+        // Undocumented account-wide export RPC; takes no params, response rows pass through untouched.
+        async exportAccountBackup(accessToken) {
+            return traced('nuvioServerDriver', 'exportAccountBackup', {}, async () => {
+                const result = await rpc('sync_export_account_backup', {}, accessToken, { maxBytes: BACKUP_EXPORT_MAX_BYTES })
+                return result && typeof result === 'object' && !Array.isArray(result) ? result : { data: result }
+            })
+        },
+
+        // grant_type=anonymous is rejected upstream; device sessions bootstrap via anonymous
+        // signup (Nuvio's own clients do the same). Reuse the token across polls (rate-limited).
+        async getAnonymousToken() {
+            return traced('nuvioServerDriver', 'getAnonymousToken', {}, async () => {
+                const res = await fetch(`${baseUrl}/auth/v1/signup`, {
+                    method: 'POST',
+                    headers: makeHeaders(null),
+                    body: JSON.stringify({ data: { tv_client: 'aiomanager' } }),
+                    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                })
+                if (!res.ok) {
+                    const err = new Error(`Nuvio device session failed: ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401 || res.status === 403
+                    try { err.data = await res.json() } catch { }
+                    throw err
+                }
+                const data = await res.json()
+                return data.access_token
+            })
+        },
+
+        async startTvLoginSession({ deviceNonce, redirectBaseUrl, deviceName }, anonToken) {
+            return traced('nuvioServerDriver', 'startTvLoginSession', {}, async () => {
+                const rows = await rpc('start_tv_login_session', {
+                    p_device_nonce: deviceNonce,
+                    p_redirect_base_url: redirectBaseUrl ?? null,
+                    p_device_name: deviceName ?? null
+                }, anonToken)
+                return Array.isArray(rows) ? rows[0] : rows
+            })
+        },
+
+        // A P0001 raise arrives as HTTP 400 from PostgREST; routes surface it as a client 400.
+        async pollTvLoginSession({ code, deviceNonce }, anonToken) {
+            return traced('nuvioServerDriver', 'pollTvLoginSession', {}, async () => {
+                const rows = await rpc('poll_tv_login_session', {
+                    p_code: code,
+                    p_device_nonce: deviceNonce
+                }, anonToken)
+                const row = Array.isArray(rows) ? rows[0] : null
+                return row?.status ?? 'pending'
+            })
+        },
+
+        // Edge function, not an RPC: apikey-only auth, no rpc() retry wrapper.
+        async exchangeTvLogin({ code, deviceNonce }) {
+            return traced('nuvioServerDriver', 'exchangeTvLogin', {}, async () => {
+                const res = await fetch(`${baseUrl}/functions/v1/tv-logins-exchange`, {
+                    method: 'POST',
+                    headers: makeHeaders(null),
+                    body: JSON.stringify({ code, device_nonce: deviceNonce }),
+                    signal: AbortSignal.timeout(AUTH_TIMEOUT_MS)
+                })
+                if (!res.ok) {
+                    const err = new Error(`Nuvio TV login exchange failed: ${res.status}`)
+                    err.status = res.status
+                    err.isAuthError = res.status === 401 || res.status === 403
+                    try { err.data = await res.json() } catch { }
+                    throw err
+                }
+                const data = await res.json()
+                return {
+                    accessToken: data.access_token,
+                    refreshToken: data.refresh_token,
+                    expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
+                    user: data.user
+                }
+            })
         }
     }
 }

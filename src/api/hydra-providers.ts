@@ -1,5 +1,5 @@
 import { resilientFetch } from '@/lib/api-resilience'
-import { useSyncStore } from '@/store/syncStore'
+import { useSyncStore, getSyncApiPath } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
 import type { HydraStatus } from '@/types/provider'
 import type { AddonDescriptor } from '@/types/addon'
@@ -18,17 +18,13 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
     }
 }
 
-function getServerUrl(): string {
-    return useSyncStore.getState().serverUrl || '/api'
-}
-
 export async function testHydraEndpoint(
     baseUrl: string,
     authType: string,
     authHeader: string,
     authValue: string,
 ): Promise<HydraStatus> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/hydra/test`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -48,7 +44,7 @@ export async function storeConnectionCredential(
     credential: string | Record<string, unknown>,
     credentialType?: string,
 ): Promise<void> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/credentials`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -67,7 +63,7 @@ export async function nuvioAuth(
     publishableKey?: string,
     baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; refreshToken: string; expiresAt: number }; profiles: Array<{ id: string; name: string }> }> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/nuvio/auth`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -86,7 +82,7 @@ export async function realstreamAuth(
     password: string,
     baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; userId: string | null; expiresAt: number } }> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/realstream/auth`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -106,7 +102,7 @@ export async function nuvioSignup(
     publishableKey?: string,
     baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; refreshToken: string; expiresAt: number }; profiles: Array<{ id: string; name: string }> }> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/nuvio/signup`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -126,7 +122,7 @@ export async function realstreamSignup(
     name?: string,
     baseUrl?: string,
 ): Promise<{ tokens: { accessToken: string; userId: string | null; expiresAt: number } }> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/realstream/signup`, {
         method: 'POST',
         headers: await getAuthHeaders(),
@@ -158,7 +154,7 @@ export interface CanonicalFetchResult {
  * Best-effort: returns empty values on any failure so it never blocks a sync.
  */
 export async function fetchCanonical(): Promise<CanonicalFetchResult> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const headers = await getAuthHeaders()
     if (canonicalCache?.etag) headers['If-None-Match'] = canonicalCache.etag
     const res = await resilientFetch(`${base}/providers/canonical`, {
@@ -184,7 +180,7 @@ export interface HydraSubscriber {
 }
 
 export async function fetchSubscribers(accountId: string): Promise<HydraSubscriber[]> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/subscribers/${accountId}`, {
         headers: await getAuthHeaders(),
         timeout: 10000,
@@ -195,7 +191,7 @@ export async function fetchSubscribers(accountId: string): Promise<HydraSubscrib
 }
 
 export async function deleteSubscriber(accountId: string, name: string): Promise<void> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/subscribers/${accountId}`, {
         method: 'DELETE',
         headers: await getAuthHeaders(),
@@ -212,7 +208,7 @@ export async function deleteConnectionCredential(
     _accountId: string,
     connectionId: string,
 ): Promise<void> {
-    const base = getServerUrl().replace(/\/+$/, '')
+    const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/credentials`, {
         method: 'DELETE',
         headers: await getAuthHeaders(),

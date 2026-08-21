@@ -381,16 +381,19 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
+                                <form id="login-form" onSubmit={(e) => { e.preventDefault(); if (isLocked && auth.isAuthenticated) { handleUnlock() } else { handleLogin() } }} className="space-y-4">
                                 <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-foreground/80 uppercase">UUID</Label>
+                                    <Label className="text-xs font-medium text-foreground/80 uppercase" htmlFor="login-uuid">UUID</Label>
                                     <div className="relative">
                                         <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
+                                            id="login-uuid"
+                                            name="username"
+                                            autoComplete="username"
                                             placeholder="uuid-string..."
                                             className={`h-11 pl-10 font-mono text-sm ${notFoundError ? 'border-destructive' : ''}`}
                                             value={loginId}
                                             onChange={(e) => { setLoginId(e.target.value.trim()); setLoginError(null); }}
-                                            onKeyDown={(e) => e.key === 'Enter' && (isLocked && auth.isAuthenticated ? handleUnlock() : handleLogin())}
                                             disabled={isLocked && auth.isAuthenticated}
                                             autoFocus
                                         />
@@ -403,17 +406,18 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-xs font-medium text-foreground/80 uppercase">Password</Label>
+                                    <Label className="text-xs font-medium text-foreground/80 uppercase" htmlFor="login-password">Password</Label>
                                     <div className="relative">
                                         <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                         <Input
+                                            id="login-password"
+                                            name="password"
                                             type={showPassword ? "text" : "password"}
                                             placeholder="••••••••"
                                             className={`h-11 pl-10 pr-12 ${passwordError ? 'border-destructive' : ''}`}
                                             autoComplete="current-password"
                                             value={loginPass}
                                             onChange={(e) => { setLoginPass(e.target.value); setLoginError(null); }}
-                                            onKeyDown={(e) => e.key === 'Enter' && (isLocked && auth.isAuthenticated ? handleUnlock() : handleLogin())}
                                         />
                                         <Button
                                             type="button"
@@ -455,13 +459,15 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                         </div>
                                     )}
                                 </div>
+                                </form>
                             </CardContent>
                             <CardFooter className="flex flex-col gap-3">
                                 <Button
+                                    type="submit"
+                                    form="login-form"
                                     className="w-full gap-2"
                                     size="xl"
                                     variant="default"
-                                    onClick={isLocked && auth.isAuthenticated ? handleUnlock : handleLogin}
                                     disabled={loading || isUnlocking}
                                 >
                                     {loading || isUnlocking ? (

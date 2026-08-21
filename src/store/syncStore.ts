@@ -119,7 +119,7 @@ const DEFAULT_SERVER = '/api'
 
     const SYNC_PASSWORD_KEY = 'aioman-sync-password'
 
-function getSyncApiPath(serverUrl: string | undefined): string {
+export function getSyncApiPath(serverUrl: string | undefined): string {
     const base = (serverUrl || DEFAULT_SERVER).trim().replace(/\/+$/, '')
     if (!base) return DEFAULT_SERVER
     if (!base.startsWith('http')) return base

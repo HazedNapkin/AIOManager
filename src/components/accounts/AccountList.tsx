@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
-import { AlertCircle, Search, Trash2, RefreshCw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
+import { AlertCircle, Search, Trash2, RefreshCw, RefreshCcw, Users, GripHorizontal, X, Layers, Check, ChevronDown, ArrowUpCircle, Loader2, LayoutGrid, List, Plus, History } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { useState, useRef, useMemo, useCallback, lazy, Suspense, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -32,6 +32,7 @@ import { AnimatedRefreshIcon } from '@/components/ui/AnimatedIcons'
 import { checkAddonUpdates } from '@/api/addons'
 import { useAddonStore } from '@/store/addonStore'
 import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
+import { mapConcurrent } from '@/lib/concurrency'
 import { getPlatformEntry } from '@/lib/platform-registry'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
@@ -43,7 +44,7 @@ import { AccountReorderDialog } from './AccountReorderDialog'
 export function AccountList() {
   useScrollRestoration('accounts')
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
-  const { accounts, error, clearError, syncAllAccounts, removeAccount, loading } = useAccounts()
+  const { accounts, error, clearError, syncAllAccounts, syncAccount, removeAccount, loading } = useAccounts()
   const loadingCount = useAccountStore(state => state.loadingAccounts.size)
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
@@ -53,6 +54,7 @@ export function AccountList() {
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [updateProgress, setUpdateProgress] = useState<{ status: OperationStatus; current: number; total: number; label: string; detail?: string }>({ status: 'idle', current: 0, total: 0, label: '' })
   const [refreshMenuOpen, setRefreshMenuOpen] = useState(false)
+  const [syncingAll, setSyncingAll] = useState(false)
   const { toast } = useToast()
 
   const handleCheckAllAddonUpdates = async () => {
@@ -316,6 +318,31 @@ export function AccountList() {
     await checkRules()
   }
 
+  const handleSyncAllAccounts = async () => {
+    if (syncingAll || accounts.length === 0) return
+    setSyncingAll(true)
+    toast({ title: 'Syncing all accounts...', description: `Force syncing ${accounts.length} account${accounts.length !== 1 ? 's' : ''}` })
+    let succeeded = 0
+    let failed = 0
+    try {
+      await mapConcurrent(accounts, 5, async (account) => {
+        try {
+          await syncAccount(account.id, true)
+          succeeded += 1
+        } catch {
+          failed += 1
+        }
+      })
+      if (failed > 0) {
+        toast({ variant: 'destructive', title: 'Sync Incomplete', description: `Synced ${succeeded} of ${accounts.length} accounts (${failed} failed)` })
+      } else {
+        toast({ title: 'Sync Complete', description: `Synced ${succeeded} of ${accounts.length} accounts` })
+      }
+    } finally {
+      setSyncingAll(false)
+    }
+  }
+
   if (loading && accounts.length === 0) {
     return (
       <div className="space-y-4">
@@ -440,7 +467,7 @@ export function AccountList() {
         <div className="grid w-full grid-cols-2 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap shrink-0">
           {!isSelectionActive && (
             <>
-              <DropdownMenu open={refreshMenuOpen || checkingUpdates} onOpenChange={(o) => { if (!checkingUpdates) setRefreshMenuOpen(o) }}>
+              <DropdownMenu open={refreshMenuOpen || checkingUpdates || syncingAll} onOpenChange={(o) => { if (!checkingUpdates && !syncingAll) setRefreshMenuOpen(o) }}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
@@ -461,6 +488,18 @@ export function AccountList() {
                   >
                     <RefreshCw className={`h-4 w-4 shrink-0 ${loading ? 'animate-spin' : ''}`} />
                     Refresh Addon Lists
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleSyncAllAccounts}
+                    disabled={syncingAll || loading}
+                    onSelect={(e) => e.preventDefault()}
+                    className="py-2.5 px-3 rounded-lg gap-2 text-sm font-medium"
+                  >
+                    {syncingAll
+                      ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                      : <RefreshCcw className="h-4 w-4 shrink-0" />
+                    }
+                    {syncingAll ? 'Syncing all accounts...' : 'Sync All Accounts'}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={handleCheckAllAddonUpdates}

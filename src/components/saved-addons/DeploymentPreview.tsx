@@ -12,7 +12,7 @@ interface DeploymentPreviewProps {
   selectedAddonIds: Set<string>
   library: Record<string, SavedAddon>
   accountIds: string[]
-  operation?: 'deploy' | 'remove'
+    operation?: 'deploy' | 'remove'
   allowProtected?: boolean
 }
 

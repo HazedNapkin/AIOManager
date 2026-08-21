@@ -1356,7 +1356,43 @@
         }
       }
     },
+    "/api/providers/nuvio/backup-export": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/providers/nuvio/auth": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/providers/nuvio/qr/start": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/providers/nuvio/qr/poll": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/providers/nuvio/qr/exchange": {
       "post": {
         "responses": {
           "200": {

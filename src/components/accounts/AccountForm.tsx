@@ -22,6 +22,7 @@ import {
   HelpCircle,
   KeyRound,
   Mail,
+  QrCode,
   Search,
   ShieldCheck,
   Smile,
@@ -38,6 +39,11 @@ import {
 } from '@/components/ui/popover'
 import { useAuthStore } from '@/store/authStore'
 import { StremioOAuth } from './StremioOAuth'
+import { QRLinkDialog } from '@/components/qr/QRLinkDialog'
+import type { QRSession } from '@/lib/qr-device-link'
+import { createStremioLink, pollStremioLink } from '@/api/stremio-link'
+import { buildResetPasswordUrl } from '@/api/stremio-relay'
+import { StremioSocialAuth } from './StremioSocialAuth'
 import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/NuvioSetupDialog'
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
 import { ProviderSetupDialog } from '@/components/providers/ProviderSetupDialog'
@@ -55,13 +61,14 @@ import { ConnectionManager } from '@/components/providers/ConnectionManager'
 import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
 import { AccountAvatar } from './AccountAvatar'
 
-type AccountAuthMode = 'credentials' | 'oauth' | 'authKey'
+type AccountAuthMode = 'credentials' | 'oauth' | 'authKey' | 'qr'
 type WizardStep = 'identity' | 'platform' | 'connect-more'
 type PlatformStep = 'select' | 'stremio-auth'
 
 const ACCOUNT_AUTH_METHODS: Array<{ id: AccountAuthMode; label: string; subtitle: string; icon: LucideIcon }> = [
   { id: 'credentials', label: 'Email & Password', subtitle: 'Best for persistent sync and auto-refresh.', icon: Mail },
   { id: 'oauth', label: 'OAuth', subtitle: 'Approve in Stremio without typing your password here.', icon: ShieldCheck },
+  { id: 'qr', label: 'QR Code', subtitle: "Scan with your phone's Stremio app.", icon: QrCode },
   { id: 'authKey', label: 'Auth Key', subtitle: 'Paste an existing token for advanced imports.', icon: KeyRound },
 ]
 
@@ -79,6 +86,7 @@ export function AccountForm() {
   const [createdAccountId, setCreatedAccountId] = useState<string | null>(null)
   const [connectedPlatforms, setConnectedPlatforms] = useState<Set<string>>(new Set())
   const [nuvioDialogOpen, setNuvioDialogOpen] = useState(false)
+  const [qrDialogOpen, setQrDialogOpen] = useState(false)
   const [realstreamDialogOpen, setRealstreamDialogOpen] = useState(false)
   const [hydraDialogOpen, setHydraDialogOpen] = useState(false)
   const [mode, setMode] = useState<AccountAuthMode>('credentials')
@@ -440,7 +448,7 @@ export function AccountForm() {
       e.stopPropagation()
     }
 
-    if (mode === 'oauth') return
+    if (mode === 'oauth' || mode === 'qr') return
     setError('')
 
     if (!encryptionKey) {
@@ -794,7 +802,7 @@ export function AccountForm() {
       )}
 
       {(!isEditing || isExpiredSession) && (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {availableAuthMethods.map(method => {
             const Icon = method.icon
             const isSelected = mode === method.id
@@ -937,6 +945,25 @@ export function AccountForm() {
             disabled={loading}
           />
         )
+      ) : mode === 'qr' ? (
+        <div className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/30">
+          <div className="mb-4 p-3 rounded-full bg-primary/10">
+            <QrCode className="h-6 w-6 text-primary" />
+          </div>
+          <h3 className="font-semibold text-sm mb-1">Stremio QR Login</h3>
+          <p className="text-xs text-muted-foreground text-center mb-6 max-w-[240px]">
+            Generate a QR code and scan it with your phone's Stremio app. Approve there, no password needed here.
+          </p>
+          <Button
+            type="button"
+            onClick={() => setQrDialogOpen(true)}
+            disabled={loading}
+            className="w-full gap-2"
+          >
+            <QrCode className="h-4 w-4" />
+            Generate QR Code
+          </Button>
+        </div>
       ) : mode === 'authKey' ? (
         <div className="space-y-3">
           <div className="space-y-2">
@@ -1045,8 +1072,28 @@ export function AccountForm() {
                 Saving Email & Password stores the password encrypted locally so AIOManager can refresh future Stremio auth keys automatically.
               </p>
             )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => window.open(buildResetPasswordUrl(email), '_blank', 'noopener,noreferrer')}
+                className="text-xs text-primary hover:underline"
+              >
+                Forgot password?
+              </button>
+            </div>
           </div>
         </div>
+      )}
+
+      {(!isEditing || isExpiredSession) && !(mode === 'oauth' && oauthAuthKey) && (
+        <StremioSocialAuth
+          onAuthKey={(key, user) => {
+            handleOAuthApproved(key, user)
+            setMode('oauth')
+          }}
+          onError={setError}
+          disabled={loading}
+        />
       )}
 
       {isEditing && (
@@ -1507,7 +1554,7 @@ export function AccountForm() {
         <Button type="button" variant="subtle" onClick={handleClose} className="rounded-xl font-semibold text-xs">
           Cancel
         </Button>
-        {mode !== 'oauth' && (
+        {mode !== 'oauth' && mode !== 'qr' && (
           <Button
             type="submit"
             disabled={loading || !encryptionKey}
@@ -1640,7 +1687,7 @@ export function AccountForm() {
                   Skip for Now
                 </Button>
               )}
-              {platformStep === 'stremio-auth' && mode !== 'oauth' && (
+              {platformStep === 'stremio-auth' && mode !== 'oauth' && mode !== 'qr' && (
                 <Button
                   type="button"
                   onClick={(e) => handleSubmit(e as unknown as React.FormEvent)}
@@ -1655,6 +1702,25 @@ export function AccountForm() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <QRLinkDialog
+      open={qrDialogOpen}
+      onOpenChange={setQrDialogOpen}
+      title="Log in with QR Code"
+      description="Open your phone's Stremio app, scan the code, and approve the login."
+      start={createStremioLink}
+      poll={pollStremioLink}
+      onClaimed={(session: QRSession) => {
+        const authKey = (session.platformData as { authKey?: string } | undefined)?.authKey
+        if (!authKey) {
+          if (import.meta.env.DEV) console.error('[AccountForm] QR approval returned no auth key')
+          return
+        }
+        setQrDialogOpen(false)
+        handleOAuthApproved(authKey)
+        setMode('oauth')
+      }}
+    />
 
     <NuvioSetupDialog
       open={nuvioDialogOpen}

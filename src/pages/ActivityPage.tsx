@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
-import { ActivityItem } from '@/types/activity'
+import { ActivityItem, LibraryItem } from '@/types/activity'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
@@ -21,6 +21,8 @@ import { useWatchEventStore } from '@/store/watchEventStore'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
 import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getCachedCinemetaName } from '@/lib/activity-utils'
+import { planEpisodeBitfieldDelete } from '@/lib/episode-bitfield-delete'
+import { fetchSeriesVideos } from '@/lib/watched-episodes'
 import type { Account } from '@/types/account'
 
 import { FloatingActionBar } from '@/components/ui/floating-action-bar'
@@ -50,9 +52,24 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
 import { mapConcurrent } from '@/lib/concurrency'
+import { getPlatformEntry } from '@/lib/platform-registry'
+import { trace } from '@/lib/trace'
 
 const ACTIVITY_ACCOUNT_DELETE_CONCURRENCY = 4
 const ACTIVITY_ITEM_DELETE_CONCURRENCY = 5
+
+function platformsPhrase(sources: Set<string>): string {
+    const names = Array.from(sources).map(s => (s && s !== 'stremio' ? getPlatformEntry(s)?.name ?? s : 'Stremio'))
+    if (names.length === 0) return 'Stremio'
+    if (names.length === 1) return names[0]
+    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+function includesWholeShowSeriesDelete(items: ActivityItem[]): boolean {
+    return items.some(item => item.source !== 'nuvio' && item.source !== 'realstream'
+        && (item.type === 'series' || item.type === 'anime')
+        && (item.season == null || item.episode == null))
+}
 
 async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): Promise<boolean> {
     const nuvioConns = (account.connections || []).filter(c => c.enabled && c.platform === 'nuvio')
@@ -81,8 +98,10 @@ async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): P
             const profileId = token.profileId ?? conn.credentials?.profileId
             await driver.deleteWatchHistory(token.accessToken, historyKeys, profileId)
             await driver.deleteWatchProgress(token.accessToken, progressKeys, profileId)
+            trace('activityDelete', 'nuvio.connection.ok', { accountId: account.id, connectionId: conn.id, historyKeys: historyKeys.length, progressKeys: progressKeys.length })
         } catch (e) {
             if (import.meta.env.DEV) console.error('[Activity] Nuvio delete failed:', e)
+            trace('activityDelete', 'nuvio.connection.error', { accountId: account.id, connectionId: conn.id, status: (e as { status?: number })?.status, error: (e as Error)?.message })
             invalidateNuvioToken(conn.id)
             failed = true
         }
@@ -112,8 +131,10 @@ async function deleteRealStreamWatchItems(account: Account, items: ActivityItem[
             const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
             const driver = realStreamDriverFor(conn)
             await driver.deleteWatchProgress(token.accessToken, userId, entries)
+            trace('activityDelete', 'realstream.connection.ok', { accountId: account.id, connectionId: conn.id, entries: entries.length })
         } catch (e) {
             if (import.meta.env.DEV) console.error('[Activity] RealStream delete failed:', e)
+            trace('activityDelete', 'realstream.connection.error', { accountId: account.id, connectionId: conn.id, error: (e as Error)?.message })
             failed = true
         }
     }
@@ -511,6 +532,28 @@ export function ActivityPage() {
         setPendingDeleteIds(ids)
     }, [])
 
+    const pendingSources = useMemo(() => {
+        if (!pendingDeleteIds) return new Set<string>()
+        const idSet = new Set(pendingDeleteIds)
+        return new Set(history.filter(h => idSet.has(h.id)).map(h => h.source || 'stremio'))
+    }, [pendingDeleteIds, history])
+
+    const selectedSources = useMemo(() => {
+        if (selectedItems.size === 0) return new Set<string>()
+        return new Set(history.filter(h => selectedItems.has(h.id)).map(h => h.source || 'stremio'))
+    }, [selectedItems, history])
+
+    const selectedHasWholeShowSeries = useMemo(
+        () => includesWholeShowSeriesDelete(history.filter(h => selectedItems.has(h.id))),
+        [selectedItems, history]
+    )
+
+    const pendingHasWholeShowSeries = useMemo(() => {
+        if (!pendingDeleteIds) return false
+        const idSet = new Set(pendingDeleteIds)
+        return includesWholeShowSeriesDelete(history.filter(h => idSet.has(h.id)))
+    }, [pendingDeleteIds, history])
+
     const handleOpenDetail = useCallback((item: ActivityItem) => {
         setDetailItem(item)
     }, [])
@@ -537,12 +580,13 @@ export function ActivityPage() {
         })
     }, [detailParamId, history, searchParams])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<boolean> => {
-        if (items.length === 0) return false
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string> }> => {
+        if (items.length === 0) return { failed: false, keptIds: new Set<string>() }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
             (byAccount[item.accountId] ||= []).push(item)
         }
+        const keptIds = new Set<string>()
         let failed = false
         await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
             const account = accountById.get(accountId)
@@ -558,32 +602,124 @@ export function ActivityPage() {
                 if (encryptionKey && stremioKey) {
                     try {
                         const authKey = await decrypt(stremioKey, encryptionKey)
-                        await mapConcurrent(stremioItems, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
+
+                        const episodeItems = stremioItems.filter(i => i.season != null && i.episode != null)
+                        const rowsById = new Map<string, LibraryItem>()
+                        let rowsFetchFailed = false
+                        if (episodeItems.length > 0) {
+                            const rowIds = Array.from(new Set(episodeItems.map(i => i.itemId)))
                             try {
+                                for (const row of await stremioClient.getLibraryItemsByIds(authKey, rowIds, account.id)) {
+                                    rowsById.set(row._id, row)
+                                }
+                            } catch (e) {
+                                // A failed rows fetch must not degrade into destructive per-item fallbacks.
+                                rowsFetchFailed = true
+                                trace('activityDelete', 'stremio.rows.error', { accountId, rows: rowIds.length, error: (e as Error)?.message })
+                                for (const item of episodeItems) keptIds.add(item.id)
+                                failed = true
+                            }
+                        }
+
+                        const showLocks = new Map<string, Promise<unknown>>()
+                        const touchedShows = new Set<string>()
+                        const withShowLock = (itemId: string, fn: () => Promise<void>): Promise<void> => {
+                            const prev = showLocks.get(itemId) ?? Promise.resolve()
+                            const next = prev.catch(() => {}).then(fn)
+                            showLocks.set(itemId, next)
+                            return next
+                        }
+
+                        await mapConcurrent(stremioItems, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
+                            const wholeShowDelete = async () => {
                                 await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
+                                trace('activityDelete', 'stremio.item.ok', { accountId, itemId: item.itemId, mode: 'whole-show' })
+                            }
+                            try {
+                                if (item.season == null || item.episode == null) {
+                                    await withShowLock(item.itemId, wholeShowDelete)
+                                    return
+                                }
+                                if (rowsFetchFailed) return
+                                const target = { uniqueItemId: item.uniqueItemId, season: item.season, episode: item.episode }
+                                await withShowLock(item.itemId, async () => {
+                                    const plan = await planEpisodeBitfieldDelete({
+                                        itemId: item.itemId,
+                                        row: rowsById.get(item.itemId),
+                                        videos: await fetchSeriesVideos(item.itemId),
+                                        target,
+                                    })
+                                    if (plan.kind === 'fail') {
+                                        // Transient/structural failures must never escalate to whole-show deletion.
+                                        keptIds.add(item.id)
+                                        failed = true
+                                        trace('activityDelete', 'stremio.item.kept', { accountId, itemId: item.itemId, reason: plan.reason })
+                                        return
+                                    }
+                                    if (plan.kind === 'skip') {
+                                        trace('activityDelete', 'stremio.item.skip', { accountId, itemId: item.itemId, reason: 'no-row' })
+                                        return
+                                    }
+                                    if (plan.kind === 'remove-row') {
+                                        await wholeShowDelete()
+                                        return
+                                    }
+                                    await stremioClient.upsertLibraryItem(authKey, plan.rewritten, account.id)
+                                    rowsById.set(item.itemId, plan.rewritten)
+                                    touchedShows.add(item.itemId)
+                                    // The rewrite preserves the row mtime, so the watcher inference
+                                    // would otherwise read the repointed anchor as a fresh watch.
+                                    useWatchEventStore.getState().patchSnapshot(accountId, item.itemId, {
+                                        mtime: new Date(plan.rewritten._mtime || '').getTime() || 0,
+                                        video_id: plan.rewritten.state?.video_id,
+                                        season: plan.rewritten.state?.season,
+                                        episode: plan.rewritten.state?.episode,
+                                    })
+                                    trace('activityDelete', 'stremio.item.ok', { accountId, itemId: item.itemId, mode: 'per-episode', season: item.season, episode: item.episode, remaining: plan.rewritten.state?.timesWatched })
+                                })
                             } catch (e) {
                                 if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
+                                trace('activityDelete', 'stremio.item.error', { accountId, itemId: item.itemId, error: (e as Error)?.message })
+                                keptIds.add(item.id)
                                 failed = true
                             }
                         })
+                        if (touchedShows.size > 0) {
+                            useLibraryCache.getState().dropMetaRows(accountId, Array.from(touchedShows))
+                        }
+                        trace('activityDelete', 'stremio.account.done', { accountId, items: stremioItems.length })
                     } catch (e) {
                         if (import.meta.env.DEV) console.error(`Failed to process deletions for account ${accountId}:`, e)
+                        trace('activityDelete', 'stremio.account.error', { accountId, items: stremioItems.length, error: (e as Error)?.message })
+                        for (const item of stremioItems) keptIds.add(item.id)
                         failed = true
                     }
+                } else {
+                    trace('activityDelete', 'stremio.account.skipped', { accountId, items: stremioItems.length, reason: encryptionKey ? 'no-auth-key' : 'locked' })
                 }
             }
 
             if (nuvioItems.length > 0) {
+                trace('activityDelete', 'nuvio.account.start', { accountId, items: nuvioItems.length })
                 const ok = await deleteNuvioWatchItems(account, nuvioItems)
-                if (!ok) failed = true
+                trace('activityDelete', 'nuvio.account.done', { accountId, items: nuvioItems.length, ok })
+                if (!ok) {
+                    failed = true
+                    for (const item of nuvioItems) keptIds.add(item.id)
+                }
             }
 
             if (realstreamItems.length > 0) {
+                trace('activityDelete', 'realstream.account.start', { accountId, items: realstreamItems.length })
                 const ok = await deleteRealStreamWatchItems(account, realstreamItems)
-                if (!ok) failed = true
+                trace('activityDelete', 'realstream.account.done', { accountId, items: realstreamItems.length, ok })
+                if (!ok) {
+                    failed = true
+                    for (const item of realstreamItems) keptIds.add(item.id)
+                }
             }
         })
-        return failed
+        return { failed, keptIds }
     }, [accountById])
 
     const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
@@ -607,12 +743,12 @@ export function ActivityPage() {
 
         const itemIdSet = new Set(itemIds)
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-        const deleteFailed = await deletePlatformItems(itemsToDelete)
+        const { failed, keptIds } = await deletePlatformItems(itemsToDelete)
 
-        purgeLocalActivity(itemsToDelete, itemIds)
+        purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), itemIds.filter(id => !keptIds.has(id)))
 
-        if (deleteFailed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
+        if (failed) {
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform and were left completely untouched in your history.' })
         } else {
             toast({
                 title: 'Items Deleted',
@@ -633,11 +769,11 @@ export function ActivityPage() {
             const idSet = new Set(ids)
             const itemsToDelete = history.filter(item => idSet.has(item.id))
 
-            purgeLocalActivity(itemsToDelete, ids)
-            const deleteFailed = await deletePlatformItems(itemsToDelete)
+            const { failed, keptIds } = await deletePlatformItems(itemsToDelete)
+            purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), ids.filter(id => !keptIds.has(id)))
 
-            if (deleteFailed) {
-                toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform.' })
+            if (failed) {
+                toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform and were left completely untouched in your history.' })
             } else {
                 toast({
                     title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
@@ -944,11 +1080,13 @@ export function ActivityPage() {
                         <AlertDialogDescription asChild>
                             <div className="space-y-3">
                                 <p>
-                                    This will permanently remove {selectedItems.size} item(s) from your Stremio watch history. This cannot be undone.
+                                    This will permanently remove {selectedItems.size} item(s) from your {platformsPhrase(selectedSources)} watch history. This cannot be undone.
                                 </p>
-                                <p className="text-xs text-muted-foreground">
-                                    Note: deleting a series removes the entire show, not individual episodes. This is a Stremio limitation.
-                                </p>
+                                {selectedHasWholeShowSeries && (
+                                    <p className="text-sm text-destructive">
+                                        Deleting a series removes its entire watch history for the show.
+                                    </p>
+                                )}
                             </div>
                         </AlertDialogDescription>
                     </AlertDialogHeader>
@@ -979,8 +1117,13 @@ export function ActivityPage() {
                 description={(
                     <>
                         <p>
-                            This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from your Stremio watch history.
+                            This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from your {platformsPhrase(pendingSources)} watch history.
                         </p>
+                        {pendingHasWholeShowSeries && (
+                            <p className="text-sm text-destructive">
+                                Deleting a series removes its entire watch history for the show.
+                            </p>
+                        )}
                         <p className="text-sm text-muted-foreground">
                             This cannot be undone.
                         </p>

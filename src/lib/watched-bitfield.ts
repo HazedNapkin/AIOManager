@@ -58,3 +58,28 @@ export async function decodeWatchedBitfield(watchedStr: string | null | undefine
     }
     return { videoId, length, watchedIndices }
 }
+
+function bytesToBase64(bytes: Uint8Array<ArrayBuffer>): string {
+    let bin = ''
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+    return btoa(bin)
+}
+
+async function deflateRaw(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+    const cs = new CompressionStream('deflate')
+    const writer = cs.writable.getWriter()
+    void writer.write(bytes)
+    void writer.close()
+    const ab = await new Response(cs.readable).arrayBuffer()
+    return new Uint8Array(ab)
+}
+
+// anchorVideoId MUST be the LAST-watched episode (videos[max set bit].id); callers must repoint it when the max bit is cleared.
+export async function encodeWatchedBitfield(indices: number[], anchorVideoId: string, length: number): Promise<string> {
+    const bytes = new Uint8Array(Math.max(1, Math.ceil(length / 8)))
+    for (const idx of indices) {
+        if (idx < 0 || idx >= length) continue
+        bytes[idx >> 3] |= 1 << (idx & 7)
+    }
+    return `${anchorVideoId}:${length}:${bytesToBase64(await deflateRaw(bytes))}`
+}

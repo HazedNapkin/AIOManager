@@ -140,14 +140,26 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                     if (ext?.imdb_id) {
                         fetchCinemeta(ext.imdb_id)
                     } else if (activeItem.name) {
-                        fetch(`https://cinemeta-live.strem.io/catalog/search/top/search=${encodeURIComponent(activeItem.name)}.json`)
-                            .then(r => r.ok ? r.json() : null)
-                            .then(data => {
-                                if (!active || !data?.metas?.[0]) return
-                                const match = data.metas.find((m: Record<string, unknown>) =>
+                        const nameQuery = encodeURIComponent(activeItem.name)
+                        Promise.all([
+                            fetch(`https://cinemeta-live.strem.io/catalog/series/top/search=${nameQuery}.json`)
+                                .then(r => r.ok ? r.json() : null)
+                                .catch(() => null),
+                            fetch(`https://cinemeta-live.strem.io/catalog/movie/top/search=${nameQuery}.json`)
+                                .then(r => r.ok ? r.json() : null)
+                                .catch(() => null),
+                        ])
+                            .then(([seriesData, movieData]) => {
+                                if (!active) return
+                                const metas: Array<Record<string, unknown>> = [
+                                    ...((Array.isArray(seriesData?.metas) ? seriesData.metas : []) as Array<Record<string, unknown>>),
+                                    ...((Array.isArray(movieData?.metas) ? movieData.metas : []) as Array<Record<string, unknown>>),
+                                ]
+                                if (metas.length === 0) return
+                                const match = metas.find((m: Record<string, unknown>) =>
                                     m.type === 'series' &&
                                     String(m.name || '').toLowerCase() === activeItem.name!.toLowerCase()
-                                ) || data.metas[0]
+                                ) || metas[0]
                                 if (match?.id && String(match.id).startsWith('tt')) {
                                     fetchCinemeta(String(match.id))
                                 }

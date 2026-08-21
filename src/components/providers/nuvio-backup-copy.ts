@@ -1,0 +1,1 @@
+export const NUVIO_BACKUP_COPY = 'Download a full backup of your Nuvio account and save it as a single file on your device. The export comes straight from Nuvio and covers your whole account, so keep it somewhere safe. If anything ever goes wrong, you have a copy to fall back on.'

@@ -1,5 +1,6 @@
 import type { Connection } from '@/types/connection'
 import type { createNuvioDriver } from '@/lib/drivers/nuvio'
+import type { NuvioAvatar } from '@/lib/nuvio-avatar'
 
 type NuvioDriver = ReturnType<typeof createNuvioDriver>
 
@@ -53,6 +54,7 @@ export interface NuvioProfileRow {
     profile_index: number
     name: string
     avatar_color_hex?: string
+    avatar_id?: string
 }
 
 export function readNuvioProfiles(accountId: string, conn: Connection): Promise<NuvioProfileRow[]> {
@@ -63,16 +65,22 @@ export function readNuvioProfiles(accountId: string, conn: Connection): Promise<
             profile_index: Number(r.profile_index ?? r.profileIndex ?? 0),
             name: String(r.name ?? 'Profile'),
             avatar_color_hex: typeof r.avatar_color_hex === 'string' ? r.avatar_color_hex : undefined,
+            avatar_id: typeof r.avatar_id === 'string' ? r.avatar_id : undefined,
         }))
     })
 }
 
-export function renameNuvioProfile(accountId: string, conn: Connection, profileId: string, name: string): Promise<unknown> {
-    return withNuvio(accountId, conn, (d, t) => d.renameProfile(t, profileId, name))
+export function renameNuvioProfile(accountId: string, conn: Connection, profileId: string, name: string, avatarId?: string): Promise<unknown> {
+    return withNuvio(accountId, conn, (d, t) => d.renameProfile(t, profileId, name, avatarId))
 }
 
-export function createNuvioProfile(accountId: string, conn: Connection, params: { profileIndex: number; name: string; avatarColorHex?: string }): Promise<unknown> {
+export function createNuvioProfile(accountId: string, conn: Connection, params: { profileIndex: number; name: string; avatarColorHex?: string; avatarId?: string }): Promise<unknown> {
     return withNuvio(accountId, conn, (d, t) => d.createProfile(t, params))
+}
+
+// The avatar catalog is a key-only public RPC, so no connection token is needed.
+export function readNuvioAvatars(_accountId: string, conn: Pick<Connection, 'credentials'>): Promise<NuvioAvatar[]> {
+    return import('@/lib/drivers/factory').then(({ nuvioDriverFor }) => nuvioDriverFor(conn).getAvatarCatalog())
 }
 
 export function deleteNuvioProfile(accountId: string, conn: Connection, profileId: string | number): Promise<unknown> {

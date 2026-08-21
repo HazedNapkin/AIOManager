@@ -35,6 +35,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const AUTOPILOT_CYCLE_BUDGET_MS = Math.max(5000, parseInt(process.env.AUTOPILOT_CYCLE_BUDGET_MS || '120000', 10) || 120000)
     const HEALTH_CACHE_TTL_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_HEALTH_CACHE_TTL_MS || '30000', 10) || 30000)
     const RULE_RECHECK_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_RULE_RECHECK_MS || '30000', 10) || 30000)
+    // Steady-rule heartbeat cadence; keeps persisted last_check fresh well under the client's 15-min staleness threshold
+    const RULE_HEARTBEAT_MS = Math.max(30_000, parseInt(process.env.AUTOPILOT_HEARTBEAT_MS || '300000', 10) || 300000)
     const ruleRuntimeState = new Map()
 
     const RULE_CACHE_MAX_BYTES = Math.max(0, parseInt(process.env.AUTOPILOT_RULE_CACHE_MAX_BYTES || String(256 * 1024 * 1024), 10) || 0)
@@ -1107,11 +1109,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         })
 
         if (!needsColdUpdate && !needsStatsUpdate) {
-            return null
+            const steadyHeartbeatDue = rule.last_check == null || now - rule.last_check >= RULE_HEARTBEAT_MS
+            if (!steadyHeartbeatDue) return null
         }
 
         const stabilizationToSave = encrypt(stabilizationJson, PRIMARY_KEY)
-        const statsParams = [rule.id, stabilizationToSave, now, lastNotificationToSave, now]
 
         if (needsColdUpdate) {
             const activeUrlToSave = (hasChanged || !decryptedActiveUrl) ? encrypt(targetActiveUrl, PRIMARY_KEY) : null
@@ -1120,12 +1122,13 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             return {
                 type: 'full',
                 ruleParams: [activeUrlToSave, addonListToSave, now, rule.id],
-                statsParams
+                statsParams: [rule.id, stabilizationToSave, now, lastNotificationToSave, now]
             }
         } else {
+            // Steady heartbeats (stabilization unchanged) pass null so the upsert keeps the stored encrypted blob instead of rewriting it
             return {
                 type: 'heartbeat',
-                statsParams
+                statsParams: [rule.id, needsStatsUpdate ? stabilizationToSave : null, now, lastNotificationToSave, now]
             }
         }
     }
@@ -1328,7 +1331,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 INSERT INTO autopilot_rule_stats (rule_id, stabilization, last_check, last_notification, updated_at)
                                 VALUES ${statRows}
                                 ON CONFLICT (rule_id) DO UPDATE SET
-                                    stabilization = EXCLUDED.stabilization,
+                                    stabilization = COALESCE(EXCLUDED.stabilization, autopilot_rule_stats.stabilization),
                                     last_check = EXCLUDED.last_check,
                                     last_notification = EXCLUDED.last_notification,
                                     updated_at = EXCLUDED.updated_at

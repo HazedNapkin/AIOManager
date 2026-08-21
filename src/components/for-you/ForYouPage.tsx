@@ -14,7 +14,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { useDiscoveryPrefs, useHouseholdSettings, HOUSEHOLD_CONTEXT } from '@/store/discoveryStore'
 import { DiscoveryPreferencesModal } from '@/components/for-you/DiscoveryPreferencesModal'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
-import { cn, maskNameLevel, formatStaleAgo, loadImdbTmdbCache, saveImdbTmdbCache } from '@/lib/utils'
+import { cn, maskNameLevel, formatStaleAgo, loadImdbTmdbCache, saveImdbTmdbCache, loadUnresolvedImdbIds, saveUnresolvedImdbIds, IMDB_UNRESOLVED_RETRY_MS } from '@/lib/utils'
 import { Tooltip } from '@/components/ui/tooltip'
 import { OperationProgress } from '@/components/ui/operation-progress'
 import { useUIStore } from '@/store/uiStore'
@@ -28,8 +28,9 @@ import {
     type SeedItem,
     type BuildRecommendationsResult,
 } from '@/lib/recommendation-engine'
-import { tmdbAdapter, proxyFetch, fetchTmdbDetailsAsMeta } from '@/api/metadata/adapters/tmdb'
-import type { TmdbFindResponse } from '@/components/activity/detail/types'
+import { buildCinemetaFatRails } from '@/lib/cinemeta-rails'
+import { useTmdbKeyStatus } from '@/hooks/useTmdbKeyStatus'
+import { tmdbAdapter, proxyFetch, fetchTmdbDetailsAsMeta, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PublishToPmdbDialog } from '@/components/for-you/PublishToPmdbDialog'
 import { checkPmdbKeyConfigured, getLastPublishTime } from '@/lib/pmdb-list-publisher'
@@ -89,11 +90,10 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                 if (active && res.meta.background) setFetchedBackdrop(res.meta.background)
             }).catch(() => {})
         } else if (isImdb && item.itemId) {
-            proxyFetch<TmdbFindResponse>(`find/${encodeURIComponent(item.itemId)}?external_source=imdb_id`).then(data => {
-                const result = data?.movie_results?.[0] || data?.tv_results?.[0]
-                if (result?.id) {
-                    const mediaType = data?.movie_results?.[0] ? 'movie' : 'tv'
-                    fetchTmdbDetailsAsMeta(result.id, mediaType).then(res => {
+            proxyFetch<TmdbFindPayload>(`find/${encodeURIComponent(item.itemId)}?external_source=imdb_id`).then(find => {
+                const picked = pickTmdbIdFromFind(find, item.type !== 'movie')
+                if (picked) {
+                    fetchTmdbDetailsAsMeta(picked.tmdbId, picked.mediaType).then(res => {
                         if (active && res.meta.background) setFetchedBackdrop(res.meta.background)
                     }).catch(() => {})
                 }
@@ -344,8 +344,15 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     const hasResultsRef = useRef(false)
 
     const [isColdStart, setIsColdStart] = useState(false)
+    const tmdbKeyStatus = useTmdbKeyStatus()
+    const [popularFallbackNotice, setPopularFallbackNotice] = useState(false)
+
+    const watchedImdbIdsFromSeeds = useCallback(() => new Set(
+        seeds.filter(s => s.itemId.startsWith('tt') && s.progress > 30).map(s => s.itemId)
+    ), [seeds])
 
     useEffect(() => {
+        setPopularFallbackNotice(false)
         if (seeds.length < 5) {
             setIsColdStart(true)
             setRecsLoading(true)
@@ -364,6 +371,24 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 .finally(() => { if (!ac.signal.aborted) setRecsLoading(false) })
             return () => ac.abort()
         }
+        if (tmdbKeyStatus === 'checking') {
+            setRecsLoading(true)
+            return
+        }
+        if (tmdbKeyStatus === 'absent') {
+            const ac = new AbortController()
+            setIsColdStart(true)
+            setRecsLoading(true)
+            setRecsError(null)
+            buildCinemetaFatRails(ac.signal, RAIL_MAX, { watchedImdbIds: watchedImdbIdsFromSeeds() })
+                .then(rails => {
+                    if (ac.signal.aborted) return
+                    setRecsResult({ rails, totalCandidates: rails.reduce((sum, r) => sum + r.items.length, 0) })
+                })
+                .catch(err => { if (ac.signal.aborted || err?.name === 'AbortError') return; setRecsError('Failed to load popular content') })
+                .finally(() => { if (!ac.signal.aborted) setRecsLoading(false) })
+            return () => ac.abort()
+        }
         const ac = new AbortController()
         const hadResults = hasResultsRef.current
         setIsColdStart(false)
@@ -373,25 +398,36 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         ;(async () => {
             const watchedTmdbIds = new Set<string>()
             const cache = loadImdbTmdbCache()
+            const unresolved = loadUnresolvedImdbIds()
+            const now = Date.now()
             let cacheDirty = false
+            let unresolvedDirty = false
             const watchedIds = seeds.filter(s => s.progress > 30 && s.itemId?.startsWith('tt')).map(s => s.itemId).slice(0, 20)
-            const needsResolve = watchedIds.filter(id => !cache[id])
+            const preferTvById = new Map(
+                seeds.filter(s => s.itemId?.startsWith('tt')).map(s => [s.itemId, s.type === 'series' || s.type === 'anime'] as const)
+            )
+            const needsResolve = watchedIds.filter(id => !cache[id] && !(unresolved[id] !== undefined && now - unresolved[id] < IMDB_UNRESOLVED_RETRY_MS))
             const BATCH = 3
             for (let i = 0; i < needsResolve.length; i += BATCH) {
                 if (ac.signal.aborted) break
                 const batch = needsResolve.slice(i, i + BATCH)
                 await Promise.all(batch.map(async (imdbId) => {
                     try {
-                        const data = await proxyFetch<{ movie_results?: Array<{ id: number }>, tv_results?: Array<{ id: number }> }>(`find/${imdbId}?external_source=imdb_id`, ac.signal)
-                        const tmdbId = data?.movie_results?.[0]?.id ?? data?.tv_results?.[0]?.id
-                        if (tmdbId) {
-                            cache[imdbId] = `tmdb:${tmdbId}`
+                        const find = await proxyFetch<TmdbFindPayload>(`find/${imdbId}?external_source=imdb_id`, ac.signal)
+                        const picked = pickTmdbIdFromFind(find, preferTvById.get(imdbId) ?? false)
+                        if (picked) {
+                            cache[imdbId] = `tmdb:${picked.tmdbId}`
                             cacheDirty = true
+                        } else if (find) {
+                            // Null data is a transport failure, not a confirmed negative find.
+                            unresolved[imdbId] = Date.now()
+                            unresolvedDirty = true
                         }
                     } catch {}
                 }))
             }
             if (cacheDirty) saveImdbTmdbCache(cache)
+            if (unresolvedDirty) saveUnresolvedImdbIds(unresolved)
             for (const id of watchedIds) { if (cache[id]) watchedTmdbIds.add(cache[id]) }
             return watchedTmdbIds
         })().then(watchedTmdbIds =>
@@ -412,15 +448,30 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 watchedTmdbIds,
             })
         )
-            .then(result => {
+            .then(async result => {
                 if (ac.signal.aborted) return
                 const allSeedsFailed = result.rails.length === 0 && (result.failedSeedCount ?? 0) > 0
-                if (allSeedsFailed) {
+                if (allSeedsFailed && hadResults) {
                     setRecsError(result.firstError || 'Recommendation service temporarily unavailable. Try again in a moment.')
-                    if (hadResults) return
+                    return
                 }
-                hasResultsRef.current = true
-                setRecsResult(result)
+                if (!allSeedsFailed) {
+                    hasResultsRef.current = true
+                    setRecsResult(result)
+                    return
+                }
+                try {
+                    const rails = await buildCinemetaFatRails(ac.signal, RAIL_MAX, { watchedImdbIds: watchedImdbIdsFromSeeds() })
+                    if (ac.signal.aborted) return
+                    if (rails.length > 0) {
+                        setIsColdStart(true)
+                        setPopularFallbackNotice(true)
+                        hasResultsRef.current = true
+                        setRecsResult({ rails, totalCandidates: rails.reduce((sum, r) => sum + r.items.length, 0) })
+                        return
+                    }
+                } catch {}
+                setRecsError(result.firstError || 'Recommendation service temporarily unavailable. Try again in a moment.')
             })
             .catch(err => {
                 if (ac.signal.aborted || err?.name === 'AbortError') return
@@ -434,7 +485,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 }
             })
         return () => { try { ac.abort() } catch {} }
-    }, [seeds, reloadKey, RAIL_MAX, householdProfile,
+    }, [seeds, reloadKey, RAIL_MAX, householdProfile, tmdbKeyStatus, watchedImdbIdsFromSeeds,
         discoveryPrefs.obscurity, discoveryPrefs.minRating, discoveryPrefs.eraRange, discoveryPrefs.typeMix,
         discoveryPrefs.genreBoosts, discoveryPrefs.excludedGenres, discoveryPrefs.dismissedItems, discoveryPrefs.lovedItems])
 
@@ -534,6 +585,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
         hasResultsRef.current = false
         setRecsResult(null)
         setRecsLoading(true)
+        setPopularFallbackNotice(false)
         setReloadKey(k => k + 1)
     }, [])
 
@@ -830,6 +882,13 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     <ContentRailSkeleton />
                     <ContentRailSkeleton />
                     <ContentRailSkeleton />
+                </div>
+            )}
+
+            {popularFallbackNotice && showRails && (
+                <div className="flex items-center gap-2 rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5 shrink-0" />
+                    Personalized recommendations are unavailable right now — showing popular titles instead.
                 </div>
             )}
 

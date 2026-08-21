@@ -34,6 +34,18 @@ export function trace(scope, event, data = {}) {
     }
 }
 
+export async function traced(scope, name, fields, fn) {    const start = Date.now()
+    trace(scope, `${name}.start`, fields)
+    try {
+        const result = await fn()
+        trace(scope, `${name}.success`, { ...fields, timing: Date.now() - start })
+        return result
+    } catch (err) {
+        trace(scope, `${name}.error`, { ...fields, error: err?.message, status: err?.status, isAuthError: !!err?.isAuthError, timing: Date.now() - start })
+        throw err
+    }
+}
+
 export function traceClientBatch(entries) {
     if (!ENABLED || !Array.isArray(entries)) return
     const s = getStream()

@@ -247,6 +247,51 @@ export function useSavedAddonSelectionActions({
     }
   }, [selectedIds, closeDeployFlow])
 
+  const handleReinstallLibraryEntries = useCallback(async () => {
+    if (selectedIds.size === 0) return
+
+    let updated = 0
+    let unchanged = 0
+    let failed = 0
+    let notSyncing = 0
+    const versionBumps: string[] = []
+
+    for (const id of selectedIds) {
+      const entry = library[id]
+      if (!entry) continue
+      if (!entry.syncWithInstalled) notSyncing += 1
+      try {
+        const result = await useAddonStore.getState().updateSavedAddonManifest(id)
+        if (result.versionChanged) {
+          updated += 1
+          versionBumps.push(`${entry.name}: v${result.previousVersion} → v${result.latestVersion}`)
+        } else {
+          unchanged += 1
+        }
+      } catch (err) {
+        failed += 1
+        if (import.meta.env.DEV) console.error(`Reinstall failed for ${entry.name}:`, err)
+      }
+    }
+
+    const total = updated + unchanged + failed
+    if (failed > 0) {
+      toast({
+        title: 'Reinstall Completed with Errors',
+        description: `Reinstalled ${total - failed} of ${total} entr${total !== 1 ? 'ies' : 'y'} (${failed} failed).${notSyncing > 0 ? ` ${notSyncing} not syncing.` : ''}`,
+        variant: 'destructive',
+      })
+    } else {
+      const bumpText = versionBumps.length > 0 && versionBumps.length <= 3 ? ` ${versionBumps.join(', ')}.` : updated > 0 ? ` ${updated} version update${updated !== 1 ? 's' : ''}.` : ' No version changes.'
+      toast({
+        title: 'Reinstall Complete',
+        description: `Reinstalled ${total} entr${total !== 1 ? 'ies' : 'y'}; sync pushed any changes to enabled accounts.${bumpText}${notSyncing > 0 ? ` ${notSyncing} not syncing.` : ''}`,
+      })
+    }
+
+    clearSelection()
+  }, [selectedIds, library, clearSelection])
+
   return {
     isSelectionMode,
     selectedIds,
@@ -268,5 +313,6 @@ export function useSavedAddonSelectionActions({
     handleBulkDelete,
     handleBulkEdit,
     handleDeployToAccounts,
+    handleReinstallLibraryEntries,
   }
 }

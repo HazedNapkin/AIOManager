@@ -336,6 +336,8 @@ export function FailoverManager({
     const [showWebhookConfirm, setShowWebhookConfirm] = useState(false)
     const [simulatingRuleId, setSimulatingRuleId] = useState<string | null>(null)
     const [simulationResults, setSimulationResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string }>>({})
+    const [simulatedCustomChecks, setSimulatedCustomChecks] = useState<CustomCheckEntry[]>([])
+    const [customCheckResults, setCustomCheckResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string }>>({})
 
     const [ruleName, setRuleName] = useState("")
     const [cooldownMinutes, setCooldownMinutes] = useState<string>("")
@@ -592,9 +594,20 @@ export function FailoverManager({
         })
     }
 
-    const handleSimulateRule = async (ruleId: string, chain: string[]) => {
+    const getApplicableCustomChecks = (chain: string[], customCheckUrls?: CustomCheckEntry[]) => {
+        const normalizedChainUrls = chain.map(u => normalizeAddonUrl(u).toLowerCase())
+        return (customCheckUrls || []).filter(c =>
+            c.appliesTo.length === 0 ||
+            c.appliesTo.some(au => normalizedChainUrls.includes(normalizeAddonUrl(au).toLowerCase()))
+        )
+    }
+
+    const handleSimulateRule = async (ruleId: string, chain: string[], customCheckUrls?: CustomCheckEntry[]) => {
         setSimulatingRuleId(ruleId)
         setSimulationResults({})
+        setCustomCheckResults({})
+        const applicableChecks = getApplicableCustomChecks(chain, customCheckUrls)
+        setSimulatedCustomChecks(applicableChecks)
 
         for (const url of chain) {
             setSimulationResults(prev => ({
@@ -610,6 +623,26 @@ export function FailoverManager({
                 }))
             } catch (err) {
                 setSimulationResults(prev => ({
+                    ...prev,
+                    [url]: { healthy: false, checking: false, error: 'Check failed' }
+                }))
+            }
+        }
+
+        for (const url of [...new Set(applicableChecks.map(c => c.url))]) {
+            setCustomCheckResults(prev => ({
+                ...prev,
+                [url]: { healthy: false, checking: true }
+            }))
+
+            try {
+                const health = await checkAddonHealth(url)
+                setCustomCheckResults(prev => ({
+                    ...prev,
+                    [url]: { healthy: health.isOnline, checking: false, error: health.error }
+                }))
+            } catch (err) {
+                setCustomCheckResults(prev => ({
                     ...prev,
                     [url]: { healthy: false, checking: false, error: 'Check failed' }
                 }))
@@ -1405,7 +1438,7 @@ export function FailoverManager({
                                                         </Button>
                                                     </DropdownMenuTrigger>
                                                     <DropdownMenuContent align="end" className="w-48">
-                                                        <DropdownMenuItem className="gap-2" onClick={() => handleSimulateRule(rule.id, rule.priorityChain)}>
+                                                        <DropdownMenuItem className="gap-2" onClick={() => handleSimulateRule(rule.id, rule.priorityChain, rule.customCheckUrls)}>
                                                             <FlaskConical className="w-4 h-4" />
                                                             Simulate Check
                                                         </DropdownMenuItem>
@@ -1540,23 +1573,87 @@ export function FailoverManager({
                                                     })}
                                                 </div>
 
-                                                {!rule.priorityChain.some(url => simulationResults[url]?.checking) && Object.keys(simulationResults).length > 0 && (
+                                                {simulatedCustomChecks.length > 0 && (
+                                                    <div className="space-y-2 pt-2 border-t border-primary/10">
+                                                        {[...new Set(simulatedCustomChecks.map(c => c.url))].map(url => {
+                                                            const result = customCheckResults[url]
+                                                            return (
+                                                                <div key={`custom-${url}`} className="flex items-center justify-between text-xs">
+                                                                    <div className="flex items-center gap-2 text-foreground/70">
+                                                                        <Shield className="w-3 h-3 opacity-40" />
+                                                                        <Tooltip content={url}>
+                                                                            <span className="truncate max-w-[220px] font-mono">{url}</span>
+                                                                        </Tooltip>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        {result?.checking ? (
+                                                                            <Loader2 className="w-3 h-3 text-primary animate-spin" />
+                                                                        ) : result?.healthy ? (
+                                                                            <Check className="w-3 h-3 text-success" />
+                                                                        ) : result ? (
+                                                                            <div className="flex items-center gap-1.5">
+                                                                                {!result.healthy && result.error && (
+                                                                                    <Tooltip content={result.error}>
+                                                                                        <span className="text-xs text-foreground/60 truncate max-w-[120px]">
+                                                                                            {result.error}
+                                                                                        </span>
+                                                                                    </Tooltip>
+                                                                                )}
+                                                                                <XCircle className="w-3 h-3 text-destructive" />
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="w-3 h-3 rounded-full border border-border/40" />
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                )}
+
+                                                {!rule.priorityChain.some(url => simulationResults[url]?.checking) && !simulatedCustomChecks.some(c => customCheckResults[c.url]?.checking) && Object.keys(simulationResults).length > 0 && (
                                                     <div className="pt-2 border-t border-primary/10">
                                                         <p className="text-xs text-foreground/90 leading-relaxed">
                                                             <span className="font-bold text-primary mr-1">CONCLUSION:</span>
                                                             {(() => {
                                                                 const primaryUrl = rule.priorityChain[0]
-                                                                const isPrimaryHealthy = simulationResults[primaryUrl]?.healthy
-                                                                if (isPrimaryHealthy) {
-                                                                    const addon = addons.find(a => a.transportUrl === primaryUrl)
-                                                                    return `${addon?.metadata?.customName || identifyAddon(primaryUrl, addon?.manifest).name} is healthy - no failover needed.`
+                                                                const normalizedChainUrls = rule.priorityChain.map(u => normalizeAddonUrl(u).toLowerCase())
+                                                                const failedCustomUrls = [...new Set(simulatedCustomChecks
+                                                                    .filter(c => {
+                                                                        const r = customCheckResults[c.url]
+                                                                        return !!r && !r.checking && !r.healthy
+                                                                    })
+                                                                    .map(c => c.url))]
+                                                                const isSunkByCustom = (idx: number) => simulatedCustomChecks.some(c => {
+                                                                    const r = customCheckResults[c.url]
+                                                                    if (!r || r.checking || r.healthy) return false
+                                                                    return c.appliesTo.length === 0 || c.appliesTo.some(au => normalizeAddonUrl(au).toLowerCase() === normalizedChainUrls[idx])
+                                                                })
+                                                                const isEffectivelyHealthy = (idx: number) => Boolean(simulationResults[rule.priorityChain[idx]]?.healthy) && !isSunkByCustom(idx)
+                                                                const addonName = (url: string) => {
+                                                                    const addon = addons.find(a => a.transportUrl === url)
+                                                                    return addon?.metadata?.customName || identifyAddon(url, addon?.manifest).name
                                                                 }
 
-                                                                const healthyFallback = rule.priorityChain.find((url, idx) => idx > 0 && simulationResults[url]?.healthy)
-                                                                if (healthyFallback) {
-                                                                    const fallbackAddon = addons.find(a => a.transportUrl === healthyFallback)
-                                                                    const primaryAddon = addons.find(a => a.transportUrl === primaryUrl)
-                                                                    return `Would failover from ${primaryAddon?.metadata?.customName || identifyAddon(primaryUrl, primaryAddon?.manifest).name} to ${fallbackAddon?.metadata?.customName || identifyAddon(healthyFallback, fallbackAddon?.manifest).name} (first healthy fallback).`
+                                                                if (isEffectivelyHealthy(0)) {
+                                                                    return `${addonName(primaryUrl)} is healthy - no failover needed.`
+                                                                }
+
+                                                                if (simulationResults[primaryUrl]?.healthy && failedCustomUrls.length > 0) {
+                                                                    const fallbackIdx = rule.priorityChain.findIndex((_, idx) => idx > 0 && isEffectivelyHealthy(idx))
+                                                                    const fallbackPart = fallbackIdx !== -1
+                                                                        ? ` Would failover to ${addonName(rule.priorityChain[fallbackIdx])}.`
+                                                                        : ' No healthy fallback - rule would stay in its current state.'
+                                                                    return `${addonName(primaryUrl)} is reachable, but custom check${failedCustomUrls.length !== 1 ? 's' : ''} failed (${failedCustomUrls.join(', ')}) - Autopilot would treat it as unhealthy.${fallbackPart}`
+                                                                }
+
+                                                                const healthyFallbackIdx = rule.priorityChain.findIndex((_, idx) => idx > 0 && isEffectivelyHealthy(idx))
+                                                                if (healthyFallbackIdx !== -1) {
+                                                                    return `Would failover from ${addonName(primaryUrl)} to ${addonName(rule.priorityChain[healthyFallbackIdx])} (first healthy fallback).`
+                                                                }
+
+                                                                if (failedCustomUrls.length > 0 && rule.priorityChain.some((url, idx) => idx > 0 && simulationResults[url]?.healthy)) {
+                                                                    return `No addon passes all health checks - custom check${failedCustomUrls.length !== 1 ? 's' : ''} failed (${failedCustomUrls.join(', ')}). Rule would stay in its current state.`
                                                                 }
 
                                                                 return "All addons in the chain are currently unreachable. Rule would stay in its current state."

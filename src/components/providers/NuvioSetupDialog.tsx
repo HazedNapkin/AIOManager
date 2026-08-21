@@ -12,12 +12,18 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog'
 import { nuvioAuth, nuvioSignup } from '@/api/hydra-providers'
+import { exchangeNuvioQr, pollNuvioQr, startNuvioQr } from '@/api/nuvio-qr'
+import { QRLinkDialog } from '@/components/qr/QRLinkDialog'
+import type { QRSession } from '@/lib/qr-device-link'
+import { discoverNuvioBackend } from '@/lib/nuvio-discovery'
+import type { NuvioDiscovery } from '@/lib/nuvio-discovery'
 import {
     Check,
     Loader2,
     AlertCircle,
     Mail,
     Lock,
+    QrCode,
 } from 'lucide-react'
 import { useState, useCallback, useEffect } from 'react'
 import { cn } from '@/lib/utils'
@@ -66,6 +72,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
     const [showAdvanced, setShowAdvanced] = useState(false)
     const [customBaseUrl, setCustomBaseUrl] = useState('')
     const [customPublishableKey, setCustomPublishableKey] = useState('')
+    const [discovered, setDiscovered] = useState<NuvioDiscovery | null>(null)
 
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -73,6 +80,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
     const [tokens, setTokens] = useState<NuvioTokens | null>(null)
     const [profiles, setProfiles] = useState<NuvioProfile[]>([])
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
+    const [qrOpen, setQrOpen] = useState(false)
 
     const reset = useCallback(() => {
         setStep('login')
@@ -81,11 +89,13 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
         setShowAdvanced(false)
         setCustomBaseUrl('')
         setCustomPublishableKey('')
+        setDiscovered(null)
         setLoading(false)
         setError(null)
         setTokens(null)
         setProfiles([])
         setSelectedProfileId(null)
+        setQrOpen(false)
     }, [])
 
     const backend = (): NuvioBackend => ({
@@ -102,6 +112,24 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
             if (initialPublishableKey) setCustomPublishableKey(initialPublishableKey)
         }
     }, [open, initialBaseUrl, initialPublishableKey])
+
+    useEffect(() => {
+        const trimmed = customBaseUrl.trim()
+        if (!trimmed) { setDiscovered(null); return }
+        let cancelled = false
+        const t = setTimeout(() => {
+            discoverNuvioBackend(trimmed).then(d => { if (!cancelled) setDiscovered(d) })
+        }, 600)
+        return () => { cancelled = true; clearTimeout(t) }
+    }, [customBaseUrl])
+
+    useEffect(() => {
+        const key = discovered?.publishableKey
+        if (key && !customPublishableKey.trim()) setCustomPublishableKey(key)
+    }, [discovered, customPublishableKey])
+
+    const keyAutoDetected = !!(discovered?.publishableKey && discovered.publishableKey === customPublishableKey.trim())
+    const passwordAuthUnavailable = discovered !== null && !discovered.capabilities.emailPasswordAuth
 
     const handleClose = (nextOpen: boolean) => {
         if (!nextOpen) reset()
@@ -139,6 +167,30 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
         }
     }
 
+    const handleQrClaimed = async (session: QRSession) => {
+        const b = backend()
+        try {
+            const result = await exchangeNuvioQr(session, b.publishableKey, b.baseUrl)
+            const t = result.tokens
+            if (!t) throw new Error('QR sign-in did not return tokens. Try again.')
+            setTokens(t)
+            const p = result.profiles || []
+            setProfiles(p)
+            setEmail(result.email || '')
+
+            if (p.length <= 1) {
+                setSelectedProfileId(p[0]?.id || null)
+                setStep('confirm')
+            } else {
+                setStep('profile')
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'QR sign-in failed')
+        } finally {
+            setQrOpen(false)
+        }
+    }
+
     const handleFinish = async () => {
         if (!tokens) return
         try {
@@ -154,6 +206,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
     const passwordValid = password.length > 0
 
     return (
+        <>
         <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="max-w-lg">
                 <DialogHeader>
@@ -269,6 +322,21 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                 </div>
                             </div>
 
+                            <div className="flex items-center gap-3 pt-1">
+                                <div className="h-px flex-1 bg-border/60" />
+                                <span className="text-[11px] uppercase tracking-wide text-muted-foreground">or</span>
+                                <div className="h-px flex-1 bg-border/60" />
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full gap-1.5 text-xs"
+                                onClick={() => { setError(null); setQrOpen(true) }}
+                            >
+                                <QrCode className="h-3.5 w-3.5" />
+                                Sign in with QR code
+                            </Button>
+
                             <div className="pt-1">
                                 <button
                                     type="button"
@@ -305,7 +373,16 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                             onChange={e => setCustomPublishableKey(e.target.value)}
                                             className="h-9 text-sm"
                                         />
+                                        {keyAutoDetected && (
+                                            <p className="text-[11px] text-muted-foreground">Key auto-detected</p>
+                                        )}
                                     </div>
+                                    {passwordAuthUnavailable && (
+                                        <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
+                                            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                                            <span>This backend reports password sign-in is unavailable</span>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -440,5 +517,15 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                 </DialogFooter>
             </DialogContent>
         </Dialog>
+        <QRLinkDialog
+            open={qrOpen}
+            onOpenChange={setQrOpen}
+            title="Sign in to Nuvio"
+            description="Scan the QR code with the Nuvio app on your phone to sign in without a password."
+            start={() => startNuvioQr(backend().publishableKey, backend().baseUrl)}
+            poll={(session) => pollNuvioQr(session, backend().publishableKey, backend().baseUrl)}
+            onClaimed={handleQrClaimed}
+        />
+        </>
     )
 }

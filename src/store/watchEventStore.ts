@@ -52,6 +52,8 @@ interface WatchEventState {
 
     removeEvents: (items: Array<{ accountId: string; itemId: string; uniqueItemId?: string; season?: number; episode?: number; type: string }>) => void
 
+    patchSnapshot: (accountId: string, itemId: string, patch: Partial<SnapshotItem>) => void
+
     diffAndRecord: (
         accountId: string,
         items: LibraryItem[],
@@ -269,6 +271,21 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         set({ events, deletedEventKeys: capped })
         persistWatchEvents()
         persistDeletedEvents(capped)
+    },
+
+    // Syncs the differencer after a self-inflicted row rewrite (per-episode delete); without it,
+    // the next diff infers a phantom watch for the repointed anchor.
+    patchSnapshot: (accountId, itemId, patch) => {
+        const state = get()
+        const current = state.snapshot[accountId]?.[itemId]
+        if (!current) return
+        set({
+            snapshot: {
+                ...state.snapshot,
+                [accountId]: { ...(state.snapshot[accountId] || {}), [itemId]: { ...current, ...patch } },
+            },
+        })
+        persistWatchEvents()
     },
 
     diffAndRecord: (accountId, items, _account, _accounts) => {

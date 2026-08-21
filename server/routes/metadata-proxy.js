@@ -2,7 +2,7 @@ import db from '../db.js'
 import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { verifyAuth } from '../auth.js'
-import { metadataCache, jitteredTtl } from '../lib/metadata-cache.js'
+import { metadataCache, PERMANENT_TTL } from '../lib/metadata-cache.js'
 import { loadUserKey } from '../lib/user-key-cache.js'
 import { maskContext } from '../utils/log-helpers.js'
 import { resilientFetch } from '../utils/api-resilience.js'
@@ -11,6 +11,8 @@ const TMDB_V3_API_BASE = 'https://api.themoviedb.org/3'
 const SUPPORTED_PROVIDERS = new Set(['tmdb'])
 const DEFAULT_TTL_DETAILS_MS = 24 * 60 * 60 * 1000
 const DEFAULT_TTL_LONG_MS = 7 * 24 * 60 * 60 * 1000
+// find: empty buckets get the short TTL, non-empty results become permanent (see findTtlFromValue)
+const DEFAULT_TTL_FIND_MS = 60 * 60 * 1000
 
 const RATE_LIMIT_PROXY = { max: 300, timeWindow: '1 minute' }
 const RATE_LIMIT_STATS = { max: 30, timeWindow: '1 minute' }
@@ -86,9 +88,21 @@ function buildTmdbRequest(pathParts, query, key, keyFormat) {
     }
 }
 
+// Empty find buckets can be transient upstream lag; non-empty finds are immutable — pick TTL per value.
+const FIND_RESULT_BUCKETS = ['movie_results', 'tv_results', 'tv_episode_results', 'tv_season_results']
+function findTtlFromValue(text) {
+    try {
+        const data = JSON.parse(text)
+        const hit = FIND_RESULT_BUCKETS.some(b => Array.isArray(data?.[b]) && data[b].length > 0)
+        return hit ? PERMANENT_TTL : DEFAULT_TTL_FIND_MS
+    } catch {
+        return DEFAULT_TTL_FIND_MS
+    }
+}
+
 function classifyTmdbKey(pathParts, query) {
     const resource = (pathParts[0] || '').toLowerCase()
-    if (resource === 'find') return { kind: 'find', ttl: 0, permanent: true }
+    if (resource === 'find') return { kind: 'find', ttl: DEFAULT_TTL_FIND_MS }
     if (resource === 'trending') return { kind: 'trending', ttl: DEFAULT_TTL_DETAILS_MS }
     if (resource === 'movie' || resource === 'tv') {
         const sub = (pathParts[2] || '').toLowerCase()
@@ -181,6 +195,7 @@ async function fetchUpstream(requestDescriptor) {
 
 export function registerMetadataProxyRoutes(fastify) {
     metadataCache.startCleanupJob()
+    metadataCache.cleanupPoisonedFindRows().catch(() => {})
 
     fastify.get('/api/metadata/:provider/*', {
         config: { rateLimit: RATE_LIMIT_PROXY },
@@ -224,8 +239,8 @@ export function registerMetadataProxyRoutes(fastify) {
         const classification = classifyTmdbKey(pathParts, sortedQuery)
         const cacheKey = buildCacheKey(provider, pathParts, sortedQuery)
 
-        const options = classification.permanent
-            ? { permanent: true }
+        const options = classification.kind === 'find'
+            ? { ttl: classification.ttl, ttlFromValue: findTtlFromValue }
             : { ttl: classification.ttl }
 
         let result
@@ -669,7 +684,7 @@ export function registerMetadataProxyRoutes(fastify) {
                     const findResult = await metadataCache.get(
                         buildCacheKey('tmdb', ['find', imdbId], 'external_source=imdb_id'),
                         () => fetchUpstream(findReq),
-                        { permanent: true }
+                        { ttl: DEFAULT_TTL_FIND_MS, ttlFromValue: findTtlFromValue }
                     )
                     const findData = findResult.value
                     const found = (findData.movie_results && findData.movie_results[0]) || (findData.tv_results && findData.tv_results[0])

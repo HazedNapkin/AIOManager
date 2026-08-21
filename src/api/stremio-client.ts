@@ -6,6 +6,7 @@ import { deriveSyncToken } from '@/lib/crypto'
 import { getHostnameIdentifier, identifyAddon } from '@/lib/addon-identifier'
 import { trace } from '@/lib/trace'
 import { ACCOUNT_CONTEXT_SYSTEM_CHECK } from '@/lib/account-contexts'
+import { exchangeFacebookLogin, exchangeAppleLogin, deleteStremioUser, type RelayLoginResult } from './stremio-relay'
 
 async function getProxyAuthHeaders(): Promise<Record<string, string>> {
     const { auth } = useSyncStore.getState()
@@ -121,6 +122,34 @@ export class StremioClient {
       }
       throw error
     }
+  }
+
+  async authWithFacebook(fbLoginToken: string): Promise<LoginResponse> {
+    try {
+      const result = await exchangeFacebookLogin(fbLoginToken)
+      return this.mapRelayLogin(result)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection')
+      throw error
+    }
+  }
+
+  async authWithApple(credentials: { token: string; sub: string; email: string; name: string }): Promise<LoginResponse> {
+    try {
+      const result = await exchangeAppleLogin(credentials)
+      return this.mapRelayLogin(result)
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection')
+      throw error
+    }
+  }
+
+  async deleteUser(authKey: string, password: string): Promise<void> {
+    await deleteStremioUser(authKey, password)
+  }
+
+  private mapRelayLogin(result: RelayLoginResult): LoginResponse {
+    return { authKey: result.authKey, user: { _id: result.user._id || '', email: result.user.email || '' } }
   }
 
   async getUser(authKey: string): Promise<{
@@ -430,6 +459,77 @@ export class StremioClient {
     }
   }
 
+  async getLibraryItemsByIds(authKey: string, ids: string[], accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<LibraryItem[]> {
+    try {
+      const start = Date.now()
+      const data = await serverPost('/api/stremio-proxy', {
+        type: 'DatastoreGet',
+        authKey,
+        collection: 'libraryItem',
+        ids
+      }, { 'x-account-context': accountContext })
+      trace('stremio', 'api-call', { method: 'DatastoreGet', timing: Date.now() - start, ids: ids.length })
+
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get library items')
+      }
+      if (data?.result === false) {
+        throw new Error('Stremio rejected the library items request')
+      }
+
+      const result = data?.result as unknown
+      if (Array.isArray(result)) {
+        return result as LibraryItem[]
+      }
+      if (result && typeof result === 'object' && Array.isArray((result as Record<string, unknown>).library)) {
+        return (result as Record<string, LibraryItem[]>).library
+      }
+
+      return []
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection or CORS configuration')
+      }
+      throw error
+    }
+  }
+
+  // Wire invariant: the proxy derives the upstream path from the type
+  // ('DatastoreMeta' -> /api/datastoreMeta) and the result is [[itemId, mtimeMs], ...].
+  async getLibraryMeta(authKey: string, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<Array<[string, number]>> {
+    try {
+      const start = Date.now()
+      const data = await serverPost('/api/stremio-proxy', {
+        type: 'DatastoreMeta',
+        authKey,
+        collection: 'libraryItem'
+      }, { 'x-account-context': accountContext })
+      trace('stremio', 'api-call', { method: 'DatastoreMeta', timing: Date.now() - start })
+
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get library meta')
+      }
+      if (data?.result === false) {
+        throw new Error('Stremio rejected the library meta request')
+      }
+
+      const result = data?.result as unknown
+      if (Array.isArray(result)) {
+        return result as Array<[string, number]>
+      }
+      return []
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes('401')) throw new Error('Invalid or expired auth key')
+        if (error.message.includes('Failed to fetch')) throw new Error('Network error - check your internet connection or CORS configuration')
+      }
+      throw error
+    }
+  }
+
   async testCORS(): Promise<boolean> {
     try {
       await fetch(`${API_BASE}/api/addonCollectionGet`, {
@@ -505,6 +605,33 @@ export class StremioClient {
         if (data?.result === false) {
           throw new Error('Stremio rejected the library update')
         }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('401')) {
+        throw new Error('Invalid or expired auth key')
+      }
+      throw error
+    }
+  }
+
+  async upsertLibraryItem(authKey: string, item: LibraryItem, accountContext: string = ACCOUNT_CONTEXT_SYSTEM_CHECK): Promise<void> {
+    try {
+      // Preserve a caller-supplied mtime: bitfield rewrites must not masquerade as fresh watches.
+      const fullItem = { ...item, removed: false, _mtime: item._mtime || new Date().toISOString() }
+
+      const data = await serverPost('/api/stremio-proxy', {
+        type: 'DatastorePut',
+        authKey,
+        collection: 'libraryItem',
+        changes: [fullItem]
+      }, { 'x-account-context': accountContext })
+
+      if (data?.error) {
+        const err = data.error as Record<string, unknown>
+        throw new Error((err.message as string) || 'Failed to update library item')
+      }
+      if (data?.result === false) {
+        throw new Error('Stremio rejected the library update')
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('401')) {

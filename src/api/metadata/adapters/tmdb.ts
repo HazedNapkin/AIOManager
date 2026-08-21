@@ -173,12 +173,38 @@ interface TmdbSeasonPayload {
     episodes?: TmdbEpisodePayload[]
 }
 
-interface TmdbFindPayload {
+export interface TmdbFindPayload {
     movie_results?: TmdbListItem[]
     tv_results?: TmdbListItem[]
+    // episode/season matches resolve to their parent series via show_id
+    tv_episode_results?: Array<{ id: number; name?: string; show_id?: number; season_number?: number | null; episode_number?: number | null }>
+    tv_season_results?: Array<{ id: number; name?: string; show_id?: number; season_number?: number | null }>
 }
 
 type TmdbMediaType = 'movie' | 'tv'
+
+export function pickTmdbIdFromFind(
+    find: TmdbFindPayload | null | undefined,
+    preferTv?: boolean
+): { tmdbId: number; mediaType: TmdbMediaType; via: 'movie' | 'tv' | 'episode' | 'season' } | null {
+    const primary = (preferTv ? find?.tv_results : find?.movie_results)?.[0]
+    if (primary && typeof primary.id === 'number' && primary.id > 0) {
+        return { tmdbId: primary.id, mediaType: preferTv ? 'tv' : 'movie', via: preferTv ? 'tv' : 'movie' }
+    }
+    const secondary = (preferTv ? find?.movie_results : find?.tv_results)?.[0]
+    if (secondary && typeof secondary.id === 'number' && secondary.id > 0) {
+        return { tmdbId: secondary.id, mediaType: preferTv ? 'movie' : 'tv', via: preferTv ? 'movie' : 'tv' }
+    }
+    const episodeShowId = find?.tv_episode_results?.[0]?.show_id
+    if (typeof episodeShowId === 'number' && episodeShowId > 0) {
+        return { tmdbId: episodeShowId, mediaType: 'tv', via: 'episode' }
+    }
+    const seasonShowId = find?.tv_season_results?.[0]?.show_id
+    if (typeof seasonShowId === 'number' && seasonShowId > 0) {
+        return { tmdbId: seasonShowId, mediaType: 'tv', via: 'season' }
+    }
+    return null
+}
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
     try {
@@ -342,7 +368,25 @@ function mapListItemToCanonical(item: TmdbListItem, mediaType: TmdbMediaType): C
 }
 
 const tmdbIdCache = new Map<string, { tmdbId: number; mediaType: TmdbMediaType } | null>()
+const tmdbNegativeExpiry = new Map<string, number>()
 const TMDB_ID_CACHE_MAX = 2000
+const NEGATIVE_TTL_MS = 10 * 60 * 1000
+
+function rememberNegativeTmdbId(key: string) {
+    tmdbIdCache.set(key, null)
+    tmdbNegativeExpiry.set(key, Date.now() + NEGATIVE_TTL_MS)
+}
+
+function lookupCachedTmdbId(key: string): { tmdbId: number; mediaType: TmdbMediaType } | null | undefined {
+    if (!tmdbIdCache.has(key)) return undefined
+    const cached = tmdbIdCache.get(key)
+    if (cached) return cached
+    const expiresAt = tmdbNegativeExpiry.get(key)
+    if (expiresAt !== undefined && Date.now() < expiresAt) return null
+    tmdbIdCache.delete(key)
+    tmdbNegativeExpiry.delete(key)
+    return undefined
+}
 
 async function resolveTmdbIdFromCanonical(
     id: CanonicalId,
@@ -354,32 +398,27 @@ async function resolveTmdbIdFromCanonical(
     }
     if (id.imdb) {
         const cacheKey = `${id.imdb}:${typeHint ?? ''}`
-        if (tmdbIdCache.has(cacheKey)) return tmdbIdCache.get(cacheKey) ?? null
+        const cached = lookupCachedTmdbId(cacheKey)
+        if (cached !== undefined) return cached
         if (tmdbIdCache.size >= TMDB_ID_CACHE_MAX) {
             const oldest = tmdbIdCache.keys().next().value
-            if (oldest) tmdbIdCache.delete(oldest)
+            if (oldest) {
+                tmdbIdCache.delete(oldest)
+                tmdbNegativeExpiry.delete(oldest)
+            }
         }
+        // Null data is a transport failure (network error, 5xx, 429, bad JSON), not a
+        // confirmed negative find — return uncached so the next call retries.
         const find = await proxyFetch<TmdbFindPayload>(
             `find/${encodeURIComponent(id.imdb)}?external_source=imdb_id`
         )
-        if (!find) {
-            tmdbIdCache.set(cacheKey, null)
+        if (!find) return null
+        const picked = pickTmdbIdFromFind(find, typeHint === 'series' || typeHint === 'anime')
+        if (!picked) {
+            rememberNegativeTmdbId(cacheKey)
             return null
         }
-        const movie = Array.isArray(find.movie_results) && find.movie_results.length > 0
-            ? find.movie_results[0]
-            : null
-        const tv = Array.isArray(find.tv_results) && find.tv_results.length > 0
-            ? find.tv_results[0]
-            : null
-        let result: { tmdbId: number; mediaType: TmdbMediaType } | null = null
-        if (typeHint === 'series' || typeHint === 'anime') {
-            if (tv) result = { tmdbId: tv.id, mediaType: 'tv' }
-            else if (movie) result = { tmdbId: movie.id, mediaType: 'movie' }
-        } else {
-            if (movie) result = { tmdbId: movie.id, mediaType: 'movie' }
-            else if (tv) result = { tmdbId: tv.id, mediaType: 'tv' }
-        }
+        const result = { tmdbId: picked.tmdbId, mediaType: picked.mediaType }
         tmdbIdCache.set(cacheKey, result)
         return result
     }
@@ -714,11 +753,6 @@ export async function searchCinemeta(query: string, signal?: AbortSignal): Promi
         }
     }
     try {
-        const endpoints = [
-            `https://v3-cinemeta.strem.io/catalog/search/top/search=${q}.json`,
-            `https://v3-cinemeta.strem.io/catalog/movie/top/search=${q}.json`,
-            `https://v3-cinemeta.strem.io/catalog/series/top/search=${q}.json`,
-        ]
         const tryEndpoint = async (url: string): Promise<SearchResult[] | null> => {
             try {
                 const res = await fetch(url, { signal })
@@ -730,9 +764,10 @@ export async function searchCinemeta(query: string, signal?: AbortSignal): Promi
                 return null
             } catch { return null }
         }
-        const combined = await tryEndpoint(endpoints[0])
-        if (combined) return combined
-        const [movies, series] = await Promise.all([tryEndpoint(endpoints[1]), tryEndpoint(endpoints[2])])
+        const [movies, series] = await Promise.all([
+            tryEndpoint(`https://v3-cinemeta.strem.io/catalog/movie/top/search=${q}.json`),
+            tryEndpoint(`https://v3-cinemeta.strem.io/catalog/series/top/search=${q}.json`),
+        ])
         return movies ?? series ?? []
     } catch {
         return []
@@ -1028,4 +1063,15 @@ export const __testing = {
     genresFromIds,
     extractYear,
     pickTrailerKey,
+    ageNegativeCacheEntries(ms: number) {
+        for (const [key, expiresAt] of tmdbNegativeExpiry) {
+            const aged = expiresAt - ms
+            if (aged <= Date.now()) {
+                tmdbNegativeExpiry.delete(key)
+                if (tmdbIdCache.get(key) === null) tmdbIdCache.delete(key)
+            } else {
+                tmdbNegativeExpiry.set(key, aged)
+            }
+        }
+    },
 }

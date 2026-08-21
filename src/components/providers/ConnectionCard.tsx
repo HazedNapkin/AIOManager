@@ -22,6 +22,7 @@ interface ConnectionCardProps {
     onEdit: () => void
     onToggle: () => void
     email?: string
+    badge?: React.ReactNode
 }
 
 export const ConnectionCard = memo(function ConnectionCard({
@@ -33,6 +34,7 @@ export const ConnectionCard = memo(function ConnectionCard({
     onEdit,
     onToggle,
     email,
+    badge,
 }: ConnectionCardProps) {
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
@@ -73,6 +75,7 @@ export const ConnectionCard = memo(function ConnectionCard({
                 <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-sm font-semibold leading-tight truncate">{name}</span>
+                        {badge}
                     </div>
                     <div className="flex items-center gap-1.5">
                         <Tooltip content={statusTooltip || undefined}>

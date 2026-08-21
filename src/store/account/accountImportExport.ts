@@ -206,6 +206,7 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
         vaultTombstones: useVaultStore.getState().tombstones,
         watchEvents: (await import('@/store/watchEventStore')).useWatchEventStore.getState().events,
         watchSnapshot: (await import('@/store/watchEventStore')).useWatchEventStore.getState().snapshot,
+        deletedWatchEvents: (await import('@/store/watchEventStore')).useWatchEventStore.getState().deletedEventKeys,
         notes: allNotes,
         notesTrash,
         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
@@ -369,17 +370,32 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             localforage.setItem(CHANGELOG_KEY, sorted).catch(e => { if (import.meta.env.DEV) console.error(e) })
         }
 
-        if (Array.isArray(data.watchEvents) && data.watchEvents.length > 0) {
+        const incomingEvents = Array.isArray(data.watchEvents) ? data.watchEvents as Record<string, unknown>[] : []
+        const incomingDeleted = (data.deletedWatchEvents && typeof data.deletedWatchEvents === 'object')
+            ? data.deletedWatchEvents as Record<string, number>
+            : null
+        const localDeleted = useWatchEventStore.getState().deletedEventKeys
+        let tombstonesChanged = false
+        const mergedDeletedMap: Record<string, number> = { ...localDeleted }
+        if (incomingDeleted) {
+            for (const [k, ts] of Object.entries(incomingDeleted)) {
+                const numTs = Number(ts) || 0
+                if (!(k in mergedDeletedMap) || numTs > mergedDeletedMap[k]) {
+                    mergedDeletedMap[k] = numTs
+                    tombstonesChanged = true
+                }
+            }
+        }
+        if (incomingEvents.length > 0 || tombstonesChanged) {
             const current = useWatchEventStore.getState().events
             const currentIds = new Set(current.map(e => e.id))
-            const incomingEvents = data.watchEvents as Record<string, unknown>[]
             const newEvents = incomingEvents.filter((e) => !currentIds.has(e.id as string))
-            if (newEvents.length > 0) {
+            if (newEvents.length > 0 || tombstonesChanged) {
                 const merged = [...current, ...newEvents] as Record<string, unknown>[]
                 const deduped = Array.from(new Map(merged.map((e) => [e.id as string, e])).values())
                 const sorted = deduped.sort((a, b) => ((b as Record<string, unknown>).event_ts as number) - ((a as Record<string, unknown>).event_ts as number))
                 const snapshot = data.watchSnapshot || useWatchEventStore.getState().snapshot
-                useWatchEventStore.getState().initialize(sorted as unknown as import('@/types/activity').WatchEvent[], snapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>)
+                useWatchEventStore.getState().initialize(sorted as unknown as import('@/types/activity').WatchEvent[], snapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeletedMap)
             }
         }
 

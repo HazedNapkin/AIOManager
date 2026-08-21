@@ -14,11 +14,6 @@ export interface DetailItem {
     accountId?: string
 }
 
-export interface TmdbFindResponse {
-    movie_results?: Array<{ id: number }>
-    tv_results?: Array<{ id: number }>
-}
-
 export interface TmdbPersonSearchResponse {
     results?: Array<{ id: number; name?: string; profile_path?: string }>
 }

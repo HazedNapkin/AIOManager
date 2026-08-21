@@ -1,29 +1,36 @@
 import { Button } from '@/components/ui/button'
+import { motion } from 'framer-motion'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
-import { Trash2, ArrowLeft, MoreVertical, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, Check, User } from 'lucide-react'
-import { useState, useEffect, useCallback } from 'react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { EmptyState } from '@/components/common/EmptyState'
+import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, Check, User, QrCode, Puzzle, BookOpen } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
+import { useAddons } from '@/hooks/useAddons'
+import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { stremioClient } from '@/api/stremio-client'
 import { loginWithCredentials } from '@/api/auth'
 import { nuvioAuth, realstreamAuth } from '@/api/hydra-providers'
+import { exchangeNuvioQr, pollNuvioQr, startNuvioQr } from '@/api/nuvio-qr'
+import { QRLinkDialog } from '@/components/qr/QRLinkDialog'
+import type { QRSession } from '@/lib/qr-device-link'
+import { createStremioLink, pollStremioLink } from '@/api/stremio-link'
 import { fetchConnectionToken } from '@/api/connection'
 import { encrypt } from '@/lib/crypto'
+import type { PremiumStatus } from '@/lib/stremio-premium'
+import type { NuvioMemberStatus } from '@/lib/nuvio-tier'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import type { Connection, ConnectionStatus } from '@/types/connection'
 import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
+import { StremioSocialAuth } from '@/components/accounts/StremioSocialAuth'
 import { displayStatus, tokenExpiry } from '@/lib/connection-format'
-import { NuvioConnectionWorkspace } from './NuvioWorkspace'
+import { NuvioBackupTab, NuvioPluginsTab, NuvioProfilesTab, NuvioLibraryTab, NuvioCollectionsTab } from './NuvioWorkspace'
+import { ConnectionMembershipTab } from './ConnectionMembershipTab'
 
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
@@ -63,6 +70,64 @@ function SectionShell({ title, description, children }: { title: string; descrip
     )
 }
 
+interface ReauthMethod {
+    id: string
+    label: string
+    content: React.ReactNode
+}
+
+function ReauthCard({ title, description, methods, layoutId, headerAction, footer }: {
+    title: string
+    description: string
+    methods: ReauthMethod[]
+    layoutId?: string
+    headerAction?: React.ReactNode
+    footer?: React.ReactNode
+}) {
+    const [activeId, setActiveId] = useState(methods[0].id)
+    const active = methods.find(m => m.id === activeId) ?? methods[0]
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="text-sm font-semibold">{title}</p>
+                    <p className="text-xs text-muted-foreground">{description}</p>
+                </div>
+                {headerAction}
+            </div>
+            {methods.length > 1 && (
+                <div className={cn(
+                    'grid gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40',
+                    methods.length === 2 ? 'grid-cols-2' : 'grid-cols-3'
+                )}>
+                    {methods.map(method => (
+                        <button
+                            key={method.id}
+                            type="button"
+                            onClick={() => setActiveId(method.id)}
+                            className={cn(
+                                'relative h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring z-10',
+                                activeId === method.id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            {activeId === method.id && (
+                                <motion.div
+                                    layoutId={layoutId}
+                                    className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
+                                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                                />
+                            )}
+                            {method.label}
+                        </button>
+                    ))}
+                </div>
+            )}
+            {active.content}
+            {footer}
+        </div>
+    )
+}
+
 function StremioCredentialsSection({ accountId, connection }: { accountId: string; connection: Connection }) {
     const updateConnection = useConnectionStore(s => s.updateConnection)
     const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
@@ -72,6 +137,7 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
     const [newAuthKey, setNewAuthKey] = useState('')
     const [saving, setSaving] = useState(false)
     const [savingKey, setSavingKey] = useState(false)
+    const [qrOpen, setQrOpen] = useState(false)
 
     const emailValid = email.includes('@')
     const passwordValid = password.length > 0
@@ -122,35 +188,219 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
         }
     }
 
+    const handleSocialAuthKey = async (authKey: string, user?: { email?: string; name?: string }) => {
+        try {
+            const encryptionKey = getEncryptionKey()
+            const encrypted = await encrypt(authKey, encryptionKey)
+            await updateConnection(accountId, connection.id, {
+                credentials: {
+                    ...connection.credentials,
+                    authKey: encrypted,
+                    ...(user?.email ? { email: user.email } : {}),
+                },
+                status: 'active',
+            })
+            toast({ title: 'Stremio session refreshed' })
+            await useConnectionStore.getState().syncConnections(accountId)
+        } catch (err) {
+            toast({ title: 'Re-authentication failed', description: errMsg(err), variant: 'destructive' })
+        }
+    }
+
+    const handleQrClaimed = async (session: QRSession) => {
+        try {
+            const authKey = (session.platformData as { authKey: string }).authKey
+            if (!authKey) throw new Error('QR approval did not return a session. Try again.')
+            const encryptionKey = getEncryptionKey()
+            const encrypted = await encrypt(authKey, encryptionKey)
+            await updateConnection(accountId, connection.id, {
+                credentials: { ...connection.credentials, authKey: encrypted },
+                status: 'active',
+            })
+            toast({ title: 'Stremio session refreshed' })
+            await useConnectionStore.getState().syncConnections(accountId)
+        } catch (err) {
+            toast({ title: 'QR re-authentication failed', description: errMsg(err), variant: 'destructive' })
+        }
+    }
+
     return (
-        <SectionShell title="Re-authenticate" description="Sign in with your Stremio email and password, or paste a fresh auth key.">
-            <div className="space-y-2">
-                <Label htmlFor="stremio-edit-email">Email</Label>
-                <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="stremio-edit-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        className="pl-10"
-                        autoFocus
-                    />
-                </div>
+        <>
+            <ReauthCard
+                title="Re-authenticate"
+                description="Sign in with your Stremio email and password, or paste a fresh auth key."
+                layoutId="stremio-reauth-method"
+                methods={[
+                    {
+                        id: 'password',
+                        label: 'Password',
+                        content: (
+                            <div className="space-y-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="stremio-edit-email">Email</Label>
+                                    <div className="relative">
+                                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="stremio-edit-email"
+                                            type="email"
+                                            placeholder="you@example.com"
+                                            value={email}
+                                            onChange={e => setEmail(e.target.value)}
+                                            className="pl-10"
+                                            autoFocus
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="stremio-edit-password">Password</Label>
+                                    <div className="relative">
+                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="stremio-edit-password"
+                                            type={showPassword ? 'text' : 'password'}
+                                            placeholder="Your Stremio password"
+                                            value={password}
+                                            onChange={e => setPassword(e.target.value)}
+                                            className="pl-10 pr-9"
+                                            onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(s => !s)}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                        </button>
+                                    </div>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={handleReauth}
+                                    disabled={saving || !emailValid || !passwordValid}
+                                >
+                                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                    {saving ? 'Authenticating...' : 'Re-authenticate'}
+                                </Button>
+                                <StremioSocialAuth onAuthKey={handleSocialAuthKey} />
+                            </div>
+                        ),
+                    },
+                    {
+                        id: 'qr',
+                        label: 'QR Code',
+                        content: (
+                            <div className="space-y-3">
+                                <p className="text-xs leading-relaxed text-muted-foreground">
+                                    Scan with your phone's Stremio app and approve to refresh this account's session without a password.
+                                </p>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={() => setQrOpen(true)}
+                                >
+                                    <QrCode className="h-3.5 w-3.5" />
+                                    Re-authenticate with QR
+                                </Button>
+                            </div>
+                        ),
+                    },
+                    {
+                        id: 'authkey',
+                        label: 'Auth Key',
+                        content: (
+                            <div className="space-y-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="stremio-new-authkey">New Auth Key</Label>
+                                    <div className="relative">
+                                        <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="stremio-new-authkey"
+                                            type="password"
+                                            placeholder="Paste a fresh Stremio auth key"
+                                            value={newAuthKey}
+                                            onChange={e => setNewAuthKey(e.target.value)}
+                                            className="pl-10"
+                                            onKeyDown={e => { if (e.key === 'Enter' && newAuthKey.trim()) handleUpdate() }}
+                                        />
+                                    </div>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={handleUpdate}
+                                    disabled={savingKey || !newAuthKey.trim()}
+                                >
+                                    {savingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                    {savingKey ? 'Updating...' : 'Update Auth Key'}
+                                </Button>
+                            </div>
+                        ),
+                    },
+                ]}
+            />
+            <QRLinkDialog
+                open={qrOpen}
+                onOpenChange={setQrOpen}
+                title="Re-authenticate Stremio"
+                description="Scan the QR code with your phone's Stremio app and approve to refresh this account's session."
+                start={createStremioLink}
+                poll={pollStremioLink}
+                onClaimed={handleQrClaimed}
+            />
+        </>
+    )
+}
+
+function StremioDangerZoneSection({ accountId, connection }: { accountId: string; connection: Connection }) {
+    const removeConnection = useConnectionStore(s => s.removeConnection)
+    const [password, setPassword] = useState('')
+    const [showPassword, setShowPassword] = useState(false)
+    const [deleting, setDeleting] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+    const [confirmDelete, setConfirmDelete] = useState(false)
+
+    const handleDelete = async () => {
+        if (!password.trim() || deleting) return
+        setDeleting(true)
+        setError(null)
+        try {
+            const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+            const encryptedKey = account ? getStremioAuthKey(account) : null
+            if (!encryptedKey) throw new Error('No auth key found for this account')
+            const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
+            await stremioClient.deleteUser(authKey, password)
+            removeConnection(accountId, connection.id)
+            toast({ title: 'Stremio account deleted', description: 'The account was permanently deleted from Stremio.' })
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to delete account')
+        } finally {
+            setDeleting(false)
+        }
+    }
+
+    return (
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 shadow-sm space-y-3">
+            <div className="min-w-0">
+                <p className="text-sm font-semibold text-destructive">Delete Stremio account</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                    Permanently deletes this account on Stremio's servers, including its addons and library. This cannot be undone.
+                </p>
             </div>
             <div className="space-y-2">
-                <Label htmlFor="stremio-edit-password">Password</Label>
+                <Label htmlFor="stremio-delete-password">Account password</Label>
                 <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
-                        id="stremio-edit-password"
+                        id="stremio-delete-password"
                         type={showPassword ? 'text' : 'password'}
                         placeholder="Your Stremio password"
                         value={password}
-                        onChange={e => setPassword(e.target.value)}
+                        onChange={e => { setPassword(e.target.value); setError(null); setConfirmDelete(false) }}
                         className="pl-10 pr-9"
-                        onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
+                        onKeyDown={e => { if (e.key === 'Enter' && password.trim() && confirmDelete) handleDelete() }}
+                        autoComplete="current-password"
                     />
                     <button
                         type="button"
@@ -161,40 +411,61 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
                         {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                 </div>
+                {error && (
+                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                )}
             </div>
-            <Button
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                onClick={handleReauth}
-                disabled={saving || !emailValid || !passwordValid}
-            >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {saving ? 'Authenticating...' : 'Re-authenticate'}
-            </Button>
-
-            <div className="border-t border-border/40" />
-
-            <div className="space-y-2">
-                <Label htmlFor="stremio-new-authkey">New Auth Key</Label>
-                <Input
-                    id="stremio-new-authkey"
-                    type="password"
-                    placeholder="Paste a fresh Stremio auth key"
-                    value={newAuthKey}
-                    onChange={e => setNewAuthKey(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && newAuthKey.trim()) handleUpdate() }}
-                />
+            <div className="flex items-center justify-end gap-1.5">
+                {confirmDelete ? (
+                    <>
+                        <Button size="sm" variant="subtle" className="h-8 text-xs" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                            Cancel
+                        </Button>
+                        <Button size="sm" variant="destructive" className="h-8 gap-1.5 text-xs" onClick={handleDelete} disabled={deleting || !password.trim()}>
+                            {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            {deleting ? 'Deleting...' : 'Permanently Delete'}
+                        </Button>
+                    </>
+                ) : (
+                    <Button size="sm" variant="destructive" className="h-8 gap-1.5 text-xs" onClick={() => setConfirmDelete(true)} disabled={!password.trim()}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete Stremio Account...
+                    </Button>
+                )}
             </div>
-            <Button
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                onClick={handleUpdate}
-                disabled={savingKey || !newAuthKey.trim()}
-            >
-                {savingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {savingKey ? 'Updating...' : 'Update Auth Key'}
-            </Button>
-        </SectionShell>
+        </div>
+    )
+}
+
+function RemoveConnectionSection({ accountId, connection, onBack }: { accountId: string; connection: Connection; onBack: () => void }) {
+    const removeConnection = useConnectionStore(s => s.removeConnection)
+    const [confirmRemove, setConfirmRemove] = useState(false)
+
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            <div className="min-w-0">
+                <p className="text-sm font-semibold">Remove connection</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                    Unlinks this {connectionLabel(connection)} connection from AIOManager. Nothing is deleted on the platform itself.
+                </p>
+            </div>
+            <div className="flex items-center justify-end gap-1.5">
+                {confirmRemove ? (
+                    <>
+                        <Button size="sm" variant="subtle" className="h-8 text-xs" onClick={() => setConfirmRemove(false)}>Cancel</Button>
+                        <Button size="sm" variant="destructive" className="h-8 gap-1.5 text-xs" onClick={() => { removeConnection(accountId, connection.id); onBack() }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Remove Connection
+                        </Button>
+                    </>
+                ) : (
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive" onClick={() => setConfirmRemove(true)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove Connection...
+                    </Button>
+                )}
+            </div>
+        </div>
     )
 }
 
@@ -206,9 +477,13 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
     const [saving, setSaving] = useState(false)
     const [testing, setTesting] = useState(false)
     const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+    const [qrOpen, setQrOpen] = useState(false)
 
     const emailValid = email.includes('@')
     const passwordValid = password.length > 0
+
+    const storedBaseUrl = connection.credentials?.baseUrl || undefined
+    const storedPublishableKey = connection.credentials?.publishableKey || undefined
 
     const handleReauth = async () => {
         if (!emailValid || !passwordValid) return
@@ -250,6 +525,41 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         }
     }
 
+    const handleQrClaimed = async (session: QRSession) => {
+        try {
+            const result = await exchangeNuvioQr(session, storedPublishableKey, storedBaseUrl)
+            const t = result.tokens
+            if (!t) throw new Error('No tokens returned. Try QR sign-in again.')
+            await updateConnection(accountId, connection.id, {
+                credentials: {
+                    ...connection.credentials,
+                    email: result.email || email,
+                    accessToken: t.accessToken,
+                    refreshToken: t.refreshToken,
+                    expiresAt: String(t.expiresAt),
+                },
+                status: 'active',
+            })
+            const { storeConnectionCredential } = await import('@/api/hydra-providers')
+            storeConnectionCredential(accountId, connection.id, {
+                accessToken: t.accessToken,
+                refreshToken: t.refreshToken,
+                expiresAt: t.expiresAt,
+                profileId: connection.credentials?.profileId || null,
+                baseUrl: storedBaseUrl || null,
+                publishableKey: storedPublishableKey || null,
+            }, 'nuvio').catch(err => {
+                toast({ title: 'Saved locally, but the server did not store the new session', description: errMsg(err), variant: 'destructive' })
+            })
+            toast({ title: 'Nuvio session refreshed' })
+            await useConnectionStore.getState().syncConnections(accountId)
+        } catch (err) {
+            toast({ title: 'QR re-authentication failed', description: errMsg(err), variant: 'destructive' })
+        } finally {
+            setQrOpen(false)
+        }
+    }
+
     const handleTest = async () => {
         setTesting(true)
         setTestResult(null)
@@ -267,67 +577,110 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
     }
 
     return (
-        <SectionShell title="Nuvio credentials" description="Re-authenticate to refresh your session tokens.">
-            <div className="flex items-center justify-end">
-                <Button
-                    variant="subtle"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5 text-xs"
-                    onClick={handleTest}
-                    disabled={testing}
-                >
-                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {testing ? 'Testing...' : 'Test Connection'}
-                </Button>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="nuvio-edit-email">Email</Label>
-                <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="nuvio-edit-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        className="pl-10"
-                    />
-                </div>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="nuvio-edit-password">Password</Label>
-                <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="nuvio-edit-password"
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="Your Nuvio password"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="pl-10 pr-9"
-                        onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setShowPassword(s => !s)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+        <>
+            <ReauthCard
+                title="Nuvio credentials"
+                description="Re-authenticate to refresh your session tokens."
+                layoutId="nuvio-reauth-method"
+                headerAction={
+                    <Button
+                        variant="subtle"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1.5 text-xs"
+                        onClick={handleTest}
+                        disabled={testing}
                     >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                </div>
-            </div>
-            <Button
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                onClick={handleReauth}
-                disabled={saving || !emailValid || !passwordValid}
-            >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {saving ? 'Authenticating...' : 'Re-authenticate'}
-            </Button>
-            <TestResultBanner result={testResult} />
-        </SectionShell>
+                        {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                        {testing ? 'Testing...' : 'Test Connection'}
+                    </Button>
+                }
+                footer={<TestResultBanner result={testResult} />}
+                methods={[
+                    {
+                        id: 'password',
+                        label: 'Password',
+                        content: (
+                            <div className="space-y-3">
+                                <div className="space-y-2">
+                                    <Label htmlFor="nuvio-edit-email">Email</Label>
+                                    <div className="relative">
+                                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="nuvio-edit-email"
+                                            type="email"
+                                            placeholder="you@example.com"
+                                            value={email}
+                                            onChange={e => setEmail(e.target.value)}
+                                            className="pl-10"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="nuvio-edit-password">Password</Label>
+                                    <div className="relative">
+                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="nuvio-edit-password"
+                                            type={showPassword ? 'text' : 'password'}
+                                            placeholder="Your Nuvio password"
+                                            value={password}
+                                            onChange={e => setPassword(e.target.value)}
+                                            className="pl-10 pr-9"
+                                            onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(s => !s)}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                        </button>
+                                    </div>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={handleReauth}
+                                    disabled={saving || !emailValid || !passwordValid}
+                                >
+                                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                    {saving ? 'Authenticating...' : 'Re-authenticate'}
+                                </Button>
+                            </div>
+                        ),
+                    },
+                    {
+                        id: 'qr',
+                        label: 'QR Code',
+                        content: (
+                            <div className="space-y-3">
+                                <p className="text-xs leading-relaxed text-muted-foreground">
+                                    Scan with the Nuvio app on your phone to refresh this connection's session without a password.
+                                </p>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={() => setQrOpen(true)}
+                                >
+                                    <QrCode className="h-3.5 w-3.5" />
+                                    Re-authenticate with QR
+                                </Button>
+                            </div>
+                        ),
+                    },
+                ]}
+            />
+            <QRLinkDialog
+                open={qrOpen}
+                onOpenChange={setQrOpen}
+                title="Re-authenticate Nuvio"
+                description="Scan the QR code with the Nuvio app on your phone to refresh this connection's session."
+                start={() => startNuvioQr(storedPublishableKey, storedBaseUrl)}
+                poll={(session) => pollNuvioQr(session, storedPublishableKey, storedBaseUrl)}
+                onClaimed={handleQrClaimed}
+            />
+        </>
     )
 }
 
@@ -397,8 +750,10 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
     }
 
     return (
-        <SectionShell title="RealStream credentials" description="Re-authenticate to refresh your session tokens.">
-            <div className="flex items-center justify-end">
+        <ReauthCard
+            title="RealStream credentials"
+            description="Re-authenticate to refresh your session tokens."
+            headerAction={
                 <Button
                     variant="subtle"
                     size="sm"
@@ -409,55 +764,65 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
                     {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                     {testing ? 'Testing...' : 'Test Connection'}
                 </Button>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="rs-edit-email">Email</Label>
-                <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="rs-edit-email"
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        className="pl-10"
-                    />
-                </div>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="rs-edit-password">Password</Label>
-                <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="rs-edit-password"
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="Your RealStream password"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="pl-10 pr-9"
-                        onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setShowPassword(s => !s)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                </div>
-            </div>
-            <Button
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                onClick={handleReauth}
-                disabled={saving || !emailValid || !passwordValid}
-            >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {saving ? 'Authenticating...' : 'Re-authenticate'}
-            </Button>
-            <TestResultBanner result={testResult} />
-        </SectionShell>
+            }
+            footer={<TestResultBanner result={testResult} />}
+            methods={[
+                {
+                    id: 'password',
+                    label: 'Password',
+                    content: (
+                        <div className="space-y-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="rs-edit-email">Email</Label>
+                                <div className="relative">
+                                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        id="rs-edit-email"
+                                        type="email"
+                                        placeholder="you@example.com"
+                                        value={email}
+                                        onChange={e => setEmail(e.target.value)}
+                                        className="pl-10"
+                                    />
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="rs-edit-password">Password</Label>
+                                <div className="relative">
+                                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        id="rs-edit-password"
+                                        type={showPassword ? 'text' : 'password'}
+                                        placeholder="Your RealStream password"
+                                        value={password}
+                                        onChange={e => setPassword(e.target.value)}
+                                        className="pl-10 pr-9"
+                                        onKeyDown={e => { if (e.key === 'Enter' && emailValid && passwordValid) handleReauth() }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(s => !s)}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
+                            </div>
+                                <Button
+                                    size="sm"
+                                    className="h-8 w-full gap-1.5 text-xs"
+                                    onClick={handleReauth}
+                                    disabled={saving || !emailValid || !passwordValid}
+                                >
+                                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                    {saving ? 'Authenticating...' : 'Re-authenticate'}
+                                </Button>
+                            </div>
+                        ),
+                    },
+            ]}
+        />
     )
 }
 
@@ -523,8 +888,10 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
     }
 
     return (
-        <SectionShell title="Hydra API key" description="Update the API key used to push to this outbound server.">
-            <div className="flex items-center justify-end">
+        <ReauthCard
+            title="Hydra API key"
+            description="Update the API key used to push to this outbound server."
+            headerAction={
                 <Button
                     variant="subtle"
                     size="sm"
@@ -535,41 +902,51 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
                     {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                     {testing ? 'Testing...' : 'Test Connection'}
                 </Button>
-            </div>
-            <div className="space-y-2">
-                <Label htmlFor="hydra-edit-key">New API Key</Label>
-                <div className="relative">
-                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        id="hydra-edit-key"
-                        type={showKey ? 'text' : 'password'}
-                        placeholder="Paste a new API key"
-                        value={newApiKey}
-                        onChange={e => setNewApiKey(e.target.value)}
-                        className="pl-10 pr-9"
-                        onKeyDown={e => { if (e.key === 'Enter' && newApiKey.trim()) handleUpdate() }}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => setShowKey(s => !s)}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        aria-label={showKey ? 'Hide key' : 'Show key'}
-                    >
-                        {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                </div>
-            </div>
-            <Button
-                size="sm"
-                className="h-8 gap-1.5 text-xs"
-                onClick={handleUpdate}
-                disabled={saving || !newApiKey.trim()}
-            >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {saving ? 'Updating...' : 'Update API Key'}
-            </Button>
-            <TestResultBanner result={testResult} />
-        </SectionShell>
+            }
+            footer={<TestResultBanner result={testResult} />}
+            methods={[
+                {
+                    id: 'apikey',
+                    label: 'API Key',
+                    content: (
+                        <div className="space-y-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="hydra-edit-key">New API Key</Label>
+                                <div className="relative">
+                                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                    <Input
+                                        id="hydra-edit-key"
+                                        type={showKey ? 'text' : 'password'}
+                                        placeholder="Paste a new API key"
+                                        value={newApiKey}
+                                        onChange={e => setNewApiKey(e.target.value)}
+                                        className="pl-10 pr-9"
+                                        onKeyDown={e => { if (e.key === 'Enter' && newApiKey.trim()) handleUpdate() }}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowKey(s => !s)}
+                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        aria-label={showKey ? 'Hide key' : 'Show key'}
+                                    >
+                                        {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </button>
+                                </div>
+                            </div>
+                            <Button
+                                size="sm"
+                                className="h-8 w-full gap-1.5 text-xs"
+                                onClick={handleUpdate}
+                                disabled={saving || !newApiKey.trim()}
+                            >
+                                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                {saving ? 'Updating...' : 'Update API Key'}
+                            </Button>
+                        </div>
+                    ),
+                },
+            ]}
+        />
     )
 }
 
@@ -624,7 +1001,7 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
 
     if (loading) {
         return (
-            <SectionShell title="Premium profiles" description="Stremio Premium sub-profiles for this account.">
+            <SectionShell title="Supporters profiles" description="Stremio Supporters sub-profiles for this account.">
                 <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading profiles...
                 </div>
@@ -634,7 +1011,7 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
 
     if (error) {
         return (
-            <SectionShell title="Premium profiles" description="Stremio Premium sub-profiles for this account.">
+            <SectionShell title="Supporters profiles" description="Stremio Supporters sub-profiles for this account.">
                 <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                 <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
                     <RefreshCw className="h-3.5 w-3.5" /> Retry
@@ -648,7 +1025,7 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
     }
 
     return (
-        <SectionShell title="Premium profiles" description="Select which Stremio Premium sub-profile to target for this connection.">
+        <SectionShell title="Supporters profiles" description="Select which Stremio Supporters sub-profile to target for this connection.">
             <div className="space-y-1.5">
                 {profiles.map(p => {
                     const active = p.id === currentProfileId
@@ -692,31 +1069,176 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
     )
 }
 
+function StremioAddonsSection({ accountId }: { accountId: string }) {
+    const { addons } = useAddons(accountId)
+
+    if (addons.length === 0) {
+        return (
+            <EmptyState
+                icon={<Puzzle className="h-5 w-5" />}
+                title="No addons found"
+                description="Addons installed on this Stremio account will appear here."
+            />
+        )
+    }
+
+    return (
+        <div className="space-y-1.5">
+            {addons.map((addon, i) => {
+                const name = addon.metadata?.customName || addon.transportName || addon.manifest.name || 'Unknown addon'
+                const logo = addon.metadata?.customLogo || addon.manifest.logo
+                const enabled = addon.flags?.enabled !== false
+                return (
+                    <div
+                        key={`${addon.transportUrl}-${i}`}
+                        className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
+                    >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 overflow-hidden">
+                            {logo ? (
+                                <img
+                                    src={logo}
+                                    alt=""
+                                    className="h-full w-full object-contain"
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden') }}
+                                />
+                            ) : null}
+                            <Puzzle className={cn('h-3.5 w-3.5 text-muted-foreground', logo && 'hidden')} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">{name}</p>
+                            {addon.manifest.version && (
+                                <p className="truncate text-[11px] text-muted-foreground/70 mt-0.5">v{addon.manifest.version}</p>
+                            )}
+                        </div>
+                        <span
+                            className={cn(
+                                'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                                enabled ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'
+                            )}
+                        >
+                            {enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 px-3.5 py-3 shadow-sm">
+            <p className="text-lg font-semibold leading-tight">{value}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{label}</p>
+        </div>
+    )
+}
+
+function StremioLibrarySection({ accountId }: { accountId: string }) {
+    const { history, loading } = useWatchHistory(accountId)
+
+    const stats = useMemo(() => {
+        let movies = 0
+        let episodes = 0
+        let watchMs = 0
+        const byShow = new Map<string, number>()
+        for (const entry of history) {
+            const isSeries = entry.type === 'series' || entry.type === 'anime' || entry.type === 'episode'
+            if (isSeries) {
+                episodes++
+                if (entry.name) byShow.set(entry.name, (byShow.get(entry.name) || 0) + 1)
+            } else {
+                movies++
+            }
+            if (entry.duration > 0 && entry.progress > 0) {
+                watchMs += (entry.duration * Math.min(entry.progress, 100)) / 100
+            }
+        }
+        const topShows = Array.from(byShow.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+        return { movies, episodes, watchMs, topShows }
+    }, [history])
+
+    if (loading && history.length === 0) {
+        return (
+            <div className="flex items-center justify-center gap-2 py-16 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading…
+            </div>
+        )
+    }
+
+    if (history.length === 0) {
+        return (
+            <EmptyState
+                icon={<BookOpen className="h-5 w-5" />}
+                title="No watch history"
+                description="Watch activity tracked for this account will appear here."
+            />
+        )
+    }
+
+    const watchHours = stats.watchMs / 3600000
+    const watchTime = watchHours >= 1 ? `${Math.round(watchHours * 10) / 10} h` : `${Math.round(stats.watchMs / 60000)} min`
+
+    return (
+        <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <StatCard label="Watched items" value={String(history.length)} />
+                <StatCard label="Movies" value={String(stats.movies)} />
+                <StatCard label="Episodes" value={String(stats.episodes)} />
+                <StatCard label="Watch time" value={watchTime} />
+            </div>
+            {stats.topShows.length > 0 && (
+                <div className="space-y-1.5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Most watched</p>
+                    {stats.topShows.map(([name, count], i) => (
+                        <div
+                            key={name}
+                            className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
+                        >
+                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-[11px] font-bold text-muted-foreground">
+                                {i + 1}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
+                            <span className="shrink-0 text-[11px] text-muted-foreground">
+                                {count} episode{count === 1 ? '' : 's'}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+
 export function ConnectionEditPanel({
     accountId,
     connection,
     status,
+    premium,
+    nuvioMember,
     onBack,
 }: {
     accountId: string
     connection: Connection
     status: ConnectionStatus
+    premium?: PremiumStatus
+    nuvioMember?: NuvioMemberStatus
     onBack: () => void
 }) {
-    const removeConnection = useConnectionStore(s => s.removeConnection)
     const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
-    const [confirmRemove, setConfirmRemove] = useState(false)
     const [testing, setTesting] = useState(false)
     const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+    const [tab, setTab] = useState('membership')
     const isHydra = connection.connectionType === 'hydra-outbound'
+    const isStremio = connection.platform === 'stremio'
+    const isNuvio = connection.platform === 'nuvio'
+    const showTabs = isStremio || isNuvio
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
     const display = displayStatus(status, expiry)
-
-    const handleRemove = () => {
-        removeConnection(accountId, connection.id)
-        onBack()
-    }
 
     const handleTestConnection = async () => {
         if (!account) return
@@ -748,30 +1270,6 @@ export function ConnectionEditPanel({
                     Connections
                 </Button>
             </ToolbarShell>
-            <div className="flex items-center gap-2">
-                <div className="flex-1" />
-                {confirmRemove ? (
-                    <div className="flex items-center gap-1.5">
-                        <Button size="sm" variant="subtle" className="h-7 text-xs" onClick={() => setConfirmRemove(false)}>Cancel</Button>
-                        <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={handleRemove}>Remove</Button>
-                    </div>
-                ) : (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground">
-                                <MoreVertical className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-[160px]">
-                            <DropdownMenuItem onClick={() => setConfirmRemove(true)} className="gap-2 text-xs text-destructive focus:text-destructive">
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Remove connection
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                )}
-            </div>
-
             <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                     <PlatformLogo platform={connection.platform} className="h-12 w-12 shrink-0" isHydra={isHydra} />
@@ -788,49 +1286,127 @@ export function ConnectionEditPanel({
                 </div>
             </div>
 
-            {connection.platform === 'stremio' && (
-                <>
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                                <p className="text-sm font-semibold">Connection health</p>
-                                <p className="text-xs text-muted-foreground">Verify the Stremio auth key is valid and reachable.</p>
-                            </div>
-                            <Button
-                                variant="subtle"
-                                size="sm"
-                                className="h-8 shrink-0 gap-1.5 text-xs"
-                                onClick={handleTestConnection}
-                                disabled={testing || !account}
-                            >
-                                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                                {testing ? 'Testing...' : 'Test Connection'}
-                            </Button>
+            {showTabs ? (
+                <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+                    <TabsList>
+                        <TabsTrigger value="membership">Membership</TabsTrigger>
+                        <TabsTrigger value="connection">Connection</TabsTrigger>
+                        {isStremio && premium?.active && (
+                            <TabsTrigger value="profiles">Supporters Profiles</TabsTrigger>
+                        )}
+                        {isStremio && (
+                            <>
+                                <TabsTrigger value="addons">Addons</TabsTrigger>
+                                <TabsTrigger value="library">Library</TabsTrigger>
+                            </>
+                        )}
+                        {isNuvio && (
+                            <>
+                                <TabsTrigger value="nuvio-plugins">Plugins</TabsTrigger>
+                                <TabsTrigger value="nuvio-profiles">Profiles</TabsTrigger>
+                                <TabsTrigger value="nuvio-library">Library</TabsTrigger>
+                                <TabsTrigger value="nuvio-collections">Collections</TabsTrigger>
+                                <TabsTrigger value="nuvio-backup">Backup</TabsTrigger>
+                            </>
+                        )}
+                    </TabsList>
+
+                    <TabsContent value="membership">
+                        <ConnectionMembershipTab platform={connection.platform} premium={premium} nuvioMember={nuvioMember} />
+                    </TabsContent>
+
+                    <TabsContent value="connection">
+                        <div className="space-y-4">
+                            {isStremio && (
+                                <>
+                                    <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-semibold">Connection health</p>
+                                                <p className="text-xs text-muted-foreground">Verify the Stremio auth key is valid and reachable.</p>
+                                            </div>
+                                            <Button
+                                                variant="subtle"
+                                                size="sm"
+                                                className="h-8 shrink-0 gap-1.5 text-xs"
+                                                onClick={handleTestConnection}
+                                                disabled={testing || !account}
+                                            >
+                                                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                                                {testing ? 'Testing...' : 'Test Connection'}
+                                            </Button>
+                                        </div>
+                                        <TestResultBanner result={testResult} />
+                                    </div>
+                                    <StremioCredentialsSection accountId={accountId} connection={connection} />
+                                    <StremioDangerZoneSection accountId={accountId} connection={connection} />
+                                </>
+                            )}
+
+                            {isNuvio && (
+                                <NuvioCredentialsSection accountId={accountId} connection={connection} />
+                            )}
+
+                            {connection.platform === 'realstream' && (
+                                <RealStreamCredentialsSection accountId={accountId} connection={connection} />
+                            )}
+
+                            {isHydra && (
+                                <HydraCredentialsSection accountId={accountId} connection={connection} />
+                            )}
+
+                            <RemoveConnectionSection accountId={accountId} connection={connection} onBack={onBack} />
                         </div>
-                        <TestResultBanner result={testResult} />
-                    </div>
-                    <StremioCredentialsSection accountId={accountId} connection={connection} />
-                    <StremioProfilePicker accountId={accountId} connection={connection} />
-                </>
-            )}
+                    </TabsContent>
 
-            {connection.platform === 'nuvio' && (
-                <>
-                    <NuvioCredentialsSection accountId={accountId} connection={connection} />
-                    <NuvioConnectionWorkspace
-                        accountId={accountId}
-                        connection={connection}
-                        status={status}
-                    />
-                </>
-            )}
+                    {isStremio && premium?.active && (
+                        <TabsContent value="profiles">
+                            <StremioProfilePicker accountId={accountId} connection={connection} />
+                        </TabsContent>
+                    )}
+                    {isStremio && (
+                        <>
+                            <TabsContent value="addons">
+                                <StremioAddonsSection accountId={accountId} />
+                            </TabsContent>
+                            <TabsContent value="library">
+                                <StremioLibrarySection accountId={accountId} />
+                            </TabsContent>
+                        </>
+                    )}
 
-            {connection.platform === 'realstream' && (
-                <RealStreamCredentialsSection accountId={accountId} connection={connection} />
-            )}
+                    {isNuvio && (
+                        <>
+                            <TabsContent value="nuvio-plugins">
+                                <NuvioPluginsTab accountId={accountId} connection={connection} />
+                            </TabsContent>
+                            <TabsContent value="nuvio-profiles">
+                                <NuvioProfilesTab accountId={accountId} connection={connection} status={status} />
+                            </TabsContent>
+                            <TabsContent value="nuvio-library">
+                                <NuvioLibraryTab accountId={accountId} connection={connection} />
+                            </TabsContent>
+                            <TabsContent value="nuvio-collections">
+                                <NuvioCollectionsTab accountId={accountId} connection={connection} />
+                            </TabsContent>
+                            <TabsContent value="nuvio-backup">
+                                <NuvioBackupTab accountId={accountId} connection={connection} />
+                            </TabsContent>
+                        </>
+                    )}
+                </Tabs>
+            ) : (
+                <div className="space-y-4">
+                    {connection.platform === 'realstream' && (
+                        <RealStreamCredentialsSection accountId={accountId} connection={connection} />
+                    )}
 
-            {isHydra && (
-                <HydraCredentialsSection accountId={accountId} connection={connection} />
+                    {isHydra && (
+                        <HydraCredentialsSection accountId={accountId} connection={connection} />
+                    )}
+
+                    <RemoveConnectionSection accountId={accountId} connection={connection} onBack={onBack} />
+                </div>
             )}
         </div>
     )

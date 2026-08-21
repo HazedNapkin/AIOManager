@@ -1181,8 +1181,8 @@ export const BULK_ACTIONS: BulkActionDefinition[] = [
   {
     id: 'reinstall-all',
     group: 'Manage',
-    title: 'Update All',
-    description: 'Check every add-on and use the newest copy available.',
+    title: 'Reinstall All',
+    description: 'Force reinstall every add-on from its source URL, even when nothing seems to have changed. Picks up config changes and pushes them everywhere sync is enabled.',
     severity: 'warning',
     icon: Zap,
     buildPreview: buildReinstallAllPreview,

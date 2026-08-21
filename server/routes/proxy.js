@@ -537,6 +537,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             'AddonCollectionSet': 'Pushing Addon Updates',
             'DatastoreGet': 'Syncing Library',
             'DatastorePut': 'Updating Library Items',
+            'DatastoreMeta': 'Checking Library Changes',
             'GetUser': 'Fetching User Profile',
             'GetProfilesAddons': 'Fetching Sub-Profile Addons',
             'SetProfileAddons': 'Updating Sub-Profile Addons'
@@ -551,7 +552,7 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const allowCollectionShrink = type === 'AddonCollectionSet' && payload.allowCollectionShrink === true && (accountContext === 'Profile Swap' || accountContext === 'Bulk Op' || accountContext === 'Clear All')
         delete payload.allowCollectionShrink
 
-        if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'GetUser' || type === 'GetProfilesAddons' || type === 'SetProfileAddons') {
+        if (type === 'AddonCollectionGet' || type === 'AddonCollectionSet' || type === 'DatastoreGet' || type === 'DatastorePut' || type === 'DatastoreMeta' || type === 'GetUser' || type === 'GetProfilesAddons' || type === 'SetProfileAddons') {
             fastify.log.info({ category: 'Sync' }, `[${masked}] ${friendlyAction}...`)
         } else {
             // Strict Whitelist: Block unknown methods to prevent abuse

@@ -10,6 +10,7 @@ import { Account } from '@/types/account'
 import { toast } from '@/hooks/use-toast'
 import { mapConcurrent } from '@/lib/concurrency'
 import { trace } from '@/lib/trace'
+import { metaIsUnchanged } from '@/lib/stremio-meta-diff'
 
 const CACHE_KEY = 'aio_library_cache_v3'
 const OLD_CACHE_KEY = 'aio_library_cache'
@@ -18,6 +19,7 @@ let _lastPersistedLibraryContent: string | null = null
 function invalidatePersistedLibraryFingerprint() {
     _lastPersistedLibraryContent = null
 }
+const seriesRowsForBackfill = new Map<string, LibraryItem[]>()
 const DELETED_ITEMS_KEY = 'aio_library_deleted'
 const CACHE_TTL = 5 * 60 * 1000
 const LIBRARY_FETCH_CONCURRENCY = 5
@@ -46,6 +48,7 @@ interface CacheData {
     items: ActivityItem[]
     lastFetched: number
     lastMtimeByAccount: Record<string, string>
+    metaMtimesByAccount?: Record<string, Record<string, number>>
 }
 
 interface DeletedEntry {
@@ -56,6 +59,7 @@ interface LibraryCacheState {
     items: ActivityItem[]
     lastFetched: number
     lastMtimeByAccount: Record<string, string>
+    metaMtimesByAccount: Record<string, Record<string, number>>
     loading: boolean
     loadingProgress: { current: number; total: number }
     isStale: boolean
@@ -65,6 +69,7 @@ interface LibraryCacheState {
     clear: () => Promise<void>
     removeItems: (itemIds: string[]) => void
     removeItemsForAccount: (accountId: string) => void
+    dropMetaRows: (accountId: string, itemIds: string[]) => void
     deletedItemIds: Set<string>
 }
 
@@ -75,6 +80,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
     items: [],
     lastFetched: 0,
     lastMtimeByAccount: {},
+    metaMtimesByAccount: {},
     loading: false,
     loadingProgress: { current: 0, total: 0 },
     isStale: false,
@@ -107,23 +113,47 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
     removeItemsForAccount: (accountId: string) => {
         bumpCacheGeneration()
-        const { items, lastMtimeByAccount } = get()
+        const { items, lastMtimeByAccount, metaMtimesByAccount } = get()
         const filtered = items.filter(item => item.accountId !== accountId)
         const newMtimes = { ...lastMtimeByAccount }
         delete newMtimes[accountId]
-        set({ items: filtered, lastMtimeByAccount: newMtimes, isStale: true })
+        const newMetas = { ...metaMtimesByAccount }
+        delete newMetas[accountId]
+        seriesRowsForBackfill.delete(accountId)
+        set({ items: filtered, lastMtimeByAccount: newMtimes, metaMtimesByAccount: newMetas, isStale: true })
         localforage.removeItem(CACHE_KEY).then(() => invalidatePersistedLibraryFingerprint()).catch(() => {})
+    },
+
+    // Rows whose content changed without an mtime bump (bitfield rewrites keep the original
+    // mtime); dropping the key forces the next meta comparison to miss and refetch.
+    // lastMtime goes too, or the mtime-skip branch reuses the stale rows this drop evicted.
+    dropMetaRows: (accountId, itemIds) => {
+        const { metaMtimesByAccount, lastMtimeByAccount } = get()
+        const map = metaMtimesByAccount[accountId]
+        if (!map) return
+        const next = { ...map }
+        let changed = false
+        for (const id of itemIds) {
+            if (id in next) { delete next[id]; changed = true }
+        }
+        if (changed) {
+            const newMtimes = { ...lastMtimeByAccount }
+            delete newMtimes[accountId]
+            set({ metaMtimesByAccount: { ...metaMtimesByAccount, [accountId]: next }, lastMtimeByAccount: newMtimes })
+        }
     },
 
     invalidate: () => {
         bumpCacheGeneration()
-        set({ items: [], lastMtimeByAccount: {}, isStale: true })
+        seriesRowsForBackfill.clear()
+        set({ items: [], lastMtimeByAccount: {}, metaMtimesByAccount: {}, isStale: true })
         localforage.removeItem(CACHE_KEY).then(() => invalidatePersistedLibraryFingerprint()).catch(() => {})
     },
 
     clear: async () => {
         bumpCacheGeneration()
-        set({ items: [], lastFetched: 0, lastMtimeByAccount: {}, isStale: true, deletedItemIds: new Set() })
+        seriesRowsForBackfill.clear()
+        set({ items: [], lastFetched: 0, lastMtimeByAccount: {}, metaMtimesByAccount: {}, isStale: true, deletedItemIds: new Set() })
         await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
         await localforage.removeItem(DELETED_ITEMS_KEY)
     },
@@ -136,7 +166,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
         if (storedVersion !== String(CACHE_VERSION)) {
             await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
             localStorage.setItem('aio-cache-version', String(CACHE_VERSION))
-            set({ items: [], lastMtimeByAccount: {} })
+            set({ items: [], lastMtimeByAccount: {}, metaMtimesByAccount: {} })
         }
 
         let shouldRetry = true
@@ -199,6 +229,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             const decrypted = await decryptData(encrypted, encryptionKey)
                             const cached = JSON.parse(decrypted) as CacheData
                             const cachedMtimes = cached.lastMtimeByAccount || {}
+                            const cachedMetas = cached.metaMtimesByAccount || {}
                             const isFresh = now - cached.lastFetched < CACHE_TTL
                             const hasCov = hasAccountCoverage(cachedMtimes, accounts)
                             const savedDeleted = await localforage.getItem<Record<string, DeletedEntry>>(DELETED_ITEMS_KEY)
@@ -228,6 +259,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     items: hydratedItems,
                                     lastFetched: cached.lastFetched,
                                     lastMtimeByAccount: cachedMtimes,
+                                    metaMtimesByAccount: cachedMetas,
                                     isStale: false,
                                     loading: false,
                                     deletedItemIds: new Set(Object.keys(deletedEntries))
@@ -239,6 +271,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 set({
                                     items: hydratedItems,
                                     lastMtimeByAccount: cachedMtimes,
+                                    metaMtimesByAccount: cachedMetas,
                                     deletedItemIds: new Set(Object.keys(deletedEntries))
                                 })
                             }
@@ -273,6 +306,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 }
                 const fetchedByAccount = new Map<string, ActivityItem[]>()
                 const newMtimes: Record<string, string> = { ...get().lastMtimeByAccount }
+                const newMetaMtimes: Record<string, Record<string, number>> = { ...get().metaMtimesByAccount }
                 const allMtimes = new Map<string, number>()
 
                 const buildMergedItems = (): ActivityItem[] => {
@@ -315,52 +349,109 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                             const stremioAuthKey = getStremioAuthKey(account)
                             if (stremioAuthKey) {
                                 const authKey = await getCachedAuthKey(stremioAuthKey, encryptionKey)
-                                const libraryItems = await stremioClient.getLibraryItems(authKey, account.id) as LibraryItem[]
 
-                                const latestMtime = libraryItems.reduce((max, item) => {
-                                    if (!item._mtime) return max
-                                    return item._mtime > max ? item._mtime : max
-                                }, '0')
-
-                                const oldMtime = get().lastMtimeByAccount[account.id]
-                                if (oldMtime && latestMtime === oldMtime && nuvioConns.length === 0) {
-                                    const newEvents = useWatchEventStore.getState().diffAndRecord(
-                                        account.id, libraryItems, account, accounts
-                                    )
-                                    if (newEvents.length > 0) {
-                                        triggerSync()
+                                // datastoreMeta pre-check: provably unchanged id->mtime snapshot skips the
+                                // fetch and diff. Backfill still fires (retry contract), and a missing event
+                                // snapshot forces the full path - the diff is what re-seeds it after a reset.
+                                let metaSkipped = false
+                                const cachedMetaMap = get().metaMtimesByAccount[account.id]
+                                const cachedAccountItems = staleByAccount.get(account.id)
+                                const hasEventSnapshot = Boolean(useWatchEventStore.getState().snapshot[account.id])
+                                if (cachedMetaMap && cachedAccountItems && cachedAccountItems.length > 0 && hasEventSnapshot) {
+                                    let metaRows: Array<[string, number]> | null = null
+                                    try {
+                                        metaRows = await stremioClient.getLibraryMeta(authKey, account.id)
+                                    } catch {
+                                        metaRows = null
                                     }
-                                    useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
-                                        .then(backfilled => { if (backfilled > 0) triggerSync() })
-                                        .catch(e => { if (import.meta.env?.DEV) console.error(`[LibraryCache] bitfield backfill (mtime-skip) failed for ${account.name || account.id}:`, e) })
-                                    const stale = staleByAccount.get(account.id) || []
-                                    fetchedByAccount.set(account.id, stale)
-                                    newMtimes[account.id] = latestMtime
-                                } else {
-                                    libraryItems.forEach(item => {
-                                        if (item._mtime) {
-                                            const key = `${account.id}:${item._id}`
-                                            allMtimes.set(key, new Date(item._mtime).getTime())
+                                    if (metaRows && metaRows.length > 0 && metaIsUnchanged(cachedMetaMap, metaRows)) {
+                                        const stale = staleByAccount.get(account.id) || []
+                                        accountItems.push(...stale)
+                                        const metaMap: Record<string, number> = {}
+                                        let maxMs = 0
+                                        for (const [itemId, mtimeMs] of metaRows) {
+                                            metaMap[itemId] = mtimeMs
+                                            allMtimes.set(`${account.id}:${itemId}`, mtimeMs)
+                                            if (mtimeMs > maxMs) maxMs = mtimeMs
                                         }
-                                    })
-
-                                    const newEvents = useWatchEventStore.getState().diffAndRecord(
-                                        account.id, libraryItems, account, accounts
-                                    )
-                                    if (newEvents.length > 0) {
-                                        triggerSync()
+                                        newMetaMtimes[account.id] = metaMap
+                                        newMtimes[account.id] = new Date(maxMs).toISOString()
+                                        trace('libraryCache', 'stremio.meta-skip', { accountId: account.id, rows: metaRows.length })
+                                        metaSkipped = true
+                                        const cachedRows = seriesRowsForBackfill.get(account.id)
+                                        if (cachedRows && cachedRows.length > 0) {
+                                            useWatchEventStore.getState().recordBackfillEpisodes(account.id, cachedRows)
+                                                .then(backfilled => { if (backfilled > 0) triggerSync() })
+                                                .catch(e => { if (import.meta.env?.DEV) console.error(`[LibraryCache] bitfield backfill (meta-skip) failed for ${account.name || account.id}:`, e) })
+                                        }
+                                    } else {
+                                        trace('libraryCache', 'stremio.meta-miss', { accountId: account.id })
                                     }
+                                }
 
-                                    useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
-                                        .then(backfilled => { if (backfilled > 0) triggerSync() })
-                                        .catch(e => { if (import.meta.env.DEV) console.error(`[LibraryCache] bitfield backfill failed for ${account.name || account.id}:`, e) })
+                                if (!metaSkipped) {
+                                    const libraryItems = await stremioClient.getLibraryItems(authKey, account.id) as LibraryItem[]
 
-                                    const accountActivity = libraryItems
-                                        .filter(item => isActuallyWatched(item))
-                                        .map(item => transformLibraryItemToActivityItem(item, account, accounts))
+                                    const metaMap: Record<string, number> = {}
+                                    for (const item of libraryItems) {
+                                        const ms = new Date(item._mtime || '').getTime()
+                                        metaMap[item._id] = Number.isNaN(ms) ? 0 : ms
+                                    }
+                                    newMetaMtimes[account.id] = metaMap
 
-                                    accountItems.push(...accountActivity)
-                                    newMtimes[account.id] = latestMtime
+                                    const seriesRows = libraryItems.filter(item =>
+                                        (item.type === 'series' || item.type === 'anime' || item.type === 'episode')
+                                        && item._id?.startsWith('tt')
+                                        && item.state?.watched
+                                    )
+                                    if (seriesRows.length > 0) seriesRowsForBackfill.set(account.id, seriesRows)
+                                    else seriesRowsForBackfill.delete(account.id)
+
+                                    const latestMtime = libraryItems.reduce((max, item) => {
+                                        if (!item._mtime) return max
+                                        return item._mtime > max ? item._mtime : max
+                                    }, '0')
+
+                                    const oldMtime = get().lastMtimeByAccount[account.id]
+                                    if (oldMtime && latestMtime === oldMtime && nuvioConns.length === 0) {
+                                        const newEvents = useWatchEventStore.getState().diffAndRecord(
+                                            account.id, libraryItems, account, accounts
+                                        )
+                                        if (newEvents.length > 0) {
+                                            triggerSync()
+                                        }
+                                        useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
+                                            .then(backfilled => { if (backfilled > 0) triggerSync() })
+                                            .catch(e => { if (import.meta.env?.DEV) console.error(`[LibraryCache] bitfield backfill (mtime-skip) failed for ${account.name || account.id}:`, e) })
+                                        const stale = staleByAccount.get(account.id) || []
+                                        fetchedByAccount.set(account.id, stale)
+                                        newMtimes[account.id] = latestMtime
+                                    } else {
+                                        libraryItems.forEach(item => {
+                                            if (item._mtime) {
+                                                const key = `${account.id}:${item._id}`
+                                                allMtimes.set(key, new Date(item._mtime).getTime())
+                                            }
+                                        })
+
+                                        const newEvents = useWatchEventStore.getState().diffAndRecord(
+                                            account.id, libraryItems, account, accounts
+                                        )
+                                        if (newEvents.length > 0) {
+                                            triggerSync()
+                                        }
+
+                                        useWatchEventStore.getState().recordBackfillEpisodes(account.id, libraryItems)
+                                            .then(backfilled => { if (backfilled > 0) triggerSync() })
+                                            .catch(e => { if (import.meta.env.DEV) console.error(`[LibraryCache] bitfield backfill failed for ${account.name || account.id}:`, e) })
+
+                                        const accountActivity = libraryItems
+                                            .filter(item => isActuallyWatched(item))
+                                            .map(item => transformLibraryItemToActivityItem(item, account, accounts))
+
+                                        accountItems.push(...accountActivity)
+                                        newMtimes[account.id] = latestMtime
+                                    }
                                 }
                             } else {
                                 newMtimes[account.id] = newMtimes[account.id] ?? '0'
@@ -424,17 +515,21 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     const watchedActivities = await mapConcurrent(watched, 5, async (row) => {
                                         try {
                                             return await transformNuvioWatchedItemToActivityItem(row, account, accounts)
-                                        } catch {
+                                        } catch (err) {
+                                            trace('libraryCache', 'nuvio.watched.transform-failed', { accountId: account.id, contentId: row?.content_id, error: (err as Error)?.message })
                                             return null
                                         }
                                     })
                                     for (const activity of watchedActivities) {
                                         if (!activity || seenIds.has(activity.uniqueItemId)) continue
+                                        // Episode-level dedup only: a show-level key would drop every
+                                        // Nuvio episode of a show that merely exists in the Stremio library.
                                         const wk1 = `${account.id}:${activity.uniqueItemId}`
-                                        const wk2 = `${account.id}:${activity.itemId}`
-                                        if (existingKeys.has(wk1) || existingKeys.has(wk2)) continue
+                                        if (existingKeys.has(wk1)) {
+                                            trace('libraryCache', 'nuvio.watched.drop-dedup', { accountId: account.id, itemId: activity.itemId, uniqueItemId: activity.uniqueItemId, name: activity.name, hit: 'unique' })
+                                            continue
+                                        }
                                         existingKeys.add(wk1)
-                                        existingKeys.add(wk2)
                                         accountItems.push(activity)
                                     }
                                     const nuvioActivities = [
@@ -597,6 +692,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                         if (import.meta.env.DEV) console.log(`[Smart Restore] Restoring ${item.name} (${item.id}) - watched again after deletion.`)
                         return true
                     }
+                    trace('libraryCache', 'final.blacklisted', { id: item.id, source: item.source, name: item.name, deletedAt: entry.deletedAt })
                     return false
                 })
 
@@ -611,19 +707,21 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                     items: filteredFinal,
                     lastFetched: now,
                     lastMtimeByAccount: newMtimes,
+                    metaMtimesByAccount: newMetaMtimes,
                     loading: false,
                     isStale: false
                 })
                 trace('libraryCache', 'ensureLoaded.load.complete', { accountCount: accounts.length, items: filteredFinal.length, timing: Date.now() - loadStart })
 
                 if (encryptionKey) {
-                    const content = JSON.stringify({ items: filteredFinal, lastMtimeByAccount: newMtimes })
+                    const content = JSON.stringify({ items: filteredFinal, lastMtimeByAccount: newMtimes, metaMtimesByAccount: newMetaMtimes })
                     if (content !== _lastPersistedLibraryContent) {
                         _lastPersistedLibraryContent = content
                         const encrypted = await encrypt(JSON.stringify({
                             items: filteredFinal,
                             lastFetched: now,
-                            lastMtimeByAccount: newMtimes
+                            lastMtimeByAccount: newMtimes,
+                            metaMtimesByAccount: newMetaMtimes
                         }), encryptionKey)
                         await localforage.setItem(CACHE_KEY, encrypted)
                     }
