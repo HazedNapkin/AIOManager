@@ -561,7 +561,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     hideAddonPreview: ra.hideAddonPreview ?? matchedAccount.hideAddonPreview,
                     hidePlatformLogos: ra.hidePlatformLogos ?? matchedAccount.hidePlatformLogos,
                     avatar: ra.avatar ?? matchedAccount.avatar,
-                    apiKey: ra.apiKey ?? matchedAccount.apiKey,
+                    apiKey: ra.apiKey ?? matchedAccount.apiKey ?? safeUUID(),
                     profiles: (() => {
                         const localProfiles = matchedAccount.profiles || []
                         const incomingProfiles = ra.profiles || []
@@ -619,6 +619,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     authKey: ra.rawKey ? await encrypt(ra.rawKey, getWriteEncryptionKey()) : '',
                     password: ra.password ? await encrypt(ra.password, getWriteEncryptionKey()) : undefined,
                     connections: mergeConnections(undefined, ra.connections, mode),
+                    apiKey: ra.apiKey ?? safeUUID(),
                 } as Account
                 reconciledAccounts.push(importedAccount)
             }

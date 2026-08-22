@@ -29,6 +29,42 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
         }
     }, [isSplitBrain, account.id])
 
+    const handleGenerateKey = () => {
+        const newKey = crypto.randomUUID()
+        const { accounts } = useAccountStore.getState()
+        const updated = accounts.map(a =>
+            a.id === account.id ? { ...a, apiKey: newKey } : a
+        )
+        useAccountStore.setState({ accounts: updated })
+        persistAccounts(updated)
+        triggerSync()
+        toast({ title: 'API key created', description: 'Use it with your AIOManager URL to connect external services via the Hydra API.' })
+    }
+
+    if (!apiKey) {
+        return (
+            <div className="bg-card/50 border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
+                <div>
+                    <h3 className="flex items-center gap-2 text-lg font-bold">
+                        <Key className="w-5 h-5 text-primary" />
+                        API Key
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        This account doesn't have an API key yet. Generate one to connect external services via the Hydra API.
+                    </p>
+                </div>
+                <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={handleGenerateKey}
+                >
+                    <Key className="h-3.5 w-3.5" />
+                    Generate API Key
+                </Button>
+            </div>
+        )
+    }
+
     const handleRegenerateKey = () => {
         const newKey = crypto.randomUUID()
         const { accounts } = useAccountStore.getState()
@@ -41,8 +77,6 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
         setConfirmRegenerate(false)
         toast({ title: 'API key regenerated', description: 'Update any services using the old key.' })
     }
-
-    if (!apiKey) return null
 
     const maskedKey = `${apiKey.slice(0, 8)}${'\u00B7'.repeat(24)}${apiKey.slice(-4)}`
 
