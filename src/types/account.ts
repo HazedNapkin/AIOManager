@@ -33,6 +33,8 @@ export interface Account {
   hideAddonPreview?: boolean
   hidePlatformLogos?: boolean
   allowExternalAddonManagement?: boolean
+  sourceOfTruth?: string
+  protectedAddons?: string[]
   profiles?: AccountProfile[]
   activeProfileId?: string
   connections?: Connection[]

@@ -12,6 +12,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore, hasPlatformConnection, getStremioAuthKey } from '@/store/accountStore'
@@ -110,6 +117,7 @@ export function AccountForm() {
   const [hideAddonPreview, setHideAddonPreview] = useState(false)
   const [hidePlatformLogos, setHidePlatformLogos] = useState(false)
   const [allowExternalAddonManagement, setAllowExternalAddonManagement] = useState(false)
+  const [sourceOfTruth, setSourceOfTruth] = useState<string | undefined>(undefined)
   const connectionSubDialogRef = useRef(false)
   const subDialogClosedAtRef = useRef(0)
 
@@ -155,6 +163,7 @@ export function AccountForm() {
       setHideAddonPreview(editingAccount.hideAddonPreview ?? false)
       setHidePlatformLogos(editingAccount.hidePlatformLogos ?? false)
       setAllowExternalAddonManagement(editingAccount.allowExternalAddonManagement ?? false)
+      setSourceOfTruth(editingAccount.sourceOfTruth)
     } else {
       setMode('credentials')
       setAuthIntent('login')
@@ -169,6 +178,7 @@ export function AccountForm() {
       setHideAddonPreview(false)
       setHidePlatformLogos(false)
       setAllowExternalAddonManagement(false)
+      setSourceOfTruth(undefined)
     }
   }, [editingAccount, isOpen])
 
@@ -245,6 +255,7 @@ export function AccountForm() {
             hideAddonPreview,
             hidePlatformLogos,
             allowExternalAddonManagement,
+sourceOfTruth,
           })
         } else {
           await addAccountByCredentials(
@@ -269,6 +280,7 @@ export function AccountForm() {
             hideAddonPreview,
             hidePlatformLogos,
             allowExternalAddonManagement,
+sourceOfTruth,
           })
         } else {
           await addAccountByAuthKey(
@@ -288,6 +300,7 @@ export function AccountForm() {
           if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
             await updateAccount(newAccount.id, {
               allowExternalAddonManagement,
+sourceOfTruth,
               hideLastWatched,
               hideAddonPreview,
               hidePlatformLogos
@@ -517,6 +530,7 @@ export function AccountForm() {
           hideAddonPreview,
           hidePlatformLogos,
           allowExternalAddonManagement,
+sourceOfTruth,
         })
       } else {
         if (mode === 'authKey') {
@@ -541,6 +555,7 @@ export function AccountForm() {
           if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
             await updateAccount(newAccount.id, {
               allowExternalAddonManagement,
+sourceOfTruth,
               hideLastWatched,
               hideAddonPreview,
               hidePlatformLogos
@@ -1168,6 +1183,29 @@ export function AccountForm() {
             onCheckedChange={setAllowExternalAddonManagement}
           />
         </div>
+        
+        {allowExternalAddonManagement && (
+          <div className="flex flex-col gap-2 py-2">
+            <div>
+              <p className="text-sm font-medium">Source of Truth App</p>
+              <p className="text-xs text-muted-foreground">Select which connected client acts as the source of truth for your addons.</p>
+            </div>
+            <Select value={sourceOfTruth || 'auto'} onValueChange={(val) => setSourceOfTruth(val === 'auto' ? undefined : val)}>
+              <SelectTrigger className="w-full h-11 bg-background/50 border-muted">
+                <SelectValue placeholder="Automatic (Default)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Automatic (Default)</SelectItem>
+                {getStremioAuthKey(liveAccount || editingAccount || { authKey: authKey, addons: [], lastSync: new Date(), id: '', name: '', status: 'active' } as any) && (
+                  <SelectItem value="stremio-native">Stremio (Native)</SelectItem>
+                )}
+                {((liveAccount || editingAccount)?.connections || []).filter(c => c.enabled).map(conn => (
+                  <SelectItem key={conn.id} value={conn.id}>{conn.platform} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -1577,6 +1615,29 @@ export function AccountForm() {
                   onCheckedChange={setAllowExternalAddonManagement}
                 />
               </div>
+              
+              {allowExternalAddonManagement && (
+                <div className="flex flex-col gap-2 py-2">
+                  <div>
+                    <p className="text-sm font-medium">Source of Truth App</p>
+                    <p className="text-xs text-muted-foreground">Select which connected client acts as the source of truth for your addons.</p>
+                  </div>
+                  <Select value={sourceOfTruth || 'auto'} onValueChange={(val) => setSourceOfTruth(val === 'auto' ? undefined : val)}>
+                    <SelectTrigger className="w-full h-11 bg-background/50 border-muted">
+                      <SelectValue placeholder="Automatic (Default)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Automatic (Default)</SelectItem>
+                      {getStremioAuthKey(liveAccount || editingAccount || { authKey: authKey, addons: [], lastSync: new Date(), id: '', name: '', status: 'active' } as any) && (
+                        <SelectItem value="stremio-native">Stremio (Native)</SelectItem>
+                      )}
+                      {((liveAccount || editingAccount)?.connections || []).filter(c => c.enabled).map(conn => (
+                        <SelectItem key={conn.id} value={conn.id}>{conn.platform} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
         </TabsContent>

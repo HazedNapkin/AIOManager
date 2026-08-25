@@ -22,6 +22,12 @@ async function getStore(): Promise<StoreRef> {
 export type SoT = { type: 'stremio-native' } | { type: 'connection'; conn: Connection }
 
 export function determineSourceOfTruth(account: Account): SoT | null {
+    if (account.sourceOfTruth) {
+        if (account.sourceOfTruth === 'stremio-native' && getStremioAuthKey(account)) return { type: 'stremio-native' }
+        const conn = account.connections?.find(c => c.enabled && c.id === account.sourceOfTruth)
+        if (conn) return { type: 'connection', conn }
+    }
+
     const nuvioConn = account.connections?.find(c => c.enabled && c.platform === 'nuvio')
     if (nuvioConn) return { type: 'connection', conn: nuvioConn }
     
@@ -72,27 +78,32 @@ export async function fetchSoTAddons(account: Account, sot: SoT, forceRefresh: b
     }
 }
 
-function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDescriptor[]): AddonDescriptor[] {
+function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDescriptor[], protectedUrls: Set<string>): AddonDescriptor[] {
     const sotList = [...sotAddons]
-    const disabledAnchors = new Map<string, AddonDescriptor[]>()
+    const anchoredAddons = new Map<string, AddonDescriptor[]>()
     let currentAnchor = ''
 
     for (const a of localAddons) {
-        if (a.flags?.enabled === false) {
-            const list = disabledAnchors.get(currentAnchor) || []
+        const url = normalizeAddonUrl(a.transportUrl)
+        const isProtected = protectedUrls.has(url)
+        const isMissingFromSoT = !sotList.some(s => normalizeAddonUrl(s.transportUrl) === url)
+
+        if (isMissingFromSoT && (a.flags?.enabled === false || isProtected)) {
+            const list = anchoredAddons.get(currentAnchor) || []
             list.push(a)
-            disabledAnchors.set(currentAnchor, list)
-        } else {
-            currentAnchor = normalizeAddonUrl(a.transportUrl)
+            anchoredAddons.set(currentAnchor, list)
+        } else if (!isMissingFromSoT) {
+            currentAnchor = url
         }
     }
 
     const result: AddonDescriptor[] = []
     
-    if (disabledAnchors.has('')) {
-        const toAdd = disabledAnchors.get('')!
+    if (anchoredAddons.has('')) {
+        const toAdd = anchoredAddons.get('')!
         for (const a of toAdd) {
-            if (!sotList.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl))) {
+            if (!result.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl)) &&
+                !sotList.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl))) {
                 result.push(a)
             }
         }
@@ -107,10 +118,11 @@ function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDe
         }
         
         const anchorUrl = normalizeAddonUrl(sa.transportUrl)
-        if (disabledAnchors.has(anchorUrl)) {
-            const toAdd = disabledAnchors.get(anchorUrl)!
+        if (anchoredAddons.has(anchorUrl)) {
+            const toAdd = anchoredAddons.get(anchorUrl)!
             for (const a of toAdd) {
-                if (!sotList.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl))) {
+                if (!result.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl)) &&
+                    !sotList.some(s => normalizeAddonUrl(s.transportUrl) === normalizeAddonUrl(a.transportUrl))) {
                     result.push(a)
                 }
             }
@@ -122,7 +134,7 @@ function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDe
 
 const phantomDebounceCache = new Map<string, { missingUrls: string[], timestamp: number }>()
 
-export async function syncExternalAddonManagement(id: string, forceRefresh: boolean): Promise<{ changed: boolean, authKeyRefreshed: boolean }> {
+export async function syncExternalAddonManagement(id: string, forceRefresh: boolean, pollStartTime: number = Date.now()): Promise<{ changed: boolean, authKeyRefreshed: boolean }> {
     const store = await getStore()
     const account = getAccountById(store.getState().accounts, id)
     if (!account) throw new Error('Account not found')
@@ -134,8 +146,15 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
 
     const sotAddons = await fetchSoTAddons(account, sot, forceRefresh)
     
+    const nowMs = Date.now()
+    const elapsed = nowMs - pollStartTime
+    const nextPollDelay = elapsed < 120_000 ? 10_000 : 60_000
+
     if (sotAddons.length === 0) {
-        console.warn('[ExternalAddonSync] SoT returned empty list. Safeguard triggered, aborting sync.')
+        console.warn(`[ExternalAddonSync] SoT returned empty list. Safeguard triggered, aborting sync. Next poll in ${nextPollDelay/1000}s.`)
+        setTimeout(() => {
+            syncExternalAddonManagement(id, forceRefresh, pollStartTime).catch(e => console.error(e))
+        }, nextPollDelay)
         return { changed: false, authKeyRefreshed: false }
     }
 
@@ -152,17 +171,17 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
             await new Promise(r => setTimeout(r, 5000))
             const reFetched = await fetchSoTAddons(account, sot, forceRefresh)
             if (reFetched.length === 0) {
+                console.warn(`[ExternalAddonSync] SoT returned empty list during re-fetch. Safeguard triggered. Next poll in ${nextPollDelay/1000}s.`)
+                setTimeout(() => {
+                    syncExternalAddonManagement(id, forceRefresh, pollStartTime).catch(e => console.error(e))
+                }, nextPollDelay)
                 return { changed: false, authKeyRefreshed: false }
             }
             
             const reFetchedUrls = new Set(reFetched.map(a => normalizeAddonUrl(a.transportUrl)))
             const stillMissing = missingUrls.filter(url => !reFetchedUrls.has(url))
             
-            if (stillMissing.length === 0) {
-                sotAddons.splice(0, sotAddons.length, ...reFetched)
-            } else {
-                sotAddons.splice(0, sotAddons.length, ...reFetched)
-            }
+            sotAddons.splice(0, sotAddons.length, ...reFetched)
         }
     }
     
@@ -181,7 +200,8 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
         }
     }
     
-    const finalAddons = mergeWithReAnchoring(account.addons, sotAddons)
+    const protectedUrls = new Set((account.protectedAddons || []).map(normalizeAddonUrl))
+    const finalAddons = mergeWithReAnchoring(account.addons, sotAddons, protectedUrls)
     
     const { fingerprintAddonList } = await import('@/lib/addon-fingerprint')
     const addonsChanged = fingerprintAddonList(account.addons) !== fingerprintAddonList(finalAddons)
@@ -206,9 +226,15 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
     
     if (!useAuthStore.getState().encryptionKey) return { changed: true, authKeyRefreshed: false }
     
+    const finalFingerprint = fingerprintAddonList(finalAddons)
+    const sotFingerprint = fingerprintAddonList(sotAddons)
+    const needsSoTPush = finalFingerprint !== sotFingerprint
+
     const pushConnections = (updatedAccount.connections || []).filter(c => {
-        if (sot.type === 'connection' && c.id === sot.conn.id) return false
-        if (sot.type === 'stremio-native' && c.platform === 'stremio') return false
+        if (!needsSoTPush) {
+            if (sot.type === 'connection' && c.id === sot.conn.id) return false
+            if (sot.type === 'stremio-native' && c.platform === 'stremio') return false
+        }
         return c.enabled
     })
     
@@ -221,16 +247,17 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
         }
     }
     
-    if (sot.type !== 'stremio-native' && !(sot.type === 'connection' && sot.conn.platform === 'stremio')) {
-        const stremioKey = getStremioAuthKey(updatedAccount)
-        if (stremioKey) {
-            try {
-                const { updateAddons } = await import('@/api/addons')
-                const decryptedKey = await getCachedAuthKey(stremioKey, getEncryptionKey())
-                await updateAddons(decryptedKey, finalAddons, id, { previousCollection: account.addons })
-            } catch (e) {
-                console.warn('[ExternalAddonSync] Push to Stremio failed', e)
-            }
+    const stremioKey = getStremioAuthKey(updatedAccount)
+    const shouldPushStremio = stremioKey && (
+        needsSoTPush || (sot.type !== 'stremio-native' && !(sot.type === 'connection' && sot.conn.platform === 'stremio'))
+    )
+    if (shouldPushStremio) {
+        try {
+            const { updateAddons } = await import('@/api/addons')
+            const decryptedKey = await getCachedAuthKey(stremioKey, getEncryptionKey())
+            await updateAddons(decryptedKey, finalAddons, id, { previousCollection: account.addons })
+        } catch (e) {
+            console.warn('[ExternalAddonSync] Push to Stremio failed', e)
         }
     }
     
