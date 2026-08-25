@@ -1,24 +1,18 @@
-﻿import { type Account } from '@/types/account'
-import { getAccountById, persistAccounts } from '@/store/accountStore'
+import { type Account } from '@/types/account'
 import { determineSourceOfTruth, fetchSoTAddons } from './externalAddonSync'
 import { normalizeAddonUrl } from '@/lib/utils'
 import type { AddonDescriptor } from '@/types/addon'
 import { triggerSync } from '@/lib/sync-trigger'
 import { getStremioAuthKey, getCachedAuthKey, getEncryptionKey } from '@/store/accountStore'
-import { reconcileTombstones } from '@/lib/addon-tombstones'
-import type { AccountStore } from '@/store/accountStore'
-import { useAuthStore } from '@/store/authStore'
 
-type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
-
-async function getStore(): Promise<StoreRef> {
-    const { useAccountStore } = await import('@/store/accountStore')
-    return useAccountStore
-}
-
-export async function backgroundSyncExternal(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }, trigger = 'unknown', isAutopilot = false) {
-    const store = await getStore()
-
+export async function backgroundSyncExternal(
+    accountId: string,
+    account: Account,
+    updatedAddons: AddonDescriptor[],
+    options?: { allowCollectionShrink?: boolean },
+    _trigger = 'unknown',
+    isAutopilot = false
+) {
     if (isAutopilot) {
         // JIT Fetch-Patch-Push strategy
         const sot = determineSourceOfTruth(account)
@@ -51,12 +45,9 @@ export async function backgroundSyncExternal(accountId: string, account: Account
                     return sa
                 })
                 
-                updatedAddons = finalSotAddons
-                
-                // Wait, if autopilot turned ON an addon, and it wasn't in sotAddons?
+                // If autopilot turned ON an addon and it wasn't in sotAddons
                 for (const [url, addon] of changedUrls.entries()) {
                     if (!finalSotAddons.some(sa => normalizeAddonUrl(sa.transportUrl) === url)) {
-                        // Insert using anchor? For autopilot it just enables/disables. If it enables an addon not in SoT, just push it.
                         finalSotAddons.push(addon)
                     }
                 }
@@ -67,15 +58,17 @@ export async function backgroundSyncExternal(accountId: string, account: Account
         }
     }
 
-    // Now push updatedAddons to ALL connections (including SoT!)
+    // Push updatedAddons to ALL connections (including SoT)
     const promises: Promise<void>[] = []
-    
-    const sot = determineSourceOfTruth(account)
 
     const pushConnections = (account.connections || []).filter(c => c.enabled)
     const { triggerReconciliation } = await import('@/api/connection')
     if (pushConnections.length > 0) {
-        promises.push(triggerReconciliation(accountId, account.primaryConnectionId, pushConnections, updatedAddons).then(() => {}).catch(console.error))
+        promises.push(
+            triggerReconciliation(accountId, account.primaryConnectionId, pushConnections, updatedAddons, {
+                allowCollectionShrink: options?.allowCollectionShrink
+            }).then(() => {}).catch(console.error)
+        )
     }
 
     const stremioKey = getStremioAuthKey(account)
@@ -83,7 +76,10 @@ export async function backgroundSyncExternal(accountId: string, account: Account
         const { updateAddons } = await import('@/api/addons')
         promises.push(
             getCachedAuthKey(stremioKey, getEncryptionKey())
-                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, accountId, { previousCollection: account.addons }))
+                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, accountId, {
+                    previousCollection: account.addons,
+                    allowCollectionShrink: options?.allowCollectionShrink
+                }))
                 .catch(console.error)
         )
     }
