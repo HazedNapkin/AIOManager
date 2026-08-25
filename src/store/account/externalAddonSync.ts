@@ -178,9 +178,6 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
                 return { changed: false, authKeyRefreshed: false }
             }
             
-            const reFetchedUrls = new Set(reFetched.map(a => normalizeAddonUrl(a.transportUrl)))
-            const stillMissing = missingUrls.filter(url => !reFetchedUrls.has(url))
-            
             sotAddons.splice(0, sotAddons.length, ...reFetched)
         }
     }

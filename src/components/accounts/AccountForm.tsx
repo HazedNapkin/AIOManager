@@ -255,7 +255,7 @@ export function AccountForm() {
             hideAddonPreview,
             hidePlatformLogos,
             allowExternalAddonManagement,
-sourceOfTruth,
+            sourceOfTruth,
           })
         } else {
           await addAccountByCredentials(
@@ -280,7 +280,7 @@ sourceOfTruth,
             hideAddonPreview,
             hidePlatformLogos,
             allowExternalAddonManagement,
-sourceOfTruth,
+            sourceOfTruth,
           })
         } else {
           await addAccountByAuthKey(
@@ -300,7 +300,7 @@ sourceOfTruth,
           if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
             await updateAccount(newAccount.id, {
               allowExternalAddonManagement,
-sourceOfTruth,
+              sourceOfTruth,
               hideLastWatched,
               hideAddonPreview,
               hidePlatformLogos
@@ -530,7 +530,7 @@ sourceOfTruth,
           hideAddonPreview,
           hidePlatformLogos,
           allowExternalAddonManagement,
-sourceOfTruth,
+          sourceOfTruth,
         })
       } else {
         if (mode === 'authKey') {
@@ -555,7 +555,7 @@ sourceOfTruth,
           if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
             await updateAccount(newAccount.id, {
               allowExternalAddonManagement,
-sourceOfTruth,
+              sourceOfTruth,
               hideLastWatched,
               hideAddonPreview,
               hidePlatformLogos

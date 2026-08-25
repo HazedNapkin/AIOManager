@@ -144,6 +144,8 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
             hideAddonPreview: acc.hideAddonPreview,
             hidePlatformLogos: acc.hidePlatformLogos,
             allowExternalAddonManagement: acc.allowExternalAddonManagement,
+            sourceOfTruth: acc.sourceOfTruth,
+            protectedAddons: acc.protectedAddons,
         }))
     )
 
@@ -461,6 +463,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 hideAddonPreview: acc.hideAddonPreview as boolean | undefined,
                 hidePlatformLogos: acc.hidePlatformLogos as boolean | undefined,
                 allowExternalAddonManagement: acc.allowExternalAddonManagement as boolean | undefined,
+                sourceOfTruth: acc.sourceOfTruth as string | undefined,
+                protectedAddons: acc.protectedAddons as string[] | undefined,
                 apiKey: acc.apiKey as string | undefined,
                 createdAt: acc.createdAt as number | undefined,
                 lastSync: new Date(),
@@ -563,6 +567,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     hideAddonPreview: ra.hideAddonPreview ?? matchedAccount.hideAddonPreview,
                     hidePlatformLogos: ra.hidePlatformLogos ?? matchedAccount.hidePlatformLogos,
                     allowExternalAddonManagement: ra.allowExternalAddonManagement ?? matchedAccount.allowExternalAddonManagement,
+                    sourceOfTruth: ra.sourceOfTruth ?? matchedAccount.sourceOfTruth,
+                    protectedAddons: ra.protectedAddons ?? matchedAccount.protectedAddons,
                     avatar: ra.avatar ?? matchedAccount.avatar,
                     apiKey: ra.apiKey ?? matchedAccount.apiKey ?? safeUUID(),
                     profiles: (() => {

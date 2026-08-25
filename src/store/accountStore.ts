@@ -354,7 +354,7 @@ export interface AccountStore {
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
             id: string,
-            data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean }
+            data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean; sourceOfTruth?: string }
       ) => Promise<void>
       updateAccountNote: (accountId: string, note: string) => Promise<void>
       toggleAddonProtection: (
@@ -927,7 +927,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return importAccounts(json, isSilent, mode, localDecryptionKey)
       },
 
-      updateAccount: async (id: string, data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean }) => {
+      updateAccount: async (id: string, data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean; sourceOfTruth?: string }) => {
             // The re-auth branch awaits (login + getAddons) then writes a snapshot taken before the
             // await, which would clobber any addon op that landed meanwhile. Hold the per-account
             // mutex so this serializes with addon writes instead of racing them.
@@ -950,6 +950,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         hideAddonPreview: data.hideAddonPreview !== undefined ? data.hideAddonPreview : (account.hideAddonPreview ?? false),
                         hidePlatformLogos: data.hidePlatformLogos !== undefined ? data.hidePlatformLogos : (account.hidePlatformLogos ?? false),
                         allowExternalAddonManagement: data.allowExternalAddonManagement !== undefined ? data.allowExternalAddonManagement : (account.allowExternalAddonManagement ?? false),
+                        sourceOfTruth: 'sourceOfTruth' in data ? data.sourceOfTruth : account.sourceOfTruth,
                   }
                   if (data.authKey || (data.email && data.password)) {
                         const encryptionKey = getEncryptionKey()
