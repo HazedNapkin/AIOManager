@@ -1,4 +1,4 @@
-﻿import { type Account } from '@/types/account'
+import { type Account } from '@/types/account'
 import { type Connection } from '@/types/connection'
 import { getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountById, persistAccounts, sanitizeAddonManifest } from '@/store/accountStore'
 import { getAddons } from '@/api/addons'
@@ -68,7 +68,7 @@ export async function fetchSoTAddons(account: Account, sot: SoT, forceRefresh: b
                 flags: { enabled: r.enabled !== false }
             })) as AddonDescriptor[]
         }
-        throw new Error(Unsupported SoT platform: )
+        throw new Error(`Unsupported SoT platform: ${(conn as Connection).platform}`)
     }
 }
 
