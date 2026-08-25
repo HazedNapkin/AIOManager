@@ -61,18 +61,17 @@ export async function backgroundSyncExternal(
     // Push updatedAddons to ALL connections (including SoT)
     const promises: Promise<void>[] = []
 
-    const pushConnections = (account.connections || []).filter(c => c.enabled)
-    const { triggerReconciliation } = await import('@/api/connection')
-    if (pushConnections.length > 0) {
-        promises.push(
-            triggerReconciliation(accountId, account.primaryConnectionId, pushConnections, updatedAddons, {
-                allowCollectionShrink: options?.allowCollectionShrink
-            }).then(() => {}).catch(console.error)
-        )
-    }
+    const { pushToConnections } = await import('./accountAddonOps')
+    promises.push(
+        pushToConnections(accountId, { addons: updatedAddons, allowCollectionShrink: options?.allowCollectionShrink })
+            .catch(err => console.error('[ExternalFailoverPush] Failed to push to connections:', err))
+    )
 
     const stremioKey = getStremioAuthKey(account)
-    if (stremioKey) {
+    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    const stremioPushEnabled = !stremioConn || stremioConn.enabled !== false
+
+    if (stremioKey && stremioPushEnabled) {
         const { updateAddons } = await import('@/api/addons')
         promises.push(
             getCachedAuthKey(stremioKey, getEncryptionKey())
