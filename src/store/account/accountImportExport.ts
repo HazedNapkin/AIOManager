@@ -143,6 +143,7 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
             hideLastWatched: acc.hideLastWatched,
             hideAddonPreview: acc.hideAddonPreview,
             hidePlatformLogos: acc.hidePlatformLogos,
+            allowExternalAddonManagement: acc.allowExternalAddonManagement,
         }))
     )
 
@@ -459,6 +460,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 hideLastWatched: acc.hideLastWatched as boolean | undefined,
                 hideAddonPreview: acc.hideAddonPreview as boolean | undefined,
                 hidePlatformLogos: acc.hidePlatformLogos as boolean | undefined,
+                allowExternalAddonManagement: acc.allowExternalAddonManagement as boolean | undefined,
                 apiKey: acc.apiKey as string | undefined,
                 createdAt: acc.createdAt as number | undefined,
                 lastSync: new Date(),
@@ -560,6 +562,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     hideLastWatched: ra.hideLastWatched ?? matchedAccount.hideLastWatched,
                     hideAddonPreview: ra.hideAddonPreview ?? matchedAccount.hideAddonPreview,
                     hidePlatformLogos: ra.hidePlatformLogos ?? matchedAccount.hidePlatformLogos,
+                    allowExternalAddonManagement: ra.allowExternalAddonManagement ?? matchedAccount.allowExternalAddonManagement,
                     avatar: ra.avatar ?? matchedAccount.avatar,
                     apiKey: ra.apiKey ?? matchedAccount.apiKey ?? safeUUID(),
                     profiles: (() => {
