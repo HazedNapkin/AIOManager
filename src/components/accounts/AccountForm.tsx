@@ -109,6 +109,7 @@ export function AccountForm() {
   const [hideLastWatched, setHideLastWatched] = useState(false)
   const [hideAddonPreview, setHideAddonPreview] = useState(false)
   const [hidePlatformLogos, setHidePlatformLogos] = useState(false)
+  const [allowExternalAddonManagement, setAllowExternalAddonManagement] = useState(false)
   const connectionSubDialogRef = useRef(false)
   const subDialogClosedAtRef = useRef(0)
 
@@ -153,6 +154,7 @@ export function AccountForm() {
       setHideLastWatched(editingAccount.hideLastWatched ?? false)
       setHideAddonPreview(editingAccount.hideAddonPreview ?? false)
       setHidePlatformLogos(editingAccount.hidePlatformLogos ?? false)
+      setAllowExternalAddonManagement(editingAccount.allowExternalAddonManagement ?? false)
     } else {
       setMode('credentials')
       setAuthIntent('login')
@@ -164,6 +166,9 @@ export function AccountForm() {
       setEmoji('')
       setAvatar('')
       setHideLastWatched(false)
+      setHideAddonPreview(false)
+      setHidePlatformLogos(false)
+      setAllowExternalAddonManagement(false)
     }
   }, [editingAccount, isOpen])
 
@@ -239,6 +244,7 @@ export function AccountForm() {
             hideLastWatched,
             hideAddonPreview,
             hidePlatformLogos,
+            allowExternalAddonManagement,
           })
         } else {
           await addAccountByCredentials(
@@ -262,6 +268,7 @@ export function AccountForm() {
             hideLastWatched,
             hideAddonPreview,
             hidePlatformLogos,
+            allowExternalAddonManagement,
           })
         } else {
           await addAccountByAuthKey(
@@ -278,6 +285,14 @@ export function AccountForm() {
       } else if (beforeIds) {
         const newAccount = useAccountStore.getState().accounts.find(a => !beforeIds.has(a.id))
         if (newAccount) {
+          if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
+            await updateAccount(newAccount.id, {
+              allowExternalAddonManagement,
+              hideLastWatched,
+              hideAddonPreview,
+              hidePlatformLogos
+            })
+          }
           setCreatedAccountId(newAccount.id)
           setConnectedPlatforms(prev => new Set(prev).add('stremio'))
           setWizardStep('connect-more')
@@ -501,6 +516,7 @@ export function AccountForm() {
           hideLastWatched,
           hideAddonPreview,
           hidePlatformLogos,
+          allowExternalAddonManagement,
         })
       } else {
         if (mode === 'authKey') {
@@ -522,6 +538,14 @@ export function AccountForm() {
       } else if (beforeIds) {
         const newAccount = useAccountStore.getState().accounts.find(a => !beforeIds.has(a.id))
         if (newAccount) {
+          if (allowExternalAddonManagement || hideLastWatched || hideAddonPreview || hidePlatformLogos) {
+            await updateAccount(newAccount.id, {
+              allowExternalAddonManagement,
+              hideLastWatched,
+              hideAddonPreview,
+              hidePlatformLogos
+            })
+          }
           setCreatedAccountId(newAccount.id)
           setConnectedPlatforms(prev => new Set(prev).add('stremio'))
           setWizardStep('connect-more')
@@ -1098,6 +1122,7 @@ export function AccountForm() {
 
       {isEditing && (
         <div className="border-t border-border/10 pt-4 space-y-1">
+          <Label className="text-xs font-medium text-muted-foreground uppercase">Card Options</Label>
           <div className="flex items-center justify-between py-2">
             <div>
               <p className="text-sm font-medium">Hide last watched</p>
@@ -1130,6 +1155,20 @@ export function AccountForm() {
           </div>
         </div>
       )}
+
+      <div className="border-t border-border/10 pt-4 space-y-1">
+        <Label className="text-xs font-medium text-muted-foreground uppercase">Sync Options</Label>
+        <div className="flex items-center justify-between py-2">
+          <div>
+            <p className="text-sm font-medium">Allow external addon management</p>
+            <p className="text-xs text-muted-foreground">Sync addon changes made from connected apps directly to AIOManager.</p>
+          </div>
+          <Switch
+            checked={allowExternalAddonManagement}
+            onCheckedChange={setAllowExternalAddonManagement}
+          />
+        </div>
+      </div>
 
       {error && (
         <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
@@ -1522,6 +1561,20 @@ export function AccountForm() {
                 <Switch
                   checked={hidePlatformLogos}
                   onCheckedChange={setHidePlatformLogos}
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-border/10 pt-4 space-y-1">
+              <Label className="text-xs font-medium text-muted-foreground uppercase">Sync Options</Label>
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-sm font-medium">Allow external addon management</p>
+                  <p className="text-xs text-muted-foreground">Sync addon changes made from connected apps directly to AIOManager.</p>
+                </div>
+                <Switch
+                  checked={allowExternalAddonManagement}
+                  onCheckedChange={setAllowExternalAddonManagement}
                 />
               </div>
             </div>
