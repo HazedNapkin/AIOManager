@@ -243,6 +243,11 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     const account = getAccountById(store.getState().accounts, id)
     if (!account) throw new Error('Account not found')
 
+    if (account.allowExternalAddonManagement) {
+        const { syncExternalAddonManagement } = await import('./externalAddonSync')
+        return syncExternalAddonManagement(id, forceRefresh)
+    }
+
     const stremioConn = account.connections?.find(c => c.platform === 'stremio')
     const stremioEnabled = !account.connections?.length || stremioConn?.enabled !== false
     const accountAuthKey = getStremioAuthKey(account)

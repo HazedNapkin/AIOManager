@@ -32,6 +32,7 @@ export interface Account {
   hideLastWatched?: boolean
   hideAddonPreview?: boolean
   hidePlatformLogos?: boolean
+  allowExternalAddonManagement?: boolean
   profiles?: AccountProfile[]
   activeProfileId?: string
   connections?: Connection[]

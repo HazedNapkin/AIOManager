@@ -204,7 +204,11 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 }
 
-function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }, trigger = 'unknown') {
+function backgroundSync(accountId: string, account: Account, updatedAddons: AddonDescriptor[], options?: { allowCollectionShrink?: boolean }, trigger = 'unknown', isAutopilot = false) {
+    if (account.allowExternalAddonManagement) {
+        import('./externalFailoverPush').then(m => m.backgroundSyncExternal(accountId, account, updatedAddons, options, trigger, isAutopilot)).catch(console.error)
+        return
+    }
     if (!hasPlatformConnection(account)) {
         return
     }
@@ -617,7 +621,7 @@ export async function toggleAddonEnabled(accountId: string, transportUrl: string
         persistAccounts(store.getState().accounts)
 
         if (!silent) {
-            backgroundSync(accountId, account, updatedAddons)
+            backgroundSync(accountId, account, updatedAddons, undefined, 'unknown', isAutopilot)
         }
 
         if (!isAutopilot) {
