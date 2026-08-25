@@ -85,7 +85,7 @@ function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDe
 
     for (const a of localAddons) {
         const url = normalizeAddonUrl(a.transportUrl)
-        const isProtected = protectedUrls.has(url)
+        const isProtected = protectedUrls.has(url) || a.flags?.protected
         const isMissingFromSoT = !sotList.some(s => normalizeAddonUrl(s.transportUrl) === url)
 
         if (isMissingFromSoT && (a.flags?.enabled === false || isProtected)) {
@@ -112,7 +112,16 @@ function mergeWithReAnchoring(localAddons: AddonDescriptor[], sotAddons: AddonDe
     for (const sa of sotList) {
         const existingLocal = localAddons.find(l => normalizeAddonUrl(l.transportUrl) === normalizeAddonUrl(sa.transportUrl))
         if (existingLocal) {
-             result.push({ ...existingLocal, flags: sa.flags })
+             // Cache Local State & Merge & Restore:
+             // Preserve aiomanager-specific metadata (specifically the protected boolean flag)
+             result.push({ 
+                 ...existingLocal, 
+                 flags: { 
+                     ...existingLocal.flags,
+                     ...sa.flags,
+                     protected: existingLocal.flags?.protected 
+                 } 
+             })
         } else {
              result.push(sa)
         }
