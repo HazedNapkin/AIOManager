@@ -210,9 +210,17 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
     const finalAddons = mergeWithReAnchoring(account.addons, sotAddons, protectedUrls)
     
     const { fingerprintAddonList } = await import('@/lib/addon-fingerprint')
-    const addonsChanged = fingerprintAddonList(account.addons) !== fingerprintAddonList(finalAddons)
+    const finalFingerprint = fingerprintAddonList(finalAddons)
+    const addonsChanged = fingerprintAddonList(account.addons) !== finalFingerprint
     
-    if (!addonsChanged) {
+    const sotFingerprint = fingerprintAddonList(sotAddons)
+    const sotUrlsSet = new Set(sotAddons.map(a => normalizeAddonUrl(a.transportUrl)))
+    const protectedAddonRestored = finalAddons.some(a => 
+        !sotUrlsSet.has(normalizeAddonUrl(a.transportUrl)) && 
+        (protectedUrls.has(normalizeAddonUrl(a.transportUrl)) || a.flags?.protected)
+    )
+    
+    if (!addonsChanged && !protectedAddonRestored) {
         return { changed: false, authKeyRefreshed: false }
     }
     
@@ -232,9 +240,7 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
     
     if (!useAuthStore.getState().encryptionKey) return { changed: true, authKeyRefreshed: false }
     
-    const finalFingerprint = fingerprintAddonList(finalAddons)
-    const sotFingerprint = fingerprintAddonList(sotAddons)
-    const needsSoTPush = finalFingerprint !== sotFingerprint
+    const needsSoTPush = finalFingerprint !== sotFingerprint || protectedAddonRestored
 
     const pushConnections = (updatedAccount.connections || []).filter(c => {
         if (!needsSoTPush) {
