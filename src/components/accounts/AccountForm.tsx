@@ -79,6 +79,8 @@ const ACCOUNT_AUTH_METHODS: Array<{ id: AccountAuthMode; label: string; subtitle
   { id: 'authKey', label: 'Auth Key', subtitle: 'Paste an existing token for advanced imports.', icon: KeyRound },
 ]
 
+const capitalize = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1) : ''
+
 export function AccountForm() {
   const isOpen = useUIStore((state) => state.isAddAccountDialogOpen)
   const closeDialog = useUIStore((state) => state.closeAddAccountDialog)
@@ -123,6 +125,18 @@ export function AccountForm() {
 
   const isEditing = !!editingAccount
   const isExpiredSession = editingAccount?.status === 'expired'
+
+  const getAutoSourceLabel = () => {
+    const account = liveAccount || editingAccount || { authKey: authKey, addons: [], lastSync: new Date(), id: '', name: '', status: 'active', connections: [] } as any
+    const nuvioConn = account.connections?.find((c: any) => c.enabled && c.platform === 'nuvio')
+    if (nuvioConn) return 'Nuvio'
+    const stremioConn = account.connections?.find((c: any) => c.enabled && c.platform === 'stremio')
+    if (stremioConn) return 'Stremio'
+    if (getStremioAuthKey(account)) return 'Stremio'
+    const otherConn = account.connections?.find((c: any) => c.enabled)
+    if (otherConn) return capitalize(otherConn.platform)
+    return 'None'
+  }
 
   useEffect(() => {
     setOauthAuthKey('')
@@ -1192,15 +1206,15 @@ export function AccountForm() {
             </div>
             <Select value={sourceOfTruth || 'auto'} onValueChange={(val) => setSourceOfTruth(val === 'auto' ? undefined : val)}>
               <SelectTrigger className="w-full h-11 bg-background/50 border-muted">
-                <SelectValue placeholder="Automatic (Default)" />
+                <SelectValue placeholder={`Default (${getAutoSourceLabel()})`} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="auto">Automatic (Default)</SelectItem>
+                <SelectItem value="auto">Default ({getAutoSourceLabel()})</SelectItem>
                 {getStremioAuthKey(liveAccount || editingAccount || { authKey: authKey, addons: [], lastSync: new Date(), id: '', name: '', status: 'active' } as any) && (
                   <SelectItem value="stremio-native">Stremio (Native)</SelectItem>
                 )}
                 {((liveAccount || editingAccount)?.connections || []).filter(c => c.enabled).map(conn => (
-                  <SelectItem key={conn.id} value={conn.id}>{conn.platform} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
+                  <SelectItem key={conn.id} value={conn.id}>{capitalize(conn.platform)} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -1624,15 +1638,15 @@ export function AccountForm() {
                   </div>
                   <Select value={sourceOfTruth || 'auto'} onValueChange={(val) => setSourceOfTruth(val === 'auto' ? undefined : val)}>
                     <SelectTrigger className="w-full h-11 bg-background/50 border-muted">
-                      <SelectValue placeholder="Automatic (Default)" />
+                      <SelectValue placeholder={`Default (${getAutoSourceLabel()})`} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="auto">Automatic (Default)</SelectItem>
+                      <SelectItem value="auto">Default ({getAutoSourceLabel()})</SelectItem>
                       {getStremioAuthKey(liveAccount || editingAccount || { authKey: authKey, addons: [], lastSync: new Date(), id: '', name: '', status: 'active' } as any) && (
                         <SelectItem value="stremio-native">Stremio (Native)</SelectItem>
                       )}
                       {((liveAccount || editingAccount)?.connections || []).filter(c => c.enabled).map(conn => (
-                        <SelectItem key={conn.id} value={conn.id}>{conn.platform} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
+                        <SelectItem key={conn.id} value={conn.id}>{capitalize(conn.platform)} ({conn.credentials?.email || conn.credentials?.profileId || 'Connection'})</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
