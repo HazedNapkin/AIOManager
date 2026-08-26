@@ -804,7 +804,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         const nextPriorityChain = isPendingUpdate
                             ? localRule.priorityChain
                             : (Array.isArray(serverRule.priorityChain) ? (serverRule.priorityChain as string[]) : localRule.priorityChain)
-                        const nextActiveUrl = (serverRule.activeUrl as string) || localRule.activeUrl || nextPriorityChain?.[0]
+                        const nextActiveUrl = (serverRule.activeUrl as string) || nextPriorityChain?.[0] || localRule.activeUrl
                         const normNextActive = normalizeAddonUrl(nextActiveUrl || '')
                         const normLocalActive = normalizeAddonUrl(localRule.activeUrl || '')
 

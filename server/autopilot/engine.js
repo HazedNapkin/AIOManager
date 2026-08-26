@@ -1019,7 +1019,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             return addon
         })
 
-        const hasChanged = normalizedTarget !== decryptedNormalizedActive
+        let hasChanged = normalizedTarget !== decryptedNormalizedActive
 
         // Steady rules never read the live collection; re-check it on the deep-audit cadence
         let lastDeepAuditToSave = getRuleRuntimeState(rule.id)?.lastDeepAudit ?? null
@@ -1070,6 +1070,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         if (canonicalTarget && canonicalTarget !== normalizedTarget) {
                             targetActiveUrl = chain[normalizedChainUrls.indexOf(canonicalTarget)] || targetActiveUrl
                             normalizedTarget = canonicalTarget
+                            hasChanged = normalizedTarget !== decryptedNormalizedActive
                         }
                     }
                 } catch (auditErr) {
