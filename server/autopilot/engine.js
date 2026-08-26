@@ -37,6 +37,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const RULE_RECHECK_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_RULE_RECHECK_MS || '30000', 10) || 30000)
     // Steady-rule heartbeat cadence; keeps persisted last_check fresh well under the client's 15-min staleness threshold
     const RULE_HEARTBEAT_MS = Math.max(30_000, parseInt(process.env.AUTOPILOT_HEARTBEAT_MS || '300000', 10) || 300000)
+    // How often a steady rule re-checks the live collection for drift
+    const RULE_DEEP_AUDIT_MS = Math.max(300_000, parseInt(process.env.AUTOPILOT_DEEP_AUDIT_MS || '3600000', 10) || 3600000)
     const ruleRuntimeState = new Map()
 
     const RULE_CACHE_MAX_BYTES = Math.max(0, parseInt(process.env.AUTOPILOT_RULE_CACHE_MAX_BYTES || String(256 * 1024 * 1024), 10) || 0)
@@ -587,7 +589,36 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         })
 
         const mergedAddons = mergeAddons(updatedLocalAddons, remoteAddons, normalizedChain)
-        return { canonical: mergedAddons, remoteAddons, normalizedActive }
+
+        // The snapshot can drift from the live collection; repair it before writing back
+        const mergedIdCounts = new Map()
+        mergedAddons.forEach(a => {
+            if (a.manifest?.id) mergedIdCounts.set(a.manifest.id, (mergedIdCounts.get(a.manifest.id) || 0) + 1)
+        })
+        const mergedChainIdMap = new Map()
+        mergedAddons.forEach(a => {
+            if (!a.manifest?.id || mergedIdCounts.get(a.manifest.id) > 1) return
+            const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
+            if (normalizedChain.includes(normUrl)) mergedChainIdMap.set(a.manifest.id, normUrl)
+        })
+        const drifted = []
+        const auditedAddons = mergedAddons.map(addon => {
+            const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
+            const effectiveUrl = normalizedChain.includes(normUrl)
+                ? normUrl
+                : (addon.manifest?.id && mergedChainIdMap.has(addon.manifest.id) ? mergedChainIdMap.get(addon.manifest.id) : null)
+            if (!effectiveUrl) return addon
+            const shouldBeEnabled = effectiveUrl === normalizedActive
+            if ((addon.flags?.enabled !== false) === shouldBeEnabled) return addon
+            drifted.push({ url: truncateUrl(normUrl), effective: truncateUrl(effectiveUrl), enabled: shouldBeEnabled })
+            return { ...addon, flags: { ...(addon.flags || {}), enabled: shouldBeEnabled } }
+        })
+        if (drifted.length > 0) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] One-active drift repaired during sync: ${drifted.map(d => `${d.enabled ? 'enabled' : 'disabled'} ${d.url}${d.effective !== d.url ? ` (chain: ${d.effective})` : ''}`).join(', ')}`)
+            await recordFailoverHistory({ id: ruleId, account_id: accountId }, 'self-healing', `Repaired chain state: ${drifted.map(d => `${d.enabled ? 'enabled' : 'disabled'} ${d.url}`).join(', ')}.`, '', '', { driftRepair: drifted })
+        }
+
+        return { canonical: auditedAddons, remoteAddons, normalizedActive }
     }
 
     const writeStremioCollection = async (authKey, canonical, { remoteAddons = [], normalizedActive, accountId }) => {
@@ -947,7 +978,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
 
         const decryptedNormalizedActive = currentActiveNorm
-        const normalizedTarget = normalizeAddonUrl(targetActiveUrl).toLowerCase()
+        let normalizedTarget = normalizeAddonUrl(targetActiveUrl).toLowerCase()
         const normalizedChain = normalizedChainUrls
 
         const idCounts = new Map()
@@ -990,7 +1021,64 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
         const hasChanged = normalizedTarget !== decryptedNormalizedActive
 
-        const needsSync = hasChanged || violationDetected
+        // Steady rules never read the live collection; re-check it on the deep-audit cadence
+        let lastDeepAuditToSave = getRuleRuntimeState(rule.id)?.lastDeepAudit ?? null
+        let deepAuditDrift = false
+        const snapshotLooksClean = !hasChanged && !violationDetected
+        if (snapshotLooksClean && decryptedAuthKey) {
+            if (Date.now() - (lastDeepAuditToSave || 0) >= RULE_DEEP_AUDIT_MS) {
+                lastDeepAuditToSave = Date.now()
+                try {
+                    // First healthy member by chain order; fall back to the stored active addon
+                    let canonicalTarget = null
+                    for (let ci = 0; ci < chain.length; ci++) {
+                        const cUrl = chain[ci]
+                        const cNorm = normalizedChainUrls[ci]
+                        if (!await checkAddonHealthInternal(cUrl)) continue
+                        const applicable = customChecks.filter(c =>
+                            c.appliesTo.length === 0 ||
+                            c.appliesTo.some(au => normalizeAddonUrl(au).toLowerCase() === cNorm)
+                        )
+                        const checkUrls = [...new Set(applicable.map(c => c.url))]
+                        if (checkUrls.length > 0 && !await checkCustomUrlsHealth(checkUrls, rule.id, rule.account_id)) continue
+                        canonicalTarget = cNorm
+                        break
+                    }
+                    const auditReference = canonicalTarget ?? currentActiveNorm
+
+                    const liveAddons = await stremioDriver.readAddons(decryptedAuthKey)
+                    const liveIdCounts = new Map()
+                    liveAddons.forEach(a => {
+                        if (a.manifest?.id) liveIdCounts.set(a.manifest.id, (liveIdCounts.get(a.manifest.id) || 0) + 1)
+                    })
+                    const liveChainIdMap = new Map()
+                    liveAddons.forEach(a => {
+                        if (!a.manifest?.id || liveIdCounts.get(a.manifest.id) > 1) return
+                        const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
+                        if (normalizedChain.includes(normUrl)) liveChainIdMap.set(a.manifest.id, normUrl)
+                    })
+                    deepAuditDrift = liveAddons.some(a => {
+                        const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
+                        const effectiveUrl = normalizedChain.includes(normUrl)
+                            ? normUrl
+                            : (a.manifest?.id && liveChainIdMap.has(a.manifest.id) ? liveChainIdMap.get(a.manifest.id) : null)
+                        if (!effectiveUrl) return false
+                        return (a.flags?.enabled !== false) !== (effectiveUrl === auditReference)
+                    })
+                    if (deepAuditDrift) {
+                        fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit found live collection drift from the one-active chain state. Forcing enforcement.`)
+                        if (canonicalTarget && canonicalTarget !== normalizedTarget) {
+                            targetActiveUrl = chain[normalizedChainUrls.indexOf(canonicalTarget)] || targetActiveUrl
+                            normalizedTarget = canonicalTarget
+                        }
+                    }
+                } catch (auditErr) {
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit read failed: ${auditErr.message}`)
+                }
+            }
+        }
+
+        const needsSync = hasChanged || violationDetected || deepAuditDrift
 
         let reconciledList = null
         let syncSucceeded = !needsSync
@@ -1105,7 +1193,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             lastCheck: now,
             lastNotification: lastNotificationToSave,
             stabilization,
-            activeUrl: needsSync && !syncSucceeded ? decryptedActiveUrl : targetActiveUrl
+            activeUrl: needsSync && !syncSucceeded ? decryptedActiveUrl : targetActiveUrl,
+            ...(lastDeepAuditToSave != null ? { lastDeepAudit: lastDeepAuditToSave } : {})
         })
 
         if (!needsColdUpdate && !needsStatsUpdate) {

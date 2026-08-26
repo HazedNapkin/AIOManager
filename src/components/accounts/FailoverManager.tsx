@@ -290,7 +290,7 @@ const SortableRuleWrapper = memo(function SortableRuleWrapper({
         zIndex: isDragging ? 10 : 'auto' as const,
     }
     return (
-        <div ref={setNodeRef} style={style} className="relative">
+        <div ref={setNodeRef} style={style} className="relative min-w-0">
             <div
                 {...attributes}
                 {...listeners}
@@ -978,18 +978,24 @@ export function FailoverManager({
                 <TabsContent value="rules" className="space-y-6">
 
                     <Dialog open={isRuleDialogOpen} onOpenChange={(open) => { if (!open) resetForm() }}>
-                        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-                            <DialogHeader>
+                        <DialogContent
+                            className='!grid-cols-none !gap-0 !p-0 flex flex-col overflow-hidden !left-0 !right-0 !top-auto !bottom-0 !translate-x-0 !translate-y-0 !max-w-full !w-full !h-[92vh] !max-h-[92vh] !rounded-t-3xl !rounded-b-none max-[639px]:animate-in max-[639px]:slide-in-from-bottom max-[639px]:duration-300 motion-reduce:animate-none motion-reduce:transition-none sm:!left-[50%] sm:!right-auto sm:!top-[50%] sm:!bottom-auto sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!max-w-2xl sm:!max-h-[92vh] sm:!h-auto sm:!rounded-2xl bg-card text-card-foreground'
+                        >
+                            <div aria-hidden="true" className="mx-auto mt-2.5 mb-1 h-1 w-9 rounded-full bg-border/70 sm:hidden" />
+                            <div className="shrink-0 bg-card px-4 pb-3 pt-1 sm:px-8 sm:pb-5 sm:pt-3">
                                 <DialogTitle className="flex items-center gap-2 min-w-0">
                                     {editingRuleId
                                         ? <><Pencil className="w-5 h-5 text-primary" /> Edit Priority Chain</>
                                         : <><Plus className="w-5 h-5 text-primary" /> Create New Autopilot Rule</>
                                     }
                                 </DialogTitle>
-                                <p className="text-sm text-foreground/60">
-                                    Define an ordered list of fallbacks. Autopilot will always try to keep the highest priority addon active.
+                                <p className="text-sm text-foreground/60 mt-2">
+                                    Pick addons in priority order. If one goes down, Autopilot switches to the next automatically.
                                 </p>
-                            </DialogHeader>
+                            </div>
+
+                            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                                <div className="space-y-5 px-4 py-4 sm:px-8 sm:py-6">
 
                             <div className="space-y-1.5 pt-4">
                                 <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Rule Name (Optional)</label>
@@ -1001,78 +1007,47 @@ export function FailoverManager({
                                 />
                             </div>
 
-                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
-                                <label className="text-xs font-medium text-muted-foreground uppercase">Notifications</label>
-
-                                <Select
-                                    value={ruleNotifyMode}
-                                    onValueChange={(val: 'default' | 'custom' | 'off') => setRuleNotifyMode(val)}
+                            <DndContext
+                                sensors={dragSensors}
+                                collisionDetection={closestCenter}
+                                onDragEnd={handleDialogChainDragEnd}
+                                modifiers={[restrictToVerticalAxis]}
+                            >
+                                <SortableContext
+                                    items={chain.map((_, i) => i)}
+                                    strategy={verticalListSortingStrategy}
                                 >
-                                    <SelectTrigger className="bg-muted/30 border-border rounded-xl">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="default">Use global webhook</SelectItem>
-                                        <SelectItem value="custom">Custom webhook for this rule</SelectItem>
-                                        <SelectItem value="off">Off - no notifications for this rule</SelectItem>
-                                    </SelectContent>
-                                </Select>
-
-                                {ruleNotifyMode !== 'off' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Notification Cooldown (minutes)</label>
-                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Minimum time between notifications for this rule. Prevents alert spam during repeated failovers.</p>
-                                        <Input
-                                            type="number"
-                                            placeholder="10"
-                                            value={cooldownMinutes}
-                                            onChange={(e) => setCooldownMinutes(e.target.value)}
-                                            className="bg-muted/30 border-border rounded-xl"
-                                        />
-                                    </div>
-                                )}
-
-                                {ruleNotifyMode === 'custom' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Custom Webhook URL</label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                placeholder="https://discord.com/api/webhooks/... or Slack URL"
-                                                value={ruleWebhookUrl}
-                                                onChange={(e) => setRuleWebhookUrl(e.target.value)}
-                                                className="bg-muted/30 border-border rounded-xl"
+                                    <div className="space-y-3">
+                                        {chain.map((url, index) => (
+                                            <SortableDialogTier
+                                                key={index}
+                                                id={index}
+                                                index={index}
+                                                url={url}
+                                                chainLength={chain.length}
+                                                localAddons={localAddons}
+                                                chain={chain}
+                                                addons={addons}
+                                                updateChainUrl={updateChainUrl}
+                                                removeFromChain={removeFromChain}
                                             />
-                                            {ruleWebhookUrl && (
-                                                <Button
-                                                    size="sm"
-                                                    className="shrink-0 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                                                    onClick={() => testWebhook(ruleWebhookUrl.trim(), accountId, toast, account.name)}
-                                                >
-                                                    Test
-                                                </Button>
-                                            )}
-                                        </div>
+                                        ))}
                                     </div>
-                                )}
-
-                                {ruleNotifyMode !== 'off' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Message Template (Optional)</label>
-                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Customize the notification message. Use {`{{rule}}`}, {`{{primary}}`}, {`{{backup}}`}, {`{{account}}`} as placeholders.</p>
-                                        <Textarea
-                                            placeholder="Autopilot triggered for {{rule}} on {{account}}: {{primary}} → {{backup}}"
-                                            value={ruleMessageTemplate}
-                                            onChange={(e) => setRuleMessageTemplate(e.target.value)}
-                                            className="bg-muted/30 border-border rounded-xl min-h-[60px] resize-none"
-                                        />
-                                    </div>
-                                )}
-                            </div>
+                                </SortableContext>
+                            </DndContext>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={addToChain}
+                                className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-12 rounded-2xl gap-2 mt-3"
+                            >
+                                <Plus className="w-4 h-4" /> Add Fallback Tier
+                            </Button>
 
                             <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
                                 <div className="space-y-0.5">
                                     <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
-                                    <p className="text-xs text-muted-foreground/60">Monitor a provider or service your addons depend on. If the URL goes down, all associated addons are skipped and the chain moves on. Associate a provider API URL with the addons that depend on it. Do NOT put your addon instance URLs here.</p>
+                                    <p className="text-xs text-muted-foreground/60">Watch a provider your addons depend on, like TorBox's API. When it goes down, the addons associated with it are skipped. Use the provider's API URL — never your addon URLs.</p>
                                 </div>
 
                                 {showLegacyBanner && (
@@ -1374,55 +1349,91 @@ export function FailoverManager({
                                 )}
                             </div>
 
-                            <DndContext
-                                sensors={dragSensors}
-                                collisionDetection={closestCenter}
-                                onDragEnd={handleDialogChainDragEnd}
-                                modifiers={[restrictToVerticalAxis]}
-                            >
-                                <SortableContext
-                                    items={chain.map((_, i) => i)}
-                                    strategy={verticalListSortingStrategy}
-                                >
-                                    <div className="space-y-3">
-                                        {chain.map((url, index) => (
-                                            <SortableDialogTier
-                                                key={index}
-                                                id={index}
-                                                index={index}
-                                                url={url}
-                                                chainLength={chain.length}
-                                                localAddons={localAddons}
-                                                chain={chain}
-                                                addons={addons}
-                                                updateChainUrl={updateChainUrl}
-                                                removeFromChain={removeFromChain}
-                                            />
-                                        ))}
-                                    </div>
-                                </SortableContext>
-                            </DndContext>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={addToChain}
-                                className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-12 rounded-2xl gap-2 mt-3"
-                            >
-                                <Plus className="w-4 h-4" /> Add Fallback Tier
-                            </Button>
+                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
+                                <label className="text-xs font-medium text-muted-foreground uppercase">Notifications</label>
 
-                            <div className="flex justify-end gap-3 pt-2 mt-4 [&_button]:h-11 [&_button]:rounded-full [&_button]:px-5">
-                                <Button variant="ghost" onClick={resetForm}>
-                                    Cancel
-                                </Button>
-                                <Button
-                                    size="sm"
-                                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
-                                    onClick={handleSaveRule}
-                                    disabled={chain.filter(u => !!u).length < 2}
+                                <Select
+                                    value={ruleNotifyMode}
+                                    onValueChange={(val: 'default' | 'custom' | 'off') => setRuleNotifyMode(val)}
                                 >
-                                    {editingRuleId ? "Update Chain" : "Enable Autopilot"}
-                                </Button>
+                                    <SelectTrigger className="bg-muted/30 border-border rounded-xl">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="default">Use global webhook</SelectItem>
+                                        <SelectItem value="custom">Custom webhook for this rule</SelectItem>
+                                        <SelectItem value="off">Off — no notifications for this rule</SelectItem>
+                                    </SelectContent>
+                                </Select>
+
+                                {ruleNotifyMode !== 'off' && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Notification Cooldown (minutes)</label>
+                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Minimum time between notifications for this rule. Prevents alert spam during repeated failovers.</p>
+                                        <Input
+                                            type="number"
+                                            placeholder="10"
+                                            value={cooldownMinutes}
+                                            onChange={(e) => setCooldownMinutes(e.target.value)}
+                                            className="bg-muted/30 border-border rounded-xl"
+                                        />
+                                    </div>
+                                )}
+
+                                {ruleNotifyMode === 'custom' && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Custom Webhook URL</label>
+                                        <div className="flex gap-2">
+                                            <Input
+                                                placeholder="https://discord.com/api/webhooks/... or Slack URL"
+                                                value={ruleWebhookUrl}
+                                                onChange={(e) => setRuleWebhookUrl(e.target.value)}
+                                                className="bg-muted/30 border-border rounded-xl"
+                                            />
+                                            {ruleWebhookUrl && (
+                                                <Button
+                                                    size="sm"
+                                                    className="shrink-0 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
+                                                    onClick={() => testWebhook(ruleWebhookUrl.trim(), accountId, toast, account.name)}
+                                                >
+                                                    Test
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {ruleNotifyMode !== 'off' && (
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Message Template (Optional)</label>
+                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Customize the notification message. Use {`{{rule}}`}, {`{{primary}}`}, {`{{backup}}`}, {`{{account}}`} as placeholders.</p>
+                                        <Textarea
+                                            placeholder="Autopilot triggered for {{rule}} on {{account}}: {{primary}} → {{backup}}"
+                                            value={ruleMessageTemplate}
+                                            onChange={(e) => setRuleMessageTemplate(e.target.value)}
+                                            className="bg-muted/30 border-border rounded-xl min-h-[60px] resize-none"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                                </div>
+                            </div>
+
+                            <div className="shrink-0 bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8">
+                                <div className="flex justify-end gap-3 [&_button]:h-11 [&_button]:rounded-full [&_button]:px-5">
+                                    <Button variant="ghost" onClick={resetForm}>
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+                                        onClick={handleSaveRule}
+                                        disabled={chain.filter(u => !!u).length < 2}
+                                    >
+                                        {editingRuleId ? "Update Chain" : "Enable Autopilot"}
+                                    </Button>
+                                </div>
                             </div>
                         </DialogContent>
                     </Dialog>
@@ -1635,7 +1646,7 @@ export function FailoverManager({
                                         return (
                                             <SortableRuleWrapper key={rule.id} id={rule.id}>
                                                 <div className="bg-card border border-border/40 rounded-2xl p-5 pl-8 flex flex-col gap-5 shadow-sm min-w-0">
-                                        <div className="flex items-center justify-between gap-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                                             <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 <Tooltip content={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
                                                     <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0">
@@ -1653,15 +1664,15 @@ export function FailoverManager({
                                                         Silent
                                                     </StatusChip>
                                                 ) : rule.webhookUrl ? (
-                                                    <span className="inline-flex items-center gap-1.5">
+                                                    <span className="inline-flex items-center gap-1.5 shrink-0">
                                                         <StatusChip icon={<Webhook />} variant="primary">
                                                             Custom
                                                         </StatusChip>
                                                         <Button
                                                             size="sm"
-                                                             variant="outline"
-                                                             className="h-6 px-2 text-xs font-medium shadow-none"
-                                                            onClick={(e) => { e.stopPropagation(); testWebhook(rule.webhookUrl, accountId, toast, account.name) }}
+                                                              variant="outline"
+                                                              className="hidden h-6 px-2 text-xs font-medium shadow-none sm:inline-flex"
+                                                             onClick={(e) => { e.stopPropagation(); testWebhook(rule.webhookUrl, accountId, toast, account.name) }}
                                                         >
                                                             Test Webhook
                                                         </Button>

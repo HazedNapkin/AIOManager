@@ -2,13 +2,15 @@
 import { useTheme } from '@/contexts/ThemeContext'
 import { ActivityItem } from '@/types/activity'
 import { formatDistanceToNow } from 'date-fns'
-import { PlayCircle, Trash2 } from 'lucide-react'
-import { memo, useMemo } from 'react'
+import { PlayCircle, Trash2, Check } from 'lucide-react'
+import { memo, useMemo, useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 
 import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { resolveWatchBadgePct } from '@/lib/activity-utils'
 import { useUIStore } from '@/store/uiStore'
+import { useAccountStore } from '@/store/accountStore'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
@@ -51,11 +53,17 @@ export const ActivityItemCard = memo(({
     const item = entry
     const isEpisodeLike = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
     const episodeLabel = isEpisodeLike && item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
+    const badgePct = resolveWatchBadgePct(item)
 
     const rawName = item.accountName || 'Unknown User'
     const userName = rawName.includes('@')
         ? (maskEmailLevel(rawName, privacyLevel) || rawName)
         : maskNameLevel(rawName, privacyLevel)
+
+    const account = useAccountStore(s => s.accounts.find(a => a.id === item.accountId))
+    const [avatarFailed, setAvatarFailed] = useState(false)
+    useEffect(() => { setAvatarFailed(false) }, [account?.avatar])
+    const showAvatar = !!account?.avatar && !avatarFailed
 
     const itemDate = useMemo(() => {
         const d = new Date(item.timestamp)
@@ -165,11 +173,17 @@ export const ActivityItemCard = memo(({
                     )}
 
 
-                    {item.progress > 0 && !isLive && (
+                    {badgePct !== undefined && !isLive && (
                         <div className="absolute bottom-2 right-2 z-10">
-                            <span className="text-xs font-bold text-white/80 bg-black/75 rounded-full px-1.5 py-0.5">
-                                {Math.round(item.progress)}%
-                            </span>
+                            {badgePct >= 100 ? (
+                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-background/85 text-success shadow-sm backdrop-blur-sm">
+                                    <Check className="h-3.5 w-3.5 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]" strokeWidth={3} />
+                                </span>
+                            ) : (
+                                <span className="text-xs font-bold text-foreground bg-background/85 rounded-full px-1.5 py-0.5 ring-1 ring-black/20 shadow-sm backdrop-blur-sm">
+                                    {badgePct}%
+                                </span>
+                            )}
                         </div>
                     )}
                 </div>
@@ -184,9 +198,23 @@ export const ActivityItemCard = memo(({
                             </span>
                         )}
 
-                        <div className="relative w-4 h-4 shrink-0 flex items-center justify-center">
+                        <div className="relative w-4 h-4 shrink-0 flex items-center justify-center overflow-hidden">
                             <SquircleOverlay />
-                            <span className="relative z-10 text-xs font-bold text-muted-foreground">{userName[0]?.toUpperCase()}</span>
+                            {showAvatar ? (
+                                <img
+                                    src={account.avatar}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={() => setAvatarFailed(true)}
+                                    className="absolute inset-0 h-full w-full object-cover z-10"
+                                    style={{ filter: 'url(#squircle)' }}
+                                />
+                            ) : (
+                                <span className="relative z-10 text-xs font-bold text-muted-foreground">
+                                    {account?.emoji ? account.emoji : userName[0]?.toUpperCase()}
+                                </span>
+                            )}
                         </div>
                         <span className="text-xs text-muted-foreground truncate font-medium">{userName}</span>
                         {!isLive && (
@@ -274,9 +302,23 @@ export const ActivityItemCard = memo(({
 
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5">
-                        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center">
+                        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center overflow-hidden">
                             <SquircleOverlay />
-                            <span className="relative z-10 text-xs font-bold text-muted-foreground">{userName[0]?.toUpperCase()}</span>
+                            {showAvatar ? (
+                                <img
+                                    src={account.avatar}
+                                    alt=""
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={() => setAvatarFailed(true)}
+                                    className="absolute inset-0 h-full w-full object-cover z-10"
+                                    style={{ filter: 'url(#squircle)' }}
+                                />
+                            ) : (
+                                <span className="relative z-10 text-xs font-bold text-muted-foreground">
+                                    {account?.emoji ? account.emoji : userName[0]?.toUpperCase()}
+                                </span>
+                            )}
                         </div>
                         <span className="text-xs font-semibold text-muted-foreground">{userName}</span>
                     </div>
@@ -286,12 +328,19 @@ export const ActivityItemCard = memo(({
                 </div>
 
 
-                {item.progress > 0 && (
+                {badgePct !== undefined && (
                     <div className="flex items-center gap-2 max-w-xs">
-                        <Progress value={item.progress} className="h-1 flex-1" />
-                        <span className="text-xs font-bold text-muted-foreground/60 tabular-nums">
-                            {Math.round(item.progress)}%{remainingMinutes > 0 && ` · ${remainingMinutes}m`}
-                        </span>
+                        <Progress value={badgePct} className="h-1 flex-1" />
+                        {badgePct >= 100 ? (
+                            <span className="flex items-center gap-1 text-xs font-bold text-success">
+                                <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                                Completed
+                            </span>
+                        ) : (
+                            <span className="text-xs font-bold text-muted-foreground/60 tabular-nums">
+                                {badgePct}%{item.progress > 0 && remainingMinutes > 0 && ` · ${remainingMinutes}m`}
+                            </span>
+                        )}
                     </div>
                 )}
 

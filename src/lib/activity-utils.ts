@@ -147,6 +147,7 @@ export function transformLibraryItemToActivityItem(
     const timeOffset = item.state?.timeOffset || 0
     const overallTimeWatched = item.state?.overallTimeWatched
     const timesWatched = item.state?.timesWatched
+    const flaggedWatched = item.state?.flaggedWatched
 
     const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
@@ -174,6 +175,7 @@ export function transformLibraryItemToActivityItem(
         watched: timeOffset,
         progress,
         timesWatched,
+        flaggedWatched,
         isInProgress,
         season,
         episode,
@@ -546,4 +548,12 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         backfill: entry.backfill,
         genres: entry.genres,
     }
+}
+
+export function resolveWatchBadgePct(item: ActivityItem): number | undefined {
+    if (item.progress > 0) return Math.round(item.progress)
+    if ((item.timesWatched ?? 0) > 0 || (item.flaggedWatched ?? 0) > 0) return 100
+    const isSeries = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
+    if (!isSeries && (item.overallTimeWatched ?? 0) > 0) return 100
+    return 0
 }

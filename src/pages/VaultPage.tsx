@@ -230,6 +230,26 @@ function KeyDetailPanel({
                 </div>
             </div>
 
+            {keyData.serverUrl && (
+                <div className="rounded-2xl border border-border overflow-hidden mb-5">
+                    <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Server</span>
+                        <a
+                            href={keyData.serverUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="h-7 px-2 rounded-md hover:bg-muted/60 text-xs font-medium text-primary flex items-center gap-1"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                            Open
+                        </a>
+                    </div>
+                    <div className="px-5 py-4">
+                        <span className="font-mono text-sm break-all tracking-wide select-all">{keyData.serverUrl}</span>
+                    </div>
+                </div>
+            )}
+
             {health && (
                 <div className="rounded-2xl border border-border overflow-hidden mb-5">
                     <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
@@ -427,7 +447,9 @@ export function VaultPage() {
             list = list.filter(k =>
                 k.name.toLowerCase().includes(q) ||
                 k.provider.toLowerCase().includes(q) ||
-                (k.customProviderName || '').toLowerCase().includes(q)
+                (k.customProviderName || '').toLowerCase().includes(q) ||
+                (k.serverUrl || '').toLowerCase().includes(q) ||
+                (k.addonUuid || '').toLowerCase().includes(q)
             )
         }
         if (entrySort !== 'default' && !(activeFilter.type === 'smart' && activeFilter.id === 'recent')) {

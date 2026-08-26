@@ -531,3 +531,15 @@ export function sanitizePosterUrl(url: string | undefined): string | undefined {
     } catch {}
     return url
 }
+
+export function formatHoursAsDays(hours: number): string {
+    const whole = Math.floor(hours / 24)
+    const rest = hours % 24
+    if (whole === 0) return `${rest}h`
+    if (rest === 0) return `${whole}d`
+    return `${whole}d ${rest}h`
+}
+
+export function normalizeForSearch(s: string): string {
+    return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}

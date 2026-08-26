@@ -36,6 +36,7 @@ interface CommandItem {
     action: () => void
     category: 'Navigation' | 'Accounts' | 'Notes' | 'Vault' | 'Saved Addons' | 'Quick Actions' | 'Bulk Operations'
     emoji?: string
+    avatarUrl?: string
     searchText?: string
 }
 
@@ -161,6 +162,7 @@ export function CommandPalette() {
                 id: `acc-${acc.id}`,
                 label: acc.name || acc.email || 'Unnamed Account',
                 emoji: acc.emoji,
+                avatarUrl: acc.avatar,
                 sublabel: acc.email && acc.name ? acc.email : undefined,
                 icon: <User className="h-4 w-4" />,
                 action: () => go(`/account/${acc.id}`),
@@ -188,6 +190,7 @@ export function CommandPalette() {
                 icon: <Key className="h-4 w-4" />,
                 action: () => go('/vault'),
                 category: 'Vault',
+                searchText: [k.serverUrl, k.addonUuid].filter(Boolean).join(' '),
             })
         }
 
@@ -377,11 +380,17 @@ export function CommandPalette() {
                                             {isSelected && (
                                                 <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" />
                                             )}
-                                            <span
-                                                className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted/45 text-muted-foreground'}`}
-                                            >
-                                                {item.icon}
-                                            </span>
+                                                {item.avatarUrl ? (
+                                                    <span className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden transition-colors">
+                                                        <img src={item.avatarUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                                                    </span>
+                                                ) : (
+                                                    <span
+                                                        className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted/45 text-muted-foreground'}`}
+                                                    >
+                                                        {item.icon}
+                                                    </span>
+                                                )}
                                             <div className="flex-1 min-w-0">
                                                 <div className="truncate text-sm font-semibold tracking-tight">
                                                     {item.emoji && <span className="mr-2">{item.emoji}</span>}

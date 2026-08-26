@@ -35,6 +35,7 @@ import { getLatestAddonVersion, isNewerVersion } from '@/lib/utils'
 import { mapConcurrent } from '@/lib/concurrency'
 import { getPlatformEntry } from '@/lib/platform-registry'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
+import { accountMatchesQuery } from '@/lib/account-compat'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
 
 import { Skeleton } from '@/components/ui/skeleton'
@@ -287,8 +288,7 @@ export function AccountList() {
     const query = debouncedSearchQuery.toLowerCase().trim()
     if (!query) return accounts
     return accounts.filter(a => {
-      if (a.name.toLowerCase().includes(query)) return true
-      if (getAccountEmail(a)?.toLowerCase().includes(query)) return true
+      if (accountMatchesQuery(a, query)) return true
       if (a.status === 'expired' && 'expired'.includes(query)) return true
       if (a.status === 'error' && ('error'.includes(query) || 'failed'.includes(query))) return true
       if (a.connections?.some(c => c.platform.toLowerCase().includes(query))) return true

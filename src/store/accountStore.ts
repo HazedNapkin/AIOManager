@@ -850,10 +850,12 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
             const { useWatchEventStore } = await import('@/store/watchEventStore')
             const wes = useWatchEventStore.getState()
-            if (wes.initialized) {
-                const filtered = wes.events.filter(e => e.accountId !== id)
-                const { [id]: _, ...restSnapshot } = wes.snapshot
-                wes.initialize(filtered, restSnapshot)
+            await wes.load()
+            if (useWatchEventStore.getState().initialized) {
+                const loaded = useWatchEventStore.getState().events
+                const filtered = loaded.filter(e => e.accountId !== id)
+                const { [id]: _, ...restSnapshot } = useWatchEventStore.getState().snapshot
+                useWatchEventStore.getState().initialize(filtered, restSnapshot)
             }
 
             const accounts = get().accounts.filter((acc) => acc.id !== id)

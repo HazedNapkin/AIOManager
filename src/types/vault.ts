@@ -20,6 +20,8 @@ export interface VaultKey {
     customProviderName?: string
     group?: string
     catalogId?: string
+    serverUrl?: string
+    addonUuid?: string
 }
 
 export interface VaultState {

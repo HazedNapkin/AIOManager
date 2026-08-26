@@ -151,6 +151,8 @@ export function vaultEntryName(baseUrl: string, uuid: string): string {
 export function getStoredAIOMetadataPassword(baseUrl: string, uuid: string): string | null {
     const { keys, isLocked } = useVaultStore.getState()
     if (isLocked) return null
+    const structured = keys.find(k => k.provider === 'aiometadata' && k.addonUuid === uuid && k.serverUrl === baseUrl)
+    if (structured?.value) return structured.value
     const lookupName = vaultEntryName(baseUrl, uuid)
     const entry = keys.find(k => k.provider === 'aiometadata' && k.name === lookupName)
     return entry?.value ?? null
@@ -159,14 +161,19 @@ export function getStoredAIOMetadataPassword(baseUrl: string, uuid: string): str
 export async function saveAIOMetadataPassword(baseUrl: string, uuid: string, password: string): Promise<void> {
     const lookupName = vaultEntryName(baseUrl, uuid)
     const { keys } = useVaultStore.getState()
-    const existing = keys.find(k => k.provider === 'aiometadata' && k.name === lookupName)
+    const existing = keys.find(k =>
+        k.provider === 'aiometadata' &&
+        (k.addonUuid === uuid || k.name === lookupName)
+    )
     if (existing) {
-        await useVaultStore.getState().updateKey(existing.id, { value: password })
+        await useVaultStore.getState().updateKey(existing.id, { value: password, serverUrl: baseUrl, addonUuid: uuid })
     } else {
         await useVaultStore.getState().addKey({
             name: lookupName,
             provider: 'aiometadata',
             value: password,
+            serverUrl: baseUrl,
+            addonUuid: uuid,
         })
     }
 }
@@ -174,7 +181,10 @@ export async function saveAIOMetadataPassword(baseUrl: string, uuid: string, pas
 export async function removeAIOMetadataPassword(baseUrl: string, uuid: string): Promise<void> {
     const lookupName = vaultEntryName(baseUrl, uuid)
     const { keys } = useVaultStore.getState()
-    const entry = keys.find(k => k.provider === 'aiometadata' && k.name === lookupName)
+    const entry = keys.find(k =>
+        k.provider === 'aiometadata' &&
+        (k.addonUuid === uuid || k.name === lookupName)
+    )
     if (entry) await useVaultStore.getState().removeKey(entry.id)
 }
 

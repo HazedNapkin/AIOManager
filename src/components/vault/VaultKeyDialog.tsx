@@ -98,6 +98,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
     const [pickerCategory, setPickerCategory] = useState<string | null>(null)
     const [name, setName] = useState('')
     const [value, setValue] = useState('')
+    const [serverUrl, setServerUrl] = useState('')
     const [customExpiry, setCustomExpiry] = useState('')
     const [customAbbr, setCustomAbbr] = useState('')
     const [customDashboardUrl, setCustomDashboardUrl] = useState('')
@@ -116,6 +117,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
             setSelected(entry)
             setName(editingKey.name)
             setValue(editingKey.value)
+            setServerUrl(editingKey.serverUrl || '')
             setCustomExpiry(editingKey.customExpiry || '')
             setCustomAbbr(editingKey.customAbbr || '')
             setCustomDashboardUrl(editingKey.customDashboardUrl || '')
@@ -126,6 +128,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
             setPickerCategory(defaultGroup ?? null)
             setName('')
             setValue('')
+            setServerUrl('')
             setCustomExpiry('')
             setCustomAbbr('')
             setCustomDashboardUrl('')
@@ -172,6 +175,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
         e.preventDefault()
         if (!selected) return
         const provider = selected.vaultProvider
+        const isAddonProvider = provider === 'aiostreams' || provider === 'aiometadata'
         try {
             const resolvedGroup = resolveVaultGroup(provider, group)
             const extra = {
@@ -183,6 +187,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                 customAbbr: customAbbr || undefined,
                 group: resolvedGroup === deriveGroup(provider) ? undefined : resolvedGroup,
                 catalogId: selected.id === 'custom' ? undefined : selected.id,
+                ...(isAddonProvider ? { serverUrl: serverUrl.trim() || undefined } : {}),
             }
 
             if (editingKey) {
@@ -371,6 +376,19 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                                 autoFocus
                             />
                         </div>
+
+                        {(selected.vaultProvider === 'aiostreams' || selected.vaultProvider === 'aiometadata') && (
+                        <div className="space-y-2">
+                            <Label htmlFor="v-server-url">Server URL <span className="text-muted-foreground/60 font-normal">(optional)</span></Label>
+                            <Input
+                                id="v-server-url"
+                                type="url"
+                                placeholder="https://your-instance.example.com"
+                                value={serverUrl}
+                                onChange={(e) => setServerUrl(e.target.value)}
+                            />
+                        </div>
+                        )}
 
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { ActivityItem, LibraryItem } from '@/types/activity'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
+import { useDiscoveryPrefs, useDiscoveryStore, CONTINUE_WATCHING_CONTEXT } from '@/store/discoveryStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { stremioClient } from '@/api/stremio-client'
@@ -182,6 +183,7 @@ export function ActivityPage() {
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
     const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
+    const { dismissedItems: dismissedContinueWatching } = useDiscoveryPrefs(CONTINUE_WATCHING_CONTEXT)
 
     const { history: watchHistory, inProgress } = useWatchHistory()
 
@@ -415,14 +417,16 @@ export function ActivityPage() {
     const accountOrderIndex = useMemo(() => new Map(accounts.map((account, index) => [account.id, index])), [accounts])
 
     const accountOptions = useMemo(() => {
-        const accountMap = new Map<string, { id: string; name: string; colorIndex: number; emoji?: string }>()
+        const accountMap = new Map<string, { id: string; name: string; colorIndex: number; emoji?: string; avatar?: string }>()
         history.forEach(item => {
             if (!accountMap.has(item.accountId)) {
+                const acc = accountById.get(item.accountId)
                 accountMap.set(item.accountId, {
                     id: item.accountId,
                     name: item.accountName,
                     colorIndex: item.accountColorIndex,
-                    emoji: accountById.get(item.accountId)?.emoji
+                    emoji: acc?.emoji,
+                    avatar: acc?.avatar
                 })
             }
         })
@@ -470,6 +474,12 @@ export function ActivityPage() {
             return true
         })
     }, [history, userFilter, searchTerm, timeFilter, customStartDate])
+
+    useEffect(() => {
+        if (userFilter !== 'all' && !accountOptions.some(o => o.id === userFilter)) {
+            setUserFilter('all')
+        }
+    }, [accountOptions, userFilter])
 
     const sessionComparison = useMemo(() => {
         const now = new Date().getTime()
@@ -580,13 +590,15 @@ export function ActivityPage() {
         })
     }, [detailParamId, history, searchParams])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string> }> => {
-        if (items.length === 0) return { failed: false, keptIds: new Set<string>() }
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string>; keptReasons: Map<string, number> }> => {
+        if (items.length === 0) return { failed: false, keptIds: new Set<string>(), keptReasons: new Map<string, number>() }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
             (byAccount[item.accountId] ||= []).push(item)
         }
         const keptIds = new Set<string>()
+        const keptReasons = new Map<string, number>()
+        const countKeep = (reason: string, n: number = 1) => keptReasons.set(reason, (keptReasons.get(reason) || 0) + n)
         let failed = false
         await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
             const account = accountById.get(accountId)
@@ -617,6 +629,7 @@ export function ActivityPage() {
                                 rowsFetchFailed = true
                                 trace('activityDelete', 'stremio.rows.error', { accountId, rows: rowIds.length, error: (e as Error)?.message })
                                 for (const item of episodeItems) keptIds.add(item.id)
+                                countKeep('rows-unavailable', episodeItems.length)
                                 failed = true
                             }
                         }
@@ -652,6 +665,7 @@ export function ActivityPage() {
                                     if (plan.kind === 'fail') {
                                         // Transient/structural failures must never escalate to whole-show deletion.
                                         keptIds.add(item.id)
+                                        countKeep(plan.reason)
                                         failed = true
                                         trace('activityDelete', 'stremio.item.kept', { accountId, itemId: item.itemId, reason: plan.reason })
                                         return
@@ -681,6 +695,7 @@ export function ActivityPage() {
                                 if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
                                 trace('activityDelete', 'stremio.item.error', { accountId, itemId: item.itemId, error: (e as Error)?.message })
                                 keptIds.add(item.id)
+                                countKeep('item-error')
                                 failed = true
                             }
                         })
@@ -692,6 +707,7 @@ export function ActivityPage() {
                         if (import.meta.env.DEV) console.error(`Failed to process deletions for account ${accountId}:`, e)
                         trace('activityDelete', 'stremio.account.error', { accountId, items: stremioItems.length, error: (e as Error)?.message })
                         for (const item of stremioItems) keptIds.add(item.id)
+                        countKeep('account-error', stremioItems.length)
                         failed = true
                     }
                 } else {
@@ -705,6 +721,7 @@ export function ActivityPage() {
                 trace('activityDelete', 'nuvio.account.done', { accountId, items: nuvioItems.length, ok })
                 if (!ok) {
                     failed = true
+                    countKeep('platform-error', nuvioItems.length)
                     for (const item of nuvioItems) keptIds.add(item.id)
                 }
             }
@@ -715,12 +732,32 @@ export function ActivityPage() {
                 trace('activityDelete', 'realstream.account.done', { accountId, items: realstreamItems.length, ok })
                 if (!ok) {
                     failed = true
+                    countKeep('platform-error', realstreamItems.length)
                     for (const item of realstreamItems) keptIds.add(item.id)
                 }
             }
         })
-        return { failed, keptIds }
+        return { failed, keptIds, keptReasons }
     }, [accountById])
+
+    const KEEP_REASON_LABELS: Record<string, string> = {
+        'no-videos': 'episode list unavailable',
+        'no-bitfield': 'no per-episode data to edit',
+        'anchor-mismatch': "the show's episode data changed since watching",
+        'episode-not-watched': 'not marked watched on the account',
+        'non-tt': 'anime titles can only be deleted as a whole show',
+        'rows-unavailable': 'watch history rows unavailable',
+        'account-error': 'account sync error',
+        'item-error': 'Stremio API error',
+        'platform-error': 'platform sync error',
+    }
+
+    const keptReasonSummary = (keptReasons: Map<string, number>): string => {
+        if (keptReasons.size === 0) return ''
+        const parts = Array.from(keptReasons.entries())
+            .map(([reason, n]) => `${n} ${KEEP_REASON_LABELS[reason] || reason}${n > 1 ? 's' : ''}`)
+        return ` (${parts.join(', ')})`
+    }
 
     const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
         const liveIds = new Set<string>(feedIds)
@@ -743,12 +780,12 @@ export function ActivityPage() {
 
         const itemIdSet = new Set(itemIds)
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-        const { failed, keptIds } = await deletePlatformItems(itemsToDelete)
+        const { failed, keptIds, keptReasons } = await deletePlatformItems(itemsToDelete)
 
         purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), itemIds.filter(id => !keptIds.has(id)))
 
         if (failed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform and were left completely untouched in your history.' })
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
         } else {
             toast({
                 title: 'Items Deleted',
@@ -769,11 +806,11 @@ export function ActivityPage() {
             const idSet = new Set(ids)
             const itemsToDelete = history.filter(item => idSet.has(item.id))
 
-            const { failed, keptIds } = await deletePlatformItems(itemsToDelete)
+            const { failed, keptIds, keptReasons } = await deletePlatformItems(itemsToDelete)
             purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), ids.filter(id => !keptIds.has(id)))
 
             if (failed) {
-                toast({ variant: 'destructive', title: 'Partial Deletion', description: 'Some items could not be removed from their source platform and were left completely untouched in your history.' })
+                toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
             } else {
                 toast({
                     title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
@@ -817,14 +854,18 @@ export function ActivityPage() {
                     </TabsTrigger>
                 </TabsList>
             </Tabs>
-            {activeView === 'foryou' && forYouAccountId ? (
+            {activeView === 'foryou' && (
+                <div className={forYouAccountId ? 'hidden' : undefined}>
+                    <ForYouPage onAccountClick={(id) => setForYouAccountId(id)} />
+                </div>
+            )}
+            {activeView === 'foryou' && forYouAccountId && (
                 <AccountDetailPage
                     accountId={forYouAccountId}
                     onBack={() => setForYouAccountId(null)}
                 />
-            ) : activeView === 'foryou' ? (
-                <ForYouPage onAccountClick={(id) => setForYouAccountId(id)} />
-            ) : (
+            )}
+            {activeView === 'feed' && (
             <>
             {/* Single unified toolbar */}
             <ToolbarShell contentClassName="gap-2 sm:gap-3">
@@ -978,7 +1019,8 @@ export function ActivityPage() {
 
             {/* Continue Watching Rail */}
             {(() => {
-              const filteredInProgress = userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter)
+              const filteredInProgress = (userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter))
+                .filter(item => !dismissedContinueWatching.includes(`${item.accountId}:${item.itemId}`))
               if (filteredInProgress.length === 0 || searchTerm) return null
               return (
                 <ContentRail
@@ -998,6 +1040,17 @@ export function ActivityPage() {
                                         className="relative w-28 shrink-0 cursor-pointer group"
                                         onClick={() => setDetailItem(item)}
                                     >
+                                        <button
+                                            type="button"
+                                            aria-label={`Remove ${item.name} from Continue Watching`}
+                                            className="absolute -top-1.5 -right-1.5 z-10 flex h-5.5 w-5.5 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground opacity-0 shadow-sm transition-all hover:bg-destructive hover:text-destructive-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                useDiscoveryStore.getState().dismissItem(CONTINUE_WATCHING_CONTEXT, `${item.accountId}:${item.itemId}`)
+                                            }}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
                                         <div className="relative aspect-[2/3] overflow-hidden rounded-2xl border border-border/40 shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                                             <Poster
                                                 src={item.poster}
@@ -1024,10 +1077,10 @@ export function ActivityPage() {
                                             </div>
                                             {account && (
                                                 <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-black/65 overflow-hidden">
-                                                    {account.emoji ? (
+                                                    {account.avatar ? (
+                                                        <img src={account.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
+                                                    ) : account.emoji ? (
                                                         <span className="text-xs font-bold leading-none text-white">{account.emoji}</span>
-                                                    ) : account.avatar ? (
-                                                        <img src={account.avatar} alt="" className="h-full w-full object-cover" />
                                                     ) : (
                                                         <span className="text-xs font-bold leading-none text-white">{(account.name || getAccountEmail(account) || '?')[0].toUpperCase()}</span>
                                                     )}
@@ -1040,10 +1093,19 @@ export function ActivityPage() {
                                                 <span className="font-mono text-xs text-muted-foreground">S{item.season ?? 1} E{item.episode}</span>
                                             )}
                                             {account && (
-                                                <span className="truncate text-xs text-muted-foreground/60">{account.name && !account.name.includes('@')
-                                                    ? maskNameLevel(account.name, privacyLevel)
-                                                    : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}
-                                                </span>
+                                                <>
+                                                    <span className="relative h-4 w-4 shrink-0 flex items-center justify-center overflow-hidden rounded-full">
+                                                        {account.avatar ? (
+                                                            <img src={account.avatar} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                                                        ) : account.emoji ? (
+                                                            <span className="text-xs font-bold leading-none text-muted-foreground">{account.emoji}</span>
+                                                        ) : null}
+                                                    </span>
+                                                    <span className="truncate text-xs text-muted-foreground/60">{account.name && !account.name.includes('@')
+                                                        ? maskNameLevel(account.name, privacyLevel)
+                                                        : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}
+                                                    </span>
+                                                </>
                                             )}
                                         </div>
                                     </motion.div>

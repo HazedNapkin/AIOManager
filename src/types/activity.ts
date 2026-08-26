@@ -40,6 +40,7 @@ export interface ActivityItem {
     watched: number
     progress: number
     timesWatched?: number  // From state.timesWatched
+    flaggedWatched?: number // From state.flaggedWatched (Stremio's watched bit)
     isInProgress: boolean  // timeOffset > 0 && progress < 90
     season?: number
     episode?: number
@@ -68,6 +69,7 @@ export interface WatchEvent {
     season?: number
     episode?: number
     source?: string
+    timesWatched?: number
     backfill?: boolean // recovered from Stremio's watched-bitfield (no real per-episode timestamp)
 }
 
