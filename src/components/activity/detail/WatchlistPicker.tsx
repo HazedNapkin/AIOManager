@@ -6,6 +6,7 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar as AccountSwitcherAvatar, maskedDisplayName } from '@/components/common/AccountSwitcher'
 import type { Account } from '@/types/account'
+import { accountMatchesQuery } from '@/lib/account-compat'
 
 interface WatchlistPickerProps {
     accounts: Account[]
@@ -87,11 +88,7 @@ export function WatchlistPicker({
 
     const filtered = useMemo(() => {
         if (!search.trim()) return accounts
-        const q = search.toLowerCase()
-        return accounts.filter(a =>
-            (a.name || '').toLowerCase().includes(q) ||
-            (a.email || '').toLowerCase().includes(q)
-        )
+        return accounts.filter(a => accountMatchesQuery(a, search))
     }, [accounts, search])
 
     const hasUniversal = watchlistTargets.has('')

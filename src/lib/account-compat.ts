@@ -1,6 +1,15 @@
 import type { Account } from '@/types/account'
 import type { AddonDescriptor } from '@/types/addon'
 import { ACCOUNT_CONTEXT_CLEAR_ALL } from './account-contexts.ts'
+import { normalizeForSearch } from './utils.ts'
+
+export function accountMatchesQuery(account: Account, rawQuery: string): boolean {
+    const q = normalizeForSearch(rawQuery.trim())
+    if (!q) return true
+    if (normalizeForSearch(account.name || '').includes(q)) return true
+    if (normalizeForSearch(getAccountEmail(account) || '').includes(q)) return true
+    return false
+}
 
 
 export function getStremioConnection(account: Account) {

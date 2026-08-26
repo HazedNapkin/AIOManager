@@ -2,6 +2,7 @@ import { AddonDescriptor } from '@/types/addon'
 import { useVaultStore } from '@/store/vaultStore'
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
+import { useAccountStore } from '@/store/accountStore'
 
 const AIOSTREAMS_MANIFEST_IDS = [
     'community.aiostreams',
@@ -426,10 +427,10 @@ export function vaultEntryName(baseUrl: string, uuid: string): string {
 export async function migrateAIOStreamsVaultNames(): Promise<void> {
     const store = useVaultStore.getState()
     if (store.isLocked) return
-    const entries = store.keys.filter(
+    const legacy = store.keys.filter(
         k => k.provider === 'aiostreams' && k.name.startsWith('AIOStreams:http')
     )
-    for (const entry of entries) {
+    for (const entry of legacy) {
         const rest = entry.name.slice('AIOStreams:'.length)
         const lastColon = rest.lastIndexOf(':')
         if (lastColon === -1) continue
@@ -438,14 +439,48 @@ export async function migrateAIOStreamsVaultNames(): Promise<void> {
         if (!oldUuid || oldUuid.length < 8) continue
         const newName = vaultEntryName(oldBaseUrl, oldUuid)
         if (newName !== entry.name) {
-            await store.updateKey(entry.id, { name: newName })
+            await store.updateKey(entry.id, { name: newName, serverUrl: oldBaseUrl, addonUuid: oldUuid })
         }
     }
+    const unstructured = store.keys.filter(
+        k => k.provider === 'aiostreams' && !k.serverUrl &&
+            /^AIOStreams · (.+?) · (.+)$/.test(k.name)
+    )
+    if (unstructured.length > 0) {
+        const instanceUuids = collectInstalledUuids()
+        for (const entry of unstructured) {
+            const match = entry.name.match(/^AIOStreams · (.+?) · (.+)$/)
+            if (!match) continue
+            const host = match[1]
+            const shortUuid = match[2]
+            const fullUuid = instanceUuids.get(`${host}|${shortUuid}`)
+            await useVaultStore.getState().updateKey(entry.id, {
+                serverUrl: `https://${host}`,
+                ...(fullUuid ? { addonUuid: fullUuid } : {}),
+            })
+        }
+    }
+}
+
+function collectInstalledUuids(): Map<string, string> {
+    const byHostShort = new Map<string, string>()
+    const { accounts } = useAccountStore.getState()
+    for (const account of accounts) {
+        for (const addon of account.addons || []) {
+            const parsed = parseAIOStreamsUrl(addon.transportUrl)
+            if (!parsed) continue
+            const host = parsed.baseUrl.replace(/^https?:\/\//, '')
+            byHostShort.set(`${host}|${parsed.uuid.slice(0, 8)}`, parsed.uuid)
+        }
+    }
+    return byHostShort
 }
 
 export function getStoredAIOStreamsPassword(baseUrl: string, uuid: string): string | null {
     const { keys, isLocked } = useVaultStore.getState()
     if (isLocked) return null
+    const structured = keys.find(k => k.provider === 'aiostreams' && k.addonUuid === uuid && k.serverUrl === baseUrl)
+    if (structured?.value) return structured.value
     const lookupName = vaultEntryName(baseUrl, uuid)
     const entry = keys.find(k => k.provider === 'aiostreams' && k.name === lookupName)
     if (entry?.value) return entry.value
@@ -462,14 +497,19 @@ export function getStoredAIOStreamsPassword(baseUrl: string, uuid: string): stri
 export async function saveAIOStreamsPassword(baseUrl: string, uuid: string, password: string): Promise<void> {
     const lookupName = vaultEntryName(baseUrl, uuid)
     const { keys } = useVaultStore.getState()
-    const existing = keys.find(k => k.provider === 'aiostreams' && k.name === lookupName)
+    const existing = keys.find(k =>
+        k.provider === 'aiostreams' &&
+        (k.addonUuid === uuid || k.name === lookupName)
+    )
     if (existing) {
-        await useVaultStore.getState().updateKey(existing.id, { value: password })
+        await useVaultStore.getState().updateKey(existing.id, { value: password, serverUrl: baseUrl, addonUuid: uuid })
     } else {
         await useVaultStore.getState().addKey({
             name: lookupName,
             provider: 'aiostreams',
             value: password,
+            serverUrl: baseUrl,
+            addonUuid: uuid,
         })
     }
 }
@@ -477,7 +517,10 @@ export async function saveAIOStreamsPassword(baseUrl: string, uuid: string, pass
 export async function removeAIOStreamsPassword(baseUrl: string, uuid: string): Promise<void> {
     const lookupName = vaultEntryName(baseUrl, uuid)
     const { keys } = useVaultStore.getState()
-    const entry = keys.find(k => k.provider === 'aiostreams' && k.name === lookupName)
+    const entry = keys.find(k =>
+        k.provider === 'aiostreams' &&
+        (k.addonUuid === uuid || k.name === lookupName)
+    )
     if (entry) {
         await useVaultStore.getState().removeKey(entry.id)
     }

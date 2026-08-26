@@ -230,7 +230,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 watched,
                 progress,
                 overallTimeWatched: seriesOverallTime.get(`${event.accountId}:${event.itemId}`),
-                timesWatched: live?.timesWatched,
+                timesWatched: live?.timesWatched ?? event.timesWatched,
                 isInProgress: live?.isInProgress ?? false,
                 isFromEventLog: true,
                 source: event.source || live?.source || 'stremio',

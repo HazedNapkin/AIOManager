@@ -24,6 +24,7 @@ export const DISCOVERY_DEFAULTS: DiscoveryPreferences = {
 }
 
 export const HOUSEHOLD_CONTEXT = 'household'
+export const CONTINUE_WATCHING_CONTEXT = 'continue-watching'
 
 interface HouseholdSettings {
     enabledAccounts: string[] | 'all'

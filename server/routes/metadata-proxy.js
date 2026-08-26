@@ -484,6 +484,7 @@ export function registerMetadataProxyRoutes(fastify) {
             clearTimeout(timeout)
             const text = await response.text()
             if (!response.ok) {
+                fastify.log.warn({ category: 'MetadataProxy' }, `PMDB ${method} ${cleanPath} user ${maskContext(authUser)} upstream ${response.status}${text ? `: ${text.slice(0, 200)}` : ''}`)
                 reply.status(response.status)
                 try { return JSON.parse(text) } catch { return { error: `PMDB upstream error (${response.status})` } }
             }
@@ -491,6 +492,7 @@ export function registerMetadataProxyRoutes(fastify) {
             return text || '{}'
         } catch (err) {
             const status = err?.name === 'AbortError' ? 504 : 502
+            fastify.log.warn({ category: 'MetadataProxy' }, `PMDB ${method} ${request.params['*'] || ''} user ${maskContext(authUser)} request failed: ${_redactKey(err && err.message)}`)
             reply.status(status)
             return { error: 'PMDB request failed' }
         }

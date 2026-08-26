@@ -55,6 +55,7 @@ import { DangerZone } from '@/components/settings/DangerZone'
 import { InstallAppCard } from '@/components/settings/InstallAppCard'
 import { RepairTools } from '@/components/settings/RepairTools'
 import { IntegrationsSection } from '@/components/settings/IntegrationsSection'
+import { ApiKeysSection } from '@/components/settings/ApiKeysSection'
 
 type ImportPreview = {
     fileName: string
@@ -604,6 +605,9 @@ export function SettingsPage() {
 
                         {/* Metadata Integrations */}
                         <IntegrationsSection />
+
+                        {/* Account API Keys */}
+                        <ApiKeysSection />
 
                         {/* Active Sync Summary */}
                         <SyncSummarySection />

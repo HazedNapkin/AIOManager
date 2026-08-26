@@ -17,7 +17,10 @@ interface RailStatusInfo {
     removed: number
     processed: number
     total: number
+    failed?: number
+    unresolved?: number
     error?: string
+    lastError?: string
 }
 
 interface PublishToPmdbDialogProps {
@@ -103,9 +106,12 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
                             status: result.skipped ? 'skipped' : result.error ? 'error' : 'done',
                             added: result.added,
                             removed: result.removed,
-                            processed: result.added + result.removed,
+                            processed: result.error ? result.added + result.removed : (prev[result.railKey]?.total ?? 0),
                             total: prev[result.railKey]?.total ?? 0,
+                            failed: result.failed,
+                            unresolved: result.unresolved,
                             error: result.error,
+                            lastError: result.lastError,
                         },
                     }))
                 },
@@ -143,6 +149,7 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
             const failed = results.filter(r => r.error)
             const totalAdded = published.reduce((s, r) => s + r.added, 0)
             const totalRemoved = published.reduce((s, r) => s + r.removed, 0)
+            const totalFailed = published.reduce((s, r) => s + r.failed + r.unresolved, 0)
 
             if (wasCancelled) {
                 toast({
@@ -151,9 +158,10 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
                 })
             } else if (published.length > 0) {
                 const failNote = failed.length > 0 ? `, ${failed.length} failed` : ''
+                const partialNote = totalFailed > 0 ? `, ${totalFailed} item${totalFailed === 1 ? '' : 's'} not published` : ''
                 toast({
                     title: 'Published to PMDB',
-                    description: `Published ${published.length} rail${published.length === 1 ? '' : 's'} (${totalAdded} added, ${totalRemoved} removed)${failNote}`,
+                    description: `Published ${published.length} rail${published.length === 1 ? '' : 's'} (${totalAdded} added, ${totalRemoved} removed)${failNote}${partialNote}`,
                 })
             } else if (failed.length > 0) {
                 toast({
@@ -268,11 +276,21 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
                                     )}
 
                                     {info?.status === 'done' && (
-                                        <span className="text-xs text-success">
-                                            {info.added > 0 || info.removed > 0
-                                                ? `${info.added} added, ${info.removed} removed`
-                                                : 'Already up to date'}
-                                        </span>
+                                        <div className="flex flex-col gap-0.5">
+                                            <span className="text-xs text-success">
+                                                {info.added > 0 || info.removed > 0
+                                                    ? `${info.added} added, ${info.removed} removed`
+                                                    : 'Already up to date'}
+                                            </span>
+                                            {(info.failed || info.unresolved) ? (
+                                                <span className="text-xs text-warning">
+                                                    {[
+                                                        info.unresolved ? `${info.unresolved} couldn't resolve to TMDB` : '',
+                                                        info.failed ? `${info.failed} failed${info.lastError ? ` (${info.lastError})` : ''}` : '',
+                                                    ].filter(Boolean).join(' · ')}
+                                                </span>
+                                            ) : null}
+                                        </div>
                                     )}
                                     {info?.status === 'error' && (
                                         <span className="text-xs text-destructive">{info.error || 'Failed'}</span>

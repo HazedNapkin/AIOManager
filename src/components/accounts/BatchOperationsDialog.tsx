@@ -1211,7 +1211,15 @@ export function BatchOperationsDialog({
                         .map((acc) => (
                           <SelectItem key={acc.id} value={acc.id}>
                             <div className="flex items-center gap-2">
-                              {acc.emoji && <span className="text-base shrink-0">{acc.emoji}</span>}
+                              <span className="h-5 w-5 shrink-0 rounded-full overflow-hidden flex items-center justify-center">
+                                {acc.avatar ? (
+                                    <img src={acc.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" loading="lazy" />
+                                ) : acc.emoji ? (
+                                    <span className="text-base">{acc.emoji}</span>
+                                ) : (
+                                    <span className="text-xs font-bold text-muted-foreground">{(acc.name || acc.email || '?')[0]?.toUpperCase()}</span>
+                                )}
+                              </span>
                               <span>{acc.name !== acc.email ? acc.name : acc.email}</span>
                             </div>
                           </SelectItem>

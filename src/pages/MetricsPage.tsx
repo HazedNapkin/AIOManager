@@ -35,7 +35,7 @@ import {
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { cn, maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { cn, maskNameLevel, maskEmailLevel, formatHoursAsDays } from '@/lib/utils'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { useUIStore } from '@/store/uiStore'
 import { Poster } from '@/components/common/Poster'
@@ -333,7 +333,7 @@ export function MetricsPage() {
                         {[
                             { icon: Activity, label: 'Total Plays', value: stats.totalItems, color: 'text-primary', bg: 'bg-primary/12', border: 'border-primary/15', tooltip: 'Total items watched in period' },
                             { icon: Zap, label: 'Max Binge Session', value: stats.bingeMasters?.[0]?.bingeDuration || 0, color: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/15', tooltip: 'Most titles in one session' },
-                            { icon: Clock, label: 'Hours Watched', value: stats.totalHours, palette: 'cyan', tooltip: 'Total hours of content watched' },
+                            { icon: Clock, label: 'Hours Watched', value: stats.totalHours, palette: 'cyan', tooltip: `Total hours of content watched (${formatHoursAsDays(stats.totalHours)})` },
                             { icon: Users, label: 'Active Profiles', value: stats.leaderboard?.length || 0, color: 'text-success', bg: 'bg-success/10', border: 'border-success/15', tooltip: 'Accounts with watch activity' },
                         ].map((card) => {
                             const { icon: Icon, label, value } = card
@@ -911,7 +911,7 @@ export function MetricsPage() {
                                     <Tooltip content="Week-over-week comparison of your watch activity" side="top">
                                         <span className="cursor-help">Time Dilation</span>
                                     </Tooltip>
-                                    <StatusChip variant="primary">{stats.totalHours}h</StatusChip>
+                                    <StatusChip variant="primary">{formatHoursAsDays(stats.totalHours)}</StatusChip>
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>

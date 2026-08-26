@@ -661,6 +661,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 duration: se.duration || 0,
                 season: se.season ?? undefined,
                 episode: se.episode ?? undefined,
+                timesWatched: (se as { timesWatched?: number }).timesWatched,
             }
 
             const existingEvent = eventsById.get(se.id)

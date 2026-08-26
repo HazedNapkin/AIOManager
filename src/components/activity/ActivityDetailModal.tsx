@@ -1684,7 +1684,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 ) : (
                     /* ══ MOVIE DETAIL VIEW ══════════════════════════════════════════ */
                     <>
-                        <div className="relative w-full shrink-0 overflow-hidden bg-black text-white -mb-1 h-[200px] sm:h-[clamp(220px,38vh,380px)]" style={{ transform: 'translateZ(0)' }}>
+                        <div className="relative w-full shrink-0 overflow-hidden bg-black text-white -mb-1 h-[clamp(110px,22vh,200px)] sm:h-[clamp(180px,24vh,380px)] lg:h-[clamp(220px,38vh,380px)]" style={{ transform: 'translateZ(0)' }}>
                             <div className="absolute inset-0 bg-black" aria-hidden="true" />
                             {background && (
                                 <img

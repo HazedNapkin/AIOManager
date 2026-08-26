@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAccountStore, getAccountEmail } from '@/store/accountStore'
+import { accountMatchesQuery } from '@/lib/account-compat'
 import { useUIStore } from '@/store/uiStore'
 import { maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { User, Search, X } from 'lucide-react'
@@ -62,10 +63,7 @@ export function AccountPickerDialog({
 
     const filteredAccounts = useMemo(() => {
         if (!searchQuery.trim()) return accounts
-        return accounts.filter(acc =>
-            acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (getAccountEmail(acc) && getAccountEmail(acc)!.toLowerCase().includes(searchQuery.toLowerCase()))
-        )
+        return accounts.filter(acc => accountMatchesQuery(acc, searchQuery))
     }, [accounts, searchQuery])
 
     const selectedAccountIds = useMemo(() => Array.from(selectedIds), [selectedIds])
@@ -165,8 +163,11 @@ export function AccountPickerDialog({
                                         </div>
                                         <div className="min-w-0">
                                             <div className="flex items-center gap-2">
-                                                {account.emoji && <span className="text-base shrink-0">{account.emoji}</span>}
-                                                {!account.emoji && account.avatar && <img src={account.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />}
+                                                {account.avatar ? (
+                                                    <img src={account.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" loading="lazy" />
+                                                ) : account.emoji ? (
+                                                    <span className="text-base shrink-0">{account.emoji}</span>
+                                                ) : null}
                                                 <p className="text-sm font-medium truncate">{maskNameLevel(account.name, namePrivacy)}</p>
                                             </div>
                                             <p className="text-xs text-muted-foreground truncate">{maskEmailLevel(getAccountEmail(account) || '', namePrivacy)}</p>

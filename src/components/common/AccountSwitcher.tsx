@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { ChevronLeft, ChevronRight, ChevronDown, Search } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
-import { maskNameLevel, maskEmailLevel } from '@/lib/utils'
+import { maskNameLevel, maskEmailLevel, normalizeForSearch } from '@/lib/utils'
 import { useUIStore } from '@/store/uiStore'
 
 export function maskedDisplayName(name: string, email: string | undefined, privacyLevel: number): string {
@@ -144,10 +144,10 @@ function SearchableDropdown({
 
     const filtered = useMemo(() => {
         if (!search.trim()) return accounts
-        const q = search.toLowerCase()
+        const q = normalizeForSearch(search)
         return accounts.filter(a =>
-            (a.name || '').toLowerCase().includes(q) ||
-            (a.email || '').toLowerCase().includes(q)
+            normalizeForSearch(a.name || '').includes(q) ||
+            normalizeForSearch(a.email || '').includes(q)
         )
     }, [accounts, search])
 

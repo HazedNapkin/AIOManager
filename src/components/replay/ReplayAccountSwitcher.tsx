@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronDown, Search, Check, Users } from 'lucide-react'
 import { Account } from '@/types/account'
+import { accountMatchesQuery } from '@/lib/account-compat'
 import { ACCOUNT_COLORS } from '@/lib/utils'
 
 interface ReplayAccountSwitcherProps {
@@ -37,10 +38,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
         return () => document.removeEventListener('keydown', handler)
     }, [])
 
-    const filtered = accounts.filter(a =>
-        a.name.toLowerCase().includes(query.toLowerCase()) ||
-        ((a as { email?: string }).email ?? '').toLowerCase().includes(query.toLowerCase())
-    )
+    const filtered = accounts.filter(a => accountMatchesQuery(a, query))
 
     const triggerLabel = selectedAccountId === 'all'
         ? 'All Accounts'

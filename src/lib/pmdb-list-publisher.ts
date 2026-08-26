@@ -23,8 +23,11 @@ export interface PmdbPublishResult {
     listId: string | null
     added: number
     removed: number
+    failed: number
+    unresolved: number
     skipped: boolean
     error?: string
+    lastError?: string
 }
 
 export interface PmdbListInfo {
@@ -109,7 +112,12 @@ async function pmdbGet(path: string): Promise<Record<string, unknown> | null> {
     }
 }
 
-async function pmdbPost(path: string, body?: unknown, retries = 2): Promise<Record<string, unknown> | null> {
+interface PmdbPostResult {
+    data: Record<string, unknown> | null
+    status: number
+}
+
+async function pmdbPost(path: string, body?: unknown, retries = 2): Promise<PmdbPostResult> {
     try {
         const res = await fetch(`/api/metadata/pmdb/${path}`, {
             method: 'POST',
@@ -118,20 +126,19 @@ async function pmdbPost(path: string, body?: unknown, retries = 2): Promise<Reco
         })
         if (res.status === 429 && retries > 0) {
             const retryAfter = Number(res.headers.get('retry-after')) || 3
-            await sleep(retryAfter * 1000)
+            await sleep(jitter(retryAfter * 1000))
             return pmdbPost(path, body, retries - 1)
         }
         if (!res.ok) {
             const errorText = await res.text().catch(() => '')
             if (import.meta.env?.DEV) console.warn(`[PMDB] POST ${path} failed: ${res.status}`, errorText)
-            return null
+            return { data: null, status: res.status }
         }
         const text = await res.text()
-        if (!text) return {}
-        return JSON.parse(text) as Record<string, unknown>
+        return { data: text ? JSON.parse(text) as Record<string, unknown> : {}, status: res.status }
     } catch (err) {
         if (import.meta.env?.DEV) console.warn(`[PMDB] POST ${path} threw:`, err)
-        return null
+        return { data: null, status: 0 }
     }
 }
 
@@ -152,6 +159,11 @@ function normalizeName(s: string): string {
 
 function sleep(ms: number): Promise<void> {
     return new Promise(r => setTimeout(r, ms))
+}
+
+// ±25% so concurrent item batches don't retry in lockstep against the shared rate bucket
+function jitter(ms: number): number {
+    return Math.round(ms * (0.75 + Math.random() * 0.5))
 }
 
 export async function findExistingLists(): Promise<PmdbListInfo[]> {
@@ -189,20 +201,21 @@ export async function findExistingLists(): Promise<PmdbListInfo[]> {
         })
 }
 
-async function createList(name: string): Promise<string | null> {
+async function createList(name: string): Promise<{ id: string | null; status: number }> {
     const existing = await findExistingLists()
     const match = existing.find(l => normalizeName(l.name) === normalizeName(name))
-    if (match) return match.id
+    if (match) return { id: match.id, status: 200 }
 
     const result = await pmdbPost('lists', { name, is_public: false })
-    if (result) {
-        const id = result.list_id ?? result.id
-        if (typeof id === 'string') return id
+    if (result.data) {
+        const id = result.data.list_id ?? result.data.id
+        if (typeof id === 'string') return { id, status: result.status }
     }
 
     const retry = await findExistingLists()
     const retryMatch = retry.find(l => normalizeName(l.name) === normalizeName(name))
-    return retryMatch?.id ?? null
+    if (retryMatch) return { id: retryMatch.id, status: 200 }
+    return { id: null, status: result.status }
 }
 
 async function getListItems(listId: string): Promise<Array<{ id: string; tmdb_id: number; media_type: string }>> {
@@ -227,16 +240,19 @@ async function getListItems(listId: string): Promise<Array<{ id: string; tmdb_id
     return all
 }
 
-async function addListItem(listId: string, tmdbId: number, mediaType: string): Promise<boolean> {
-    for (let attempt = 0; attempt < 3; attempt++) {
+async function addListItem(listId: string, tmdbId: number, mediaType: string): Promise<{ ok: boolean; status: number }> {
+    let status = 0
+    for (let attempt = 0; attempt < 2; attempt++) {
         const result = await pmdbPost(`lists/${encodeURIComponent(listId)}/items`, {
             tmdb_id: tmdbId,
             media_type: mediaType,
-        })
-        if (result !== null) return true
-        await sleep(RETRY_DELAY_MS * (attempt + 1))
+        }, 1)
+        if (result.data !== null) return { ok: true, status: result.status }
+        status = result.status
+        if (status === 401 || status === 403) break
+        await sleep(jitter(RETRY_DELAY_MS * (attempt + 1)))
     }
-    return false
+    return { ok: false, status }
 }
 
 async function removeListItem(listId: string, itemId: string): Promise<boolean> {
@@ -264,6 +280,8 @@ export async function publishRail(
         listId: null,
         added: 0,
         removed: 0,
+        failed: 0,
+        unresolved: 0,
         skipped: false,
     }
 
@@ -283,12 +301,13 @@ export async function publishRail(
         if (match) {
             entry = { listId: match.id, listName: match.name, lastPublishedAt: 0 }
         } else {
-            const newId = await createList(expectedName)
-            if (!newId) {
-                result.error = 'Failed to create PMDB list (rate limit or auth error)'
+            const created = await createList(expectedName)
+            if (!created.id) {
+                result.error = 'Failed to create PMDB list'
+                result.lastError = `create: HTTP ${created.status}`
                 return result
             }
-            entry = { listId: newId, listName: expectedName, lastPublishedAt: 0 }
+            entry = { listId: created.id, listName: expectedName, lastPublishedAt: 0 }
         }
         registry[sKey] = entry
         saveRegistry(registry)
@@ -319,8 +338,12 @@ export async function publishRail(
                     imdbCache[item.id] = tmdbKey
                     cacheDirty = true
                     resolvedItems.push({ ...item, id: tmdbKey })
+                } else {
+                    result.unresolved++
                 }
             }
+        } else {
+            result.unresolved++
         }
     }
     if (cacheDirty) saveImdbTmdbCache(imdbCache)
@@ -347,6 +370,8 @@ export async function publishRail(
 
     let added = 0
     let removed = 0
+    let failedAdds = 0
+    let lastError: string | undefined
 
     for (let i = 0; i < toRemove.length; i += CONCURRENCY) {
         if (signal?.aborted) break
@@ -356,7 +381,7 @@ export async function publishRail(
             if (ok) removed++
         }))
         if (onProgress) onProgress(added, removed)
-        await sleep(BATCH_DELAY_MS)
+        await sleep(jitter(BATCH_DELAY_MS))
     }
 
     for (let i = 0; i < toAdd.length; i += CONCURRENCY) {
@@ -365,15 +390,21 @@ export async function publishRail(
         await Promise.allSettled(chunk.map(async (item) => {
             const tmdbId = Number(item.id.replace('tmdb:', ''))
             const mediaType = (item.type === 'series' || item.type === 'anime') ? 'tv' : 'movie'
-            const ok = await addListItem(entry!.listId, tmdbId, mediaType)
-            if (ok) added++
+            const add = await addListItem(entry!.listId, tmdbId, mediaType)
+            if (add.ok) added++
+            else {
+                failedAdds++
+                lastError = `add: HTTP ${add.status}`
+            }
         }))
         if (onProgress) onProgress(added, removed)
-        await sleep(BATCH_DELAY_MS)
+        await sleep(jitter(BATCH_DELAY_MS))
     }
 
     result.added = added
     result.removed = removed
+    result.failed = failedAdds
+    if (lastError) result.lastError = lastError
 
     entry.lastPublishedAt = Date.now()
     registry[sKey] = entry
