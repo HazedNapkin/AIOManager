@@ -13,21 +13,25 @@ body:
     attributes:
       label: Version
       description: What version are you using? The version number can be seen at the bottom of your AIOManager page.
-      placeholder: v1.8.5+build.2
+      placeholder: v2.0.0
     validations:
       required: true
   - type: dropdown
     id: instance
     attributes:
       label: Instance
-      description: What instance are using?
+      description: What instance are using? Beta instances run pre-release builds.
       multiple: false
       options:
         - Selfhosted instance
-        - ElfHosted
-        - Midnight (ForTheWeebs)
-        - Yeb (ForTheWeak)
-        - Kuu
+        - Elfhosted
+        - Midnight's
+        - Yeb's
+        - Kuu's
+        - "Ibby's (beta)"
+        - "Kuu's (beta)"
+        - "Yeb's (beta)"
+        - Other
     validations:
       required: true
   - type: input
