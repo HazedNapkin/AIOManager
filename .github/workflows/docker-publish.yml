@@ -62,6 +62,12 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # ghcr rejects an uppercase path and github.repository preserves the
+      # owner's casing, so the name is lowered before it reaches a ref.
+      - name: Compute the ghcr image name
+        id: img
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.11.1
 
@@ -87,7 +93,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           pull: true
           outputs: |
-            type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+            type=image,name=${{ env.REGISTRY }}/${{ steps.img.outputs.name }},push-by-digest=true,name-canonical=true,push=true
             type=image,name=${{ env.DOCKER_HUB_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
@@ -159,7 +165,7 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          for image in "${REGISTRY}/${IMAGE_NAME}" "${DOCKER_HUB_IMAGE}"; do
+          for image in "${REGISTRY}/${IMAGE_NAME,,}" "${DOCKER_HUB_IMAGE}"; do
             tag_args=()
             while read -r tag; do
               [ -n "$tag" ] || continue
