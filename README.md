@@ -110,6 +110,7 @@ Browse and install addons from the community directory at stremio-addons.net. Se
 * **Local First**: Your data stays in your browser via IndexedDB.
 * **Encrypted Cloud**: Optional sync using AES-256-GCM encryption. User-side keys never leave your device.
 * **Server-Side Protection**: Autopilot rules, Stremio auth keys, and connection credentials are encrypted at rest on the server using a global `ENCRYPTION_KEY` secret.
+* **Remember This Device**: An opt-in saved sign-in for your own devices. The server stores only a scrypt-hashed per-device token (revocable without changing your password), your keys stay wrapped in your browser, and on capable devices the secret lives in your device's secure hardware via a passkey. See the Kronorium for the full walkthrough.
 
 #### Encrypted Vault
 ![Vault](public/screenshots/Vault.png)
@@ -179,6 +180,12 @@ You don't need to manually configure encryption for it to work:
 *   **Localhost**: Works over `http://localhost:1610`.
 *   **Remote/Server**: **HTTPS is Mandatory** (via reverse proxy like Traefik, Caddy, or Nginx Proxy Manager).
 *   **Plain HTTP over IP**: Accessing via `http://192.168.x.x` **will not work**.
+
+> [!TIP]
+> **Sync payload size**: Cloud Sync pushes your full encrypted data in a single request. If you put AIOManager behind plain nginx (not NPM, Traefik, or Caddy), raise its default 1MB body limit or large syncs will fail with 413:
+> ```
+> client_max_body_size 32m;
+> ```
 
 #### Option 2: Browser Bypass (Advanced / Chrome & Edge)
 If you cannot set up a reverse proxy, you can force your browser to treat your server's IP as secure:

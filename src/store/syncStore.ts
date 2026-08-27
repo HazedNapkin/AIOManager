@@ -71,6 +71,28 @@ export function markAccountsHydrated() {
     _accountsHydrated = true
 }
 
+// Identity profile lives outside the churnable auth object: session resets, 401 wipes and
+// expiry paths must never erase the user's chosen name or avatar. The id stamp scopes the
+// local fallback to the owning account so identities never bleed across accounts.
+const IDENTITY_KEY = 'aio-identity-v1'
+
+export function readIdentityProfile(): { id: string | null; name: string; avatar: string | null } {
+    try {
+        const raw = JSON.parse(localStorage.getItem(IDENTITY_KEY) || '{}') as { id?: unknown; name?: unknown; avatar?: unknown }
+        return {
+            id: typeof raw.id === 'string' && raw.id ? raw.id : null,
+            name: typeof raw.name === 'string' ? raw.name : '',
+            avatar: typeof raw.avatar === 'string' && raw.avatar ? raw.avatar : null,
+        }
+    } catch {
+        return { id: null, name: '', avatar: null }
+    }
+}
+
+function writeIdentityProfile(id: string, name: string, avatar: string | null): void {
+    try { localStorage.setItem(IDENTITY_KEY, JSON.stringify({ id, name, avatar })) } catch {}
+}
+
 export interface SyncHistoryEntry {
     id: string
     timestamp: string
@@ -85,6 +107,7 @@ interface SyncState {
         id: string
         password: string
         name: string
+        avatar: string | null
         isAuthenticated: boolean
     }
     serverUrl: string
@@ -102,7 +125,7 @@ interface SyncState {
     setLastSeenVersion: (version: string) => void
     addLogEntry: (data: Omit<SyncHistoryEntry, 'id' | 'timestamp'>) => void
     register: (password: string, name?: string) => Promise<void>
-    login: (id: string, password: string, isSilent?: boolean, bypassGuard?: boolean) => Promise<void>
+    login: (id: string, password: string, isSilent?: boolean, bypassGuard?: boolean, deviceUnlock?: { syncKey: CryptoKey }) => Promise<void>
     logout: () => void
     syncToRemote: (isAuto?: boolean, isDebounced?: boolean, forceFull?: boolean) => Promise<boolean>
     syncFromRemote: (isSilent?: boolean) => Promise<void>
@@ -111,13 +134,14 @@ interface SyncState {
     forceMirrorState: () => Promise<void>
     setServerUrl: (url: string) => void
     setDisplayName: (name: string) => void
+    setAvatar: (avatar: string | null) => void
     deleteRemoteAccount: () => Promise<void>
     reset: () => void
 }
 
 const DEFAULT_SERVER = '/api'
 
-    const SYNC_PASSWORD_KEY = 'aioman-sync-password'
+const LEGACY_SYNC_PASSWORD_KEY = 'aioman-sync-password'
 
 export function getSyncApiPath(serverUrl: string | undefined): string {
     const base = (serverUrl || DEFAULT_SERVER).trim().replace(/\/+$/, '')
@@ -126,17 +150,32 @@ export function getSyncApiPath(serverUrl: string | undefined): string {
     return base.endsWith('/api') ? base : `${base}/api`
 }
 
-export const savePasswordToSession = (password: string) => {
-    try { sessionStorage.setItem(SYNC_PASSWORD_KEY, password) } catch (e) { if (import.meta.env.DEV) console.error(e) }
-}
-
-const loadPasswordFromSession = (): string => {
-    try { return sessionStorage.getItem(SYNC_PASSWORD_KEY) || '' } catch (e) { if (import.meta.env.DEV) console.error(e); return '' }
-}
-
-const clearPasswordFromSession = () => {
-    try { sessionStorage.removeItem(SYNC_PASSWORD_KEY) } catch (e) { if (import.meta.env.DEV) console.error(e) }
+const clearSyncCredentialCaches = () => {
+    try { sessionStorage.removeItem(LEGACY_SYNC_PASSWORD_KEY) } catch (e) { if (import.meta.env.DEV) console.error(e) }
     import('@/lib/crypto').then(({ clearSyncKeyCache }) => clearSyncKeyCache()).catch(() => {})
+}
+
+async function isDeviceSessionActive(): Promise<boolean> {
+    try {
+        const { isDeviceAuthActive } = await import('@/lib/device-session')
+        return isDeviceAuthActive()
+    } catch {
+        return false
+    }
+}
+
+async function getActiveDeviceSyncKey(): Promise<CryptoKey | null> {
+    try {
+        const { getDeviceSyncKey } = await import('@/lib/device-session')
+        return getDeviceSyncKey()
+    } catch {
+        return null
+    }
+}
+
+async function deviceUnlockFromSession(): Promise<{ syncKey: CryptoKey } | undefined> {
+    const syncKey = await getActiveDeviceSyncKey()
+    return syncKey ? { syncKey } : undefined
 }
 
 export const useSyncStore = create<SyncState>()(
@@ -145,7 +184,8 @@ export const useSyncStore = create<SyncState>()(
             auth: {
                 id: '',
                 password: '',
-                name: '',
+                name: readIdentityProfile().name,
+                avatar: readIdentityProfile().avatar,
                 isAuthenticated: false
             },
             serverUrl: '',
@@ -182,13 +222,23 @@ export const useSyncStore = create<SyncState>()(
                 set((state) => ({
                     auth: { ...state.auth, name }
                 }))
+                writeIdentityProfile(get().auth.id, name, get().auth.avatar ?? null)
+                get().syncToRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
+            },
+
+            setAvatar: (avatar) => {
+                set((state) => ({
+                    auth: { ...state.auth, avatar }
+                }))
+                writeIdentityProfile(get().auth.id, get().auth.name, avatar)
                 get().syncToRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
             },
 
             syncFromRemote: async (isSilent: boolean = true) => {
                 const { auth } = get()
                 if (!auth.isAuthenticated) return
-                await get().login(auth.id, auth.password, isSilent)
+                if (!auth.password && !(await isDeviceSessionActive())) return
+                await get().login(auth.id, auth.password, isSilent, undefined, await deviceUnlockFromSession())
             },
 
             /**
@@ -199,14 +249,15 @@ export const useSyncStore = create<SyncState>()(
              */
             refreshFromCloud: async () => {
                 const { auth, isSyncing } = get()
-                if (!auth.isAuthenticated || !auth.id || !auth.password) return
+                if (!auth.isAuthenticated || !auth.id) return
+                if (!auth.password && !(await isDeviceSessionActive())) return
                 if (isSyncing) return
 
                 const releaseSyncLock = await acquireSyncLock()
 
                 set({ isRefreshingFromCloud: true })
                 try {
-                    await get().login(auth.id, auth.password, true, true)
+                    await get().login(auth.id, auth.password, true, true, await deviceUnlockFromSession())
                     set({ isInitialSyncCompleted: true })
                 } catch (e) {
                     if (import.meta.env.DEV) console.error('[Sync] Post-unlock cloud refresh failed:', e)
@@ -293,9 +344,9 @@ export const useSyncStore = create<SyncState>()(
                         throw setupError
                     }
 
-                    savePasswordToSession(password)
+                    writeIdentityProfile(newId, name, null)
                     set({
-                        auth: { id: newId, password, name, isAuthenticated: true },
+                        auth: { id: newId, password, name, avatar: null, isAuthenticated: true },
                         lastSyncedAt: new Date().toISOString(),
                         isInitialSyncCompleted: true,
                         syncSaltB64,
@@ -312,7 +363,7 @@ export const useSyncStore = create<SyncState>()(
                 }
             },
 
-            login: async (id: string, password: string, isSilent: boolean = false, bypassGuard: boolean = false) => {
+            login: async (id: string, password: string, isSilent: boolean = false, bypassGuard: boolean = false, deviceUnlock?: { syncKey: CryptoKey }) => {
                 if (get().isSyncing && !bypassGuard) return
                 set({ isSyncing: true })
                 const { serverUrl } = get()
@@ -361,7 +412,20 @@ export const useSyncStore = create<SyncState>()(
                         return
                     }
 
-                    if (res.status === 401) throw new Error("Incorrect Password. If you've forgotten it, you may need to reset your account.")
+                    if (res.status === 401) {
+                        let reason = ''
+                        try {
+                            const body = await res.json() as { reason?: unknown }
+                            if (body && typeof body.reason === 'string') reason = body.reason
+                        } catch {}
+                        if (deviceUnlock && (reason === 'revoked' || reason === 'expired' || reason === 'generation')) {
+                            throw Object.assign(new Error('Your remembered sign-in ended. Sign in again to continue.'), { reason })
+                        }
+                        if (deviceUnlock && reason === 'unknown') {
+                            throw Object.assign(new Error('This device is no longer recognized. Sign in again to continue.'), { reason })
+                        }
+                        throw new Error("Incorrect Password. If you've forgotten it, you may need to reset your account.")
+                    }
                     if (res.status === 404) throw new Error("Cloud Account not found. Check the ID or Register a new one.")
                     if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status}). Try again later.`)
 
@@ -388,7 +452,9 @@ export const useSyncStore = create<SyncState>()(
                                 if (!get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
                             }
                             try {
-                                decryptedStr = await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
+                                decryptedStr = deviceUnlock
+                                    ? await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceUnlock.syncKey))
+                                    : await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
                             } catch {
                                 throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
                             }
@@ -476,7 +542,8 @@ export const useSyncStore = create<SyncState>()(
                     // If no in-memory key (fresh page load / re-login after corruption),
                     // try to derive one from the local salt + password so we can still
                     // decrypt existing local account authKeys during reconciliation.
-                    if (!preUnlockEncryptionKey) {
+                    // Remembered sessions already carry the key; nothing to derive.
+                    if (!preUnlockEncryptionKey && !deviceUnlock) {
                         const { loadSalt, deriveKey } = await import('@/lib/crypto')
                         const localSalt = loadSalt()
                         if (localSalt) {
@@ -511,16 +578,25 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     let unlockOk = false
-                    try {
-                        const allowGen = saltPolicy.allowGenerate || (saltPolicy.refuse && bypassGuard)
-                        await useAuthStore.getState().unlockFromSync(password, saltPolicy.saltToUse, { allowGenerate: allowGen })
-                        unlockOk = true
-                    } catch (e) {
-                        if (import.meta.env.DEV) console.error("Failed to restore session from sync:", e)
-                        if (!isSilent) {
-                            throw new Error("Could not sign in with this password. (Encryption Mismatch)")
+                    if (deviceUnlock) {
+                        // Remembered session: the vault key was unwrapped locally and injected
+                        // before this pull; unlockFromSync would need the password.
+                        unlockOk = !!useAuthStore.getState().encryptionKey
+                        if (!unlockOk && !isSilent) {
+                            throw new Error('Remembered sign-in could not unlock the vault. Sign in again.')
                         }
-                        // Silent path: don't attempt data import without an encryption key
+                    } else {
+                        try {
+                            const allowGen = saltPolicy.allowGenerate || (saltPolicy.refuse && bypassGuard)
+                            await useAuthStore.getState().unlockFromSync(password, saltPolicy.saltToUse, { allowGenerate: allowGen })
+                            unlockOk = true
+                        } catch (e) {
+                            if (import.meta.env.DEV) console.error("Failed to restore session from sync:", e)
+                            if (!isSilent) {
+                                throw new Error("Could not sign in with this password. (Encryption Mismatch)")
+                            }
+                            // Silent path: don't attempt data import without an encryption key
+                        }
                     }
 
                     // Guard: skip all encrypted store operations if unlock failed
@@ -649,9 +725,25 @@ export const useSyncStore = create<SyncState>()(
                         try { localStorage.setItem('aio-discover-prefs', JSON.stringify(syncData.discoverPrefs)) } catch {}
                     }
 
-                    savePasswordToSession(password)
+                    // Identity is upgrade-only on pull: an empty name/avatar in the cloud
+                    // (a stale push from another device) can never erase what this device has.
+                    // The local fallback only applies to the SAME account (no cross-account bleed).
+                    const localAuth = get().auth
+                    const profile = readIdentityProfile()
+                    const sameAccount = profile.id === id
+                    const fallbackName = sameAccount ? (localAuth.name || profile.name) : ''
+                    const fallbackAvatar = sameAccount ? (localAuth.avatar ?? profile.avatar) : null
+                    const restoredName = (syncData.name as string) || fallbackName
+                    const restoredAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : fallbackAvatar
+                    writeIdentityProfile(id, restoredName, restoredAvatar)
                     set({
-                        auth: { id, password, name: (syncData.name as string) || '', isAuthenticated: true },
+                        auth: {
+                            id,
+                            password,
+                            name: restoredName,
+                            avatar: restoredAvatar,
+                            isAuthenticated: true
+                        },
                         lastSyncedAt: (syncData.syncedAt as string) || new Date().toISOString(),
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
@@ -718,7 +810,7 @@ export const useSyncStore = create<SyncState>()(
                                 trace('sync', 'pull.corrupt-restored', { accountId: id })
                                 _corruptRestoreInFlight = true
                                 try {
-                                    return await get().login(id, password, isSilent, bypassGuard)
+                                    return await get().login(id, password, isSilent, bypassGuard, deviceUnlock)
                                 } finally {
                                     _corruptRestoreInFlight = false
                                 }
@@ -781,12 +873,15 @@ export const useSyncStore = create<SyncState>()(
                 if (_syncDebounceTimer) { clearTimeout(_syncDebounceTimer); _syncDebounceTimer = null }
                 if (_onlineHandler) { window.removeEventListener('online', _onlineHandler); _onlineHandler = null }
                 if (_syncBC) { _syncBC.close(); _syncBC = null }
-                clearPasswordFromSession()
+                clearSyncCredentialCaches()
+                import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
                 import('@/lib/canonical-base').then(({ clearCanonicalBases }) => clearCanonicalBases()).catch(() => {})
                 import('@/lib/pmdb-list-publisher').then(({ _invalidateAuthCache }) => _invalidateAuthCache()).catch(() => {})
                 import('@/api/hydra-providers').then(({ _clearCanonicalCache }) => _clearCanonicalCache()).catch(() => {})
                 set({
-                    auth: { id: '', password: '', name: '', isAuthenticated: false },
+                    // Profile (name + avatar) survives sign-out on purpose: the login screen's
+                    // Continue strip and avatar are driven from it, like every keep-me-signed-in app.
+                    auth: { id: '', password: '', name: get().auth.name, avatar: get().auth.avatar, isAuthenticated: false },
                     lastSyncedAt: null,
                     lastSyncCheckedAt: null,
                     isInitialSyncCompleted: false,
@@ -810,8 +905,9 @@ export const useSyncStore = create<SyncState>()(
                 }
                 const { auth, serverUrl, isSyncing, isInitialSyncCompleted } = get()
                 const { isLocked } = useAuthStore.getState()
-                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated) {
-                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : 'account state not hydrated'
+                const hasSessionCredentials = !!auth.password || (await isDeviceSessionActive())
+                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials) {
+                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : 'account state not hydrated'
                     if (!isAuto) {
                         get().addLogEntry({ type: 'push', status: 'error', message: `Push skipped: ${reason}.`, isAuto: false })
                         trace('sync', 'push.guard-reject', { accountId: auth.id, reason })
@@ -940,6 +1036,7 @@ export const useSyncStore = create<SyncState>()(
                         deletedWatchEvents: watchExport.deletedEvents,
                         salt: saltBase64,
                         name: auth.name,
+                        avatar: auth.avatar ?? null,
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
@@ -989,7 +1086,14 @@ export const useSyncStore = create<SyncState>()(
                             isCompressed = true
                         } catch {}
                     }
-                    const encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
+                    let encryptedState: string
+                    if (auth.password) {
+                        encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
+                    } else {
+                        const deviceSyncKey = await getActiveDeviceSyncKey()
+                        if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
+                        encryptedState = await import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(compressedPayload, deviceSyncKey))
+                    }
 
                     // Canonical addon lists for accounts the server can't read itself. A
                     // server-side Stremio credential (serverStremioCredentialedAccounts, learned
@@ -1034,9 +1138,15 @@ export const useSyncStore = create<SyncState>()(
                     })
 
                     if (res.status === 401) {
-                        set({ auth: { id: '', password: '', name: '', isAuthenticated: false }, isInitialSyncCompleted: false })
-                        clearPasswordFromSession()
+                        const profile = readIdentityProfile()
+                        set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isInitialSyncCompleted: false })
+                        clearSyncCredentialCaches()
+                        import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
                         throw new Error('Sync session expired')
+                    }
+
+                    if (res.status === 413) {
+                        throw new Error('Sync data was too large for the server to accept (413). If AIOManager sits behind nginx, raise client_max_body_size in its config. Your data is safe locally and will push once the limit is raised.')
                     }
 
                     if (!res.ok) {
@@ -1151,6 +1261,7 @@ export const useSyncStore = create<SyncState>()(
             forceMirrorState: async () => {
                 const { auth, serverUrl } = get()
                 if (!auth.isAuthenticated) return
+                if (!auth.password && !(await isDeviceSessionActive())) return
                 set({ isSyncing: true })
 
                 const apiPath = getSyncApiPath(serverUrl)
@@ -1171,7 +1282,14 @@ export const useSyncStore = create<SyncState>()(
                         const remoteSyncSalt = raw.syncSalt && typeof raw.syncSalt === 'string'
                             ? Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
                             : undefined
-                        const decryptedStr = await decryptPayload(raw.data as string, auth.password, remoteSyncSalt)
+                        let decryptedStr: string
+                        if (auth.password) {
+                            decryptedStr = await decryptPayload(raw.data as string, auth.password, remoteSyncSalt)
+                        } else {
+                            const deviceSyncKey = await getActiveDeviceSyncKey()
+                            if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
+                            decryptedStr = await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceSyncKey))
+                        }
                         const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
                         data = JSON.parse(payloadStr) as Record<string, unknown>
                     } else {
@@ -1292,7 +1410,7 @@ export const useSyncStore = create<SyncState>()(
             reset: () => {
                 _accountsHydrated = false
                 set({
-                    auth: { id: '', password: '', name: '', isAuthenticated: false },
+                    auth: { id: '', password: '', name: '', avatar: null, isAuthenticated: false },
                     serverUrl: '',
                     lastSyncedAt: null,
                     lastSyncCheckedAt: null,
@@ -1313,6 +1431,7 @@ export const useSyncStore = create<SyncState>()(
                 auth: {
                     id: state.auth.id,
                     name: state.auth.name,
+                    avatar: state.auth.avatar,
                     isAuthenticated: state.auth.isAuthenticated,
                     password: '',
                 },
@@ -1336,17 +1455,11 @@ export const useSyncStore = create<SyncState>()(
 )
 
 if (typeof window !== 'undefined') {
-    const restorePassword = () => {
-        const state = useSyncStore.getState()
-        if (state.auth.isAuthenticated && !state.auth.password) {
-            const savedPassword = loadPasswordFromSession()
-            if (savedPassword) {
-                useSyncStore.setState({ auth: { ...state.auth, password: savedPassword } })
-            }
-        }
-    }
-    restorePassword()
+    // Migration: stop storing the raw password (pre-remembered-device sessions).
+    try { sessionStorage.removeItem(LEGACY_SYNC_PASSWORD_KEY) } catch {}
     localStorage.removeItem('aio-pending-sync')
+
+    import('@/lib/device-session').then(({ reactivateDeviceSessionIfNeeded }) => reactivateDeviceSessionIfNeeded()).catch(() => {})
 
     _onlineHandler = () => {
         if (_pendingRetry) {

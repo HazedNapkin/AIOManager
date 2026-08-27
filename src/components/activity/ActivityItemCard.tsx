@@ -67,10 +67,12 @@ export const ActivityItemCard = memo(({
 
     const itemDate = useMemo(() => {
         const d = new Date(item.timestamp)
-        return isNaN(d.getTime()) ? new Date() : d
+        // Placeholder watch dates (Stremio rows with missing/zero lastWatched) render as unknown
+        // instead of "December 31, 2000" / "over 2025 years ago".
+        return isNaN(d.getTime()) || d.getTime() < Date.UTC(1995, 0, 1) ? null : d
     }, [item.timestamp])
 
-    const isLive = useMemo(() => Date.now() - itemDate.getTime() < 1200000, [itemDate])
+    const isLive = useMemo(() => !!itemDate && Date.now() - itemDate.getTime() < 1200000, [itemDate])
 
     const remainingMinutes = useMemo(() => item.duration && item.watched
         ? Math.max(0, Math.round((item.duration - item.watched) / 60000))
@@ -219,7 +221,7 @@ export const ActivityItemCard = memo(({
                         <span className="text-xs text-muted-foreground truncate font-medium">{userName}</span>
                         {!isLive && (
                             <span className="text-xs text-muted-foreground/60 font-mono ml-auto shrink-0">
-                                {formatDistanceToNow(itemDate, { addSuffix: true })}
+                                {itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
                             </span>
                         )}
                     </div>
@@ -323,7 +325,7 @@ export const ActivityItemCard = memo(({
                         <span className="text-xs font-semibold text-muted-foreground">{userName}</span>
                     </div>
                     <span className="text-xs text-muted-foreground/60 font-mono">
-                        {isLive ? 'Watching now' : formatDistanceToNow(itemDate, { addSuffix: true })}
+                        {isLive ? 'Watching now' : itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
                     </span>
                 </div>
 

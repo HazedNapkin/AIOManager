@@ -56,6 +56,7 @@ import { InstallAppCard } from '@/components/settings/InstallAppCard'
 import { RepairTools } from '@/components/settings/RepairTools'
 import { IntegrationsSection } from '@/components/settings/IntegrationsSection'
 import { ApiKeysSection } from '@/components/settings/ApiKeysSection'
+import { RememberedDevicesSection } from '@/components/settings/RememberedDevicesSection'
 
 type ImportPreview = {
     fileName: string
@@ -666,6 +667,7 @@ export function SettingsPage() {
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
                         <NotificationsSection />
                         <RepairTools />
+                        <RememberedDevicesSection />
                         <SyncDiagnostics />
                         <DangerZone />
                     </TabsContent>

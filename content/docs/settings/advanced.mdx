@@ -3,7 +3,22 @@ title: Advanced & Danger Zone
 description: Irreversible data operations for resetting or wiping AIOManager data.
 ---
 
-The Advanced tab contains irreversible data operations. All actions require toggling **Unlock Actions** before any button becomes active.
+The Advanced tab holds maintenance tools, remembered sign-in management, and irreversible data operations. Danger Zone actions additionally require toggling **Unlock Actions** before any button becomes active.
+
+## Remembered Devices
+
+Every browser where you ticked **Remember this device** at sign-in is listed here, with its label (the browser and device it identified itself as), unlock tier (**Passkey** or **Device key**), the date it was saved, and when it was last used. Your current browser is marked **This device**.
+
+| Action | Effect |
+|--------|--------|
+| **Revoke** | That browser's saved sign-in stops working immediately. Nothing is deleted from your data; the browser simply asks for your UUID and password next time. |
+| **Sign out everywhere** | All remembered devices are revoked at once. Use it after losing a device, or whenever you want a clean slate. |
+
+<Note>The list shows remembered browsers only. Regular password sign-ins are not tracked.</Note>
+
+See [Remember This Device](/kronorium/getting-started/remember-this-device) for how saved sign-ins work.
+
+## Danger Zone
 
 <Warning>These actions cannot be undone. Export a backup from Settings → Data & Sync before proceeding.</Warning>
 

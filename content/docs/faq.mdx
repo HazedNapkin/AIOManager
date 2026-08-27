@@ -97,6 +97,12 @@ Answers to frequently asked questions about AIOManager.
   <Accordion title="What if I forget my Master Password?">
     There is no recovery. AIOManager's client-side encryption means the server never sees your key. You will need to clear the vault and re-add your keys from scratch.
   </Accordion>
+  <Accordion title="What does Remember this device store?">
+    A random per-device token (stored only as a scrypt hash on the server) plus your vault and sync keys, encrypted together inside your own browser. On capable devices the unlocking secret is a passkey kept in your device's secure hardware instead. Your password is never stored by the feature, and you can revoke any device from Settings without changing it. See [Remember This Device](/kronorium/getting-started/remember-this-device).
+  </Accordion>
+  <Accordion title="My watch history looks capped. Is data being dropped?">
+    No. The limits are floors, not ceilings: the sync keeps at least 25,000 events overall and guarantees each account at least 2,000, with more carried while space allows. When older events are folded out, they are summarized into rollups so your all-time totals in Metrics (hours watched, streaks, top titles) never lose anything. Raw event rows are the only thing trimmed, and only after they have been rolled up.
+  </Accordion>
 </Accordions>
 
 ---

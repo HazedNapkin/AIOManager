@@ -1,5 +1,5 @@
-import { deriveSyncToken } from '@/lib/crypto'
 import { useSyncStore, learnServerCredentialedAccounts } from '@/store/syncStore'
+import { getDeviceAwareAuthHeaders } from '@/lib/device-session'
 import { useWatchEventStore, type ServerActivityEvent } from '@/store/watchEventStore'
 
 const DEFAULT_SERVER = '/api'
@@ -33,19 +33,14 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs =
     }
 }
 
-async function getActivityServerStatus(apiPath: string, syncToken: string, syncUser: string): Promise<ActivityServerStatus | null> {
-    const cacheKey = `${apiPath}:${syncUser}`
+async function getActivityServerStatus(apiPath: string, authHeaders: Record<string, string>): Promise<ActivityServerStatus | null> {
+    const cacheKey = `${apiPath}:${authHeaders['x-sync-user']}`
     if (statusCache && statusCache.key === cacheKey && Date.now() - statusCache.ts < STATUS_CACHE_MS) {
         return statusCache.value
     }
 
     try {
-        const status = await fetchWithTimeout(`${apiPath}/activity/status`, {
-            headers: {
-                'x-sync-password': syncToken,
-                'x-sync-user': syncUser,
-            },
-        })
+        const status = await fetchWithTimeout(`${apiPath}/activity/status`, { headers: authHeaders })
         if (!status.ok) {
             statusCache = { key: cacheKey, ts: Date.now(), value: null }
             return null
@@ -79,11 +74,14 @@ function writeActivityCursor(ts: number) {
 
 export async function fetchAndMergeServerEvents(): Promise<number> {
     const { auth, serverUrl } = useSyncStore.getState()
-    if (!auth.isAuthenticated || !auth.password) return 0
+    if (!auth.isAuthenticated) return 0
+    let authHeaders: Record<string, string>
+    try {
+        authHeaders = await getDeviceAwareAuthHeaders()
+    } catch { return 0 }
 
     const apiPath = getApiBase(serverUrl)
-    const syncToken = await deriveSyncToken(auth.password)
-    const status = await getActivityServerStatus(apiPath, syncToken, auth.id)
+    const status = await getActivityServerStatus(apiPath, authHeaders)
     if (!status?.engineEnabled) return 0
 
     const since = readActivityCursor()
@@ -99,12 +97,7 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
             const sinceParam = since > 0 ? `&since=${since}` : ''
             const res = await fetchWithTimeout(
                 `${apiPath}/activity/events?limit=${SERVER_EVENT_PAGE_LIMIT}&offset=${offset}${sinceParam}`,
-                {
-                    headers: {
-                        'x-sync-password': syncToken,
-                        'x-sync-user': auth.id,
-                    },
-                }
+                { headers: authHeaders }
             )
             if (!res.ok) break
 
@@ -137,11 +130,14 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
 
 export async function pushCredentialsToServer(): Promise<number> {
     const { auth, serverUrl } = useSyncStore.getState()
-    if (!auth.isAuthenticated || !auth.password) return 0
+    if (!auth.isAuthenticated) return 0
+    let authHeaders: Record<string, string>
+    try {
+        authHeaders = await getDeviceAwareAuthHeaders()
+    } catch { return 0 }
 
     const apiPath = getApiBase(serverUrl)
-    const syncToken = await deriveSyncToken(auth.password)
-    const status = await getActivityServerStatus(apiPath, syncToken, auth.id)
+    const status = await getActivityServerStatus(apiPath, authHeaders)
     if (!status?.engineEnabled) return 0
 
     const { useAuthStore } = await import('@/store/authStore')
@@ -169,8 +165,7 @@ export async function pushCredentialsToServer(): Promise<number> {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'x-sync-password': syncToken,
-                'x-sync-user': auth.id,
+                ...authHeaders,
             },
             body: JSON.stringify({ accounts: authKeys, allAccountIds: accounts.map(a => a.id) }),
         })

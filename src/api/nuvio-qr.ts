@@ -1,7 +1,7 @@
 import type { QRSession, QRPollOutcome } from '@/lib/qr-device-link'
 import { mapNuvioPollErrorStatus, mapNuvioPollStatus, parseExpiry } from '@/lib/qr-device-link'
 import { useSyncStore, getSyncApiPath } from '@/store/syncStore'
-import { deriveSyncToken } from '@/lib/crypto'
+import { getDeviceAwareAuthHeaders } from '@/lib/device-session'
 
 interface NuvioQrStartResponse {
     code: string
@@ -27,15 +27,11 @@ function platformDataOf(session: QRSession): { deviceNonce?: string; anonToken?:
 }
 
 async function postQr<T>(path: string, payload: Record<string, unknown>): Promise<T> {
-    const { auth, serverUrl } = useSyncStore.getState()
-    if (!auth?.id || !auth?.password) throw new Error('Not authenticated')
+    const { serverUrl } = useSyncStore.getState()
+    const headers = await getDeviceAwareAuthHeaders()
     const res = await fetch(`${getSyncApiPath(serverUrl)}/providers/nuvio/qr/${path}`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-sync-user': auth.id,
-            'x-sync-password': await deriveSyncToken(auth.password),
-        },
+        headers,
         body: JSON.stringify(payload),
     })
     if (!res.ok) {

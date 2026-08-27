@@ -11,6 +11,7 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { useSyncStore, markAccountsHydrated } from '@/store/syncStore'
 import { useNotesStore } from '@/store/notesStore'
 import { LoginPage } from '@/pages/LoginPage'
+import { DeviceNameDialog } from '@/components/auth/DeviceNameDialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useNavigate, Routes, Route } from 'react-router-dom'
 import { useEffect, useState, lazy, Suspense } from 'react'
@@ -363,6 +364,7 @@ function App() {
         {keybindingsSeen && <Suspense fallback={null}><KeybindingsHelp isOpen={showShortcuts} onClose={() => setShowShortcuts(false)} /></Suspense>}
       </Layout>
       <Toaster />
+      <DeviceNameDialog />
     </TooltipProvider>
   )
 }
