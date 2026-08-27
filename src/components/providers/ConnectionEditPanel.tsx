@@ -1291,7 +1291,9 @@ export function ConnectionEditPanel({
                     <TabsList>
                         <TabsTrigger value="membership">Membership</TabsTrigger>
                         <TabsTrigger value="connection">Connection</TabsTrigger>
-                        {isStremio && premium?.active && (
+                        {/* Supporters Profiles tab hidden: the selector wrote a credential field no sync path reads.
+                            Returns with the Profile Quick-Add roster (real per-profile accounts). */}
+                        {false && isStremio && premium?.active && (
                             <TabsTrigger value="profiles">Supporters Profiles</TabsTrigger>
                         )}
                         {isStremio && (

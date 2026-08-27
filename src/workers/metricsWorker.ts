@@ -115,6 +115,16 @@ interface TopAllTimeEntry {
     shared: boolean
 }
 
+interface RollupMonthEntry {
+    count: number
+    minutes: number
+}
+
+interface EventRollupsPayload {
+    byMonth: Record<string, RollupMonthEntry>
+    daysByAccount: Record<string, string[]>
+}
+
 interface MetricsResult {
     totalItems: number
     totalHours: number
@@ -153,9 +163,9 @@ interface MetricsResult {
     _message?: string
 }
 
-self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
+self.onmessage = (e: MessageEvent<{ items: ActivityItem[]; rollups?: EventRollupsPayload }>) => {
     try {
-    const { items } = e.data
+    const { items, rollups } = e.data
     if (!items || items.length === 0) {
         self.postMessage(null)
         return
@@ -328,6 +338,28 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         }
     })
 
+    // Evicted events exist only in rollups, so adding them to event-derived stats never double counts.
+    const rollupCountByItem = new Map<string, number>()
+    let rollupMinutesTotal = 0
+    let rollupEarliestMs = Infinity
+    if (rollups) {
+        const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+        for (const [key, entry] of Object.entries(rollups.byMonth)) {
+            if (!entry || typeof entry.count !== 'number' || typeof entry.minutes !== 'number') continue
+            const lastColon = key.lastIndexOf(':')
+            const month = key.slice(lastColon + 1)
+            const firstColon = key.indexOf(':')
+            if (lastColon <= 0 || firstColon === lastColon || !MONTH_KEY_RE.test(month)) continue
+            const itemId = key.slice(firstColon + 1, lastColon)
+            rollupCountByItem.set(itemId, (rollupCountByItem.get(itemId) || 0) + entry.count)
+            rollupMinutesTotal += entry.minutes
+            const [y, m] = month.split('-').map(Number)
+            const monthStart = new Date(y, m - 1, 1).getTime()
+            if (monthStart < rollupEarliestMs) rollupEarliestMs = monthStart
+        }
+    }
+    totalDurationMinutes += rollupMinutesTotal
+
     // Binge Logic
     const chronoHistory = [...normalizedItems].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     const tempBingeTracker: Record<string, { currentChain: ActivityItem[], lastTime: Date }> = {}
@@ -402,7 +434,10 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     // Streaks
     const streakStats = Object.keys(userStats).map(uid => {
         const u = userStats[uid]
-        const localDays = [...new Set<string>(u.allDates.map((d: Date) => toLocalDayKey(d instanceof Date ? d.getTime() : new Date(d).getTime())))]
+        const localDays = [...new Set<string>([
+            ...u.allDates.map((d: Date) => toLocalDayKey(d instanceof Date ? d.getTime() : new Date(d).getTime())),
+            ...(rollups?.daysByAccount?.[uid] || []),
+        ])]
         localDays.sort()
         let currentStreak = 0, bestStreak = 0, tempStreak = 0
         if (localDays.length > 0) {
@@ -437,11 +472,11 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
     const bingeMasters = [...streakStats].sort((a, b) => b.bingeDuration - a.bingeDuration)
     const streakMasters = [...streakStats].sort((a, b) => b.bestStreak - a.bestStreak)
     const topTrending = Object.values(trendingItems).sort((a, b) => b.count - a.count).slice(0, 10).map(t => t.item)
-    const topAllTime = Object.values(contentStats).sort((a, b) => b.count - a.count).slice(0, 20).map(c => ({
-        count: c.count,
+    const topAllTime = Object.values(contentStats).map(c => ({
+        count: c.count + (rollupCountByItem.get(c.item.itemId) || 0),
         item: c.item,
         shared: c.accounts.size > 1
-    }))
+    })).sort((a, b) => b.count - a.count).slice(0, 20)
 
     const sharedUniverse = Object.values(contentStats)
         .filter((cs) => cs.accounts.size > 1)
@@ -498,7 +533,9 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[] }>) => {
         .sort((a, b) => a.firstSeen.getTime() - b.firstSeen.getTime())
     const firstWatch = allContentFirsts.length > 0 ? {
         item: allContentFirsts[0].item,
-        date: allContentFirsts[0].firstSeen
+        date: rollupEarliestMs < allContentFirsts[0].firstSeen.getTime()
+            ? new Date(rollupEarliestMs)
+            : allContentFirsts[0].firstSeen
     } : null
 
     const dailyActivity: Record<string, number> = {}
