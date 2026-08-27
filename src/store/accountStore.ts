@@ -354,7 +354,7 @@ export interface AccountStore {
       importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
       updateAccount: (
             id: string,
-            data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
+            data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
       ) => Promise<void>
       updateAccountNote: (accountId: string, note: string) => Promise<void>
       toggleAddonProtection: (
@@ -929,7 +929,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return importAccounts(json, isSilent, mode, localDecryptionKey)
       },
 
-      updateAccount: async (id: string, data: { name: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {
+      updateAccount: async (id: string, data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {
             // The re-auth branch awaits (login + getAddons) then writes a snapshot taken before the
             // await, which would clobber any addon op that landed meanwhile. Hold the per-account
             // mutex so this serializes with addon writes instead of racing them.
@@ -943,14 +943,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
                   const updatedAccount: Account = {
                         ...account,
-                        name: data.name,
-                        accentColor: data.accentColor,
-                        emoji: data.emoji,
+                        name: data.name ?? account.name,
+                        accentColor: data.accentColor ?? account.accentColor,
+                        emoji: data.emoji ?? account.emoji,
                         avatar: 'avatar' in data ? data.avatar : account.avatar,
-                        note: data.note || undefined,
-                        hideLastWatched: data.hideLastWatched ?? false,
-                        hideAddonPreview: data.hideAddonPreview ?? false,
-                        hidePlatformLogos: data.hidePlatformLogos ?? false,
+                        note: data.note ?? (account.note ?? undefined),
+                        hideLastWatched: data.hideLastWatched ?? (account.hideLastWatched ?? false),
+                        hideAddonPreview: data.hideAddonPreview ?? (account.hideAddonPreview ?? false),
+                        hidePlatformLogos: data.hidePlatformLogos ?? (account.hidePlatformLogos ?? false),
                   }
                   if (data.authKey || (data.email && data.password)) {
                         const encryptionKey = getEncryptionKey()
