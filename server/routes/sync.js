@@ -77,8 +77,8 @@ async function archiveCurrentKV(tx, key, authUser) {
             [now, key]
         )
         await tx.run(
-            `DELETE FROM kv_store_history WHERE key = ? AND archived_at NOT IN (
-                 SELECT archived_at FROM kv_store_history WHERE key = ? ORDER BY archived_at DESC LIMIT ?
+            `DELETE FROM kv_store_history WHERE key = $1 AND archived_at NOT IN (
+                 SELECT archived_at FROM kv_store_history WHERE key = $2 ORDER BY archived_at DESC LIMIT $3
              )`,
             [key, key, KV_HISTORY_KEEP]
         )
