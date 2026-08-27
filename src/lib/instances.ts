@@ -38,5 +38,31 @@ export const instances: Instance[] = [
     name: "Kuu's",
     url: 'https://aiomanager.stremio.ru',
   },
+  {
+    id: 'ibby-beta',
+    name: "Ibby's (beta)",
+    hostedBy: '@IbbyLabs',
+    hostedByUrl: 'https://ibbylabs.dev',
+    description: 'Hosted by an AIOManager community member. Tracks the beta release channel.',
+    warning: 'Runs pre-release builds. If something breaks here, check the stable instance before reporting it.',
+    url: 'https://aiomanager.ibbylabs.dev',
+  },
+  {
+    id: 'kuu-beta',
+    name: "Kuu's (beta)",
+    hostedBy: '@Kuu',
+    description: 'Tracks the beta release channel. Fixes land here first for early testing before they reach the stable release.',
+    warning: 'Runs pre-release builds. If something breaks here, check the stable instance before reporting it.',
+    url: 'https://aiomanager-beta.stremio.ru',
+  },
+  {
+    id: 'yeb-beta',
+    name: "Yeb's (beta)",
+    hostedBy: '@nhyyeb',
+    hostedByUrl: 'https://fortheweak.cloud',
+    description: 'Tracks the beta release channel. Fixes land here first for early testing before they reach the stable release.',
+    warning: 'Runs pre-release builds. If something breaks here, check the stable instance before reporting it.',
+    url: 'https://aiomanager-beta.fortheweak.cloud',
+  },
 ];
 

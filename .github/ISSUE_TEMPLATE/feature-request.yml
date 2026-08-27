@@ -1,0 +1,20 @@
+name: 🚀 Feature request
+description: Request a new feature.
+title: "[Feature request]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a new feature!
+        *To prevent duplicates be sure to search for existing feature requests first.*
+
+        **Please note:** AIOManager is feature complete. Suggestions are read but not scheduled; additions happen when the maintainer has interest or time. If you'd like something built, pull requests are welcome.
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: Feature description
+      description: Describe your suggestion. Detailed descriptions with context are easier to evaluate.
+      placeholder: My detailed feature suggestion...
+    validations:
+      required: true
