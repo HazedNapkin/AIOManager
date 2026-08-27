@@ -47,7 +47,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
     const [added, setAdded] = useState<ProfileQuickAddResult[]>([])
     const [failed, setFailed] = useState<ProfileQuickAddResult[]>([])
     const [skipped, setSkipped] = useState<ProfileQuickAddResult[]>([])
-    const accountsVersion = useAccountStore(s => s.accounts.length)
+    const accounts = useAccountStore(s => s.accounts)
 
     // Reset per invocation so repeated opens always reflect the current roster.
     useEffect(() => {
@@ -69,10 +69,9 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
     const createdAccounts = useMemo(() => (
         added.map(result => ({
             result,
-            account: useAccountStore.getState().accounts.find(a => a.id === result.accountId),
+            account: accounts.find(a => a.id === result.accountId),
         })).filter((pair): pair is { result: ProfileQuickAddResult; account: Account } => !!pair.account)
-    ), [added, accountsVersion])
-
+    ), [added, accounts])
     const runBatch = async (batch: ProfileQuickAddEntry[]) => {
         setSubmitting(true)
         try {
