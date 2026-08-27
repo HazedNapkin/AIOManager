@@ -4,6 +4,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
 import { ActivityItem } from '@/types/activity'
 import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail } from '@/lib/activity-utils'
+import { reconcileRailProgress } from '@/lib/rail-progress'
 import { trace } from '@/lib/trace'
 
 const GENRE_CACHE_STORAGE_KEY = 'aio-genre-map-v1'
@@ -346,11 +347,26 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             })
             : dedupedList
 
-        const inProgress = (accountId
-            ? liveItems.filter(i => i.accountId === accountId)
-            : liveItems
-        ).filter(i => i.isInProgress)
-            .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        const railEvents = eventEntries
+            .filter(entry => !entry.backfill)
+            .map(entry => ({
+                key: `${entry.accountId}:${getEpisodeIdentity(entry.itemId, entry.video_id, entry.season, entry.episode, entry.type)}`,
+                timestamp: entry.timestamp.getTime(),
+                progress: entry.progress,
+            }))
+
+        const inProgress = reconcileRailProgress(
+            (accountId
+                ? liveItems.filter(i => i.accountId === accountId)
+                : liveItems
+            ).filter(i => i.isInProgress)
+                .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+                .map(item => ({
+                    ...item,
+                    key: `${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`,
+                })),
+            railEvents
+        ).map(({ key: _key, ...item }) => item)
 
         return {
             history: enrichedHistory,

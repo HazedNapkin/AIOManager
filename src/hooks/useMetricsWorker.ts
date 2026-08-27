@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { ActivityItem } from '@/types/activity'
+import type { EventRollups } from '@/lib/watch-event-rollups'
 
 interface UserStatsEntry {
     id: string
@@ -206,11 +207,44 @@ function createItemsFingerprint(items: ActivityItem[]): string {
     return `${items.length}-${hash >>> 0}`
 }
 
-export function useMetricsWorker(items: ActivityItem[]) {
+export type MetricsRollupInput = Pick<EventRollups, 'byMonth' | 'daysByAccount'>
+
+function createRollupsFingerprint(rollups: MetricsRollupInput): string {
+    let hash = 2166136261
+
+    const mix = (value: unknown) => {
+        const text = String(value ?? '')
+        for (let i = 0; i < text.length; i++) {
+            hash ^= text.charCodeAt(i)
+            hash = Math.imul(hash, 16777619)
+        }
+        hash ^= 31
+        hash = Math.imul(hash, 16777619)
+    }
+
+    const byMonthKeys = Object.keys(rollups.byMonth)
+    for (const key of byMonthKeys) {
+        mix(key)
+        mix(rollups.byMonth[key].count)
+        mix(rollups.byMonth[key].minutes)
+    }
+    for (const [accountId, days] of Object.entries(rollups.daysByAccount)) {
+        mix(accountId)
+        mix(days.length)
+        if (days.length > 0) mix(days[0])
+    }
+
+    return `${byMonthKeys.length}-${hash >>> 0}`
+}
+
+export function useMetricsWorker(items: ActivityItem[], rollups?: MetricsRollupInput) {
     const [results, setResults] = useState<MetricsResult | null>(null)
     const [isComputing, setIsComputing] = useState(false)
     const workerRef = useRef<Worker | null>(null)
     const lastFingerprintRef = useRef<string>('')
+    const rollupsRef = useRef(rollups)
+    rollupsRef.current = rollups
+    const rollupsFingerprint = useMemo(() => (rollups ? createRollupsFingerprint(rollups) : ''), [rollups])
 
     useEffect(() => {
         if (!workerRef.current) {
@@ -251,7 +285,7 @@ export function useMetricsWorker(items: ActivityItem[]) {
         }
 
         const worker = workerRef.current
-        const fingerprint = createItemsFingerprint(items)
+        const fingerprint = `${createItemsFingerprint(items)}|${rollupsFingerprint}`
 
         if (fingerprint === lastFingerprintRef.current) {
             return
@@ -284,10 +318,10 @@ export function useMetricsWorker(items: ActivityItem[]) {
             setResults({ _error: true, _message: 'Metrics worker crashed.' } as MetricsResult)
         }
 
-        worker.postMessage({ items })
+        worker.postMessage({ items, rollups: rollupsRef.current })
 
         return () => clearTimeout(timeoutId)
-    }, [items])
+    }, [items, rollupsFingerprint])
 
     return { results, isComputing }
 }

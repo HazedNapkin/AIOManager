@@ -257,6 +257,7 @@ export const useSyncStore = create<SyncState>()(
                         notesTrash: [],
                         watchEvents: [],
                         watchSnapshot: {},
+                        watchEventRollups: { byMonth: {}, daysByAccount: {}, foldedThrough: {} },
                         deletedWatchEvents: {},
                         salt: saltBase64,
                         syncedAt: new Date().toISOString()
@@ -448,6 +449,7 @@ export const useSyncStore = create<SyncState>()(
                             customThemes: Array.isArray(d.customThemes) ? d.customThemes : [],
                             watchEvents: Array.isArray(d.watchEvents) ? d.watchEvents : [],
                             watchSnapshot: d.watchSnapshot || {},
+                            watchEventRollups: (d.watchEventRollups && typeof d.watchEventRollups === 'object') ? d.watchEventRollups : undefined,
                             deletedWatchEvents: (d.deletedWatchEvents && typeof d.deletedWatchEvents === 'object') ? d.deletedWatchEvents : {},
                             apiKeys: d.apiKeys,
                             accountStates: d.accountStates,
@@ -629,7 +631,10 @@ export const useSyncStore = create<SyncState>()(
                         const mergedEvents = Array.from(merged.values())
                             .sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
                         const mergedSnapshot = { ...(syncData.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
-                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted)
+                        const remoteRollups = (syncData.watchEventRollups && typeof syncData.watchEventRollups === 'object')
+                            ? syncData.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
+                            : undefined
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
 
                     if (Array.isArray(syncData.customThemes) && syncData.customThemes.length > 0) {
@@ -931,6 +936,7 @@ export const useSyncStore = create<SyncState>()(
                         notesTrash: (await import('@/store/notesStore')).useNotesStore.getState().trash,
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
+                        watchEventRollups: watchExport.rollups,
                         deletedWatchEvents: watchExport.deletedEvents,
                         salt: saltBase64,
                         name: auth.name,

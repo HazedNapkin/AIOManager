@@ -337,7 +337,9 @@ export function ActivityPage() {
         }
     }, [liveActivity, accounts, ensureLoaded])
 
-    const [userFilter, setUserFilter] = useState('all')
+    const [userFilter, setUserFilter] = useState(() => {
+        try { return localStorage.getItem('aio-activity-user-filter') || 'all' } catch { return 'all' }
+    })
     const [timeFilter, setTimeFilter] = useState(() => {
         try { return localStorage.getItem('activity-time-filter') || 'all' } catch { return 'all' }
     })
@@ -414,31 +416,14 @@ export function ActivityPage() {
     }, [accounts, ensureLoaded, refreshFromCloud, syncIsAuthenticated, syncId, syncPassword, watchEventsInitialized])
 
     const accountById = useMemo(() => new Map(accounts.map(account => [account.id, account])), [accounts])
-    const accountOrderIndex = useMemo(() => new Map(accounts.map((account, index) => [account.id, index])), [accounts])
 
-    const accountOptions = useMemo(() => {
-        const accountMap = new Map<string, { id: string; name: string; colorIndex: number; emoji?: string; avatar?: string }>()
-        history.forEach(item => {
-            if (!accountMap.has(item.accountId)) {
-                const acc = accountById.get(item.accountId)
-                accountMap.set(item.accountId, {
-                    id: item.accountId,
-                    name: item.accountName,
-                    colorIndex: item.accountColorIndex,
-                    emoji: acc?.emoji,
-                    avatar: acc?.avatar
-                })
-            }
-        })
-
-        return Array.from(accountMap.values()).sort((a, b) => {
-            const indexA = accountOrderIndex.get(a.id) ?? -1
-            const indexB = accountOrderIndex.get(b.id) ?? -1
-            if (indexA === -1) return 1
-            if (indexB === -1) return -1
-            return indexA - indexB
-        })
-    }, [history, accountById, accountOrderIndex])
+    const accountOptions = useMemo(() => accounts.map((account, index) => ({
+        id: account.id,
+        name: account.name || getAccountEmail(account)?.split('@')[0] || account.id || 'Unknown',
+        colorIndex: index % 10,
+        emoji: account.emoji,
+        avatar: account.avatar,
+    })), [accounts])
 
     const filteredHistory = useMemo(() => {
         const now = new Date().getTime()
@@ -475,11 +460,16 @@ export function ActivityPage() {
         })
     }, [history, userFilter, searchTerm, timeFilter, customStartDate])
 
+    const handleUserFilterChange = useCallback((id: string) => {
+        setUserFilter(id)
+        try { localStorage.setItem('aio-activity-user-filter', id) } catch {}
+    }, [])
+
     useEffect(() => {
         if (userFilter !== 'all' && !accountOptions.some(o => o.id === userFilter)) {
-            setUserFilter('all')
+            handleUserFilterChange('all')
         }
-    }, [accountOptions, userFilter])
+    }, [accountOptions, userFilter, handleUserFilterChange])
 
     const sessionComparison = useMemo(() => {
         const now = new Date().getTime()
@@ -901,7 +891,7 @@ export function ActivityPage() {
                             mode="filter"
                             accounts={accountOptions}
                             selectedId={userFilter}
-                            onSelect={setUserFilter}
+                            onSelect={handleUserFilterChange}
                             allLabel="All Users"
                             placeholder="Search users..."
                             buttonClassName="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border/40 bg-muted/30 px-3 text-xs font-medium shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"

@@ -12,6 +12,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { useMetricsWorker } from '@/hooks/useMetricsWorker'
 import { useAccountStore } from '@/store/accountStore'
+import { useWatchEventStore } from '@/store/watchEventStore'
 import type { Account } from '@/types/account'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
 import {
@@ -129,6 +130,7 @@ export function MetricsPage() {
     const { history: watchHistory } = useWatchHistory()
     // Exclude backfilled episodes (synthetic timestamps) from time-based metrics; Replay keeps them in totals.
     const history = useMemo(() => watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill), [watchHistory])
+    const rollups = useWatchEventStore(s => s.rollups)
 
     const [selectedAccountId, setSelectedAccountId] = useState<string>('all')
     const [selectedPeriod, setSelectedPeriod] = useState<MetricPeriodId>('all')
@@ -176,7 +178,23 @@ export function MetricsPage() {
         return map
     }, [filteredHistory, accounts])
 
-    const { results: stats, isComputing: workerLoading } = useMetricsWorker(filteredHistory)
+    // Rollups are month-granular all-time aggregates, so they only apply to the unbounded period.
+    const scopedRollups = useMemo(() => {
+        if (selectedPeriod !== 'all') return undefined
+        if (selectedAccountId === 'all') {
+            return (Object.keys(rollups.byMonth).length > 0 || Object.keys(rollups.daysByAccount).length > 0) ? rollups : undefined
+        }
+        const prefix = `${selectedAccountId}:`
+        const byMonth: Record<string, { count: number; minutes: number }> = {}
+        for (const [key, entry] of Object.entries(rollups.byMonth)) {
+            if (key.startsWith(prefix)) byMonth[key] = entry
+        }
+        const days = rollups.daysByAccount[selectedAccountId]
+        if (!days && Object.keys(byMonth).length === 0) return undefined
+        return { byMonth, daysByAccount: days ? { [selectedAccountId]: days } : {} }
+    }, [rollups, selectedAccountId, selectedPeriod])
+
+    const { results: stats, isComputing: workerLoading } = useMetricsWorker(filteredHistory, scopedRollups)
 
     useEffect(() => {
         if (accounts.length > 0) {

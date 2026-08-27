@@ -8,6 +8,8 @@ body:
       value: |
         Thanks for taking the time to fill out this bug report!
         *To prevent duplicates be sure to search for existing issues first.*
+
+        **Note:** If a synced addon change is not showing up on Nuvio, this is a display and sync issue on their end and has nothing to do with AIOManager. Fully closing the app, force refreshing, or signing out and back in on the Nuvio side fixes it most of the time. If your issue turns out to be this Nuvio behavior, it will be closed as expected behavior.
   - type: input
     id: version
     attributes:
