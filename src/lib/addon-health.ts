@@ -2,6 +2,7 @@
 import { SavedAddon } from '@/types/saved-addon'
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
+import { getSessionSyncCredential } from '@/lib/session-sync-token'
 import { normalizeAddonUrl } from '@/lib/utils'
 import { trace } from '@/lib/trace'
 
@@ -43,9 +44,9 @@ export async function checkAddonHealth(addonUrl: string): Promise<HealthStatus> 
   try {
     const { auth } = useSyncStore.getState()
     const headers: Record<string, string> = {}
-    if (auth.id && auth.password) {
+    if (auth.isAuthenticated && auth.id) {
       headers['x-sync-user'] = auth.id
-      headers['x-sync-password'] = await deriveSyncToken(auth.password)
+      headers['x-sync-password'] = getSessionSyncCredential(auth.id)?.token ?? await deriveSyncToken(auth.password)
     }
 
     const response = await fetch(`/api/addon-health?url=${encodeURIComponent(addonUrl)}`, {
@@ -194,10 +195,10 @@ export async function checkAddonFunctionality(addonUrl: string): Promise<{ isHea
         const { useSyncStore } = await import('@/store/syncStore')
         const { auth } = useSyncStore.getState()
         const headers: Record<string, string> = {}
-        if (auth.isAuthenticated) {
+        if (auth.isAuthenticated && auth.id) {
           const { deriveSyncToken } = await import('@/lib/crypto')
           headers['x-sync-user'] = auth.id
-          headers['x-sync-password'] = await deriveSyncToken(auth.password)
+          headers['x-sync-password'] = getSessionSyncCredential(auth.id)?.token ?? await deriveSyncToken(auth.password)
         }
         const proxyUrl = `/api/meta-proxy?url=${encodeURIComponent(manifestUrl)}`
         const res = await fetch(proxyUrl, { signal: controller.signal, headers })
