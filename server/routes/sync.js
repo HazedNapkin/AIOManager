@@ -8,6 +8,7 @@ import { hashApiKey } from '../api-keys.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
 import { invalidateCanonicalAddons } from './hydra.js'
 import { listStremioCredentialedAccountIds } from '../lib/stremio-credentials.js'
+import { hashSyncPassword, isScryptHash, verifySyncPassword, upgradeLegacyPasswordHash } from '../lib/sync-password.js'
 import { isRegistrationsClosed } from '../config.js'
 import { trace } from '../utils/trace.js'
 
@@ -77,9 +78,9 @@ async function archiveCurrentKV(tx, key, authUser) {
         )
         await tx.run(
             `DELETE FROM kv_store_history WHERE key = $1 AND archived_at NOT IN (
-                 SELECT archived_at FROM kv_store_history WHERE key = $1 ORDER BY archived_at DESC LIMIT $2
+                 SELECT archived_at FROM kv_store_history WHERE key = $2 ORDER BY archived_at DESC LIMIT $3
              )`,
-            [key, KV_HISTORY_KEEP]
+            [key, key, KV_HISTORY_KEEP]
         )
         trace('syncRoute', 'kv.archived', { accountId: key, by: authUser || 'system' })
     } catch (err) {
@@ -125,11 +126,16 @@ export function registerSyncRoutes(fastify) {
                 return { error: 'Unauthorized: Invalid credentials' }
             }
 
-            const cachedPw = getCachedAuth('sync:' + id)
+            const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
             if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
-            } else {
-                const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
-                if (!decryptedPassword || !timingSafeEqual(decryptedPassword, password)) {
+            } else if (request.deviceAuth?.accountUuid !== id) {
+                const verified = verifySyncPassword(password, row.password)
+                let authorized = verified === true
+                if (verified === null) {
+                    const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+                    authorized = !!decryptedPassword && timingSafeEqual(decryptedPassword, password)
+                }
+                if (!authorized) {
                     fastify.log.warn({ category: 'Sync' }, `[${id}] Unauthorized: Password mismatch.`)
                     trace('syncRoute', 'pull.error', { accountId: id, error: 'password-mismatch' })
                     reply.status(401);
@@ -146,15 +152,18 @@ export function registerSyncRoutes(fastify) {
             }
 
             const decryptedValueStr = decrypt(row.value, FALLBACK_KEYS)
-            const needsMigration = (row.password && typeof row.password === 'string' && !row.password.includes(':')) ||
+            const needsMigration = (row.password && typeof row.password === 'string' && !isScryptHash(row.password)) ||
                 (row.value && typeof row.value === 'string' && !row.value.includes(':'))
 
             if (needsMigration) {
                 fastify.log.info({ category: 'Sync' }, `[${id}] Upgrading sync data to Zero-Knowledge storage.`)
-                const encryptedPass = encrypt(password, PRIMARY_KEY)
+                // Device-authed requests carry a token in x-sync-password; it must never become the stored account password.
+                const storedPass = request.deviceAuth
+                    ? row.password
+                    : (isScryptHash(row.password) ? row.password : hashSyncPassword(password))
                 const encryptedVal = encrypt(decryptedValueStr, PRIMARY_KEY)
                 db.run('UPDATE kv_store SET password = $1, value = $2, updated_at = $3 WHERE key = $4',
-                    [encryptedPass, encryptedVal, Date.now(), id]).catch(err => {
+                    [storedPass, encryptedVal, Date.now(), id]).catch(err => {
                         fastify.log.error({ category: 'Sync' }, `[${id}] Migration write failed: ${err.message}`)
                     })
             }
@@ -246,11 +255,19 @@ export function registerSyncRoutes(fastify) {
             )
 
             if (row) {
-                const cachedPw = getCachedAuth('sync:' + id)
+                const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
                 if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
-                } else {
-                    const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
-                    if (!timingSafeEqual(decryptedPassword, password)) {
+                } else if (request.deviceAuth?.accountUuid !== id) {
+                    const verified = verifySyncPassword(password, row.password)
+                    let authorized = verified === true
+                    if (verified === null) {
+                        const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+                        if (decryptedPassword && timingSafeEqual(decryptedPassword, password)) {
+                            authorized = true
+                            await upgradeLegacyPasswordHash(tx, id, password)
+                        }
+                    }
+                    if (!authorized) {
                         reply.status(401);
                         return { error: 'Unauthorized: Password mismatch' }
                     }
@@ -280,23 +297,29 @@ export function registerSyncRoutes(fastify) {
                 await archiveCurrentKV(tx, id, id)
 
                 const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
-                const encryptedPass = encrypt(password, PRIMARY_KEY)
+                // Device-authed pushes carry a token in x-sync-password; it must never become the stored account password.
+                const hashedPass = request.deviceAuth ? row.password : hashSyncPassword(password)
                 await tx.run(`
                     UPDATE kv_store
                     SET value = $1, password = $2, updated_at = $3, content_hash = $4, content_hint = $5
                     WHERE key = $6
-                `, [encryptedVal, encryptedPass, Date.now(), contentHash, clientHint, id])
+                `, [encryptedVal, hashedPass, Date.now(), contentHash, clientHint, id])
             } else {
+                // Device auth requires an existing account row; an INSERT here means the row vanished mid-request, so fail closed.
+                if (request.deviceAuth) {
+                    reply.status(401);
+                    return { error: 'Unauthorized: Password mismatch' }
+                }
                 if (isRegistrationsClosed()) {
                     reply.status(403);
                     return { error: 'Registrations are closed on this instance.' }
                 }
                 const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
-                const encryptedPass = encrypt(password, PRIMARY_KEY)
+                const hashedPass = hashSyncPassword(password)
                 await tx.run(`
                     INSERT INTO kv_store (key, value, password, updated_at, content_hash, content_hint)
                     VALUES ($1, $2, $3, $4, $5, $6)
-                `, [id, encryptedVal, encryptedPass, Date.now(), contentHash, clientHint])
+                `, [id, encryptedVal, hashedPass, Date.now(), contentHash, clientHint])
             }
 
             const apiKeys = data.apiKeys
@@ -408,10 +431,18 @@ export function registerSyncRoutes(fastify) {
                 return { error: 'Unauthorized: Invalid credentials' }
             }
 
-            const cachedPw = getCachedAuth('sync:' + id)
-            if (!(cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password)))) {
-                const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
-                if (!decryptedPassword || !timingSafeEqual(decryptedPassword, password)) {
+            const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
+            if (request.deviceAuth?.accountUuid !== id && !(cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password)))) {
+                const verified = verifySyncPassword(password, row.password)
+                let authorized = verified === true
+                if (verified === null) {
+                    const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+                    if (decryptedPassword && timingSafeEqual(decryptedPassword, password)) {
+                        authorized = true
+                        await upgradeLegacyPasswordHash(db, id, password)
+                    }
+                }
+                if (!authorized) {
                     reply.status(401)
                     return { error: 'Unauthorized: Invalid credentials' }
                 }
@@ -474,11 +505,16 @@ export function registerSyncRoutes(fastify) {
             return { error: 'Unauthorized: Invalid credentials' }
         }
 
-        const cachedPw = getCachedAuth('sync:' + id)
+        const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
         if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
-        } else {
-            const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
-            if (!timingSafeEqual(decryptedPassword, password)) {
+        } else if (request.deviceAuth?.accountUuid !== id) {
+            const verified = verifySyncPassword(password, row.password)
+            let authorized = verified === true
+            if (verified === null) {
+                const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+                authorized = !!decryptedPassword && timingSafeEqual(decryptedPassword, password)
+            }
+            if (!authorized) {
                 fastify.log.warn({ category: 'Server' }, `DELETE failed: Password mismatch for ID ${id}`)
                 trace('syncRoute', 'delete.error', { accountId: id, error: 'password-mismatch' })
                 reply.status(401);
@@ -493,6 +529,7 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM activity_snapshots WHERE sync_user = $1', [id])
             await tx.run('DELETE FROM account_canonical_addons WHERE sync_user = $1', [id])
             await tx.run('DELETE FROM server_credentials WHERE sync_user = $1', [id])
+            await tx.run('DELETE FROM device_credentials WHERE account_uuid = $1', [id])
             // Without these, deleting a sync user leaves valid API keys + subscriber rows that
             // still authenticate to /hydra/* for the now-deleted user.
             await tx.run('DELETE FROM account_api_keys WHERE sync_user = $1', [id])

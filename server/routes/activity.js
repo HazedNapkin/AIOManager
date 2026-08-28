@@ -5,8 +5,10 @@ import { FALLBACK_KEYS, PRIMARY_KEY } from '../keys.js'
 import { getCachedAuth, setCachedAuth, hashAuthPassword } from '../state.js'
 import { timingSafeEqual } from '../auth.js'
 import { listStremioCredentialedAccountIds } from '../lib/stremio-credentials.js'
+import { verifySyncPassword, upgradeLegacyPasswordHash } from '../lib/sync-password.js'
 
 async function validateSyncAuth(request, reply) {
+    if (request.deviceAuth?.accountUuid) return request.deviceAuth.accountUuid
     const syncUser = request.headers['x-sync-user']
     const syncPassword = request.headers['x-sync-password']
     if (!syncUser || !syncPassword) {
@@ -25,8 +27,16 @@ async function validateSyncAuth(request, reply) {
         return null
     }
 
-    const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
-    if (!decryptedPassword || !timingSafeEqual(decryptedPassword, syncPassword)) {
+    const verified = verifySyncPassword(syncPassword, row.password)
+    let authorized = verified === true
+    if (verified === null) {
+        const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
+        if (decryptedPassword && timingSafeEqual(decryptedPassword, syncPassword)) {
+            authorized = true
+            await upgradeLegacyPasswordHash(db, syncUser, syncPassword)
+        }
+    }
+    if (!authorized) {
         reply.status(401)
         return null
     }

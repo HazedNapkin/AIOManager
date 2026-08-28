@@ -77,7 +77,8 @@ function writePersistedVideos(base: string, data: MetaVideo[]): void {
 }
 
 // Cinemeta is CORS-open, so fetch directly. tt... only (kitsu/other namespaces are indexed against a
-// different meta ordering and would mis-map; they fail closed).
+// different meta ordering and would mis-map; they fail closed). One retry after a short backoff so a
+// transient Cinemeta blip does not brick a per-episode delete.
 export async function fetchSeriesVideos(seriesId: string): Promise<MetaVideo[] | null> {
     const base = String(seriesId || '').split(':')[0]
     if (!base.startsWith('tt')) return null
@@ -85,31 +86,37 @@ export async function fetchSeriesVideos(seriesId: string): Promise<MetaVideo[] |
     const cached = metaCache.get(base)
     if (cached && Date.now() - cached.ts < META_TTL_MS) return cached.videos
 
-    return deduped(`cinemeta:${base}`, async () => {
-        const persisted = await readPersistedVideos(base)
-        if (persisted) {
-            metaCache.set(base, { videos: persisted, ts: Date.now() })
-            return persisted
-        }
+    const first = await deduped(`cinemeta:${base}`, () => fetchVideosOnce(base))
+    if (first) return first
 
-        try {
-            const ctrl = new AbortController()
-            const t = setTimeout(() => ctrl.abort(), 10000)
-            const res = await fetch(`https://v3-cinemeta.strem.io/meta/series/${base}.json`, { signal: ctrl.signal }).finally(() => clearTimeout(t))
-            if (!res.ok) return null
-            const json = await res.json()
-            const videos = json?.meta?.videos
-            if (!Array.isArray(videos)) return null
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    return deduped(`cinemeta-retry:${base}`, () => fetchVideosOnce(base))
+}
 
-            if (metaCache.size >= META_CACHE_MAX) {
-                const oldest = [...metaCache.entries()].sort((a, b) => a[1].ts - b[1].ts).slice(0, metaCache.size - META_CACHE_MAX + 1)
-                for (const [k] of oldest) metaCache.delete(k)
-            }
-            metaCache.set(base, { videos, ts: Date.now() })
-            writePersistedVideos(base, videos)
-            return videos
-        } catch {
-            return null
+async function fetchVideosOnce(base: string): Promise<MetaVideo[] | null> {
+    const persisted = await readPersistedVideos(base)
+    if (persisted) {
+        metaCache.set(base, { videos: persisted, ts: Date.now() })
+        return persisted
+    }
+
+    try {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 10000)
+        const res = await fetch(`https://v3-cinemeta.strem.io/meta/series/${base}.json`, { signal: ctrl.signal }).finally(() => clearTimeout(t))
+        if (!res.ok) return null
+        const json = await res.json()
+        const videos = json?.meta?.videos
+        if (!Array.isArray(videos)) return null
+
+        if (metaCache.size >= META_CACHE_MAX) {
+            const oldest = [...metaCache.entries()].sort((a, b) => a[1].ts - b[1].ts).slice(0, metaCache.size - META_CACHE_MAX + 1)
+            for (const [k] of oldest) metaCache.delete(k)
         }
-    })
+        metaCache.set(base, { videos, ts: Date.now() })
+        writePersistedVideos(base, videos)
+        return videos
+    } catch {
+        return null
+    }
 }

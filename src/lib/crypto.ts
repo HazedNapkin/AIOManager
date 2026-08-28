@@ -389,6 +389,32 @@ export async function deriveSyncEncryptionKey(password: string, salt?: Uint8Arra
   return key
 }
 
+export async function exportSyncKeyRaw(password: string, salt?: Uint8Array): Promise<Uint8Array> {
+  const effectiveSalt = salt ?? SYNC_KEY_SALT
+  const bits = await runPbkdf2(String(password), effectiveSalt, PBKDF2_ITERATIONS, 256)
+  return new Uint8Array(bits)
+}
+
+export async function importSyncKey(raw: Uint8Array): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    raw as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
+}
+
+export async function encryptSyncPayloadWithKey(plaintext: string, key: CryptoKey): Promise<string> {
+  return encrypt(plaintext, key)
+}
+
+export async function decryptSyncPayloadWithKey(ciphertext: string, key: CryptoKey): Promise<string> {
+  const result = await decrypt(ciphertext, key)
+  if (!result) throw new Error('Decryption failed')
+  return result
+}
+
 export async function encryptSyncPayload(plaintext: string, password: string, salt?: Uint8Array): Promise<string> {
   const start = Date.now()
   trace('crypto', 'encryptSyncPayload.start', { bytes: plaintext.length })

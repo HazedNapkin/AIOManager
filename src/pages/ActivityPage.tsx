@@ -356,6 +356,8 @@ export function ActivityPage() {
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null)
     const [isDeletingPending, setIsDeletingPending] = useState(false)
+    const [pendingWholeShow, setPendingWholeShow] = useState<Array<{ accountId: string; itemId: string; id: string }> | null>(null)
+    const [isDeletingWholeShow, setIsDeletingWholeShow] = useState(false)
     const [isBulkMode, setIsBulkMode] = useState(false)
     const [detailItem, setDetailItem] = useState<ActivityItem | null>(null)
     const cloudRefreshAttemptedRef = useRef(false)
@@ -580,14 +582,15 @@ export function ActivityPage() {
         })
     }, [detailParamId, history, searchParams])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string>; keptReasons: Map<string, number> }> => {
-        if (items.length === 0) return { failed: false, keptIds: new Set<string>(), keptReasons: new Map<string, number>() }
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string>; keptReasons: Map<string, number>; noVideos: Array<{ accountId: string; itemId: string; id: string }> }> => {
+        if (items.length === 0) return { failed: false, keptIds: new Set<string>(), keptReasons: new Map<string, number>(), noVideos: [] }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
             (byAccount[item.accountId] ||= []).push(item)
         }
         const keptIds = new Set<string>()
         const keptReasons = new Map<string, number>()
+        const noVideos: Array<{ accountId: string; itemId: string; id: string }> = []
         const countKeep = (reason: string, n: number = 1) => keptReasons.set(reason, (keptReasons.get(reason) || 0) + n)
         let failed = false
         await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
@@ -657,6 +660,7 @@ export function ActivityPage() {
                                         keptIds.add(item.id)
                                         countKeep(plan.reason)
                                         failed = true
+                                        if (plan.reason === 'no-videos') noVideos.push({ accountId, itemId: item.itemId, id: item.id })
                                         trace('activityDelete', 'stremio.item.kept', { accountId, itemId: item.itemId, reason: plan.reason })
                                         return
                                     }
@@ -727,7 +731,7 @@ export function ActivityPage() {
                 }
             }
         })
-        return { failed, keptIds, keptReasons }
+        return { failed, keptIds, keptReasons, noVideos }
     }, [accountById])
 
     const KEEP_REASON_LABELS: Record<string, string> = {
@@ -770,9 +774,14 @@ export function ActivityPage() {
 
         const itemIdSet = new Set(itemIds)
         const itemsToDelete = history.filter(item => itemIdSet.has(item.id))
-        const { failed, keptIds, keptReasons } = await deletePlatformItems(itemsToDelete)
+        const { failed, keptIds, keptReasons, noVideos } = await deletePlatformItems(itemsToDelete)
 
         purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), itemIds.filter(id => !keptIds.has(id)))
+
+        if (noVideos.length > 0) {
+            setPendingWholeShow(noVideos)
+            return
+        }
 
         if (failed) {
             toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
@@ -796,8 +805,14 @@ export function ActivityPage() {
             const idSet = new Set(ids)
             const itemsToDelete = history.filter(item => idSet.has(item.id))
 
-            const { failed, keptIds, keptReasons } = await deletePlatformItems(itemsToDelete)
+            const { failed, keptIds, keptReasons, noVideos } = await deletePlatformItems(itemsToDelete)
             purgeLocalActivity(itemsToDelete.filter(item => !keptIds.has(item.id)), ids.filter(id => !keptIds.has(id)))
+
+            if (noVideos.length > 0) {
+                setPendingDeleteIds(null)
+                setPendingWholeShow(noVideos)
+                return
+            }
 
             if (failed) {
                 toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
@@ -810,6 +825,50 @@ export function ActivityPage() {
             setPendingDeleteIds(null)
         } finally {
             setIsDeletingPending(false)
+        }
+    }
+
+    const handleDeleteWholeShows = async () => {
+        if (!pendingWholeShow || pendingWholeShow.length === 0) {
+            setPendingWholeShow(null)
+            return
+        }
+        setIsDeletingWholeShow(true)
+        try {
+            const { encryptionKey } = useAuthStore.getState()
+            const deleted: Array<{ accountId: string; itemId: string; id: string }> = []
+            const byAccount: Record<string, typeof pendingWholeShow> = {}
+            for (const entry of pendingWholeShow) {
+                (byAccount[entry.accountId] ||= []).push(entry)
+            }
+            await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, entries]) => {
+                const account = accountById.get(accountId)
+                if (!account || !encryptionKey) return
+                const stremioKey = getStremioAuthKey(account)
+                if (!stremioKey) return
+                try {
+                    const authKey = await decrypt(stremioKey, encryptionKey)
+                    for (const entry of entries) {
+                        try {
+                            await stremioClient.removeLibraryItem(authKey, entry.itemId, accountId)
+                            deleted.push(entry)
+                        } catch {
+                            // A failed whole-show removal leaves the entry in history for a retry.
+                        }
+                    }
+                } catch {
+                    // Auth key decrypt failure: entries stay in history.
+                }
+            })
+            if (deleted.length > 0) {
+                purgeLocalActivity(deleted.map(entry => history.find(h => h.id === entry.id)).filter((h): h is ActivityItem => !!h), deleted.map(entry => entry.id))
+                toast({ title: 'Shows Deleted', description: `${deleted.length} show(s) removed from Stremio and history.` })
+            } else {
+                toast({ variant: 'destructive', title: 'Delete failed', description: 'The shows could not be removed from Stremio. Try again later.' })
+            }
+            setPendingWholeShow(null)
+        } finally {
+            setIsDeletingWholeShow(false)
         }
     }
 
@@ -1185,6 +1244,17 @@ export function ActivityPage() {
                 isDestructive
                 isLoading={isDeletingPending}
                 onConfirm={() => { void handleConfirmPendingDelete() }}
+            />
+
+            <ConfirmationDialog
+                open={!!pendingWholeShow}
+                onOpenChange={(open) => { if (!open && !isDeletingWholeShow) setPendingWholeShow(null) }}
+                title="Delete entire shows instead?"
+                description={`${pendingWholeShow?.length ?? 0} item(s) could not be deleted per-episode because their show's episode list is unavailable. Delete the ENTIRE show from Stremio instead? Every episode of each show will be removed from Stremio and history. This cannot be undone.`}
+                confirmText="Delete entire shows"
+                isDestructive
+                isLoading={isDeletingWholeShow}
+                onConfirm={() => { void handleDeleteWholeShows() }}
             />
 
             {/* Floating Action Bar for Bulk Deletion */}

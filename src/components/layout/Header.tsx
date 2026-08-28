@@ -468,8 +468,12 @@ export function Header() {
             {auth.isAuthenticated && (
               <div className="flex items-center gap-1.5">
                 <Tooltip content={auth.id} side="bottom">
-                  <div className="h-7 w-7 rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary cursor-default">
-                    {(auth.name || auth.id).charAt(0).toUpperCase()}
+                  <div className="h-7 w-7 overflow-hidden rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary cursor-default">
+                    {auth.avatar ? (
+                      <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      (auth.name || auth.id).charAt(0).toUpperCase()
+                    )}
                   </div>
                 </Tooltip>
                 <Tooltip content="Logout" side="bottom">

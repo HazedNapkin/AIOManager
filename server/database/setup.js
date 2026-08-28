@@ -15,6 +15,11 @@ export async function migrateKvStoreColumns(log = console) {
         await db.run(`ALTER TABLE kv_store ADD COLUMN content_hint TEXT`)
         log.info({ category: 'Database' }, 'Migrated: Added content_hint column to kv_store')
     }
+    const hasCredentialEpoch = kvTableInfo.some(col => col.name === 'credential_epoch')
+    if (!hasCredentialEpoch) {
+        await db.run(`ALTER TABLE kv_store ADD COLUMN credential_epoch INTEGER NOT NULL DEFAULT 1`)
+        log.info({ category: 'Database' }, 'Migrated: Added credential_epoch column to kv_store')
+    }
 }
 
 export async function initializeDatabase(fastify) {
@@ -65,7 +70,8 @@ export async function initializeDatabase(fastify) {
         password TEXT,
         updated_at BIGINT,
         content_hash TEXT,
-        content_hint TEXT
+        content_hint TEXT,
+        credential_epoch INTEGER NOT NULL DEFAULT 1
       );
 
       -- Previous sync blobs, captured on every overwrite. The server can't validate
@@ -598,6 +604,7 @@ export async function initializeDatabase(fastify) {
 
             try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hash TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS content_hint TEXT`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
+            try { await db.run(`ALTER TABLE kv_store ADD COLUMN IF NOT EXISTS credential_epoch INTEGER NOT NULL DEFAULT 1`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
 
             try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_owner ON autopilot_rules (owner_sync_user)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
             try { await db.run(`CREATE INDEX IF NOT EXISTS idx_rules_active_id ON autopilot_rules (is_active, id)`) } catch (e) { fastify.log.warn({ category: 'Database' }, `Migration step failed: ${e.message}`) }
@@ -898,6 +905,46 @@ export async function initializeDatabase(fastify) {
         error: `ALTER TABLE commands ADD COLUMN error TEXT`,
         created_at: `ALTER TABLE commands ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0`,
         updated_at: `ALTER TABLE commands ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0`,
+    }, ['id'])
+
+    // Remembered-device credentials; keep DDL in sync with migrations/003_device_credentials.sql.
+    const deviceCredentialsDdl = db.type === 'postgres'
+        ? `CREATE TABLE IF NOT EXISTS device_credentials (
+            id TEXT PRIMARY KEY,
+            account_uuid TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            tier TEXT NOT NULL CHECK (tier IN ('idb', 'prf')),
+            label TEXT,
+            created_at BIGINT NOT NULL DEFAULT 0,
+            expires_at BIGINT NOT NULL DEFAULT 0,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            last_used_at BIGINT,
+            credential_epoch INTEGER NOT NULL DEFAULT 1
+        );`
+        : `CREATE TABLE IF NOT EXISTS device_credentials (
+            id TEXT PRIMARY KEY,
+            account_uuid TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            tier TEXT NOT NULL CHECK (tier IN ('idb', 'prf')),
+            label TEXT,
+            created_at INTEGER NOT NULL DEFAULT 0,
+            expires_at INTEGER NOT NULL DEFAULT 0,
+            revoked INTEGER NOT NULL DEFAULT 0,
+            last_used_at INTEGER,
+            credential_epoch INTEGER NOT NULL DEFAULT 1
+        );`
+    await ensureTable('device_credentials', deviceCredentialsDdl, [
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_device_credentials_account_device ON device_credentials (account_uuid, device_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_device_credentials_account ON device_credentials (account_uuid)`,
+    ], ['id', 'account_uuid', 'device_id', 'token_hash', 'tier', 'created_at', 'expires_at'], {
+        tier: `ALTER TABLE device_credentials ADD COLUMN tier TEXT NOT NULL DEFAULT 'idb'`,
+        label: `ALTER TABLE device_credentials ADD COLUMN label TEXT`,
+        expires_at: `ALTER TABLE device_credentials ADD COLUMN expires_at BIGINT NOT NULL DEFAULT 0`,
+        revoked: `ALTER TABLE device_credentials ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`,
+        last_used_at: `ALTER TABLE device_credentials ADD COLUMN last_used_at BIGINT`,
+        credential_epoch: `ALTER TABLE device_credentials ADD COLUMN credential_epoch INTEGER NOT NULL DEFAULT 1`,
     }, ['id'])
 
     try {

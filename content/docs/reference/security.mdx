@@ -29,6 +29,17 @@ If you later set a manual `ENCRYPTION_KEY`, the server uses the new key for new 
 
 <Note>AIOManager must be served over HTTPS or localhost. Plain HTTP connections block the browser's Web Crypto APIs required for the Key Vault and Cloud Sync.</Note>
 
+## Remembered Devices
+
+**Remember this device** is an opt-in saved sign-in that skips the UUID and password on return visits. It is built so a saved device never becomes a copy of your password:
+
+- The server stores only a **scrypt hash** of a random per-device token. It can verify the token, never read it, and can revoke it independently of your password.
+- Your vault and sync keys are stored in the browser **wrapped** (AES-256-GCM under an HKDF-derived key) together with that token. Without the device secret they are unreadable.
+- On capable devices the device secret is derived from a **passkey held in your device's secure hardware** (TPM / Secure Enclave) and never touches browser storage at all.
+- Your password is not stored anywhere by this feature, and revoking a device does not require changing it.
+
+A device token expires after 180 days without use and dies immediately if your password changes or you revoke it from Settings. Full walkthrough: [Remember This Device](/kronorium/getting-started/remember-this-device).
+
 ## Privacy
 
 AIOManager does not collect telemetry or tracking data. All your data stays on your own infrastructure. The only external connections made are to the Stremio API (for account syncing) and the addon URLs you install.

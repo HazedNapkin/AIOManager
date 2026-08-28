@@ -350,6 +350,13 @@ export const AddonCard = React.memo(function AddonCard({
     return isExternal && !isInstalled
   }, [isExternal, isInstalled])
 
+  const library = useAddonStore(s => s.library)
+  const savedInLibrary = useMemo(() => {
+    return Object.values(library).some(
+      (s) => s.manifest.id === addon.manifest.id && s.installUrl === addon.transportUrl
+    )
+  }, [library, addon.manifest.id, addon.transportUrl])
+
   const hasVersionUpdate = latestVersion ? isNewerVersion(addon.manifest.version, latestVersion) : false
   const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
   const hasUpdate = hasVersionUpdate || hasManifestShapeChange
@@ -784,10 +791,12 @@ export const AddonCard = React.memo(function AddonCard({
                           Save to Library
                         </DropdownMenuItem>
                       )}
-                      <DropdownMenuItem className="gap-2 sm:hidden" onClick={(e) => { e.stopPropagation(); handleUpdate(); }} disabled={loading || updating || removing}>
-                        <AnimatedRefreshIcon className="h-4 w-4" isAnimating={updating} />
-                        Reinstall
-                      </DropdownMenuItem>
+                      {savedInLibrary && (
+                        <DropdownMenuItem className="gap-2 sm:hidden" onClick={(e) => { e.stopPropagation(); handleUpdate(); }} disabled={loading || updating || removing}>
+                          <AnimatedRefreshIcon className="h-4 w-4" isAnimating={updating} />
+                          Reinstall
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem className="gap-2" onClick={(e) => { e.stopPropagation(); handleToggleProtection(); }}>
                         <Shield className={`h-4 w-4 ${addon.flags?.protected ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
                         {addon.flags?.protected ? 'Unprotect Addon' : 'Protect Addon'}
@@ -880,12 +889,14 @@ export const AddonCard = React.memo(function AddonCard({
                     Save
                   </Button>
                 )}
-                <Tooltip content="Reinstalls this addon - also useful after making config changes to refresh settings without losing anything">
-                  <Button size="sm" onClick={handleUpdate} disabled={loading || updating || removing} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
-                    <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={updating} />
-                    Reinstall
-                  </Button>
-                </Tooltip>
+                {savedInLibrary && (
+                  <Tooltip content="Reinstalls this addon - also useful after making config changes to refresh settings without losing anything">
+                    <Button size="sm" onClick={handleUpdate} disabled={loading || updating || removing} className="h-8 gap-1.5 bg-muted/40 text-xs font-semibold text-foreground/70 shadow-none hover:bg-muted/70">
+                      <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={updating} />
+                      Reinstall
+                    </Button>
+                  </Tooltip>
+                )}
 
                 <AddonNoteEditor
                   accountId={accountId}
@@ -1183,17 +1194,19 @@ export const AddonCard = React.memo(function AddonCard({
                   Save to Library
                 </Button>
               )}
-              <Tooltip content="Reinstalls this addon - also useful after making config changes to refresh settings without losing anything">
-                <Button
-                  size="sm"
-                  onClick={handleUpdate}
-                  disabled={loading || updating || removing}
-                  className="font-semibold text-xs gap-1.5 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                >
-                  <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={updating} />
-                  Reinstall
-                </Button>
-              </Tooltip>
+              {savedInLibrary && (
+                <Tooltip content="Reinstalls this addon - also useful after making config changes to refresh settings without losing anything">
+                  <Button
+                    size="sm"
+                    onClick={handleUpdate}
+                    disabled={loading || updating || removing}
+                    className={cn('font-semibold text-xs gap-1.5 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none', canSaveToLibrary && 'col-span-2')}
+                  >
+                    <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={updating} />
+                    Reinstall
+                  </Button>
+                </Tooltip>
+              )}
             </div>
 
             <div className="flex gap-1.5 w-full">

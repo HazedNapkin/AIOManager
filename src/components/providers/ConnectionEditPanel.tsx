@@ -6,8 +6,8 @@ import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/common/EmptyState'
-import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, Check, User, QrCode, Puzzle, BookOpen } from 'lucide-react'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
 import { useAddons } from '@/hooks/useAddons'
@@ -31,6 +31,11 @@ import { StremioSocialAuth } from '@/components/accounts/StremioSocialAuth'
 import { displayStatus, tokenExpiry } from '@/lib/connection-format'
 import { NuvioBackupTab, NuvioPluginsTab, NuvioProfilesTab, NuvioLibraryTab, NuvioCollectionsTab } from './NuvioWorkspace'
 import { ConnectionMembershipTab } from './ConnectionMembershipTab'
+import { ProfileRosterRow } from './ProfileRosterRow'
+import { useUIStore } from '@/store/uiStore'
+import { addStremioProfileAccount, findAccountByAuthKey } from '@/store/account/profileQuickAdd'
+import { getProfileClaims, resolveProfileState, profileClaimKey } from '@/lib/profile-claims'
+import type { ProfileRosterState } from '@/lib/profile-claims'
 
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
@@ -54,18 +59,6 @@ function TestResultBanner({ result }: { result: { ok: boolean; message: string }
         )}>
             {result.ok ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
             <span className="truncate">{result.message}</span>
-        </div>
-    )
-}
-
-function SectionShell({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
-    return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
-            <div className="min-w-0">
-                <p className="text-sm font-semibold">{title}</p>
-                <p className="text-xs text-muted-foreground">{description}</p>
-            </div>
-            {children}
         </div>
     )
 }
@@ -950,15 +943,16 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
     )
 }
 
-function StremioProfilePicker({ accountId, connection }: { accountId: string; connection: Connection }) {
-    const updateConnection = useConnectionStore(s => s.updateConnection)
+function SupportersProfilesRoster({ accountId, connection }: { accountId: string; connection: Connection }) {
     const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
+    const accounts = useAccountStore(s => s.accounts)
+    const updateConnection = useConnectionStore(s => s.updateConnection)
     const [profiles, setProfiles] = useState<Array<{ id: string; name: string; avatar?: string }>>([])
     const [loading, setLoading] = useState(true)
-    const [switching, setSwitching] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const selfUserId = useRef('')
 
-    const currentProfileId = connection.credentials?.stremioProfileId || ''
+    const claims = useMemo(() => getProfileClaims(accounts), [accounts])
 
     const loadProfiles = useCallback(async () => {
         if (!account) return
@@ -969,6 +963,7 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
             if (!encryptedKey) throw new Error('No auth key found')
             const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
             const user = await stremioClient.getUser(authKey)
+            selfUserId.current = user._id || ''
             const userProfiles = user.premiumPrefs?.userProfiles
             if (userProfiles) {
                 setProfiles(Object.values(userProfiles).map(p => ({ id: p.id, name: p.name, avatar: p.avatar })))
@@ -984,88 +979,205 @@ function StremioProfilePicker({ accountId, connection }: { accountId: string; co
 
     useEffect(() => { loadProfiles() }, [loadProfiles])
 
-    const handleSelect = async (profileId: string) => {
-        if (profileId === currentProfileId) return
-        setSwitching(true)
+    const rowStateFor = (profileId: string): ProfileRosterState => {
+        if (!profileId) return 'unclaimed'
+        const resolved = resolveProfileState({ platform: 'stremio', profileId }, claims, accountId, connection.id)
+        if (resolved === 'unclaimed' && selfUserId.current && profileId === selfUserId.current) return 'active-here'
+        return resolved
+    }
+
+    const navigateToClaimant = (claimId: string) => {
+        const owner = accounts.find(a => a.id === claimId)
+        if (!owner) return
+        useUIStore.getState().openAddAccountDialog(owner)
+    }
+
+    const [pasteFor, setPasteFor] = useState<{ id: string; name: string } | null>(null)
+    const [pasteName, setPasteName] = useState('')
+    const [pasteKey, setPasteKey] = useState('')
+    const [adding, setAdding] = useState(false)
+    const [showKeyHelp, setShowKeyHelp] = useState(false)
+
+    const openPaste = (p: { id: string; name: string }) => {
+        setPasteFor(p)
+        setPasteName(p.name)
+        setPasteKey('')
+    }
+
+    const confirmPaste = async () => {
+        if (!pasteFor || !pasteKey.trim() || adding) return
+        setAdding(true)
+        let createdId: string | null = null
         try {
-            await updateConnection(accountId, connection.id, {
-                credentials: { ...connection.credentials, stremioProfileId: profileId }
-            })
-            toast({ title: 'Stremio profile updated' })
+            const result = await addStremioProfileAccount(
+                pasteKey.trim(),
+                pasteName.trim() || pasteFor.name,
+            )
+            createdId = result.accountId
+            if (result.skipped) {
+                toast({ title: 'Already added', description: 'This profile is already an account here.' })
+            }
+            // Stamp the claim on the skipped path too: a first attempt that created
+            // the account but died before stamping would otherwise stay unclaimed
+            // forever while every retry reports "Already added".
+            const targetId = createdId ?? (await findAccountByAuthKey(pasteKey.trim()))
+            const target = targetId ? useAccountStore.getState().accounts.find(a => a.id === targetId) : undefined
+            const stremioConn = target?.connections?.find(c => c.platform === 'stremio')
+            if (target && stremioConn && !stremioConn.credentials?.stremioProfileId) {
+                await updateConnection(target.id, stremioConn.id, {
+                    credentials: { ...stremioConn.credentials, stremioProfileId: pasteFor.id },
+                })
+            }
+            if (!result.skipped) {
+                toast({ title: 'Account added' })
+            }
+            setPasteFor(null)
+            setPasteKey('')
+            await loadProfiles()
         } catch (err) {
-            toast({ title: 'Could not switch profile', description: errMsg(err), variant: 'destructive' })
+            toast({
+                title: createdId ? 'Account added, but the profile stamp failed' : 'Could not add this auth key',
+                description: createdId ? 'The account exists; retry this profile to link it.' : errMsg(err),
+                variant: createdId ? 'warning' : 'destructive',
+            })
         } finally {
-            setSwitching(false)
+            setAdding(false)
         }
     }
 
-    if (loading) {
-        return (
-            <SectionShell title="Supporters profiles" description="Stremio Supporters sub-profiles for this account.">
+    const claimFor = (profileId: string) =>
+        claims.get(profileClaimKey({ platform: 'stremio', profileId }))
+
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            <div className="min-w-0">
+                <p className="text-sm font-semibold">Supporters profiles</p>
+                <p className="text-xs text-muted-foreground">Each Supporters profile can become its own fully managed account.</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">
+                    Adding a profile as an account makes it a full account, just like the ones you already manage: its own addons, its own watch history. It stays on the same Stremio login and nothing changes on Stremio. You can delete the account anytime.
+                </p>
+            </div>
+
+            {loading ? (
                 <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading profiles...
                 </div>
-            </SectionShell>
-        )
-    }
-
-    if (error) {
-        return (
-            <SectionShell title="Supporters profiles" description="Stremio Supporters sub-profiles for this account.">
-                <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
-                    <RefreshCw className="h-3.5 w-3.5" /> Retry
-                </Button>
-            </SectionShell>
-        )
-    }
-
-    if (profiles.length === 0) {
-        return null
-    }
-
-    return (
-        <SectionShell title="Supporters profiles" description="Select which Stremio Supporters sub-profile to target for this connection.">
-            <div className="space-y-1.5">
-                {profiles.map(p => {
-                    const active = p.id === currentProfileId
-                    return (
-                        <button
-                            key={p.id}
-                            type="button"
-                            disabled={switching}
-                            onClick={() => handleSelect(p.id)}
-                            className={cn(
-                                'flex w-full items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-left text-sm transition-[background-color,border-color,box-shadow,transform] duration-200',
-                                active
-                                    ? 'border-primary/30 bg-primary/10 text-foreground shadow-sm cursor-default'
-                                    : 'border-border/40 bg-card text-foreground shadow-sm hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md',
-                                switching && 'pointer-events-none opacity-60'
-                            )}
-                        >
-                            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 overflow-hidden">
-                                {p.avatar ? (
-                                    <img
-                                        src={p.avatar}
-                                        alt=""
-                                        className="h-full w-full object-cover"
-                                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden') }}
+            ) : error ? (
+                <>
+                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
+                        <RefreshCw className="h-3.5 w-3.5" /> Retry
+                    </Button>
+                </>
+            ) : profiles.length === 0 ? (
+                <p className="py-2 text-xs text-muted-foreground">No Supporters profiles found on this login.</p>
+            ) : (
+                <>
+                    <div className="space-y-1.5">
+                        {profiles.map((p, i) => {
+                            const state = rowStateFor(p.id)
+                            const claim = state === 'claimed' ? claimFor(p.id) : undefined
+                            return (
+                                <div key={p.id}>
+                                    <ProfileRosterRow
+                                        profile={{ name: p.name, index: i + 1 }}
+                                        state={state}
+                                        claimedBy={claim}
+                                        onAdd={() => openPaste(p)}
+                                        onNavigate={() => claim && navigateToClaimant(claim.accountId)}
                                     />
-                                ) : null}
-                                <User className={cn('h-3.5 w-3.5 text-muted-foreground', p.avatar && 'hidden')} />
-                            </span>
-                            <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
-                            {active && (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary shrink-0">
-                                    <Check className="h-3 w-3" />
-                                    Active
+                                </div>
+                            )
+                        })}
+                    </div>
+
+                    {pasteFor && (
+                        <div className="rounded-2xl border border-border/40 bg-card p-3 space-y-2.5 shadow-sm">
+                            <p className="text-xs font-medium">Add <strong>{pasteFor.name}</strong> as its own account</p>
+                            <div className="space-y-1">
+                                <Label htmlFor={`supporters-name-${pasteFor.id}`} className="text-[11px] text-muted-foreground">Account name</Label>
+                                <Input
+                                    id={`supporters-name-${pasteFor.id}`}
+                                    value={pasteName}
+                                    onChange={e => setPasteName(e.target.value)}
+                                    className="h-8 text-xs"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <Label htmlFor={`supporters-key-${pasteFor.id}`} className="text-[11px] text-muted-foreground">Auth key from web.stremio.com</Label>
+                                <Input
+                                    id={`supporters-key-${pasteFor.id}`}
+                                    type="password"
+                                    value={pasteKey}
+                                    onChange={e => setPasteKey(e.target.value)}
+                                    placeholder="Paste this profile's auth key"
+                                    className="h-8 font-mono text-xs"
+                                    autoFocus
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void confirmPaste() } }}
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <Button variant="subtle" size="sm" className="h-7 flex-1 text-xs" onClick={() => setPasteFor(null)} disabled={adding}>Cancel</Button>
+                                <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => void confirmPaste()} disabled={adding || !pasteKey.trim()}>
+                                    {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                    Add as account
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
+
+            <div className="rounded-xl border border-border/30 bg-muted/20">
+                <button
+                    type="button"
+                    onClick={() => setShowKeyHelp(s => !s)}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+                >
+                    <span className="text-xs font-semibold">How to get a profile's auth key</span>
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        Don't know how?
+                        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showKeyHelp && 'rotate-180')} />
+                    </span>
+                </button>
+                {showKeyHelp && (
+                    <div className="space-y-2.5 border-t border-border/30 px-3 py-3">
+                        <ol className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                            <li className="flex gap-2">
+                                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold text-primary mt-0.5">1</span>
+                                <span>
+                                    Go to <a href="https://web.stremio.com/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">web.stremio.com</a> and switch to the profile you want to add.
                                 </span>
-                            )}
-                        </button>
-                    )
-                })}
+                            </li>
+                            <li className="flex gap-2">
+                                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold text-primary mt-0.5">2</span>
+                                <span className="min-w-0 flex-1">
+                                    Open the browser console (<kbd className="px-1 py-0.5 rounded bg-muted border border-border text-[10px]">F12</kbd>) and run:
+                                    <pre
+                                        className="mt-1 select-all cursor-pointer overflow-x-auto rounded-lg bg-muted/60 border border-border/40 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:bg-muted transition-colors"
+                                        onClick={(e) => {
+                                            const target = e.currentTarget
+                                            const selection = window.getSelection()
+                                            const range = document.createRange()
+                                            range.selectNodeContents(target)
+                                            selection?.removeAllRanges()
+                                            selection?.addRange(range)
+                                        }}
+                                    >localStorage.getItem("profile")</pre>
+                                </span>
+                            </li>
+                            <li className="flex gap-2">
+                                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[10px] font-bold text-primary mt-0.5">3</span>
+                                <span>Copy the <span className="font-mono text-[10px]">authKey</span> value from the result, come back here, and paste it into the profile's Add as account box.</span>
+                            </li>
+                        </ol>
+                        <p className="text-[11px] text-muted-foreground/70 border-t border-border/30 pt-2">
+                            Stremio keeps profile control inside its own apps, so each profile needs its own key. Nuvio profiles are added with one tap on the Nuvio side. Full walkthrough in the <a href="/kronorium" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Kronorium</a>.
+                        </p>
+                    </div>
+                )}
             </div>
-        </SectionShell>
+        </div>
     )
 }
 
@@ -1291,9 +1403,7 @@ export function ConnectionEditPanel({
                     <TabsList>
                         <TabsTrigger value="membership">Membership</TabsTrigger>
                         <TabsTrigger value="connection">Connection</TabsTrigger>
-                        {/* Supporters Profiles tab hidden: the selector wrote a credential field no sync path reads.
-                            Returns with the Profile Quick-Add roster (real per-profile accounts). */}
-                        {false && isStremio && premium?.active && (
+                        {isStremio && premium?.active && (
                             <TabsTrigger value="profiles">Supporters Profiles</TabsTrigger>
                         )}
                         {isStremio && (
@@ -1304,8 +1414,8 @@ export function ConnectionEditPanel({
                         )}
                         {isNuvio && (
                             <>
-                                <TabsTrigger value="nuvio-plugins">Plugins</TabsTrigger>
                                 <TabsTrigger value="nuvio-profiles">Profiles</TabsTrigger>
+                                <TabsTrigger value="nuvio-plugins">Plugins</TabsTrigger>
                                 <TabsTrigger value="nuvio-library">Library</TabsTrigger>
                                 <TabsTrigger value="nuvio-collections">Collections</TabsTrigger>
                                 <TabsTrigger value="nuvio-backup">Backup</TabsTrigger>
@@ -1363,7 +1473,7 @@ export function ConnectionEditPanel({
 
                     {isStremio && premium?.active && (
                         <TabsContent value="profiles">
-                            <StremioProfilePicker accountId={accountId} connection={connection} />
+                            <SupportersProfilesRoster accountId={accountId} connection={connection} />
                         </TabsContent>
                     )}
                     {isStremio && (
@@ -1379,11 +1489,11 @@ export function ConnectionEditPanel({
 
                     {isNuvio && (
                         <>
-                            <TabsContent value="nuvio-plugins">
-                                <NuvioPluginsTab accountId={accountId} connection={connection} />
-                            </TabsContent>
                             <TabsContent value="nuvio-profiles">
                                 <NuvioProfilesTab accountId={accountId} connection={connection} status={status} />
+                            </TabsContent>
+                            <TabsContent value="nuvio-plugins">
+                                <NuvioPluginsTab accountId={accountId} connection={connection} />
                             </TabsContent>
                             <TabsContent value="nuvio-library">
                                 <NuvioLibraryTab accountId={accountId} connection={connection} />

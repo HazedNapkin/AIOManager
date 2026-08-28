@@ -1,15 +1,9 @@
 import { resilientFetch } from '@/lib/api-resilience'
 import { useSyncStore, getSyncApiPath } from '@/store/syncStore'
-import { deriveSyncToken } from '@/lib/crypto'
+import { getDeviceAwareAuthHeaders } from '@/lib/device-session'
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-    const { auth } = useSyncStore.getState()
-    if (!auth?.id || !auth?.password) throw new Error('Not authenticated')
-    return {
-        'Content-Type': 'application/json',
-        'x-sync-user': auth.id,
-        'x-sync-password': await deriveSyncToken(auth.password),
-    }
+    return getDeviceAwareAuthHeaders()
 }
 
 export async function downloadNuvioBackup(accountId: string, connectionId: string): Promise<void> {

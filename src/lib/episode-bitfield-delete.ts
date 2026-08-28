@@ -21,11 +21,18 @@ export async function planEpisodeBitfieldDelete(args: {
     if (!itemId.startsWith('tt')) return { kind: 'fail', reason: 'non-tt' }
     // Row absent remotely: nothing to delete remotely, the local purge handles the feed entry.
     if (!row) return { kind: 'skip' }
-    if (videos == null) return { kind: 'fail', reason: 'no-videos' }
 
     const decoded = await decodeWatchedBitfield(row.state?.watched)
     // An empty bitfield is "no data", not "nothing watched" — destroying the row would lose real state.
     if (!decoded || decoded.watchedIndices.length === 0) return { kind: 'fail', reason: 'no-bitfield' }
+
+    // Cinemeta-free exact match: a single watched episode whose anchor id equals the target
+    // is fully identified without a video list, so an unavailable meta cannot block the delete.
+    if (target.uniqueItemId && decoded.watchedIndices.length === 1 && decoded.videoId === target.uniqueItemId) {
+        return { kind: 'remove-row' }
+    }
+
+    if (videos == null) return { kind: 'fail', reason: 'no-videos' }
 
     const maxWatched = videos[decoded.watchedIndices[decoded.watchedIndices.length - 1]]
     if (!maxWatched || maxWatched.id !== decoded.videoId) return { kind: 'fail', reason: 'anchor-mismatch' }

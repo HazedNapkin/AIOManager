@@ -502,9 +502,10 @@ export function createReconciler(fastify) {
                 continue
             }
             try {
-                // Stremio uses client-side writer callback instead of server driver
-                if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
-                    if (!stremioWriter) continue
+                // A client-side Stremio writer takes priority; without one the server driver
+                // writes Stremio itself (it holds the authKey), so an API-driven enforce —
+                // e.g. an AIOMetadata "sync to all" push — can never silently skip Stremio.
+                if (connection.platform === 'stremio' && !isHydraOutbound(connection) && stremioWriter) {
                     await stremioWriter(connection)
                 } else {
                     if (canon.length === 0) continue

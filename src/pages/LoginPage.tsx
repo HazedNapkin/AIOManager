@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
-import { useSyncStore, savePasswordToSession } from '@/store/syncStore'
+import { useSyncStore } from '@/store/syncStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert } from 'lucide-react'
+import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert, UserRound, Fingerprint } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { useTheme } from '@/contexts/ThemeContext'
@@ -14,6 +15,13 @@ import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { clearLocalAuthSecrets, restoreLocalAuthSecrets } from '@/lib/crypto'
 import { apiGet } from '@/lib/http-client'
+import {
+    deactivateDeviceAuth,
+    enrollRememberedDevice,
+    getRememberedGateInfo,
+    unlockWithDevice,
+    type RememberedGateInfo,
+} from '@/lib/device-session'
 
 import { CopyButton } from '@/components/ui/copy-button'
 import { useConfetti } from '@/components/ui/confetti'
@@ -51,6 +59,13 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
 
     const [loginId, setLoginId] = useState(auth.id || '')
     const [loginPass, setLoginPass] = useState('')
+
+    const [remember, setRemember] = useState(false)
+    const [unlockFailures, setUnlockFailures] = useState(0)
+    const [gateInfo, setGateInfo] = useState<RememberedGateInfo | null | undefined>(undefined)
+    const [deviceBusy, setDeviceBusy] = useState(false)
+
+    const knownDeviceLogin = !!(isLocked && auth.isAuthenticated && gateInfo && gateInfo.accountUUID === auth.id)
 
     const [regPass, setRegPass] = useState('')
     const [regPassConfirm, setRegPassConfirm] = useState('')
@@ -91,6 +106,34 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         }
     }, [searchParams])
 
+    useEffect(() => {
+        let cancelled = false
+        getRememberedGateInfo().then(info => {
+            if (!cancelled) setGateInfo(info)
+        }).catch(() => {
+            if (!cancelled) setGateInfo(null)
+        })
+        return () => { cancelled = true }
+    }, [])
+
+    const handleContinueWithDevice = async () => {
+        setDeviceBusy(true)
+        try {
+            const result = await unlockWithDevice()
+            if (result.ok) {
+                toast({ title: "Welcome back", description: "Signed in with your saved sign-in." })
+            } else if (result.reason === 'prf-cancelled' || result.reason === 'unavailable') {
+                toast({ title: result.reason === 'prf-cancelled' ? "Passkey unlock cancelled" : "Could not reach the server", description: result.message })
+            } else {
+                toast({ title: "Sign in to continue", description: result.message })
+            }
+        } catch {
+            toast({ variant: "destructive", title: "Sign-in failed", description: "Something went wrong. Use the sign-in form below." })
+        } finally {
+            setDeviceBusy(false)
+        }
+    }
+
     const handleRegister = async () => {
         if (!regPass) {
             toast({ variant: "destructive", title: "Password required", description: "Choose a password." })
@@ -127,24 +170,46 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         }
     }
 
+    const maybeRememberDevice = () => {
+        if (!remember) return
+        void (async () => {
+            try {
+                const enrolled = await enrollRememberedDevice()
+                if (!enrolled) {
+                    toast({ title: "Remembered sign-in unavailable", description: "This server does not support remembering this device yet. You are signed in as usual." })
+                } else {
+                    getRememberedGateInfo().then(info => setGateInfo(info)).catch(() => {})
+                }
+            } catch (e) {
+                if (import.meta.env.DEV) console.error('[Auth] Remember-this-device enrollment failed:', e)
+                toast({ title: "Remembered sign-in unavailable", description: "This device could not be remembered. You are signed in as usual." })
+            }
+        })()
+    }
+
     const handleUnlock = async () => {
         if (!loginPass) {
             toast({ variant: "destructive", title: "Password required", description: "Enter your master password." })
             return
         }
 
+        // Explicit password auth outranks the remembered layer: a stale device session
+        // must never rewrite or gate these requests.
+        deactivateDeviceAuth()
         setIsUnlocking(true)
         setLoginError(null)
 
         try {
             const success = await unlock(loginPass)
             if (!success) {
+                setUnlockFailures(n => n + 1)
                 setLoginError('Invalid password')
             } else {
+                setUnlockFailures(0)
                 if (auth.isAuthenticated && auth.id) {
-                    savePasswordToSession(loginPass)
                     useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass } }))
                 }
+                void maybeRememberDevice()
                 toast({ title: "Welcome back", description: "Signed in successfully." })
             }
         } catch (e) {
@@ -154,6 +219,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 if (import.meta.env.DEV) console.log('[Auth] Local DB empty. Attempting Cloud Restore...')
                 try {
                     await login(auth.id, loginPass, true)
+                    void maybeRememberDevice()
                     toast({ title: "Restored", description: "Session restored from cloud." })
                 } catch (restoreErr) {
                     if (import.meta.env.DEV) console.error('[Auth] Cloud restore failed:', restoreErr)
@@ -174,10 +240,14 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             return
         }
 
+        // Explicit password auth outranks the remembered layer: a stale device session
+        // must never rewrite or gate these requests.
+        deactivateDeviceAuth()
         setLoading(true)
         setLoginError(null)
         try {
             await login(loginId, loginPass)
+            void maybeRememberDevice()
         } catch (e) {
             setLoginError((e as Error).message)
             if (import.meta.env.DEV) console.error("Login error:", e)
@@ -198,6 +268,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         const localAuthBackup = clearLocalAuthSecrets()
         try {
             await login(effectiveId, loginPass, false, true)
+            void maybeRememberDevice()
             toast({ title: "Signed in", description: "This browser session was reset and your cloud data was restored." })
         } catch (e) {
             restoreLocalAuthSecrets(localAuthBackup)
@@ -459,7 +530,46 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                         </div>
                                     )}
                                 </div>
+
+                                <div className="space-y-1.5 pt-1">
+                                    <div className="flex items-start gap-2">
+                                        <Checkbox
+                                            id="remember-device"
+                                            className="mt-0.5"
+                                            checked={knownDeviceLogin || remember}
+                                            disabled={knownDeviceLogin}
+                                            onCheckedChange={(checked) => setRemember(checked === true)}
+                                        />
+                                        <Label htmlFor="remember-device" className={`text-sm font-normal leading-snug ${knownDeviceLogin ? 'cursor-default' : 'cursor-pointer'}`}>
+                                            Remember this device
+                                        </Label>
+                                    </div>
+                                    <p className="pl-6 text-xs text-muted-foreground">
+                                        {knownDeviceLogin
+                                            ? 'This device is already remembered.'
+                                            : 'Stay signed in on this device until you sign out or this browser clears its data.'}
+                                    </p>
+                                </div>
                                 </form>
+
+                                {isLocked && auth.isAuthenticated && unlockFailures >= 2 && (
+                                    <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 space-y-2 animate-in slide-in-from-top-1">
+                                        <p className="text-xs font-semibold text-warning">Still not working? This browser's saved session may be corrupted.</p>
+                                        <p className="text-xs text-muted-foreground leading-relaxed">
+                                            Sign in from cloud instead: it resets this browser's broken saved session and restores everything from your sync. Anything already synced is safe.
+                                        </p>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 w-full text-xs border-warning/30 bg-background/60 text-warning hover:bg-warning/10"
+                                            disabled={loading || isUnlocking}
+                                            onClick={handleCloudRecoveryLogin}
+                                        >
+                                            Sign in from cloud
+                                        </Button>
+                                    </div>
+                                )}
                             </CardContent>
                             <CardFooter className="flex flex-col gap-3">
                                 <Button
@@ -477,6 +587,40 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                     )}
                                     {loading || isUnlocking ? 'Signing in' : 'Login'}
                                 </Button>
+
+                                {gateInfo && (
+                                    <>
+                                        <div className="flex w-full items-center gap-3">
+                                            <div className="h-px flex-1 bg-border" />
+                                            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">or</span>
+                                            <div className="h-px flex-1 bg-border" />
+                                        </div>
+                                        <div className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-muted/20 p-2.5">
+                                            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
+                                            {auth.avatar ? (
+                                                <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
+                                            ) : (
+                                                <UserRound className="h-4 w-4 text-primary" />
+                                            )}
+                                        </div>
+                                            <p className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">Continue as {gateInfo.label || 'saved sign-in'}</p>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="shrink-0 gap-1.5"
+                                                onClick={handleContinueWithDevice}
+                                                disabled={deviceBusy}
+                                            >
+                                                {deviceBusy ? (
+                                                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                                ) : (
+                                                    <Fingerprint className="h-3.5 w-3.5" />
+                                                )}
+                                                {deviceBusy ? 'Signing in' : 'Continue'}
+                                            </Button>
+                                        </div>
+                                    </>
+                                )}
 
                                 {isLocked && auth.isAuthenticated && (
                                     <Button

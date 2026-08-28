@@ -1,7 +1,9 @@
+import { useRef } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Check, User, Clock, RefreshCw, Upload, Download } from 'lucide-react'
+import { ImageUploadButton } from '@/components/ui/image-upload-button'
 import { useSyncStore } from '@/store/syncStore'
 import { getTimeAgo } from '@/lib/utils'
 import { CopyButton } from '@/components/ui/copy-button'
@@ -13,6 +15,8 @@ export function AccountSection() {
     const isSyncing = useSyncStore(s => s.isSyncing)
     const lastSyncedAt = useSyncStore(s => s.lastSyncedAt)
     const setDisplayName = useSyncStore(s => s.setDisplayName)
+    const setAvatar = useSyncStore(s => s.setAvatar)
+    const urlRef = useRef<HTMLInputElement>(null)
 
     if (!auth.isAuthenticated) {
         return (
@@ -44,14 +48,48 @@ export function AccountSection() {
                 <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display Name</Label>
-                        <div className="relative">
-                            <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                            <Input
-                                placeholder="Your Name"
-                                className="h-10 border-border/45 bg-background/60 pl-10 focus:bg-background"
-                                value={auth.name}
-                                onChange={(e) => setDisplayName(e.target.value)}
-                            />
+                        <div className="flex items-center gap-3">
+                            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-primary/25 bg-primary/10 flex items-center justify-center">
+                                {auth.avatar ? (
+                                    <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                    <span className="text-xl font-bold text-primary">{(auth.name || auth.id).charAt(0).toUpperCase()}</span>
+                                )}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-1.5">
+                                <Input
+                                    placeholder="Your Name"
+                                    className="h-10 border-border/45 bg-background/60 focus:bg-background"
+                                    value={auth.name}
+                                    onChange={(e) => setDisplayName(e.target.value)}
+                                />
+                                <div className="flex gap-2">
+                                    <Input
+                                        ref={urlRef}
+                                        value={auth.avatar?.startsWith('data:') ? '\u2713 Uploaded image' : (auth.avatar || '')}
+                                        onChange={(e) => setAvatar(e.target.value || null)}
+                                        placeholder="Avatar image URL (optional)..."
+                                        className="h-8 text-xs"
+                                        readOnly={auth.avatar?.startsWith('data:')}
+                                    />
+                                    <ImageUploadButton
+                                        onUploaded={(dataUrl) => setAvatar(dataUrl)}
+                                        options={{ maxDimension: 128, square: true, quality: 0.85 }}
+                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                                        label="Upload avatar"
+                                    />
+                                    {auth.avatar && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 shrink-0 text-xs text-muted-foreground hover:text-destructive"
+                                            onClick={() => setAvatar(null)}
+                                        >
+                                            Remove
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
 

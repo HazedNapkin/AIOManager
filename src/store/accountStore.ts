@@ -943,14 +943,14 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
 
                   const updatedAccount: Account = {
                         ...account,
-                        name: data.name !== undefined ? data.name : account.name,
-                        accentColor: data.accentColor !== undefined ? data.accentColor : account.accentColor,
-                        emoji: data.emoji !== undefined ? data.emoji : account.emoji,
+                        name: data.name ?? account.name,
+                        accentColor: data.accentColor ?? account.accentColor,
+                        emoji: data.emoji ?? account.emoji,
                         avatar: 'avatar' in data ? data.avatar : account.avatar,
-                        note: data.note !== undefined ? (data.note || undefined) : account.note,
-                        hideLastWatched: data.hideLastWatched !== undefined ? data.hideLastWatched : (account.hideLastWatched ?? false),
-                        hideAddonPreview: data.hideAddonPreview !== undefined ? data.hideAddonPreview : (account.hideAddonPreview ?? false),
-                        hidePlatformLogos: data.hidePlatformLogos !== undefined ? data.hidePlatformLogos : (account.hidePlatformLogos ?? false),
+                        note: data.note ?? (account.note ?? undefined),
+                        hideLastWatched: data.hideLastWatched ?? (account.hideLastWatched ?? false),
+                        hideAddonPreview: data.hideAddonPreview ?? (account.hideAddonPreview ?? false),
+                        hidePlatformLogos: data.hidePlatformLogos ?? (account.hidePlatformLogos ?? false),
                         allowExternalAddonManagement: data.allowExternalAddonManagement !== undefined ? data.allowExternalAddonManagement : (account.allowExternalAddonManagement ?? false),
                         sourceOfTruth: 'sourceOfTruth' in data ? data.sourceOfTruth : account.sourceOfTruth,
                   }

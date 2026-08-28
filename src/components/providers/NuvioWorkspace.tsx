@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, User, Download } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { RefreshCw, Loader2, Pencil, Check, X, Trash2, Plus, BookOpen, Layers, User, Users, Crosshair, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
@@ -15,6 +16,13 @@ import { fetchConnectionToken } from '@/api/connection'
 import { downloadNuvioBackup } from '@/api/nuvio-backup'
 import { nuvioDriverFor } from '@/lib/drivers/factory'
 import { NUVIO_BACKUP_COPY } from './nuvio-backup-copy'
+import { useAccountStore } from '@/store/accountStore'
+import { useUIStore } from '@/store/uiStore'
+import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { getProfileClaims, resolveProfileState, profileClaimKey } from '@/lib/profile-claims'
+import type { ProfileRosterState } from '@/lib/profile-claims'
+import { ProfileQuickAddReview } from './ProfileQuickAddReview'
+import type { ProfileQuickAddEntry as NuvioQuickAddEntry } from '@/store/account/profileQuickAdd'
 
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
@@ -45,14 +53,20 @@ function useNuvioResource<T>(load: () => Promise<T>) {
     return { data, loading, error, reload }
 }
 
-function TabToolbar({ label, count, loading, onReload }: {
+function TabToolbar({ label, count, loading, onReload, icon }: {
     label?: string
     count?: number
     loading: boolean
     onReload: () => void
+    icon?: ReactNode
 }) {
     return (
         <div className="flex items-center gap-2 mb-4">
+            {icon && (
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-border/40 bg-muted/40 text-muted-foreground">
+                    {icon}
+                </span>
+            )}
             {label && (
                 <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground flex-1">{label}</p>
             )}
@@ -175,20 +189,52 @@ function CollectionsSection({ accountId, connection }: { accountId: string; conn
     )
 }
 
-function ProfilesSection({ accountId, connection }: { accountId: string; connection: Connection }) {
+function ProfilesSection({ accountId, connection, status }: { accountId: string; connection: Connection; status?: ConnectionStatus }) {
     const load = useCallback(() => readNuvioProfiles(accountId, connection), [accountId, connection])
     const { data, loading, error, reload } = useNuvioResource<NuvioProfileRow[]>(load)
     const profiles = data || []
+    const accounts = useAccountStore(s => s.accounts)
     const [busy, setBusy] = useState(false)
     const [editId, setEditId] = useState<string | null>(null)
     const [editName, setEditName] = useState('')
     const [newName, setNewName] = useState('')
     const [confirm, setConfirm] = useState<NuvioProfileRow | null>(null)
+    const [quickAddEntries, setQuickAddEntries] = useState<NuvioQuickAddEntry[] | null>(null)
+
+    // Account-level subscription: deleting an account must release its claim chip.
+    const claims = useMemo(() => getProfileClaims(accounts), [accounts])
+    const stale = !!error || status === 'expired'
+    const addDisabled = stale || busy
+
+    const openClaimedAccount = useCallback((claimAccountId: string) => {
+        const owner = accounts.find(a => a.id === claimAccountId)
+        if (!owner) return
+        useUIStore.getState().openAddAccountDialog(owner)
+    }, [accounts])
+
+    const rosterBackend = connection.credentials?.baseUrl
+
+    const rowState = (p: NuvioProfileRow): ProfileRosterState =>
+        resolveProfileState(
+            { platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend },
+            claims,
+            accountId,
+            connection.id,
+        )
+
+    const claimedOnRow = (p: NuvioProfileRow) => claims.get(profileClaimKey({ platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend }))
 
     const used = new Set(profiles.map(p => p.profile_index))
     let nextIdx = 1
     while (used.has(nextIdx) && nextIdx <= 4) nextIdx++
     const canCreate = nextIdx <= 4
+
+    const unclaimedProfiles = profiles.filter(p => rowState(p) === 'unclaimed')
+    const doQuickAddAll = () => setQuickAddEntries(unclaimedProfiles.map(p => ({
+        profileIndex: p.profile_index,
+        name: p.name,
+        avatarColorHex: p.avatar_color_hex,
+    })))
 
     const doRename = async (p: NuvioProfileRow) => {
         const name = editName.trim()
@@ -216,9 +262,23 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
 
     return (
         <div>
-            <TabToolbar label="Manage profiles" count={data ? profiles.length : undefined} loading={loading} onReload={reload} />
-            {error ? <TabError message={error} onRetry={reload} /> : loading ? <TabLoading /> : (
+            <TabToolbar label="Manage profiles" count={data ? profiles.length : undefined} loading={loading} onReload={reload} icon={<Users className="h-3.5 w-3.5" />} />
+            <p className="-mt-2.5 mb-1 text-xs text-muted-foreground">Each Nuvio profile can become its own fully managed account.</p>
+            <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground/80">
+                Adding a profile as an account makes it a full account, just like the ones you already manage: its own addons, its own watch history. It stays on the same Nuvio login and nothing changes on Nuvio. You can delete the account anytime.
+            </p>
+            {error && !(data && data.length > 0) ? (
+                <TabError message={error} onRetry={reload} />
+            ) : loading ? <TabLoading /> : (
                 <div className="space-y-1.5">
+                    {stale && (
+                        <div className="mb-1.5 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/8 px-3 py-2 text-[11px] text-muted-foreground">
+                            <RefreshCw className="h-3 w-3 shrink-0" />
+                            <span className="flex-1">Showing last known profiles. Add actions are off until this list refreshes.</span>
+                            <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-[11px]" onClick={() => reload()}>Retry</Button>
+                        </div>
+                    )}
+
                     {profiles.length === 0 && (
                         <EmptyState
                             icon={<User className="h-5 w-5" />}
@@ -227,7 +287,10 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                         />
                     )}
 
-                    {profiles.map(p => (
+                    {profiles.map(p => {
+                        const state = rowState(p)
+                        const claim = state === 'claimed' ? claimedOnRow(p) : undefined
+                        return (
                         <div
                             key={p.id}
                             className={cn(
@@ -257,6 +320,47 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                             ) : (
                                 <>
                                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
+                                    {state === 'active-here' && (
+                                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                                            <Check className="h-3 w-3" />
+                                            Active
+                                        </span>
+                                    )}
+                                    {state === 'claimed' && claim && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openClaimedAccount(claim.accountId)}
+                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:text-foreground"
+                                            title={`Open ${claim.accountName}`}
+                                        >
+                                            <AccountAvatar
+                                                size="sm"
+                                                showStatus={false}
+                                                account={{
+                                                    name: claim.accountName,
+                                                    email: claim.accountEmail,
+                                                    emoji: claim.emoji,
+                                                    avatar: claim.avatar,
+                                                    status: claim.status ?? 'active',
+                                                }}
+                                            />
+                                            Account: {claim.accountName}
+                                        </button>
+                                    )}
+                                    {state === 'unclaimed' && (
+                                        <button
+                                            type="button"
+                                            disabled={addDisabled}
+                                            onClick={() => setQuickAddEntries([{
+                                                profileIndex: p.profile_index,
+                                                name: p.name,
+                                                avatarColorHex: p.avatar_color_hex,
+                                            }])}
+                                            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                                        >
+                                            Add as account
+                                        </button>
+                                    )}
                                     <Button variant="ghost" size="icon" className="h-7 w-7 flex items-center justify-center shrink-0 text-muted-foreground hover:text-foreground" onClick={() => { setEditId(p.id); setEditName(p.name) }} disabled={busy} aria-label="Rename">
                                         <Pencil className="h-3.5 w-3.5" />
                                     </Button>
@@ -266,7 +370,17 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                                 </>
                             )}
                         </div>
-                    ))}
+                        )
+                    })}
+
+                    {unclaimedProfiles.length >= 2 && (
+                        <div className="flex justify-end pt-1">
+                            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={doQuickAddAll} disabled={addDisabled}>
+                                <Plus className="h-3.5 w-3.5" />
+                                Add all unclaimed ({unclaimedProfiles.length})
+                            </Button>
+                        </div>
+                    )}
 
                     {confirm && (
                         <div className="rounded-2xl border border-destructive/30 bg-destructive/8 p-4 space-y-3 shadow-sm">
@@ -297,6 +411,16 @@ function ProfilesSection({ accountId, connection }: { accountId: string; connect
                         <p className="pt-2 text-[11px] text-muted-foreground border-t border-border/40 mt-2">Nuvio allows up to 4 profiles per account.</p>
                     )}
                 </div>
+            )}
+
+            {quickAddEntries !== null && (
+                <ProfileQuickAddReview
+                    open={!!quickAddEntries}
+                    sourceAccountId={accountId}
+                    email={connection.credentials?.email || undefined}
+                    entries={quickAddEntries}
+                    onClose={() => { setQuickAddEntries(null); reload() }}
+                />
             )}
         </div>
     )
@@ -467,14 +591,19 @@ export function NuvioProfilesTab({ accountId, connection, status }: {
         <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <div className="space-y-6">
                 {canSwitchProfile && (
-                    <div className="space-y-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sync target</p>
-                        <p className="text-xs text-muted-foreground -mt-1.5">Choose which profile this account's addons push to.</p>
+                    <div className="space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5">
+                        <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-border/40 bg-muted/40 text-muted-foreground">
+                                <Crosshair className="h-3.5 w-3.5" />
+                            </span>
+                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Sync target</p>
+                        </div>
+                        <p className="text-xs text-muted-foreground -mt-1">Choose which profile this account's addons push to.</p>
                         <NuvioProfilePicker accountId={accountId} connection={connection} />
                     </div>
                 )}
-                <div className={cn('space-y-3', canSwitchProfile && 'border-t border-border/40 pt-6')}>
-                    <ProfilesSection accountId={accountId} connection={connection} />
+                <div className={cn('space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5', canSwitchProfile && 'pt-3.5')}>
+                    <ProfilesSection accountId={accountId} connection={connection} status={status} />
                 </div>
             </div>
         </div>

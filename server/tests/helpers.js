@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS kv_store (
   password TEXT,
   updated_at BIGINT,
   content_hash TEXT,
-  content_hint TEXT
+  content_hint TEXT,
+  credential_epoch INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS kv_store_history (
@@ -169,6 +170,22 @@ CREATE TABLE IF NOT EXISTS hydra_push_senders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hydra_push_senders_account ON hydra_push_senders (account_id, sync_user);
+
+CREATE TABLE IF NOT EXISTS device_credentials (
+  id TEXT PRIMARY KEY,
+  account_uuid TEXT NOT NULL,
+  device_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  tier TEXT NOT NULL CHECK (tier IN ('idb', 'prf')),
+  label TEXT,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  expires_at INTEGER NOT NULL DEFAULT 0,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  credential_epoch INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_device_credentials_account_device ON device_credentials (account_uuid, device_id);
+CREATE INDEX IF NOT EXISTS idx_device_credentials_account ON device_credentials (account_uuid);
 `
 
 export async function setupTestEnv() {

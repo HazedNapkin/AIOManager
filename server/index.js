@@ -24,6 +24,8 @@ import { registerMetadataKeysRoutes } from './routes/metadata-keys.js'
 import { registerMetadataProxyRoutes } from './routes/metadata-proxy.js'
 import { registerCommandsRoutes } from './routes/commands.js'
 import { registerWatchlistRoutes } from './routes/watchlist.js'
+import { registerDeviceCredentialRoutes } from './routes/device-credentials.js'
+import { deviceAuthHook } from './auth.js'
 
 import { traceClientBatch, traceEnabled } from './utils/trace.js'
 
@@ -99,6 +101,8 @@ fastify.addHook('onRequest', async (request) => {
     request.startTime = Date.now()
 })
 
+fastify.addHook('onRequest', deviceAuthHook)
+
 fastify.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff')
     reply.header('X-Frame-Options', 'DENY')
@@ -119,6 +123,7 @@ fastify.addHook('onSend', async (request, reply) => {
 })
 
 registerWatchlistRoutes(fastify)
+registerDeviceCredentialRoutes(fastify)
 
 fastify.get('/logo.png', async (_request, reply) => {
     const distLogo = `${distPath}/logo.png`

@@ -1,6 +1,6 @@
 {
   "title": "Getting Started",
-  "pages": ["index", "public-instances", "installation", "first-account"],
+  "pages": ["index", "public-instances", "installation", "first-account", "remember-this-device"],
   "index": {
     "public-instances": {
       "title": "Public Instances"
