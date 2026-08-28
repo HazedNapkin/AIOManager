@@ -129,7 +129,7 @@ export function registerSyncRoutes(fastify) {
             const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
             if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
             } else if (request.deviceAuth?.accountUuid !== id) {
-                const verified = verifySyncPassword(password, row.password)
+                const verified = await verifySyncPassword(password, row.password)
                 let authorized = verified === true
                 if (verified === null) {
                     const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
@@ -160,7 +160,7 @@ export function registerSyncRoutes(fastify) {
                 // Device-authed requests carry a token in x-sync-password; it must never become the stored account password.
                 const storedPass = request.deviceAuth
                     ? row.password
-                    : (isScryptHash(row.password) ? row.password : hashSyncPassword(password))
+                    : (isScryptHash(row.password) ? row.password : await hashSyncPassword(password))
                 const encryptedVal = encrypt(decryptedValueStr, PRIMARY_KEY)
                 db.run('UPDATE kv_store SET password = $1, value = $2, updated_at = $3 WHERE key = $4',
                     [storedPass, encryptedVal, Date.now(), id]).catch(err => {
@@ -246,6 +246,11 @@ export function registerSyncRoutes(fastify) {
             for (const h of storedKeyHashes) { if (!pushedKeyHashes.has(h)) { keysChanged = true; break } }
         }
 
+        // scrypt (N=16384) must never run while the global SQLite tx queue is held
+        // (finding #4): the hash depends only on headers, so compute it before the tx.
+        // Device-authed pushes keep the stored password, so no hash is needed for them.
+        const precomputedHashedPass = request.deviceAuth ? null : await hashSyncPassword(password)
+
         return await db.tx(async (tx) => {
             const row = await tx.get(
                 db.type === 'postgres'
@@ -258,7 +263,7 @@ export function registerSyncRoutes(fastify) {
                 const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
                 if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
                 } else if (request.deviceAuth?.accountUuid !== id) {
-                    const verified = verifySyncPassword(password, row.password)
+                    const verified = await verifySyncPassword(password, row.password)
                     let authorized = verified === true
                     if (verified === null) {
                         const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
@@ -298,7 +303,7 @@ export function registerSyncRoutes(fastify) {
 
                 const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
                 // Device-authed pushes carry a token in x-sync-password; it must never become the stored account password.
-                const hashedPass = request.deviceAuth ? row.password : hashSyncPassword(password)
+                const hashedPass = request.deviceAuth ? row.password : precomputedHashedPass
                 await tx.run(`
                     UPDATE kv_store
                     SET value = $1, password = $2, updated_at = $3, content_hash = $4, content_hint = $5
@@ -315,7 +320,7 @@ export function registerSyncRoutes(fastify) {
                     return { error: 'Registrations are closed on this instance.' }
                 }
                 const encryptedVal = encrypt(storedStr, PRIMARY_KEY)
-                const hashedPass = hashSyncPassword(password)
+                const hashedPass = precomputedHashedPass
                 await tx.run(`
                     INSERT INTO kv_store (key, value, password, updated_at, content_hash, content_hint)
                     VALUES ($1, $2, $3, $4, $5, $6)
@@ -433,7 +438,7 @@ export function registerSyncRoutes(fastify) {
 
             const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
             if (request.deviceAuth?.accountUuid !== id && !(cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password)))) {
-                const verified = verifySyncPassword(password, row.password)
+                const verified = await verifySyncPassword(password, row.password)
                 let authorized = verified === true
                 if (verified === null) {
                     const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)
@@ -508,7 +513,7 @@ export function registerSyncRoutes(fastify) {
         const cachedPw = request.deviceAuth?.accountUuid === id ? null : getCachedAuth('sync:' + id)
         if (cachedPw && timingSafeEqual(cachedPw, hashAuthPassword(password))) {
         } else if (request.deviceAuth?.accountUuid !== id) {
-            const verified = verifySyncPassword(password, row.password)
+            const verified = await verifySyncPassword(password, row.password)
             let authorized = verified === true
             if (verified === null) {
                 const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)

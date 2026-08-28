@@ -1384,6 +1384,9 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
     fastify.get('/api/discover-proxy', {
         config: { rateLimit: { max: 600, timeWindow: '1 minute' } }
     }, async (request, reply) => {
+        const authResult = await requireProxyAuth(request, reply)
+        if (authResult) return authResult
+
         const targetUrl = request.query.url
         if (!targetUrl || !targetUrl.startsWith('https://stremio-addons.net/api/v0/')) {
             return reply.code(400).send({ error: 'Invalid URL' })

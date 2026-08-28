@@ -29,6 +29,11 @@ import { createSafeStorage } from './safe-storage'
 import { wipeAllData } from '@/lib/storage-reset'
 import { resetAllStores } from '@/lib/store-coordinator'
 import { trace } from '@/lib/trace'
+import {
+    clearSessionSyncToken,
+    getSessionSyncCredential,
+    saveSessionSyncToken,
+} from '@/lib/session-sync-token'
 
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
 let _appReady = false
@@ -121,6 +126,10 @@ interface SyncState {
     syncSaltB64: string | null
     lastSyncedCloudEtag: string | null
     serverStremioCredentialedAccounts: string[] | null
+    // True only when an authenticated+unlocked session has NO usable server credential
+    // (no in-memory password, no active device session): pushes are impossible and the
+    // dashboard must banner it instead of skipping silently. Session-only; never persisted.
+    needsReauth: boolean
     history: SyncHistoryEntry[]
     setLastSeenVersion: (version: string) => void
     addLogEntry: (data: Omit<SyncHistoryEntry, 'id' | 'timestamp'>) => void
@@ -152,6 +161,7 @@ export function getSyncApiPath(serverUrl: string | undefined): string {
 
 const clearSyncCredentialCaches = () => {
     try { sessionStorage.removeItem(LEGACY_SYNC_PASSWORD_KEY) } catch (e) { if (import.meta.env.DEV) console.error(e) }
+    clearSessionSyncToken()
     import('@/lib/crypto').then(({ clearSyncKeyCache }) => clearSyncKeyCache()).catch(() => {})
 }
 
@@ -199,6 +209,7 @@ export const useSyncStore = create<SyncState>()(
             syncSaltB64: null,
             lastSyncedCloudEtag: null,
             serverStremioCredentialedAccounts: null,
+            needsReauth: false,
             history: [],
 
             setLastSeenVersion: (version: string) => {
@@ -350,7 +361,16 @@ export const useSyncStore = create<SyncState>()(
                         lastSyncedAt: new Date().toISOString(),
                         isInitialSyncCompleted: true,
                         syncSaltB64,
+                        needsReauth: false,
                     })
+
+                    // Bug #52: persist the derived session credential so a page refresh
+                    // keeps platform calls and pushes authenticated without the raw password.
+                    try {
+                        const { exportSyncKeyRaw } = await import('@/lib/crypto')
+                        const syncKeyRaw = await exportSyncKeyRaw(password, syncSalt)
+                        saveSessionSyncToken(newId, syncToken, btoa(String.fromCharCode(...syncKeyRaw)))
+                    } catch { /* best-effort: this session still has the password in memory */ }
 
                     // Set flag to show post-login reminder (Since the registration dialog is hidden too fast)
                     localStorage.setItem('aiom_show_sync_id_reminder', 'true')
@@ -372,7 +392,23 @@ export const useSyncStore = create<SyncState>()(
                 trace('sync', 'pull.start', { accountId: id, isSilent })
 
                 try {
-                    const pullHeaders: Record<string, string> = { 'x-sync-password': await deriveSyncToken(password) }
+                    const syncToken = await deriveSyncToken(password)
+                    const pullHeaders: Record<string, string> = { 'x-sync-password': syncToken }
+                    // Bug #52: keep the derived wire credential (+ sync key) in sessionStorage so
+                    // the post-refresh session — which never sees the raw password again — stays
+                    // authenticated on platform calls and pushes. Skipped when the stored entry
+                    // already matches (token equality implies the same password and key).
+                    const persistSessionCredential = async () => {
+                        if (!password) return
+                        if (getSessionSyncCredential(id)?.token === syncToken) return
+                        try {
+                            const { exportSyncKeyRaw } = await import('@/lib/crypto')
+                            const saltB64 = get().syncSaltB64
+                            const keySalt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : undefined
+                            const syncKeyRaw = await exportSyncKeyRaw(password, keySalt)
+                            saveSessionSyncToken(id, syncToken, btoa(String.fromCharCode(...syncKeyRaw)))
+                        } catch { /* best-effort: this session still has the password in memory */ }
+                    }
                     const storedEtag = get().lastSyncedCloudEtag
                     const sessionUnlocked = !!useAuthStore.getState().encryptionKey
                     if (storedEtag && sessionUnlocked) pullHeaders['If-None-Match'] = storedEtag
@@ -383,6 +419,7 @@ export const useSyncStore = create<SyncState>()(
 
                     if (res.status === 304) {
                         set({ isInitialSyncCompleted: true, lastSyncCheckedAt: new Date().toISOString() })
+                        await persistSessionCredential()
                         if (!useAccountStore.getState().hydrated) {
                             await useAccountStore.getState().initialize()
                         }
@@ -748,8 +785,12 @@ export const useSyncStore = create<SyncState>()(
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
                         isInitialSyncCompleted: true,
-                        lastSyncedCloudEtag: responseEtag ?? null
+                        lastSyncedCloudEtag: responseEtag ?? null,
+                        needsReauth: false
                     })
+                    // After the set: syncSaltB64 may have just been adopted from the cloud,
+                    // and the sync key must be exported under that same salt.
+                    await persistSessionCredential()
 
                     // Heal a salt-less cloud record only with a definitively-correct salt (a freshly
                     // minted one for an empty account). A device-local fallback for a record that has
@@ -886,7 +927,8 @@ export const useSyncStore = create<SyncState>()(
                     lastSyncCheckedAt: null,
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
-                    serverStremioCredentialedAccounts: null
+                    serverStremioCredentialedAccounts: null,
+                    needsReauth: false
                 })
                 _lastSyncedAccountCount = null
                 clearRepublishState()
@@ -905,9 +947,19 @@ export const useSyncStore = create<SyncState>()(
                 }
                 const { auth, serverUrl, isSyncing, isInitialSyncCompleted } = get()
                 const { isLocked } = useAuthStore.getState()
-                const hasSessionCredentials = !!auth.password || (await isDeviceSessionActive())
+                // Bug #52: a password-session that refreshed keeps its derived session credential,
+                // so pushes resume instead of silently skipping ("no in-session credentials").
+                const sessionCred = auth.isAuthenticated ? getSessionSyncCredential(auth.id) : null
+                const hasSessionCredentials = !!auth.password || !!sessionCred || (await isDeviceSessionActive())
                 if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials) {
                     const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : 'account state not hydrated'
+                    // Credentialless-but-otherwise-operational is the corpse state of the refresh
+                    // bug: skipping silently kept it invisible. Raise the re-auth state so the
+                    // dashboard banners the stopped sync (live bug #51, part 2).
+                    if (!hasSessionCredentials && auth.isAuthenticated && !isLocked && useAccountStore.getState().hydrated && !get().needsReauth) {
+                        set({ needsReauth: true })
+                        trace('sync', 'push.reauth-required', { accountId: auth.id, isAuto })
+                    }
                     if (!isAuto) {
                         get().addLogEntry({ type: 'push', status: 'error', message: `Push skipped: ${reason}.`, isAuto: false })
                         trace('sync', 'push.guard-reject', { accountId: auth.id, reason })
@@ -1089,6 +1141,13 @@ export const useSyncStore = create<SyncState>()(
                     let encryptedState: string
                     if (auth.password) {
                         encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
+                    } else if (sessionCred) {
+                        // Refreshed password-session: encrypt with the session-stored sync key
+                        // (exported at login under the same syncSalt) — identical key material
+                        // to the password path, and NOT a PBKDF2 of the empty password.
+                        const { importSyncKey, encryptSyncPayloadWithKey } = await import('@/lib/crypto')
+                        const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
+                        encryptedState = await encryptSyncPayloadWithKey(compressedPayload, sessionSyncKey)
                     } else {
                         const deviceSyncKey = await getActiveDeviceSyncKey()
                         if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
@@ -1116,7 +1175,7 @@ export const useSyncStore = create<SyncState>()(
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'x-sync-password': await deriveSyncToken(auth.password)
+                            'x-sync-password': sessionCred?.token ?? await deriveSyncToken(auth.password)
                         },
                         body: JSON.stringify({
                             data: encryptedState,
@@ -1139,7 +1198,7 @@ export const useSyncStore = create<SyncState>()(
 
                     if (res.status === 401) {
                         const profile = readIdentityProfile()
-                        set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isInitialSyncCompleted: false })
+                        set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isInitialSyncCompleted: false, needsReauth: false })
                         clearSyncCredentialCaches()
                         import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
                         throw new Error('Sync session expired')
@@ -1190,10 +1249,10 @@ export const useSyncStore = create<SyncState>()(
                     // If server returns a timestamp, use it. Fallback to local only if missing.
                     const serverTime = resData.syncedAt
                     if (serverTime) {
-                        set({ lastSyncedAt: serverTime })
+                        set({ lastSyncedAt: serverTime, needsReauth: false })
                         if (import.meta.env.DEV) console.log(`[Sync] Synced with server clock: ${serverTime}`)
                     } else {
-                        set({ lastSyncedAt: new Date().toISOString() })
+                        set({ lastSyncedAt: new Date().toISOString(), needsReauth: false })
                     }
 
                     get().addLogEntry({
@@ -1261,14 +1320,15 @@ export const useSyncStore = create<SyncState>()(
             forceMirrorState: async () => {
                 const { auth, serverUrl } = get()
                 if (!auth.isAuthenticated) return
-                if (!auth.password && !(await isDeviceSessionActive())) return
+                const sessionCred = getSessionSyncCredential(auth.id)
+                if (!auth.password && !sessionCred && !(await isDeviceSessionActive())) return
                 set({ isSyncing: true })
 
                 const apiPath = getSyncApiPath(serverUrl)
 
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
-                        headers: { 'x-sync-password': await deriveSyncToken(auth.password) }
+                        headers: { 'x-sync-password': sessionCred?.token ?? await deriveSyncToken(auth.password) }
                     })
 
                     if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status})`)
@@ -1285,6 +1345,10 @@ export const useSyncStore = create<SyncState>()(
                         let decryptedStr: string
                         if (auth.password) {
                             decryptedStr = await decryptPayload(raw.data as string, auth.password, remoteSyncSalt)
+                        } else if (sessionCred) {
+                            const { importSyncKey, decryptSyncPayloadWithKey } = await import('@/lib/crypto')
+                            const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
+                            decryptedStr = await decryptSyncPayloadWithKey(raw.data as string, sessionSyncKey)
                         } else {
                             const deviceSyncKey = await getActiveDeviceSyncKey()
                             if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
@@ -1395,7 +1459,7 @@ export const useSyncStore = create<SyncState>()(
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
                         method: 'DELETE',
-                        headers: { 'x-sync-password': await deriveSyncToken(auth.password) }
+                        headers: { 'x-sync-password': getSessionSyncCredential(auth.id)?.token ?? await deriveSyncToken(auth.password) }
                     })
 
                     if (!res.ok) throw new Error("Failed to delete account from server")
@@ -1419,7 +1483,8 @@ export const useSyncStore = create<SyncState>()(
                     lastActionTimestamp: 0,
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
-                    serverStremioCredentialedAccounts: null
+                    serverStremioCredentialedAccounts: null,
+                    needsReauth: false
                 })
                 clearRepublishState()
             }

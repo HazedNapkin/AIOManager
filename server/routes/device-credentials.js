@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import db from '../db.js'
 import { verifyAuth } from '../auth.js'
-import { invalidateCachedAuth } from '../state.js'
+import { invalidateCachedAuth, invalidateCachedAuthPrefix } from '../state.js'
 import { hashSyncPassword } from '../lib/sync-password.js'
 
 const DEVICE_TIERS = new Set(['idb', 'prf'])
@@ -46,16 +46,20 @@ export function registerDeviceCredentialRoutes(fastify) {
             const now = Date.now()
             const expiresAt = now + DEVICE_LIFETIME_DAYS * DAY_MS
             const epoch = Number(account.credential_epoch) || 1
+            // scrypt stays outside the tx (finding #4): the hash depends only on the request.
+            const tokenHash = await hashSyncPassword(deviceToken)
             const row = await db.tx(async (tx) => {
                 await tx.run('DELETE FROM device_credentials WHERE account_uuid = $1 AND device_id = $2', [authUser, deviceId])
                 const id = crypto.randomUUID()
                 await tx.run(
                     `INSERT INTO device_credentials (id, account_uuid, device_id, token_hash, tier, label, created_at, expires_at, revoked, last_used_at, credential_epoch)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, NULL, $9)`,
-                    [id, authUser, deviceId, hashSyncPassword(deviceToken), tier, label, now, expiresAt, epoch]
+                    [id, authUser, deviceId, tokenHash, tier, label, now, expiresAt, epoch]
                 )
                 return await tx.get('SELECT * FROM device_credentials WHERE id = $1', [id])
             })
+            // Re-enrollment replaced the credential: any cached token for this device is dead.
+            invalidateCachedAuth('device:' + authUser + ':' + deviceId)
             return { success: true, device: publicDeviceRecord(row) }
         } catch {
             reply.status(500)
@@ -82,6 +86,7 @@ export function registerDeviceCredentialRoutes(fastify) {
             if (!row) return { success: true, found: false }
             await db.run('UPDATE device_credentials SET revoked = 1 WHERE id = $1', [row.id])
             invalidateCachedAuth('sync:' + authUser)
+            invalidateCachedAuth('device:' + authUser + ':' + deviceId)
             return { success: true, found: true }
         } catch {
             reply.status(500)
@@ -102,6 +107,7 @@ export function registerDeviceCredentialRoutes(fastify) {
             const nextEpoch = (Number(account.credential_epoch) || 1) + 1
             await db.run('UPDATE kv_store SET credential_epoch = $1 WHERE key = $2', [nextEpoch, authUser])
             invalidateCachedAuth('sync:' + authUser)
+            invalidateCachedAuthPrefix('device:' + authUser + ':')
             return { success: true, credentialEpoch: nextEpoch }
         } catch {
             reply.status(500)
