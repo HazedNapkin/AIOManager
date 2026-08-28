@@ -12,6 +12,7 @@ import {
   clearSessionKey,
   clearSyncKeyCache,
 } from '@/lib/crypto'
+import { findVaultRestorableDeviceRecord } from '@/lib/boot-session-restore'
 import { wipeAllData } from '@/lib/storage-reset'
 import { resetAllStores } from '@/lib/store-coordinator'
 
@@ -50,12 +51,17 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     const sessionKey = await loadSessionKey()
 
-    if (sessionKey) {
+    if (sessionKey && (await findVaultRestorableDeviceRecord())) {
       set({
         encryptionKey: sessionKey,
         isLocked: false,
       })
     } else {
+      // A restored vault key alone is a credentialless session: the password is never
+      // persisted, so without a silently-activatable remembered device record every
+      // request would authenticate as deriveSyncToken('') and 401 across the
+      // password-verified routes (stremio-proxy, Nuvio QR, backup, re-auth) while sync
+      // failures stay silent. Present the gate and collect a real credential instead.
       set({ isLocked: true })
     }
   },

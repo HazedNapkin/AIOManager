@@ -19,7 +19,12 @@ export function getCachedAuth(key) {
 
 export function setCachedAuth(key, password) {
     authCache.set(key, { passwordHash: hashAuthPassword(password), ts: Date.now() })
-    if (authCache.size > 200) {
+    // Cap sized for the namespace mix: 'sync:<uuid>' (one per account) plus
+    // 'device:<uuid>:<deviceId>' (one per enrolled device). At 200 the shared
+    // LRU thrashed on instances with >200 accounts or many devices, forcing a
+    // full scrypt per request; 1000 keeps hot entries resident at trivial
+    // memory cost (~100 bytes/entry).
+    if (authCache.size > 1000) {
         const oldest = authCache.keys().next().value
         authCache.delete(oldest)
     }
@@ -27,6 +32,14 @@ export function setCachedAuth(key, password) {
 
 export function invalidateCachedAuth(key) {
     authCache.delete(key)
+}
+
+// Invalidate every entry under a namespace prefix, e.g. 'device:<uuid>:' when
+// a credential epoch bump kills all of an account's device sessions.
+export function invalidateCachedAuthPrefix(prefix) {
+    for (const key of authCache.keys()) {
+        if (key.startsWith(prefix)) authCache.delete(key)
+    }
 }
 
 export const proxyQueue = []

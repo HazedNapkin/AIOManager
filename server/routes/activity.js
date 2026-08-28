@@ -27,7 +27,7 @@ async function validateSyncAuth(request, reply) {
         return null
     }
 
-    const verified = verifySyncPassword(syncPassword, row.password)
+    const verified = await verifySyncPassword(syncPassword, row.password)
     let authorized = verified === true
     if (verified === null) {
         const decryptedPassword = decrypt(row.password, FALLBACK_KEYS)

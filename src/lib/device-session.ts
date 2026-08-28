@@ -34,6 +34,8 @@ import {
     saveSalt,
 } from '@/lib/crypto'
 import { apiFetch } from '@/lib/http-client'
+import { trace } from '@/lib/trace'
+import { resolveBootReactivation, type BootReactivationOutcome } from '@/lib/device-session-boot'
 import { useAuthStore } from '@/store/authStore'
 import { getSyncApiPath, readIdentityProfile, useSyncStore } from '@/store/syncStore'
 
@@ -498,6 +500,7 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
     activateDeviceAuth({ accountUUID: record.accountUUID, deviceId: record.deviceId, deviceToken: bundle.deviceToken, syncKey })
     useSyncStore.setState((s) => ({
         auth: { ...s.auth, id: record.accountUUID, password: '', name: s.auth.name, isAuthenticated: true },
+        needsReauth: false,
     }))
 
     suppressAutoWipe = true
@@ -505,8 +508,9 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
         await useSyncStore.getState().login(record.accountUUID, '', true, true, { syncKey })
     } catch (e) {
         deactivateDeviceAuth()
+        const profile = readIdentityProfile()
         useSyncStore.setState((s) => ({
-            auth: { ...s.auth, id: '', password: '', name: '', isAuthenticated: false },
+            auth: { ...s.auth, id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false },
             isInitialSyncCompleted: false,
         }))
         const reason = (e as { reason?: string })?.reason
@@ -528,32 +532,27 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
 
 export async function reactivateDeviceSessionIfNeeded(): Promise<void> {
     if (activeDeviceAuth) return
-    const { auth } = useSyncStore.getState()
-    const authState = useAuthStore.getState()
-    if (!auth.isAuthenticated || auth.password || authState.isLocked || !authState.encryptionKey) return
-    let record: DeviceRecord | null
+    // Guard + unwrap logic lives in device-session-boot.ts (alias-free, store-injected) so
+    // the boot race is unit-tested; this wrapper owns module state and the follow-up pull.
+    let outcome: BootReactivationOutcome
     try {
-        record = await loadCurrentRecord()
+        outcome = await resolveBootReactivation(useSyncStore, useAuthStore)
     } catch {
         return
     }
-    // PRF records need a biometric gesture; only the login gate can supply one.
-    if (!record || !record.deviceSecret || record.accountUUID !== auth.id) return
-    let opened: OpenedRecord
-    try {
-        opened = await openRecord(record, record.deviceSecret)
-    } catch {
-        await deleteRecord(record.accountUUID)
+    if (!outcome.activated) {
+        trace('auth', 'deviceSession.reactivate.skip', { reason: outcome.reason })
         return
     }
-    activateDeviceAuth({
-        accountUUID: record.accountUUID,
-        deviceId: record.deviceId,
-        deviceToken: opened.bundle.deviceToken,
-        syncKey: opened.syncKey,
-    })
+    const { record, secret, bundle } = outcome
+    const syncKeyRaw = bundle.syncKey
+    if (!syncKeyRaw) return
+    trace('auth', 'deviceSession.reactivate.activated', { account: record.accountUUID, deviceId: record.deviceId })
+    const syncKey = await importSyncKey(syncKeyRaw)
+    activateDeviceAuth({ accountUUID: record.accountUUID, deviceId: record.deviceId, deviceToken: bundle.deviceToken, syncKey })
+    useSyncStore.setState((s) => (s.needsReauth ? { needsReauth: false } : {}))
     useSyncStore.getState().refreshFromCloud().catch(() => {})
-    renewRememberedRecord(record, record.deviceSecret, opened.bundle)
+    renewRememberedRecord(record, secret, bundle)
 }
 
 installDeviceAuthInterceptor()

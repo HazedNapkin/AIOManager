@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import { Footer } from './Footer'
 import { Header, MobileBottomNav } from './Header'
 import { SyncIdReminder } from './SyncIdReminder'
+import { ReauthBanner } from './ReauthBanner'
 import { useAddonStore } from '@/store/addonStore'
 import { CommandPalette } from '@/components/CommandPalette'
 
@@ -56,6 +57,7 @@ export function Layout({ children }: LayoutProps) {
         </defs>
       </svg>
       <SyncIdReminder />
+      <ReauthBanner />
       <Header />
       <main id="main-content" className="relative z-10 max-w-[1800px] mx-auto w-full px-4 py-6 md:py-10 flex-1 overflow-y-auto md:overflow-visible">{children}</main>
       <MobileBottomNav />
