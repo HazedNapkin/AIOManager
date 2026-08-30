@@ -115,38 +115,38 @@ export function MobileBottomNav() {
               />
               <motion.div
                 className="fixed bottom-[80px] left-0 right-0 z-40 bg-card/95 backdrop-blur-lg rounded-t-3xl border border-b-0 border-border/40 shadow-[0_-10px_40px_hsl(var(--background)/0.8)]"
-                initial={{ y: 280 }}
+                initial={{ y: 420 }}
                 animate={{ y: 0 }}
-                exit={{ y: 280 }}
+                exit={{ y: 420 }}
                 transition={{ type: 'spring', stiffness: 400, damping: 35 }}
               >
-                <div className="flex items-center justify-between px-5 pt-4 pb-2">
-                  <span className="text-xs font-medium uppercase text-foreground/60">More</span>
-                  <Button variant="ghost" onClick={() => setMoreOpen(false)} className="p-1 text-muted-foreground/60 hover:text-foreground" aria-label="Close menu">
-                    <X className="h-4 w-4" />
-                  </Button>
+                <div className="flex items-center justify-between px-5 pt-5 pb-3">
+                    <span className="text-xs font-medium uppercase text-foreground/60">More</span>
+                    <Button variant="ghost" onClick={() => setMoreOpen(false)} className="p-1 text-muted-foreground/60 hover:text-foreground" aria-label="Close menu">
+                        <X className="h-4 w-4" />
+                    </Button>
                 </div>
-                <div className="grid grid-cols-3 gap-1 px-3 pb-3">
-                  {MORE_NAV.map((item) => {
-                    const isActive = item.match(location.pathname)
-                    const Icon = item.icon
-                    return (
-                      <Link
-                        key={item.to}
-                        to={item.to}
-                        onClick={() => setMoreOpen(false)}
-                        className={`flex flex-col items-center justify-center py-3 px-2 rounded-xl transition-colors gap-1.5 ${isActive ? 'bg-primary/12 text-primary' : 'text-foreground/70 hover:bg-muted/50 hover:text-foreground'}`}
-                      >
-                        {item.to === '/replay' ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="m11 19-9-7 9-7v14z" opacity="0.5" />
-                            <path d="m22 19-9-7 9-7v14z" />
-                          </svg>
-                        ) : (
-                          Icon && <Icon className="h-5 w-5" />
-                        )}
-                        <span className="text-xs font-bold">{item.label}</span>
-                      </Link>
+                <div className="grid grid-cols-3 gap-3 px-4 pb-6">
+                    {MORE_NAV.map((item) => {
+                        const isActive = item.match(location.pathname)
+                        const Icon = item.icon
+                        return (
+                            <Link
+                                key={item.to}
+                                to={item.to}
+                                onClick={() => setMoreOpen(false)}
+                                className={`flex flex-col items-center justify-center py-5 px-3 rounded-2xl transition-colors gap-2.5 ${isActive ? 'bg-primary/12 text-primary' : 'text-foreground/70 hover:bg-muted/50 hover:text-foreground'}`}
+                            >
+                                {item.to === '/replay' ? (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="m11 19-9-7 9-7v14z" opacity="0.5" />
+                                        <path d="m22 19-9-7 9-7v14z" />
+                                    </svg>
+                                ) : (
+                                    Icon && <Icon className="h-6 w-6" />
+                                )}
+                                <span className="text-sm font-bold">{item.label}</span>
+                            </Link>
                     )
                   })}
                 </div>

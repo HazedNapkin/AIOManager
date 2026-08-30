@@ -174,6 +174,35 @@ export function registerActivityRoutes(fastify, activityEngine) {
         return activityEngine.triggerScan()
     })
 
+    // Per-event delete fired (fire-and-forget) by clients after dropping the matching local
+    // watch events. Owner-scoped by sync_user + event id, idempotent (unknown ids delete
+    // nothing). Not gated on activityEngine.isEnabled(): like the credential route, removing
+    // rows is data management, not telemetry.
+    fastify.delete('/api/activity/events/:eventId', {
+        config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+    }, async (request, reply) => {
+        const syncUser = await validateSyncAuth(request, reply)
+        if (!syncUser) return { error: 'Invalid credentials' }
+
+        const eventId = decodeURIComponent(request.params.eventId || '')
+        if (!eventId || eventId.length > 512) {
+            reply.status(400)
+            return { error: 'Invalid event id' }
+        }
+
+        try {
+            const result = await db.run(
+                'DELETE FROM activity_events WHERE sync_user = $1 AND id = $2',
+                [syncUser, eventId]
+            )
+            return { deleted: Math.max(0, Number(result?.changes ?? 0)) }
+        } catch (dbErr) {
+            fastify.log.error({ category: 'Activity' }, `Event delete failed: ${dbErr.message}`)
+            reply.status(503)
+            return { error: 'database_unavailable' }
+        }
+    })
+
     fastify.post('/api/credentials/sync', {
         config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
         bodyLimit: 1024 * 512
@@ -187,10 +216,10 @@ export function registerActivityRoutes(fastify, activityEngine) {
             return { error: 'Expected { accounts: [...] }' }
         }
 
-        if (!activityEngine.isEnabled()) {
-            return { synced: 0, skipped: accounts.length, disabled: true, serverStremioCredentialedAccounts: await listStremioCredentialedAccountIds(syncUser) }
-        }
-
+        // Not gated on activityEngine.isEnabled(): server_credentials rows are what
+        // external Hydra writes use to reach Stremio directly, so persisting them is
+        // an identity concern, not activity telemetry. Only the activity-event routes
+        // above stay engine-gated.
         const capped = accounts.slice(0, 200)
         const existingRows = await db.query(
             'SELECT account_id, account_name, auth_key FROM server_credentials WHERE sync_user = $1',

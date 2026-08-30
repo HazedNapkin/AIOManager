@@ -1,6 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { mapConcurrent } from '@/lib/concurrency'
-import { rebuildRuleFromServerState, stripUndefinedRuleFields } from '@/lib/failover-state-mapping'
+import { didActiveTierChange, rebuildRuleFromServerState, stripUndefinedRuleFields } from '@/lib/failover-state-mapping'
 import { create } from 'zustand'
 import localforage from 'localforage'
 import { useAccountStore, getCachedAuthKey, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
@@ -138,7 +138,14 @@ const normalizeCustomChecks = (checks: Array<CustomCheckEntry | string> | undefi
         .slice(0, 5)
 }
 
-const reconcileAccountAddonsWithActiveRule = async (rule: FailoverRule) => {
+// localOnly (consumer mode): flip the local flags without pushing the local list back
+// to the platform/connections (toggleAddonEnabled runs silent — no backgroundSync, no
+// pushToConnections). Used whenever the source of truth is the server's enforced rule
+// state: the engine already enforced it on the platform, so pushing our copy is at best
+// redundant and at worst re-clobbers managed chains with an intermediate state.
+// Manual user actions (addRule/updateRule/toggleRuleActive) omit it so intentional
+// edits still propagate.
+const reconcileAccountAddonsWithActiveRule = async (rule: FailoverRule, opts?: { localOnly?: boolean }) => {
     if (!rule.isActive || !rule.priorityChain.length) return false
 
     const account = useAccountStore.getState().accounts.find(a => a.id === rule.accountId)
@@ -176,7 +183,7 @@ const reconcileAccountAddonsWithActiveRule = async (rule: FailoverRule) => {
             rule.accountId,
             url,
             shouldBeEnabled,
-            false,
+            opts?.localOnly === true,
             undefined,
             true
         )
@@ -244,6 +251,29 @@ const scheduleNextPoll = () => {
     }, _adaptiveIntervalMs)
 }
 
+// Tab-focus convergence: the poll loop skips hidden tabs by design, so a server-enforced
+// swap that lands while hidden would otherwise wait out the adaptive backoff (up to 10
+// min) after the tab regains focus. On visible, poke the existing loop once: pulse()
+// only pulls states when the worker heartbeat advanced, and its own guards (_isPulling,
+// vault lock, auth) prevent fighting an in-flight sync. Event edge, not a new timer.
+let focusPulseRegistered = false
+const handleFocusPulse = () => {
+    if (document.visibilityState !== 'visible') return
+    const state = useFailoverStore.getState()
+    if (!state.isMonitoring || state.rules.length === 0) return
+    void state.pulse()
+}
+const registerFocusPulse = () => {
+    if (focusPulseRegistered || typeof document === 'undefined') return
+    document.addEventListener('visibilitychange', handleFocusPulse)
+    focusPulseRegistered = true
+}
+const unregisterFocusPulse = () => {
+    if (!focusPulseRegistered || typeof document === 'undefined') return
+    document.removeEventListener('visibilitychange', handleFocusPulse)
+    focusPulseRegistered = false
+}
+
 const syncRuleToServer = async (rule: FailoverRule) => {
     try {
         const { useSyncStore } = await import('@/store/syncStore')
@@ -302,9 +332,7 @@ const syncRuleToServer = async (rule: FailoverRule) => {
                 is_active: rule.isActive ? 1 : 0,
                 is_automatic: rule.isAutomatic !== false ? 1 : 0,
                 addonList,
-                webhookUrl: rule.notifyEnabled === false
-                    ? ''
-                    : (rule.webhookUrl || useFailoverStore.getState().webhook.url),
+                webhookUrl: rule.notifyEnabled === false ? '' : (rule.webhookUrl || ''),
                 cooldown_ms: rule.cooldown_ms,
                 messageTemplate: rule.messageTemplate || null,
                 customCheckUrls: normalizeCustomChecks(rule.customCheckUrls),
@@ -368,9 +396,7 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
                 is_active: rule.isActive ? 1 : 0,
                 is_automatic: rule.isAutomatic !== false ? 1 : 0,
                 addonList,
-                webhookUrl: rule.notifyEnabled === false
-                    ? ''
-                    : (rule.webhookUrl || useFailoverStore.getState().webhook.url),
+                webhookUrl: rule.notifyEnabled === false ? '' : (rule.webhookUrl || ''),
                 cooldown_ms: rule.cooldown_ms,
                 messageTemplate: rule.messageTemplate || null,
                 customCheckUrls: normalizeCustomChecks(rule.customCheckUrls),
@@ -392,6 +418,40 @@ const syncRulesToServerBatch = async (rules: FailoverRule[]) => {
         if (import.meta.env.DEV) console.log(`[Autopilot] Batch synced ${payload.length} rules to server.`)
     } catch (err) {
         if (import.meta.env.DEV) console.error('[Autopilot] Batch server sync failed:', err)
+    }
+}
+
+// The global webhook lives server-side (owner-scoped, encrypted); the engine resolves
+// it at notification time for rules saved with "Use global webhook" (empty webhookUrl).
+const pushGlobalWebhookToServer = async (url: string) => {
+    try {
+        const { useSyncStore } = await import('@/store/syncStore')
+        const { auth, serverUrl } = useSyncStore.getState()
+        if (!auth.isAuthenticated) return
+
+        const syncPassword = useSyncStore.getState().auth.password
+        const { deriveSyncToken } = await import('@/lib/crypto')
+        const syncToken = await deriveSyncToken(syncPassword)
+        const baseUrl = serverUrl || ''
+        const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
+
+        const resp = await resilientFetch(`${apiPath}/autopilot/global-webhook`, {
+            method: 'PUT',
+            retries: 0,
+            headers: {
+                'Content-Type': 'application/json',
+                'x-sync-password': syncToken,
+                'x-sync-user': auth.id
+            },
+            body: JSON.stringify({ webhookUrl: url })
+        })
+        // Silent drop = UI shows Active while notifications never fire - say so.
+        if (resp && !resp.ok) {
+            toast({ title: 'Global webhook not saved', description: `Server rejected the webhook (status ${resp.status}). Notifications for rules using it will not fire.`, variant: 'destructive' })
+        }
+    } catch (err) {
+        if (import.meta.env.DEV) console.error('[Autopilot] Global webhook server sync failed:', err)
+        toast({ title: 'Global webhook not saved', description: 'Could not reach the server. Notifications for rules using it will not fire.', variant: 'destructive' })
     }
 }
 
@@ -711,7 +771,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         processedRules.push(mergedRule)
                     }
 
-                    const reconcileResults = await mapConcurrent(processedRules, 3, (rule) => reconcileAccountAddonsWithActiveRule(rule))
+                    const reconcileResults = await mapConcurrent(processedRules, 3, (rule) => reconcileAccountAddonsWithActiveRule(rule, { localOnly: true }))
                     if (reconcileResults.some(Boolean)) {
                         needsSync = true
                     }
@@ -806,9 +866,8 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                             : (Array.isArray(serverRule.priorityChain) ? (serverRule.priorityChain as string[]) : localRule.priorityChain)
                         const nextActiveUrl = (serverRule.activeUrl as string) || nextPriorityChain?.[0] || localRule.activeUrl
                         const normNextActive = normalizeAddonUrl(nextActiveUrl || '')
-                        const normLocalActive = normalizeAddonUrl(localRule.activeUrl || '')
 
-                        if (nextActiveUrl && normNextActive !== normLocalActive) {
+                        if (didActiveTierChange(localRule.activeUrl, nextActiveUrl)) {
                             if (import.meta.env.DEV) console.log(`[Failover] Server-side swap detected: ${localRule.id} -> ${nextActiveUrl}`)
                         }
 
@@ -829,7 +888,11 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                         }
                         hasUpdates = true
 
-                        if (await reconcileAccountAddonsWithActiveRule(updatedRules[ruleIndex])) {
+                        // Consumer mode: the server already enforced this state on the
+                        // platform, so reconciling must only APPLY it locally — never push
+                        // the local list back out (backgroundSync/pushToConnections), which
+                        // would resurrect the Swap & Hide clobber one level down the stack.
+                        if (await reconcileAccountAddonsWithActiveRule(updatedRules[ruleIndex], { localOnly: true })) {
                             hasUpdates = true
                         }
                     }
@@ -871,13 +934,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
 
         triggerSync()
 
-        // Re-sync all rules using default webhook mode so the server gets the updated URL.
-        // Rules in "default" mode have notifyEnabled=true and no custom webhookUrl.
-        // Their webhook_url on the server was baked in at last-sync time and is now stale.
-        const defaultModeRules = get().rules.filter(
-            r => r.notifyEnabled !== false && !r.webhookUrl
-        )
-        syncRulesToServerBatch(defaultModeRules).catch(e => { if (import.meta.env.DEV) console.error(e) })
+        pushGlobalWebhookToServer(enabled !== false ? url : '').catch(e => { if (import.meta.env.DEV) console.error(e) })
     },
 
     addRule: async (accountId, priorityChain, name, cooldown_ms, webhookUrl, notifyEnabled, messageTemplate, customCheckUrls) => {
@@ -1034,6 +1091,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         _lastWorkerRun = 0
         _adaptiveIntervalMs = BASE_INTERVAL_MS
         _stableCheckCount = 0
+        registerFocusPulse()
         state.pulse()
         set({ isMonitoring: true })
         scheduleNextPoll()
@@ -1044,6 +1102,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             window.clearTimeout(automationInterval)
             automationInterval = null
         }
+        unregisterFocusPulse()
         set({ isMonitoring: false })
     },
 

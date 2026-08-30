@@ -336,6 +336,7 @@ export function FailoverManager({
     const [chain, setChain] = useState<string[]>(["", ""])
     const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
     const [webhookUrl, setWebhookUrl] = useState("")
+    const [serverGlobalWebhook, setServerGlobalWebhook] = useState<{ configured: boolean; masked?: string | null } | null>(null)
     const [showWebhookConfirm, setShowWebhookConfirm] = useState(false)
     const [simulatingRuleId, setSimulatingRuleId] = useState<string | null>(null)
     const [simulationResults, setSimulationResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string }>>({})
@@ -386,6 +387,15 @@ export function FailoverManager({
     useEffect(() => {
         setWebhookUrl(webhook.url)
     }, [webhook.url])
+
+    useEffect(() => {
+        let cancelled = false
+        void (async () => {
+            const result = await apiFetch<{ configured: boolean; masked?: string | null }>('/autopilot/global-webhook')
+            if (!cancelled && result.ok) setServerGlobalWebhook(result.data ?? { configured: false })
+        })()
+        return () => { cancelled = true }
+    }, [])
 
     useEffect(() => {
         if (!isRuleDialogOpen || !editingRuleId) return
@@ -876,12 +886,17 @@ export function FailoverManager({
                                     Global Webhook
                                 </h3>
                                 <div className="flex items-center gap-2 mt-2">
-                                    <StatusChip variant={webhook.url ? 'success' : 'muted'}>
-                                        <span className={`h-1.5 w-1.5 rounded-full ${webhook.url ? 'bg-success' : 'bg-muted-foreground/40'}`} />
-                                        {webhook.url ? 'Active' : 'Not configured'}
+                                    <StatusChip variant={webhook.url || serverGlobalWebhook?.configured ? 'success' : 'muted'}>
+                                        <span className={`h-1.5 w-1.5 rounded-full ${webhook.url || serverGlobalWebhook?.configured ? 'bg-success' : 'bg-muted-foreground/40'}`} />
+                                        {webhook.url ? 'Active' : serverGlobalWebhook?.configured ? `Active on server${serverGlobalWebhook.masked ? ` ${serverGlobalWebhook.masked}` : ''}` : 'Not configured'}
                                     </StatusChip>
                                 </div>
                                 <p className="text-xs text-muted-foreground mt-1">Fallback for all rules unless a rule has its own custom webhook.</p>
+                                {!webhook.url && serverGlobalWebhook?.configured && (
+                                    <p className="text-xs text-muted-foreground/70 mt-1">
+                                        A global webhook is saved on the server{serverGlobalWebhook.masked ? ` (${serverGlobalWebhook.masked})` : ''} for this account. This browser has no local copy — paste the URL and save to replace or test it.
+                                    </p>
+                                )}
                             </div>
                         </div>
                         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
@@ -2006,6 +2021,22 @@ function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accou
     const clearLogs = useHistoryStore(s => s.clearLogs)
     const rulesCount = useFailoverStore(s => s.rules.filter(rule => rule.accountId === accountId).length)
     const logs = useMemo(() => allLogs.filter(l => l.accountId === accountId), [allLogs, accountId])
+
+    // Collapse consecutive same-type events from one primary: flapping would otherwise flood the log.
+    const groupedLogs = useMemo(() => {
+        const out: Array<{ log: (typeof allLogs)[number]; repeats: number }> = []
+        for (const log of logs) {
+            const prev = out[out.length - 1]
+            if (prev && prev.log.type === log.type && prev.log.primaryName === log.primaryName) {
+                prev.repeats++
+            } else {
+                out.push({ log, repeats: 1 })
+            }
+        }
+        return out
+    }, [logs])
+    const [showAllLogs, setShowAllLogs] = useState(false)
+    const visibleLogs = showAllLogs ? groupedLogs : groupedLogs.slice(0, 8)
     const [showClearConfirm, setShowClearConfirm] = useState(false)
     const [isClearing, setIsClearing] = useState(false)
 
@@ -2063,33 +2094,29 @@ function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accou
                 </Button>
             </div>
             <div className="space-y-3">
-                {logs.map((log) => {
+                {visibleLogs.map(({ log, repeats }) => {
                     const logDate = log.timestamp ? new Date(log.timestamp) : null;
                     const isValidLogDate = logDate && !isNaN(logDate.getTime());
 
                     let Icon = Activity;
                     let typeColor = 'text-muted-foreground';
                     let typeVariant: 'muted' | 'primary' | 'success' | 'destructive' = 'muted';
-                    let cardBg = 'bg-muted/20';
                     let iconBg = 'bg-muted/40';
 
                     if (log.type === 'failover') {
                         Icon = AlertTriangle;
                         typeColor = 'text-destructive';
                         typeVariant = 'destructive';
-                        cardBg = 'bg-destructive/5';
                         iconBg = 'bg-destructive/15';
                     } else if (log.type === 'recovery') {
                         Icon = Check;
                         typeColor = 'text-success';
                         typeVariant = 'success';
-                        cardBg = 'bg-success/5';
                         iconBg = 'bg-success/15';
                     } else if (log.type === 'self-healing') {
                         Icon = Activity;
                         typeColor = 'text-primary';
                         typeVariant = 'primary';
-                        cardBg = 'bg-primary/5';
                         iconBg = 'bg-primary/15';
                     }
 
@@ -2098,7 +2125,7 @@ function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accou
                     const latencyMs = log.metadata?.latencyMs as number | undefined
 
                     return (
-                        <div key={log.id} className={`rounded-xl border border-border/30 ${cardBg} p-4`}>
+                        <div key={log.id} className="rounded-xl border border-border/30 bg-muted/20 p-4">
                             <div className="flex items-start gap-3">
                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
                                     <Icon className={`w-4 h-4 ${typeColor}`} />
@@ -2107,7 +2134,7 @@ function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accou
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2">
                                             <StatusChip variant={typeVariant} size="sm">
-                                                {log.type}
+                                                {log.type}{repeats > 1 ? ` ×${repeats}` : ''}
                                             </StatusChip>
                                             {latencyMs != null && (
                                                 <span className="text-xs font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
@@ -2149,6 +2176,11 @@ function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accou
                         </div>
                     )
                 })}
+                {groupedLogs.length > visibleLogs.length && (
+                    <Button size="sm" variant="outline" className="w-full" onClick={() => setShowAllLogs(s => !s)}>
+                        {showAllLogs ? 'Show recent events' : `Show ${groupedLogs.length - visibleLogs.length} older events`}
+                    </Button>
+                )}
             </div>
         </div>
         <ConfirmationDialog

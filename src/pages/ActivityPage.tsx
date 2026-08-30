@@ -23,6 +23,7 @@ import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
 import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getCachedCinemetaName } from '@/lib/activity-utils'
 import { planEpisodeBitfieldDelete } from '@/lib/episode-bitfield-delete'
+import { isEpisodeScopedDelete, isBareAnchoredEpisode } from '@/lib/activity-delete-routing'
 import { fetchSeriesVideos } from '@/lib/watched-episodes'
 import type { Account } from '@/types/account'
 
@@ -608,7 +609,7 @@ export function ActivityPage() {
                     try {
                         const authKey = await decrypt(stremioKey, encryptionKey)
 
-                        const episodeItems = stremioItems.filter(i => i.season != null && i.episode != null)
+                        const episodeItems = stremioItems.filter(i => isEpisodeScopedDelete(i))
                         const rowsById = new Map<string, LibraryItem>()
                         let rowsFetchFailed = false
                         if (episodeItems.length > 0) {
@@ -642,11 +643,19 @@ export function ActivityPage() {
                                 trace('activityDelete', 'stremio.item.ok', { accountId, itemId: item.itemId, mode: 'whole-show' })
                             }
                             try {
-                                if (item.season == null || item.episode == null) {
+                                // Movies (even with season 0/episode 0) and rows without real
+                                // episode coordinates have no per-episode state to edit.
+                                if (!isEpisodeScopedDelete(item)) {
                                     await withShowLock(item.itemId, wholeShowDelete)
                                     return
                                 }
                                 if (rowsFetchFailed) return
+                                // A part-watched episode is the row's only watch state — removing
+                                // the row IS the episode delete.
+                                if (isBareAnchoredEpisode(rowsById.get(item.itemId), item.uniqueItemId)) {
+                                    await withShowLock(item.itemId, wholeShowDelete)
+                                    return
+                                }
                                 const target = { uniqueItemId: item.uniqueItemId, season: item.season, episode: item.episode }
                                 await withShowLock(item.itemId, async () => {
                                     const plan = await planEpisodeBitfieldDelete({

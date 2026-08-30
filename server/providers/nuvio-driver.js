@@ -9,6 +9,7 @@ const REST_TIMEOUT_MS = 15000
 
 import { Buffer } from 'node:buffer'
 import { traced } from '../utils/trace.js'
+import { resilientFetch } from '../utils/api-resilience.js'
 
 const BACKUP_EXPORT_MAX_BYTES = 50 * 1024 * 1024
 
@@ -47,35 +48,26 @@ export function createNuvioDriver(options = {}) {
     })
 
     const rpc = async (fn, body, accessToken, opts = {}) => {
-        const retries = opts.retries ?? 2
-        let lastErr
-        for (let attempt = 0; attempt <= retries; attempt++) {
-            let res
-            try {
-                res = await fetch(`${baseUrl}${RPC_PATH}/${fn}`, {
-                    method: 'POST',
-                    headers: makeHeaders(accessToken),
-                    body: JSON.stringify(body),
-                    signal: AbortSignal.timeout(RPC_TIMEOUT_MS)
-                })
-            } catch (err) {
-                lastErr = err
-                if (attempt < retries) { await new Promise(r => setTimeout(r, 400 * (attempt + 1))); continue }
-                throw err
-            }
-            if (!res.ok) {
-                const err = new Error(`Nuvio RPC ${fn} returned ${res.status}`)
-                err.status = res.status
-                err.isAuthError = res.status === 401
-                try { err.data = await res.json() } catch { }
-                if (res.status >= 500 && attempt < retries) { lastErr = err; await new Promise(r => setTimeout(r, 400 * (attempt + 1))); continue }
-                throw err
-            }
-            if (res.status === 204) return null
-            if (opts.maxBytes > 0) return readJsonCapped(res, opts.maxBytes)
-            return res.json()
+        // idempotent:true on POST is load-bearing (preserves 5xx-retry semantics for upsert ops).
+        const res = await resilientFetch(`${baseUrl}${RPC_PATH}/${fn}`, {
+            method: 'POST',
+            headers: makeHeaders(accessToken),
+            body: JSON.stringify(body),
+            timeout: RPC_TIMEOUT_MS,
+            retries: opts.retries ?? 2,
+            idempotent: true
+        })
+        if (!res.ok) {
+            const err = new Error(`Nuvio RPC ${fn} returned ${res.status}`)
+            err.status = res.status
+            err.isAuthError = res.status === 401
+            // body may not be JSON (proxy 502 HTML, etc.); the status code is the contract
+            try { err.data = await res.json() } catch { /* response body unreadable as JSON - status carries the signal */ }
+            throw err
         }
-        throw lastErr
+        if (res.status === 204) return null
+        if (opts.maxBytes > 0) return readJsonCapped(res, opts.maxBytes)
+        return res.json()
     }
 
     async function resolveProfileIndex(accessToken, profileId, opts = {}) {

@@ -10,6 +10,8 @@ import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.
 import { trace } from '../utils/trace.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { isUnifiedEnforcement } from '../config.js'
+import { applyOneActiveFlags } from './one-active.js'
+import { getGlobalWebhook } from './global-webhook.js'
 
 async function mapConcurrent(items, limit, worker) {
     const results = new Array(items.length)
@@ -646,7 +648,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         return finalAddons
     }
 
-    const enforceConnectionOnly = async (rule, reconciledAddons) => {
+    const enforceConnectionOnly = async (rule, reconciledAddons, chain = [], activeUrl = null) => {
         if (!reconciler?.enforceAccount) return { synced: [] }
         const connections = await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)
         const targets = (connections || []).filter(c =>
@@ -656,11 +658,15 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only rule has no matching enabled connection. Skipping enforcement.`)
             return { synced: [] }
         }
-        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, {})
+        // Chain guard: refuses writes that would drop the managed chain or its active tier.
+        const guardOpts = (Array.isArray(chain) && chain.length > 0)
+            ? { requiredUrls: chain, requiredActiveUrl: activeUrl }
+            : {}
+        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, guardOpts)
         if (result.synced.length > 0) {
             fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only enforcement pushed to ${result.synced.join(', ')}.`)
         }
-        return { synced: result.synced }
+        return { synced: result.synced, chainGuardSkipped: result.chainGuardSkipped === true }
     }
 
     const syncStremioLive = async (authKeyOrDescriptor, chain, activeUrl, accountId, ruleId, storedAddonList = [], forceReinstall = false) => {
@@ -668,7 +674,12 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const authKey = descriptor.authKey
         if (!authKey) {
             const rule = { account_id: accountId, id: ruleId, owner_sync_user: descriptor.ownerSyncUser, connection_id: descriptor.connectionId, platform: descriptor.platform }
-            await enforceConnectionOnly(rule, storedAddonList)
+            const result = await enforceConnectionOnly(rule, storedAddonList, chain, activeUrl)
+            if (result.chainGuardSkipped) {
+                // Broken chain state: skip so the engine can reconstitute on the next pass.
+                fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Chain guard skipped enforcement for rule ${ruleId}: stored addon list does not carry the active chain tier.`)
+                return null
+            }
             return storedAddonList
         }
         try {
@@ -935,8 +946,9 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     stabilization[normUrl] = { failures: 0, successes: newSuccesses, latencyMs: getHealthLatency(url) }
                 }
             } else {
+                // Unclamped on purpose: the threshold below is a trigger comparison only.
                 const prevFailures = stabilization[normUrl]?.failures || 0
-                const newFailures = Math.min(prevFailures + 1, FAILOVER_THRESHOLD)
+                const newFailures = prevFailures + 1
                 if (stabilization[normUrl]?.successes !== 0 || prevFailures !== newFailures) {
                     stabilization[normUrl] = { failures: newFailures, successes: 0, latencyMs: null }
                 }
@@ -981,43 +993,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         let normalizedTarget = normalizeAddonUrl(targetActiveUrl).toLowerCase()
         const normalizedChain = normalizedChainUrls
 
-        const idCounts = new Map()
-        addonList.forEach(addon => {
-            if (!addon.manifest?.id) return
-            idCounts.set(addon.manifest.id, (idCounts.get(addon.manifest.id) || 0) + 1)
-        })
-        const duplicateIds = new Set([...idCounts.entries()].filter(([, c]) => c > 1).map(([id]) => id))
-
-        const chainIdMap = new Map()
-        addonList.forEach(addon => {
-            if (!addon.manifest?.id) return
-            if (duplicateIds.has(addon.manifest.id)) return
-            const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            const idx = normalizedChain.indexOf(normUrl)
-            if (idx !== -1) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
-        })
-
-        let violationDetected = false
-        const updatedAddonList = addonList.map(addon => {
-            const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            let effectiveUrl = normUrl
-            let isChainMember = normalizedChain.includes(normUrl)
-
-            if (!isChainMember && addon.manifest?.id && chainIdMap.has(addon.manifest.id)) {
-                isChainMember = true
-                effectiveUrl = chainIdMap.get(addon.manifest.id)
-            }
-
-            if (isChainMember) {
-                const shouldBeEnabled = effectiveUrl === normalizedTarget
-                if (addon.flags?.enabled !== shouldBeEnabled) violationDetected = true
-                return {
-                    ...addon,
-                    flags: { ...(addon.flags || {}), enabled: shouldBeEnabled }
-                }
-            }
-            return addon
-        })
+        // Every writer must derive identical one-active flags via the shared helper.
+        const { list: updatedAddonList, violationDetected } = applyOneActiveFlags(addonList, normalizedChain, normalizedTarget)
 
         let hasChanged = normalizedTarget !== decryptedNormalizedActive
 
@@ -1077,6 +1054,34 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit read failed: ${auditErr.message}`)
                 }
             }
+        } else if (snapshotLooksClean && hasConnectionTarget && reconciler?.resolveConnections && reconciler.auditConnections) {
+            // Hourly drift audit: catches Nuvio-side changes the echo and reconcile paths miss.
+            if (Date.now() - (lastDeepAuditToSave || 0) >= RULE_DEEP_AUDIT_MS) {
+                lastDeepAuditToSave = Date.now()
+                try {
+                    const auditTargets = (await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user) || [])
+                        .filter(c => c.enabled && c.platform !== 'stremio' && (!rule.connection_id || c.id === rule.connection_id))
+                    if (auditTargets.length > 0) {
+                        const auditCanonical = updatedAddonList.filter(a => a?.flags?.enabled !== false)
+                        const audits = await reconciler.auditConnections(rule.account_id, auditTargets, auditCanonical)
+                        for (const audit of audits) {
+                            if (!Array.isArray(audit.addons)) continue
+                            const enabledChain = new Set()
+                            for (const live of audit.addons) {
+                                const norm = normalizeAddonUrl(live.transportUrl || live.url || '').toLowerCase()
+                                if (normalizedChain.includes(norm) && (live.flags?.enabled ?? live.enabled) !== false) enabledChain.add(norm)
+                            }
+                            if (!(enabledChain.size === 1 && enabledChain.has(normalizedTarget))) {
+                                deepAuditDrift = true
+                                fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit (connection) found live collection drift from the one-active chain state on ${audit.platform}. Forcing enforcement.`)
+                                break
+                            }
+                        }
+                    }
+                } catch (auditErr) {
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit (connection) read failed: ${auditErr.message}`)
+                }
+            }
         }
 
         const needsSync = hasChanged || violationDetected || deepAuditDrift
@@ -1089,7 +1094,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
             try {
                 if (!decryptedAuthKey) {
-                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList)
+                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList, chain, targetActiveUrl)
                     if (synced.length === 0) throw new Error('Connection enforcement failed')
                     reconciledList = updatedAddonList
                     syncSucceeded = true
@@ -1155,11 +1160,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     const cooldownPassed = now - lastNotification >= cooldownMs
 
                     if (isRecovery || cooldownPassed) {
-                        const decryptedWebhook = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
-                        if (!decryptedWebhook) {
-                            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook decryption failed or empty. Skipping notification.`)
+                        // Resolution order: decrypted per-rule webhook -> owner's global
+                        // webhook (the UI's "Use global webhook" default) -> none.
+                        let webhookUrl = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
+                        let webhookSource = 'rule'
+                        if (rule.webhook_url && !webhookUrl) {
+                            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Per-rule webhook blob present but undecryptable; falling back to the global webhook.`)
+                        }
+                        if (!webhookUrl) {
+                            webhookUrl = await getGlobalWebhook(rule.owner_sync_user)
+                            webhookSource = 'global'
+                        }
+                        if (!webhookUrl) {
+                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] No webhook configured (rule + global). Skipping notification.`)
                         } else {
-                            await sendNotification(decryptedWebhook, {
+                            await sendNotification(webhookUrl, {
                                 type,
                                 message: msg,
                                 messageTemplate: rule.message_template || null,
@@ -1171,7 +1186,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 fromUrl: chain[0],
                             })
                             shouldUpdateNotificationTime = true
-                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook sent: ${type}`)
+                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook sent (${webhookSource}): ${type}`)
                         }
                     } else {
                         fastify.log.debug({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook skipped (cooldown: ${Math.round((cooldownMs - (now - lastNotification)) / 1000)}s remaining)`)

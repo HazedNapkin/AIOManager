@@ -15,6 +15,8 @@ import { compressSyncPayload, decompressSyncPayload } from '@/lib/sync-payload-c
 import { applySyncedSettings, readSyncedSettings } from '@/lib/synced-settings'
 import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { serverHasStremioCredential, canonicalMembershipChanged } from '@/lib/canonical-visibility'
+import { needsCredentialHeal } from '@/lib/credential-heal'
+import { mergeDeletedEventMaps } from '@/lib/event-tombstones'
 import {
     bindRepublishHost,
     learnServerCredentialedAccounts,
@@ -41,6 +43,10 @@ setTimeout(() => { _appReady = true }, 3000)
 
 let _lastPushedHash: string | null = null
 let _corruptRestoreInFlight = false
+// Cloud-side watch-event tombstones as of the last pull. The push serialisation merges local
+// tombstones into this map (max-wins) instead of replacing the cloud blob wholesale, so a
+// stale local map can never erase fresher cloud deletes.
+let _lastPulledDeletedWatchEvents: Record<string, number> | null = null
 
 async function computeHash(data: string): Promise<string> {
     const encoded = new TextEncoder().encode(data)
@@ -136,7 +142,7 @@ interface SyncState {
     register: (password: string, name?: string) => Promise<void>
     login: (id: string, password: string, isSilent?: boolean, bypassGuard?: boolean, deviceUnlock?: { syncKey: CryptoKey }) => Promise<void>
     logout: () => void
-    syncToRemote: (isAuto?: boolean, isDebounced?: boolean, forceFull?: boolean) => Promise<boolean>
+    syncToRemote: (isAuto?: boolean, isDebounced?: boolean, forceFull?: boolean, forcePush?: boolean) => Promise<boolean>
     syncFromRemote: (isSilent?: boolean) => Promise<void>
     refreshFromCloud: () => Promise<void>
     forcePushState: () => Promise<void>
@@ -735,10 +741,8 @@ export const useSyncStore = create<SyncState>()(
                         const local = useWatchEventStore.getState()
                         const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
                         const remoteDeleted = (syncData.deletedWatchEvents && typeof syncData.deletedWatchEvents === 'object') ? syncData.deletedWatchEvents as Record<string, number> : {}
-                        const mergedDeleted: Record<string, number> = { ...local.deletedEventKeys }
-                        for (const [k, ts] of Object.entries(remoteDeleted)) {
-                            if (!(k in mergedDeleted) || ts > mergedDeleted[k]) mergedDeleted[k] = ts
-                        }
+                        _lastPulledDeletedWatchEvents = remoteDeleted
+                        const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values())
@@ -941,7 +945,7 @@ export const useSyncStore = create<SyncState>()(
                 toast({ title: "Logged Out", description: "See you next time." })
             },
 
-            syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false, forceFull: boolean = false): Promise<boolean> => {
+            syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false, forceFull: boolean = false, forcePush: boolean = false): Promise<boolean> => {
                 if (!useAccountStore.getState().hydrated) {
                     await useAccountStore.getState().initialize()
                 }
@@ -1085,7 +1089,7 @@ export const useSyncStore = create<SyncState>()(
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
                         watchEventRollups: watchExport.rollups,
-                        deletedWatchEvents: watchExport.deletedEvents,
+                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, _lastPulledDeletedWatchEvents ?? {}),
                         salt: saltBase64,
                         name: auth.name,
                         avatar: auth.avatar ?? null,
@@ -1183,6 +1187,7 @@ export const useSyncStore = create<SyncState>()(
                             compressed: isCompressed,
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
+                            force: forcePush,
                             // Hash of the logical state (pre-syncedAt); lets the server skip the
                             // archive/rewrite/apiKeys churn when the content is byte-identical
                             // to what it already holds, since the envelope hash is IV-random.
@@ -1224,7 +1229,12 @@ export const useSyncStore = create<SyncState>()(
                                 description: 'Your changes were not pushed because another device synced more recently. Pulling the newer state now.',
                             })
                         }).catch(() => {})
-                        get().refreshFromCloud().catch(e => { if (import.meta.env.DEV) console.error(e) })
+                        get().refreshFromCloud()
+                            .then(() => {
+                                // Re-stamp after the pull: its imported syncedAt may be stale and would re-trap pushes.
+                                set({ lastSyncedAt: new Date().toISOString() })
+                            })
+                            .catch(e => { if (import.meta.env.DEV) console.error(e) })
                         return false
                     }
 
@@ -1236,6 +1246,17 @@ export const useSyncStore = create<SyncState>()(
                     }
                     adoptPushResponseCredentials(forceCanonicalRepublish, resData.serverStremioCredentialedAccounts)
                     for (const hubId of emptiedHubs) clearFoldedHub(hubId)
+
+                    // Credential auto-heal: the response's serverStremioCredentialedAccounts
+                    // is the authoritative server-side credential set. Uploading only when an
+                    // account with a client-side Stremio key is missing from it keeps healed
+                    // steady-state pushes free of the extra round trip.
+                    const serverCredentialedIds = Array.isArray(resData.serverStremioCredentialedAccounts)
+                        ? resData.serverStremioCredentialedAccounts as string[]
+                        : null
+                    if (needsCredentialHeal(serverCredentialedIds, useAccountStore.getState().accounts.map(a => ({ id: a.id, hasClientStremioKey: !!getStremioAuthKey(a) })))) {
+                        import('@/lib/activity-server').then(m => m.syncCredentialsToServer()).catch(() => { })
+                    }
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the
@@ -1308,7 +1329,7 @@ export const useSyncStore = create<SyncState>()(
                     return
                 }
 
-                const ok = await get().syncToRemote(false, false, true)
+                const ok = await get().syncToRemote(false, false, true, true)
                 get().addLogEntry({
                     type: 'force-push',
                     status: ok ? 'success' : 'error',
@@ -1395,10 +1416,8 @@ export const useSyncStore = create<SyncState>()(
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
                         const remoteDeleted = (data.deletedWatchEvents && typeof data.deletedWatchEvents === 'object') ? data.deletedWatchEvents as Record<string, number> : {}
-                        const mergedDeleted: Record<string, number> = { ...local.deletedEventKeys }
-                        for (const [k, ts] of Object.entries(remoteDeleted)) {
-                            if (!(k in mergedDeleted) || ts > mergedDeleted[k]) mergedDeleted[k] = ts
-                        }
+                        _lastPulledDeletedWatchEvents = remoteDeleted
+                        const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...(data.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values()).sort((a, b) => (b.event_ts as number) - (a.event_ts as number))

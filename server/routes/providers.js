@@ -3,6 +3,8 @@ import db from '../db.js'
 import { encrypt, decrypt } from '../crypto.js'
 import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
+import { normalizeAddonUrl } from '../utils/addon-url.js'
+import { applyOneActiveFlags } from '../autopilot/one-active.js'
 import { listStremioCredentialedAccountIds, stremioCredentialVersion } from '../lib/stremio-credentials.js'
 import { mapNuvioLoginError, nuvioDriverFrom } from './nuvio-route-helpers.js'
 
@@ -26,6 +28,81 @@ async function accountBelongsTo(accountId, syncUser) {
 }
 
 export function registerProviderRoutes(fastify, reconciler) {
+    // Spec F3 (managed-chain blindness): an active automatic rule's chain members
+    // are engine-owned. A client-driven reconcile must neither drop them nor
+    // re-flag them from the client's local copy: non-chain client changes flow
+    // through, chain members are re-derived from the rules' stored state. Rules
+    // scope by owner (multi-tenant table) and by connection (born-global rules
+    // govern every connection, matching engine.js's cross-platform propagation).
+    async function loadManagedChainRules(accountId, authUser, connectionIds) {
+        const ids = [...new Set((connectionIds || []).filter(Boolean))]
+        const scopeSql = ids.length > 0
+            ? `(connection_id IS NULL OR connection_id IN (${ids.map((_, i) => `$${i + 3}`).join(',')}))`
+            : 'connection_id IS NULL'
+        const rows = await db.query(
+            `SELECT id, priority_chain, addon_list, active_url FROM autopilot_rules
+             WHERE account_id = $1 AND owner_sync_user = $2 AND is_active = 1 AND is_automatic = 1 AND ${scopeSql}
+             ORDER BY id ASC`,
+            [accountId, authUser, ...ids]
+        )
+        const rules = []
+        for (const row of rows || []) {
+            let chain = null
+            let storedList = []
+            let activeUrl = null
+            try {
+                if (row.priority_chain) {
+                    const decryptedChain = decrypt(row.priority_chain, FALLBACK_KEYS)
+                    if (!decryptedChain) throw new Error('priority_chain blob present but unreadable')
+                    chain = JSON.parse(decryptedChain)
+                }
+                if (row.addon_list) {
+                    const decryptedList = decrypt(row.addon_list, FALLBACK_KEYS)
+                    if (!decryptedList) throw new Error('addon_list blob present but unreadable')
+                    const parsed = JSON.parse(decryptedList)
+                    if (Array.isArray(parsed)) storedList = parsed
+                }
+                if (row.active_url) {
+                    activeUrl = decrypt(row.active_url, FALLBACK_KEYS)
+                    if (!activeUrl) throw new Error('active_url blob present but unreadable')
+                }
+            } catch (err) {
+                // Fail closed: a rule whose state cannot be read cannot have its chain
+                // protected, so no unprotected list may be pushed either.
+                fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Automatic rule ${row.id} has unreadable state (${err.message}); skipping the reconcile write for chain protection.`)
+                return { rules: null, failClosed: true }
+            }
+            if (!Array.isArray(chain) || chain.length === 0) {
+                fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Automatic rule ${row.id} has no usable priority chain; skipping the reconcile write for chain protection.`)
+                return { rules: null, failClosed: true }
+            }
+            rules.push({ ruleId: row.id, chain, storedList, activeUrl: activeUrl || chain[0] })
+        }
+        return { rules, failClosed: false }
+    }
+
+    function applyManagedChainOverlay(clientAddons, matchedRules) {
+        const chainUrlSet = new Set()
+        for (const rule of matchedRules) {
+            for (const url of rule.chain) chainUrlSet.add(normalizeAddonUrl(url))
+        }
+        const base = (clientAddons || []).filter(a => a && !chainUrlSet.has(normalizeAddonUrl(a.transportUrl)))
+        // Union of chains across ALL matched rules; the first rule (stable id order)
+        // to claim a URL wins a multi-rule overlap.
+        const claimed = new Map()
+        for (const rule of matchedRules) {
+            const derived = applyOneActiveFlags(rule.storedList, rule.chain, rule.activeUrl)
+            const normalizedActive = normalizeAddonUrl(rule.activeUrl)
+            for (const url of rule.chain) {
+                const norm = normalizeAddonUrl(url)
+                if (claimed.has(norm)) continue
+                const member = derived.list.find(a => normalizeAddonUrl(a.transportUrl) === norm)
+                claimed.set(norm, member ?? { transportUrl: url, flags: { enabled: norm === normalizedActive } })
+            }
+        }
+        return [...base, ...claimed.values()]
+    }
+
     fastify.post('/api/providers/sync/:accountId', {
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
     }, async (request, reply) => {
@@ -49,13 +126,30 @@ export function registerProviderRoutes(fastify, reconciler) {
                 return { synced: true, changes: [], connectionStates: {} }
             }
 
-            const result = await reconciler.reconcileAccount(
-                accountId,
-                primaryConnectionId,
-                resolvedConnections,
-                addons,
-                { allowCollectionShrink: allowCollectionShrink === true }
-            )
+            // Managed-chain overlay (spec F3). Skipped for empty/absent client
+            // lists: today's empty-canonical guard already makes those no-ops, and
+            // overlaying chain-only content would replace the platform list with
+            // just the active tier, dropping every non-chain platform addon.
+            let effectiveAddons = addons
+            let overlayBlocked = false
+            if (Array.isArray(addons) && addons.length > 0) {
+                const overlay = await loadManagedChainRules(accountId, authUser, resolvedConnections.map(c => c.id))
+                if (overlay.failClosed) {
+                    overlayBlocked = true
+                } else if (overlay.rules.length > 0) {
+                    effectiveAddons = applyManagedChainOverlay(addons, overlay.rules)
+                }
+            }
+
+            const result = overlayBlocked
+                ? { changes: [], canonical: [] }
+                : await reconciler.reconcileAccount(
+                    accountId,
+                    primaryConnectionId,
+                    resolvedConnections,
+                    effectiveAddons,
+                    { allowCollectionShrink: allowCollectionShrink === true }
+                )
 
             if (result.changes.length > 0) {
                 fastify.log.info({ category: 'Reconciler' }, `[${accountId}] Reconciled: ${result.changes.length} changes`)

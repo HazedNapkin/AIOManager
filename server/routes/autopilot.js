@@ -8,6 +8,8 @@ import { safeFetchWithRedirects } from '../utils/safe-fetch.js'
 import { maskContext } from '../utils/log-helpers.js'
 import { proxyQueue, proxyQueueKeyCounts, serverState } from '../state.js'
 import { trace } from '../utils/trace.js'
+import { applyOneActiveFlags } from '../autopilot/one-active.js'
+import { getGlobalWebhook, setGlobalWebhook, maskWebhookUrl } from '../autopilot/global-webhook.js'
 
 const AUTOPILOT_BODY_LIMIT = 1024 * 1024 * 5
 
@@ -122,14 +124,22 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
     // The worker owns addon_list/active_url on automatic rules: an open tab's background
     // echo must never rewrite them or re-enforce a stale copy of them.
+    const STORED_STATE_UNREADABLE = 'stored addon list unreadable; enforcement skipped'
+
     const engineOwnedSyncFields = (existingRule, { addonList, activeUrl, is_automatic }) => {
         if (!existingRule || existingRule.is_automatic !== 1 || !is_automatic) return { addonList, activeUrl }
+        const listBlobPresent = Boolean(existingRule.addon_list)
+        const activeBlobPresent = Boolean(existingRule.active_url)
         try {
-            const storedList = existingRule.addon_list ? JSON.parse(decrypt(existingRule.addon_list, FALLBACK_KEYS) || 'null') : null
-            const storedActive = existingRule.active_url ? decrypt(existingRule.active_url, FALLBACK_KEYS) : null
+            const storedList = listBlobPresent ? JSON.parse(decrypt(existingRule.addon_list, FALLBACK_KEYS) || 'null') : null
+            const storedActive = activeBlobPresent ? decrypt(existingRule.active_url, FALLBACK_KEYS) : null
+            // Unreadable stored blobs must never adopt the client's copy - the rule requires repair.
+            if ((listBlobPresent && storedList === null) || (activeBlobPresent && storedActive === null)) {
+                return { blocked: true }
+            }
             return { addonList: storedList ?? addonList, activeUrl: storedActive ?? activeUrl }
         } catch {
-            return { addonList, activeUrl }
+            return { blocked: true }
         }
     }
 
@@ -164,12 +174,16 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             JSON.stringify(normCustomChecks(existingCustomCheckUrls)) === JSON.stringify(normCustomChecks(customCheckUrls))
     }
 
-    async function upsertRuleRecord({ id, accountId, name, authKey, priorityChain, activeUrl, addonList, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, platform, connectionId, customCheckUrls }, existingRule, authUser) {
+    async function upsertRuleRecord({ id, accountId, name, authKey, priorityChain, activeUrl, addonList, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, platform, connectionId, customCheckUrls }, existingRule, authUser, preserveEngineOwned = false) {
         const effectivePlatform = (platform || 'stremio').toLowerCase()
         const encryptedAuthKey = authKey ? encrypt(authKey, PRIMARY_KEY) : null
         const encryptedChain = encrypt(JSON.stringify(priorityChain), PRIMARY_KEY)
-        const encryptedActiveUrl = activeUrl ? encrypt(activeUrl, PRIMARY_KEY) : null
-        const encryptedAddonList = addonList ? encrypt(JSON.stringify(addonList), PRIMARY_KEY) : null
+        // preserveEngineOwned (spec F4): the stored addon_list/active_url blobs are
+        // unreadable and must survive this upsert untouched — never nulled (the
+        // ON CONFLICT UPDATE self-assigns them), never replaced by client values.
+        // Blocked always implies an existing row, so the INSERT VALUES never land.
+        const encryptedActiveUrl = (activeUrl && !preserveEngineOwned) ? encrypt(activeUrl, PRIMARY_KEY) : null
+        const encryptedAddonList = (addonList && !preserveEngineOwned) ? encrypt(JSON.stringify(addonList), PRIMARY_KEY) : null
         const encryptedWebhookUrl = webhookUrl ? encrypt(webhookUrl, PRIMARY_KEY) : null
         const customCheckNormArr = normCustomChecks(customCheckUrls)
         const encryptedCustomChecks = customCheckNormArr.length > 0 ? encrypt(JSON.stringify(customCheckNormArr), PRIMARY_KEY) : null
@@ -184,8 +198,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     name = EXCLUDED.name,
                     auth_key = EXCLUDED.auth_key,
                     priority_chain = EXCLUDED.priority_chain,
-                    addon_list = EXCLUDED.addon_list,
-                    active_url = EXCLUDED.active_url,
+                    ${preserveEngineOwned
+                        ? 'addon_list = autopilot_rules.addon_list,\n                    active_url = autopilot_rules.active_url,'
+                        : 'addon_list = EXCLUDED.addon_list,\n                    active_url = EXCLUDED.active_url,'}
                     webhook_url = EXCLUDED.webhook_url,
                     is_active = EXCLUDED.is_active,
                     is_automatic = EXCLUDED.is_automatic,
@@ -200,8 +215,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     autopilot_rules.name IS DISTINCT FROM EXCLUDED.name OR
                     autopilot_rules.auth_key IS DISTINCT FROM EXCLUDED.auth_key OR
                     autopilot_rules.priority_chain IS DISTINCT FROM EXCLUDED.priority_chain OR
-                    autopilot_rules.addon_list IS DISTINCT FROM EXCLUDED.addon_list OR
+                    ${preserveEngineOwned ? '' : `autopilot_rules.addon_list IS DISTINCT FROM EXCLUDED.addon_list OR
                     autopilot_rules.active_url IS DISTINCT FROM EXCLUDED.active_url OR
+                    `}
                     autopilot_rules.webhook_url IS DISTINCT FROM EXCLUDED.webhook_url OR
                     autopilot_rules.is_active IS DISTINCT FROM EXCLUDED.is_active OR
                     autopilot_rules.is_automatic IS DISTINCT FROM EXCLUDED.is_automatic OR
@@ -219,8 +235,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     name = excluded.name,
                     auth_key = excluded.auth_key,
                     priority_chain = excluded.priority_chain,
-                    addon_list = excluded.addon_list,
-                    active_url = excluded.active_url,
+                    ${preserveEngineOwned
+                        ? 'addon_list = autopilot_rules.addon_list,\n                    active_url = autopilot_rules.active_url,'
+                        : 'addon_list = excluded.addon_list,\n                    active_url = excluded.active_url,'}
                     webhook_url = excluded.webhook_url,
                     is_active = excluded.is_active,
                     is_automatic = excluded.is_automatic,
@@ -235,8 +252,9 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     COALESCE(autopilot_rules.name, '') != COALESCE(excluded.name, '') OR
                     autopilot_rules.auth_key IS NOT excluded.auth_key OR
                     autopilot_rules.priority_chain != excluded.priority_chain OR
-                    COALESCE(autopilot_rules.addon_list, '') != COALESCE(excluded.addon_list, '') OR
+                    ${preserveEngineOwned ? '' : `COALESCE(autopilot_rules.addon_list, '') != COALESCE(excluded.addon_list, '') OR
                     COALESCE(autopilot_rules.active_url, '') != COALESCE(excluded.active_url, '') OR
+                    `}
                     COALESCE(autopilot_rules.webhook_url, '') != COALESCE(excluded.webhook_url, '') OR
                     autopilot_rules.is_active != excluded.is_active OR
                     autopilot_rules.is_automatic != excluded.is_automatic OR
@@ -361,7 +379,7 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         }
     }
 
-    const scheduleRuleEnforcement = async ({ id, accountId, authKey, connectionId, platform, ownerSyncUser, priorityChain, activeUrl, addonList, is_active, is_automatic }) => {
+    const scheduleRuleEnforcement = async ({ id, accountId, authKey, connectionId, platform, ownerSyncUser, priorityChain, addonList, is_active, is_automatic }) => {
         if (!syncStremioLive || (!authKey && !connectionId) || is_active === 0 || is_active === false || is_automatic === 0 || is_automatic === false) return
         if (!Array.isArray(priorityChain) || priorityChain.length === 0) return
 
@@ -369,8 +387,44 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         const safeChain = priorityChain.filter((_, i) => chainSafety[i])
         if (safeChain.length === 0) return
 
-        const targetActiveUrl = (activeUrl && await isSafeAutopilotUrl(activeUrl)) ? activeUrl : safeChain[0]
-        const storedAddons = Array.isArray(addonList) ? addonList : []
+        // Derive, never replay (spec F1): re-read the committed rule row so the echo
+        // pushes flag state derived from the engine's latest swap, never a snapshot
+        // that can predate it. The re-read happens BEFORE the payload hash so a
+        // mid-window engine commit changes the hash and busts the debounce.
+        let storedAddons
+        let targetActiveUrl
+        try {
+            const freshRow = id ? await db.get('SELECT addon_list, active_url FROM autopilot_rules WHERE id = $1', [id]) : null
+            if (!freshRow) {
+                fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Rule ${id} vanished before echo enforcement; skipping.`)
+                return
+            }
+            let freshList = null
+            if (freshRow.addon_list) {
+                const decrypted = decrypt(freshRow.addon_list, FALLBACK_KEYS)
+                if (!decrypted) throw new Error('stored addon_list is unreadable')
+                freshList = JSON.parse(decrypted)
+            }
+            // Active-url resolution mirrors buildAutopilotState: runtime state beats
+            // the stored blob beats the chain head.
+            const runtimeActive = getRuleRuntimeState?.(id)?.activeUrl
+            let storedActive = null
+            if (!runtimeActive && freshRow.active_url) {
+                storedActive = decrypt(freshRow.active_url, FALLBACK_KEYS)
+                if (!storedActive) throw new Error('stored active_url is unreadable')
+            }
+            const resolvedActive = runtimeActive ?? storedActive ?? safeChain[0]
+            targetActiveUrl = (resolvedActive && await isSafeAutopilotUrl(resolvedActive)) ? resolvedActive : safeChain[0]
+            const baseList = Array.isArray(freshList) ? freshList : (Array.isArray(addonList) ? addonList : [])
+            const derived = applyOneActiveFlags(baseList, safeChain, targetActiveUrl)
+            if (derived.violationDetected) {
+                fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Echo re-derived one-active flags for rule ${id} (stored snapshot had chain violations).`)
+            }
+            storedAddons = derived.list
+        } catch (err) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Echo re-read failed for rule ${id} (${err.message}); skipping enforcement.`)
+            return
+        }
         const payloadHash = hashEnforcementPayload({ authKey: authKey || connectionId, safeChain, targetActiveUrl, storedAddons })
         if (shouldDebounceEnforcement(id, payloadHash)) return
 
@@ -422,7 +476,17 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
             return { error: 'Forbidden: rule has no owner and cannot be modified' }
         }
 
-        ;({ addonList, activeUrl } = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic }))
+        // Spec F4: unreadable stored blobs must never adopt the client's copy, but rule
+        // field edits (name, chain, webhook, ...) still persist — the upsert runs in
+        // preserve mode and enforcement is skipped with a warning surfaced to the client.
+        const engineOwnedSyncFieldsResult = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic })
+        const engineOwnedBlocked = engineOwnedSyncFieldsResult.blocked === true
+        if (engineOwnedBlocked) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Stored addon state for rule ${id} is unreadable; preserving server blobs, skipping enforcement (rule requires repair).`)
+        } else {
+            addonList = engineOwnedSyncFieldsResult.addonList
+            activeUrl = engineOwnedSyncFieldsResult.activeUrl
+        }
 
         const rulePayload = { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name, customCheckUrls }
 
@@ -434,21 +498,25 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
                     await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey, (platform || 'stremio').toLowerCase(), connectionId || null)
                 }
-                scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                if (!engineOwnedBlocked) {
+                    scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+                }
                 trace('autopilot', 'sync.success', { ruleId: id, accountId, skipped: true, timing: Date.now() - start })
-                return { success: true, skipped: true }
+                return engineOwnedBlocked ? { success: true, skipped: true, warning: STORED_STATE_UNREADABLE } : { success: true, skipped: true }
             }
         } catch (cmpErr) {
             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Plaintext comparison failed, falling back to upsert: ${cmpErr.message}`)
         }
 
-        await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser)
+        await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser, engineOwnedBlocked)
 
         fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Rule synced to server (Swap & Hide Mode).`)
-        clearRuleRuntimeState?.(id)
-        scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+        if (!engineOwnedBlocked) {
+            clearRuleRuntimeState?.(id)
+            scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
+        }
         trace('autopilot', 'sync.success', { ruleId: id, accountId, skipped: false, timing: Date.now() - start })
-        return { success: true }
+        return engineOwnedBlocked ? { success: true, warning: STORED_STATE_UNREADABLE } : { success: true }
     })
 
 
@@ -484,7 +552,14 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     continue
                 }
 
-                ;({ addonList, activeUrl } = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic }))
+                const engineOwned = engineOwnedSyncFields(existingRule, { addonList, activeUrl, is_automatic })
+                const engineOwnedBlocked = engineOwned.blocked === true
+                if (engineOwnedBlocked) {
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Stored addon state for rule ${id} is unreadable; preserving server blobs, skipping enforcement (rule requires repair).`)
+                } else {
+                    addonList = engineOwned.addonList
+                    activeUrl = engineOwned.activeUrl
+                }
 
                 const rulePayload = { authKey, priorityChain, addonList, activeUrl, webhookUrl, is_active, is_automatic, cooldown_ms, messageTemplate, name, customCheckUrls }
 
@@ -495,6 +570,10 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                             const encryptedAuthKey = encrypt(authKey, PRIMARY_KEY)
                             await upsertCredential(existingRule.owner_sync_user || authUser, accountId, name, encryptedAuthKey, (platform || 'stremio').toLowerCase(), connectionId || null)
                         }
+                        if (engineOwnedBlocked) {
+                            results.push({ id, ok: false, error: STORED_STATE_UNREADABLE })
+                            continue
+                        }
                         scheduleRuleEnforcement({ id, accountId, authKey, connectionId, platform, ownerSyncUser: existingRule.owner_sync_user || authUser, priorityChain, activeUrl, addonList, is_active, is_automatic })
                         results.push({ id, ok: true, skipped: true })
                         continue
@@ -503,7 +582,11 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Plaintext comparison failed, falling back to upsert: ${cmpErr.message}`)
                 }
 
-                await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser)
+                await upsertRuleRecord({ id, accountId, name, ...rulePayload, platform, connectionId }, existingRule, authUser, engineOwnedBlocked)
+                if (engineOwnedBlocked) {
+                    results.push({ id, ok: false, error: STORED_STATE_UNREADABLE })
+                    continue
+                }
 
                 results.push({ id, ok: true })
                 clearRuleRuntimeState?.(id)
@@ -633,6 +716,32 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
 
         trace('autopilot', 'test-webhook.success', { timing: Date.now() - start })
         return { success: true }
+    })
+
+    fastify.get('/api/autopilot/global-webhook', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const url = await getGlobalWebhook(authUser)
+        return { configured: !!url, ...(url ? { masked: maskWebhookUrl(url) } : {}) }
+    })
+
+    fastify.put('/api/autopilot/global-webhook', { bodyLimit: 1024 * 4, config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+        const authUser = await verifyAuth(request)
+        if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
+
+        const { webhookUrl } = request.body || {}
+        if (typeof webhookUrl !== 'string') { reply.status(400); return { error: 'webhookUrl (string) required' } }
+        const trimmed = webhookUrl.trim()
+        if (trimmed === '') {
+            await setGlobalWebhook(authUser, null)
+            return { configured: false }
+        }
+        if (!/^https?:\/\//i.test(trimmed)) { reply.status(400); return { error: 'Webhook URL must be http(s)' } }
+        if (!(await isSafeUrlResolved(trimmed))) { reply.status(400); return { error: 'Invalid webhook URL' } }
+
+        await setGlobalWebhook(authUser, trimmed)
+        return { configured: true, masked: maskWebhookUrl(trimmed) }
     })
 
     fastify.post('/api/autopilot/test-url', { bodyLimit: 1024 * 100, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

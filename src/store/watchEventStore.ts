@@ -7,6 +7,7 @@ import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
 import { evictLegacyExternalEvents } from '@/lib/external-watch-events'
 import { EventRollups, emptyRollups, capWatchEventsWithRollups, mergeRollups } from '@/lib/watch-event-rollups'
+import { isIdentityDeleted } from '@/lib/event-tombstones'
 
 const STORAGE_KEY = 'aio_watch_events_v2'
 
@@ -176,8 +177,8 @@ if (typeof window !== 'undefined') {
 }
 
 const DELETED_EVENTS_KEY = 'aio_watch_events_deleted_v1'
-// A tombstone may only expire if no surviving event predates it; otherwise an offline
-// device holding the original event would resurrect it after the tombstone ages out.
+// Tombstones are absolute per identity and may only be evicted by the cap below; an aged-out
+// timestamp must never resurrect a deleted episode (a surviving event pins its key instead).
 const DELETED_EVENTS_CAP = 10000
 
 export function watchEventIdentityKey(e: { accountId: string; itemId: string; video_id?: string; season?: number; episode?: number; type: string }): string {
@@ -185,8 +186,7 @@ export function watchEventIdentityKey(e: { accountId: string; itemId: string; vi
 }
 
 function isEventTombstoned(e: WatchEvent, deleted: Record<string, number>): boolean {
-    const ts = deleted[watchEventIdentityKey(e)]
-    return ts !== undefined && (e.event_ts ?? 0) <= ts
+    return isIdentityDeleted(watchEventIdentityKey(e), deleted, e.event_ts)
 }
 
 function filterTombstonedEvents(events: WatchEvent[], deleted: Record<string, number> | undefined): WatchEvent[] {
@@ -271,15 +271,30 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const state = get()
         const now = Date.now()
         const deleted = { ...state.deletedEventKeys }
+        const targetKeys = new Set<string>()
         for (const it of items) {
             const key = `${it.accountId}:${getEpisodeIdentity(it.itemId, it.uniqueItemId, it.season, it.episode, it.type)}`
             deleted[key] = now
+            targetKeys.add(key)
         }
+        // Mirror the drop onto the server's activity rows, fire-and-forget: every stored
+        // event carrying a just-tombstoned identity is deleted by its (server-assigned) id.
+        // Server events merged earlier keep their evt_… ids locally, so this reaches exactly
+        // the rows that exist; anything missed re-merges on the next pull and stays hidden
+        // behind the absolute tombstone.
+        const serverEventIds = state.events
+            .filter(e => targetKeys.has(watchEventIdentityKey(e)))
+            .map(e => e.id)
         const capped = capDeletedEvents(deleted, state.events)
         const events = filterTombstonedEvents(state.events, capped)
         set({ events, deletedEventKeys: capped })
         persistWatchEvents()
         persistDeletedEvents(capped)
+        if (serverEventIds.length > 0) {
+            void import('@/lib/activity-server')
+                .then(m => m.deleteServerActivityEvents(serverEventIds))
+                .catch(() => { })
+        }
     },
 
     // Syncs the differencer after a self-inflicted row rewrite (per-episode delete); without it,
@@ -584,15 +599,17 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             backfillProcessed.add(guardKey)
             if (backfillProcessed.size > 2000) backfillProcessed.clear()
 
-            const ts = parseStremioDate(item.state?.lastWatched)?.getTime()
+            const lastWatchedTs = parseStremioDate(item.state?.lastWatched)?.getTime()
                 || parseStremioDate(item._mtime)?.getTime()
-                || now
+            const ts = lastWatchedTs || now
 
             for (const ep of episodes) {
                 const season = ep.season ?? undefined
                 const episode = ep.episode ?? undefined
                 const identity = getEpisodeIdentity(seriesId, ep.videoId, season, episode, item.type || 'series')
                 if (existingIdentities.has(identity)) continue // real event already covers this episode
+                // A fabricated ts would bypass the tombstone gate; tombstoned identities backfill from real dates only.
+                if (lastWatchedTs === undefined && isIdentityDeleted(`${accountId}:${identity}`, get().deletedEventKeys)) continue
                 const id = `bf:${accountId}:${ep.videoId}`
                 if (existingIds.has(id)) continue
 
@@ -641,9 +658,12 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
 
     reset: () => {
         cancelPendingPersist()
-        set({ events: [], snapshot: {}, deletedEventKeys: {}, rollups: emptyRollups(), initialized: false })
+        // Deletes are durable: reset clears watch data but NEVER the tombstones — wiping
+        // them would resurrect every deleted event on the next pull.
+        const deleted = get().deletedEventKeys
+        set({ events: [], snapshot: {}, deletedEventKeys: deleted, rollups: emptyRollups(), initialized: false })
         localforage.removeItem(STORAGE_KEY).catch(() => {})
-        localforage.removeItem(DELETED_EVENTS_KEY).catch(() => {})
+        if (Object.keys(deleted).length > 0) persistDeletedEvents(deleted)
     },
 
     mergeServerEvents: (serverEvents) => {

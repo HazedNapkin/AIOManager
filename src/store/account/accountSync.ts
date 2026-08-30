@@ -98,7 +98,9 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
         strippedByTombstone,
     })
     // Hub-canonical: passive read is additive; only an explicit forceRefresh adopts platform removals.
-    const out = mergeAddons(account.addons, survivingRemote, { keepMissingLocal: !forceRefresh })
+    // instanceMatch keep-local-url: the local post-fold state is authoritative, so a stale
+    // platform entry with an older config URL folds into the local entry instead of duplicating.
+    const out = mergeAddons(account.addons, survivingRemote, { keepMissingLocal: !forceRefresh, instanceMatch: 'keep-local-url' })
     trace('sync.merge', 'result', { accountId: account.id, out: out.length, keepMissingLocal: !forceRefresh })
     return out
 }

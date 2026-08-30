@@ -128,7 +128,11 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
     return totalMerged
 }
 
-export async function pushCredentialsToServer(): Promise<number> {
+// Credential-upload core, deliberately NOT gated on the activity engine: server-side
+// Stremio credentials are what external Hydra writes use to reach the Stremio collection
+// directly, so persisting them is an identity concern, not activity telemetry. Gating
+// this on the engine left engine-off defaults (the self-hosted default) with no writer.
+export async function syncCredentialsToServer(): Promise<number> {
     const { auth, serverUrl } = useSyncStore.getState()
     if (!auth.isAuthenticated) return 0
     let authHeaders: Record<string, string>
@@ -136,13 +140,11 @@ export async function pushCredentialsToServer(): Promise<number> {
         authHeaders = await getDeviceAwareAuthHeaders()
     } catch { return 0 }
 
-    const apiPath = getApiBase(serverUrl)
-    const status = await getActivityServerStatus(apiPath, authHeaders)
-    if (!status?.engineEnabled) return 0
-
     const { useAuthStore } = await import('@/store/authStore')
     const encryptionKey = useAuthStore.getState().encryptionKey
     if (!encryptionKey) return 0
+
+    const apiPath = getApiBase(serverUrl)
 
     const { useAccountStore, getCachedAuthKey, getStremioAuthKey } = await import('@/store/accountStore')
     const accounts = useAccountStore.getState().accounts
@@ -176,4 +178,36 @@ export async function pushCredentialsToServer(): Promise<number> {
     } catch {
         return 0
     }
+}
+
+// Kept for the login-time (pull-path) invocation sites; now engine-free like the core.
+export async function pushCredentialsToServer(): Promise<number> {
+    return syncCredentialsToServer()
+}
+
+// Per-event server deletes, fired fire-and-forget from watchEventStore.removeEvents after the
+// local drop. Each id is the server's own event id (evt_…, preserved on locally merged server
+// events), so the route stays owner-scoped and idempotent — ids that never reached the server
+// (locally-generated events) simply delete nothing. Not engine-gated, like the credential core:
+// removing rows is data management, not telemetry.
+export async function deleteServerActivityEvents(eventIds: string[]): Promise<number> {
+    const { auth, serverUrl } = useSyncStore.getState()
+    if (!auth.isAuthenticated || eventIds.length === 0) return 0
+    let authHeaders: Record<string, string>
+    try {
+        authHeaders = await getDeviceAwareAuthHeaders()
+    } catch { return 0 }
+
+    const apiPath = getApiBase(serverUrl)
+    let deleted = 0
+    for (const eventId of eventIds) {
+        try {
+            const res = await fetchWithTimeout(`${apiPath}/activity/events/${encodeURIComponent(eventId)}`, {
+                method: 'DELETE',
+                headers: authHeaders,
+            })
+            if (res.ok) deleted++
+        } catch { /* fire-and-forget: a missed row re-merges on the next pull and stays tombstoned locally */ }
+    }
+    return deleted
 }

@@ -52,7 +52,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -1275,7 +1274,6 @@ export function AddonList({ accountId }: AddonListProps) {
                         <Wand2 className="h-4 w-4 text-primary" />
                       Find &amp; Replace URL
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     {addons.some(a => !a.flags?.protected) ? (
                       <DropdownMenuItem className="gap-2" onClick={handleProtectAll}>
                         <AnimatedShieldIcon className="h-4 w-4 text-primary" />
@@ -1306,7 +1304,6 @@ export function AddonList({ accountId }: AddonListProps) {
                         Show Configure All
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!hasPlatformConnection(account) || addons.length === 0}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                         Clear All Addons
