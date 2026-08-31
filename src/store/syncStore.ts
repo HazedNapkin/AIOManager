@@ -703,7 +703,7 @@ export const useSyncStore = create<SyncState>()(
                             avatar: restoredAvatar,
                             isAuthenticated: true
                         },
-                        lastSyncedAt: (syncData.syncedAt as string) || new Date().toISOString(),
+                        lastSyncedAt: new Date().toISOString(),
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
                         isInitialSyncCompleted: true,
@@ -1184,15 +1184,7 @@ export const useSyncStore = create<SyncState>()(
                         .then(({ setCanonicalBases }) => setCanonicalBases(canonicalPayload))
                         .catch(() => {})
 
-                    // TRUST THE SERVER CLOCK (Fixes Clock Drift)
-                    // If server returns a timestamp, use it. Fallback to local only if missing.
-                    const serverTime = resData.syncedAt
-                    if (serverTime) {
-                        set({ lastSyncedAt: serverTime, needsReauth: false })
-                        if (import.meta.env.DEV) console.log(`[Sync] Synced with server clock: ${serverTime}`)
-                    } else {
-                        set({ lastSyncedAt: new Date().toISOString(), needsReauth: false })
-                    }
+                    set({ lastSyncedAt: new Date().toISOString(), needsReauth: false })
 
                     get().addLogEntry({
                         type: 'push',
@@ -1359,7 +1351,7 @@ export const useSyncStore = create<SyncState>()(
                         set({ lastSeenVersion: data.lastSeenVersion as string | null })
                     }
 
-                    set({ lastSyncedAt: (data.syncedAt as string) || new Date().toISOString() })
+                    set({ lastSyncedAt: new Date().toISOString() })
 
                         ; get().addLogEntry({
                             type: 'force-mirror',

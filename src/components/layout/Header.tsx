@@ -225,11 +225,16 @@ export function Header() {
 
   const addonCount = useMemo(() => Object.keys(library).length, [library])
 
-  const syncTimeAgo = useMemo(() => {
-    const display = lastSyncCheckedAt || lastSyncedAt
-    if (!display) return ''
-    return formatDistanceToNow(new Date(display), { addSuffix: true })
+  // The newest of "last checked" vs "last synced" so the chip reflects real activity, not the login moment
+  const latestSyncAt = useMemo(() => {
+    const times = [lastSyncCheckedAt, lastSyncedAt].filter(Boolean).map(t => new Date(t as string).getTime())
+    return times.length ? Math.max(...times) : null
   }, [lastSyncCheckedAt, lastSyncedAt])
+
+  const syncTimeAgo = useMemo(() => {
+    if (!latestSyncAt) return ''
+    return formatDistanceToNow(new Date(latestSyncAt), { addSuffix: true })
+  }, [latestSyncAt])
 
   const recentSyncError = useMemo(() => {
     const lastError = syncHistory.find(h => h.status === 'error')
@@ -238,14 +243,12 @@ export function Header() {
 
   const syncDotColor = useMemo(() => {
     const isOnline = auth.isAuthenticated
-    if (!isOnline || (!isSyncing && !isRefreshingFromCloud && !lastSyncCheckedAt && !lastSyncedAt)) return 'bg-red-500'
+    if (!isOnline || (!isSyncing && !isRefreshingFromCloud && latestSyncAt === null)) return 'bg-red-500'
     if (isSyncing || isRefreshingFromCloud) return 'bg-yellow-500 animate-pulse'
     if (recentSyncError) return 'bg-red-500'
-    const lastCheck = lastSyncCheckedAt || lastSyncedAt
-    const lastSync = lastCheck ? new Date(lastCheck).getTime() : 0
-    if (Date.now() - lastSync > 5 * 60 * 1000) return 'bg-yellow-500'
+    if (latestSyncAt !== null && Date.now() - latestSyncAt > 5 * 60 * 1000) return 'bg-yellow-500'
     return 'bg-green-500'
-  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, lastSyncCheckedAt, lastSyncedAt, recentSyncError])
+  }, [auth.isAuthenticated, isSyncing, isRefreshingFromCloud, latestSyncAt, recentSyncError])
 
   const [syncLabel, setSyncLabel] = useState('')
   useEffect(() => {

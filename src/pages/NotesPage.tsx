@@ -1552,6 +1552,7 @@ export function NotesPage() {
     const createNote = useNotesStore(s => s.createNote)
     const restoreNote = useNotesStore(s => s.restoreNote)
     const emptyTrash = useNotesStore(s => s.emptyTrash)
+    const trashAllNotes = useNotesStore(s => s.trashAllNotes)
     const loadNoteContent = useNotesStore(s => s.loadNoteContent)
     const activeNote = useNotesStore(s => s.activeNote)
     const saveFailed = useNotesStore(s => s.saveFailed)
@@ -1563,6 +1564,8 @@ export function NotesPage() {
     const [activeTag, setActiveTag] = useState<string | null>(null)
     const [selectionMode, setSelectionMode] = useState(false)
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const [eraseAllOpen, setEraseAllOpen] = useState(false)
+    const [isErasing, setIsErasing] = useState(false)
     const searchRef = useRef<HTMLInputElement>(null)
     const importInputRef = useRef<HTMLInputElement>(null)
     const sidebarCollapsed = useUIStore(s => s.notesSidebarCollapsed)
@@ -1982,14 +1985,41 @@ export function NotesPage() {
                         />
                         <div className="flex items-center gap-1 min-w-0">
                             <Tooltip content="Import .md files or a notes backup ZIP" side="top">
-                                <Button variant="ghost" onClick={() => importInputRef.current?.click()} className="justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                                <Button variant="ghost" onClick={() => importInputRef.current?.click()} className="shrink-0 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
                                     <Upload className="h-3.5 w-3.5" /> Import
                                 </Button>
                             </Tooltip>
-                            <Button variant="ghost" onClick={() => handleExportZip()} className="justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                                <Download className="h-3.5 w-3.5" /> Backup All (ZIP)
-                            </Button>
+                            <Tooltip content="Download a ZIP backup of all notes" side="top">
+                                <Button variant="ghost" onClick={() => handleExportZip()} className="shrink-0 justify-start gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                                    <Download className="h-3.5 w-3.5" /> Backup
+                                </Button>
+                            </Tooltip>
+                            <Tooltip content="Erase all notes" side="top">
+                                <Button variant="ghost" onClick={() => setEraseAllOpen(true)} disabled={notes.length === 0} className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive">
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                            </Tooltip>
                         </div>
+                        <ConfirmationDialog
+                            open={eraseAllOpen}
+                            onOpenChange={setEraseAllOpen}
+                            title="Erase All Notes"
+                            description={`Are you sure you want to erase all ${notes.length} notes? They move to Deleted, where they can be restored or emptied.`}
+                            confirmText="Erase All"
+                            isDestructive={true}
+                            isLoading={isErasing}
+                            disabled={notes.length === 0}
+                            onConfirm={async () => {
+                                setIsErasing(true)
+                                try {
+                                    await trashAllNotes()
+                                    toast({ title: 'Notes Erased', description: 'All notes were moved to Deleted.' })
+                                    setEraseAllOpen(false)
+                                } finally {
+                                    setIsErasing(false)
+                                }
+                            }}
+                        />
                         <Tooltip content="Collapse sidebar" side="right">
                             <Button variant="ghost" onClick={() => setSidebarCollapsed(true)}
                                 className="hidden md:inline-flex h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground">

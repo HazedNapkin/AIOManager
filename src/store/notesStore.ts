@@ -191,6 +191,7 @@ interface NotesStore {
     createNote: (title: string, content: string) => Promise<Note>
     updateNote: (id: string, data: Partial<Pick<Note, 'title' | 'content' | 'pinned'>>) => Promise<void>
     deleteNote: (id: string) => Promise<void>
+    trashAllNotes: () => Promise<void>
     restoreNote: (id: string) => Promise<void>
     emptyTrash: () => Promise<void>
     importNotes: (notes: Note[]) => Promise<void>
@@ -413,6 +414,30 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         triggerSync()
         cacheInvalidate(id)
         if (get().activeNote?.id === id) set({ activeNote: null })
+    },
+
+    trashAllNotes: async () => {
+        const notes = get().notes
+        if (notes.length === 0) return
+        const timestamp = new Date().toISOString()
+        const trashItems: Note[] = []
+        for (const meta of notes) {
+            const cached = noteCache.get(meta.id)
+            const fullNote = cached ? cached.note : await readNoteFromStorage(meta.id)
+            trashItems.push(fullNote
+                ? { ...fullNote, updatedAt: timestamp }
+                : { ...meta, content: '', updatedAt: timestamp })
+        }
+        const trash = [...trashItems, ...get().trash]
+        set({ notes: [], trash })
+        await persistIndex([])
+        await persistTrash(trash)
+        for (const meta of notes) {
+            await removeNoteKey(meta.id)
+            cacheInvalidate(meta.id)
+        }
+        if (get().activeNote) set({ activeNote: null })
+        triggerSync()
     },
 
     restoreNote: async (id) => {

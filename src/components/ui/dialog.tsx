@@ -133,25 +133,59 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
     const { onOpenChange, titleId } = React.useContext(DialogContext)
     const state = props['data-state'] || 'open'
     const touchStartY = React.useRef<number | null>(null)
+    const dismissEligible = React.useRef(false)
     const sheetRef = React.useRef<HTMLDivElement>(null)
     const [dragOffset, setDragOffset] = React.useState(0)
 
+    // The sheet can be overflow-hidden while a nested element does the scrolling; dismissal
+    // must yield to whichever container the finger is actually scrolling
+    const scrollOwnerFor = (target: EventTarget) => {
+        const sheet = sheetRef.current
+        let node: Element | null = target instanceof Element ? target : null
+        while (node && node !== sheet) {
+            if (node instanceof HTMLElement) {
+                const overflowY = window.getComputedStyle(node).overflowY
+                if (overflowY === 'auto' || overflowY === 'scroll') return node
+            }
+            node = node.parentElement
+        }
+        return sheet
+    }
+
     const handleTouchStart = (e: React.TouchEvent) => {
         touchStartY.current = e.touches[0].clientY
+        const sheet = sheetRef.current
+        if (sheet) {
+            const rect = sheet.getBoundingClientRect()
+            dismissEligible.current = e.touches[0].clientY - rect.top < rect.height / 2
+        }
     }
+
     const handleTouchMove = (e: React.TouchEvent) => {
         if (touchStartY.current === null) return
-        const el = sheetRef.current
-        if (el && el.scrollTop > 0) { touchStartY.current = null; return }
-        const delta = e.touches[0].clientY - touchStartY.current
-        if (delta > 0) setDragOffset(delta)
+        const y = e.touches[0].clientY
+        const delta = y - touchStartY.current
+        if (Math.abs(delta) < 12) return
+        if (!dismissEligible.current) {
+            touchStartY.current = null
+            return
+        }
+        const owner = scrollOwnerFor(e.target)
+        if (owner && owner.scrollTop > 0) {
+            touchStartY.current = null
+            setDragOffset(0)
+            return
+        }
+        setDragOffset(Math.max(0, delta))
     }
+
     const handleTouchEnd = () => {
-        if (dragOffset > 80) {
+        const dismiss = dragOffset > 80
+        touchStartY.current = null
+        if (dismiss) {
             onOpenChange?.(false)
             return
         }
-        touchStartY.current = null
         setDragOffset(0)
     }
 
