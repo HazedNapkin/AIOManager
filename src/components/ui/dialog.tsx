@@ -174,6 +174,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
           'rounded-t-2xl rounded-b-none border-t border-border/40',
           'bg-card shadow-[0_-8px_32px_hsl(0_0%_0%/0.24)]',
           'max-[639px]:animate-in max-[639px]:slide-in-from-bottom max-[639px]:duration-300',
+          'motion-reduce:animate-none motion-reduce:transition-none',
           // sm and up: centered modal
           'sm:left-[50%] sm:right-auto sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%]',
           'sm:max-w-lg sm:max-h-[95vh] sm:rounded-2xl sm:border sm:border-border/40',

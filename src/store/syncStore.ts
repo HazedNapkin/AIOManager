@@ -32,78 +32,36 @@ import { wipeAllData } from '@/lib/storage-reset'
 import { resetAllStores } from '@/lib/store-coordinator'
 import { trace } from '@/lib/trace'
 import {
-    clearSessionSyncToken,
+    computeHash,
+    acquireSyncLock,
+    readIdentityProfile,
+    writeIdentityProfile,
+    getSyncApiPath,
+    clearSyncCredentialCaches,
+    isDeviceSessionActive,
+    getActiveDeviceSyncKey,
+    deviceUnlockFromSession,
+    resetAccountsHydration,
+    isAccountsHydrationComplete,
+    LEGACY_SYNC_PASSWORD_KEY,
+    syncRuntime,
+} from './sync-store-helpers'
+export { markAccountsHydrated, readIdentityProfile, getSyncApiPath } from './sync-store-helpers'
+import {
     getSessionSyncCredential,
     saveSessionSyncToken,
 } from '@/lib/session-sync-token'
 
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
-let _appReady = false
-setTimeout(() => { _appReady = true }, 3000)
+setTimeout(() => { syncRuntime.appReady = true }, 3000)
 
-let _lastPushedHash: string | null = null
-let _corruptRestoreInFlight = false
-// Cloud-side watch-event tombstones as of the last pull. The push serialisation merges local
 // tombstones into this map (max-wins) instead of replacing the cloud blob wholesale, so a
-// stale local map can never erase fresher cloud deletes.
-let _lastPulledDeletedWatchEvents: Record<string, number> | null = null
 
-async function computeHash(data: string): Promise<string> {
-    const encoded = new TextEncoder().encode(data)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoded)
-    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('')
-}
 
-let _pendingRetry = false
-let _syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
-let _accountsHydrated = false
-let _lastSyncedAccountCount: number | null = null
-let _syncLock: Promise<void> | null = null
-
-let _onlineHandler: (() => void) | null = null
-let _syncBC: BroadcastChannel | null = null
-
-async function acquireSyncLock(): Promise<() => void> {
-    while (_syncLock) {
-        await _syncLock
-    }
-    let resolve!: () => void
-    _syncLock = new Promise<void>(r => { resolve = r })
-    let released = false
-    return () => {
-        if (released) return
-        released = true
-        _syncLock = null
-        resolve()
-    }
-}
-
-export function markAccountsHydrated() {
-    _accountsHydrated = true
-}
 
 // Identity profile lives outside the churnable auth object: session resets, 401 wipes and
 // expiry paths must never erase the user's chosen name or avatar. The id stamp scopes the
 // local fallback to the owning account so identities never bleed across accounts.
-const IDENTITY_KEY = 'aio-identity-v1'
-
-export function readIdentityProfile(): { id: string | null; name: string; avatar: string | null } {
-    try {
-        const raw = JSON.parse(localStorage.getItem(IDENTITY_KEY) || '{}') as { id?: unknown; name?: unknown; avatar?: unknown }
-        return {
-            id: typeof raw.id === 'string' && raw.id ? raw.id : null,
-            name: typeof raw.name === 'string' ? raw.name : '',
-            avatar: typeof raw.avatar === 'string' && raw.avatar ? raw.avatar : null,
-        }
-    } catch {
-        return { id: null, name: '', avatar: null }
-    }
-}
-
-function writeIdentityProfile(id: string, name: string, avatar: string | null): void {
-    try { localStorage.setItem(IDENTITY_KEY, JSON.stringify({ id, name, avatar })) } catch {}
-}
-
 export interface SyncHistoryEntry {
     id: string
     timestamp: string
@@ -152,46 +110,6 @@ interface SyncState {
     setAvatar: (avatar: string | null) => void
     deleteRemoteAccount: () => Promise<void>
     reset: () => void
-}
-
-const DEFAULT_SERVER = '/api'
-
-const LEGACY_SYNC_PASSWORD_KEY = 'aioman-sync-password'
-
-export function getSyncApiPath(serverUrl: string | undefined): string {
-    const base = (serverUrl || DEFAULT_SERVER).trim().replace(/\/+$/, '')
-    if (!base) return DEFAULT_SERVER
-    if (!base.startsWith('http')) return base
-    return base.endsWith('/api') ? base : `${base}/api`
-}
-
-const clearSyncCredentialCaches = () => {
-    try { sessionStorage.removeItem(LEGACY_SYNC_PASSWORD_KEY) } catch (e) { if (import.meta.env.DEV) console.error(e) }
-    clearSessionSyncToken()
-    import('@/lib/crypto').then(({ clearSyncKeyCache }) => clearSyncKeyCache()).catch(() => {})
-}
-
-async function isDeviceSessionActive(): Promise<boolean> {
-    try {
-        const { isDeviceAuthActive } = await import('@/lib/device-session')
-        return isDeviceAuthActive()
-    } catch {
-        return false
-    }
-}
-
-async function getActiveDeviceSyncKey(): Promise<CryptoKey | null> {
-    try {
-        const { getDeviceSyncKey } = await import('@/lib/device-session')
-        return getDeviceSyncKey()
-    } catch {
-        return null
-    }
-}
-
-async function deviceUnlockFromSession(): Promise<{ syncKey: CryptoKey } | undefined> {
-    const syncKey = await getActiveDeviceSyncKey()
-    return syncKey ? { syncKey } : undefined
 }
 
 export const useSyncStore = create<SyncState>()(
@@ -664,7 +582,7 @@ export const useSyncStore = create<SyncState>()(
                         const localAccounts = useAccountStore.getState().accounts
                         const remoteAccountsRaw = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | undefined)?.accounts || []
                         const remoteAccounts = remoteAccountsRaw as Record<string, unknown>[]
-                        _lastSyncedAccountCount = remoteAccounts.length
+                        syncRuntime.lastSyncedAccountCount = remoteAccounts.length
 
                         const hasRemoteData = remoteAccounts.length > 0
                         const hasLocalData = localAccounts.length > 0
@@ -741,7 +659,7 @@ export const useSyncStore = create<SyncState>()(
                         const local = useWatchEventStore.getState()
                         const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
                         const remoteDeleted = (syncData.deletedWatchEvents && typeof syncData.deletedWatchEvents === 'object') ? syncData.deletedWatchEvents as Record<string, number> : {}
-                        _lastPulledDeletedWatchEvents = remoteDeleted
+                        syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
                         const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
@@ -844,7 +762,7 @@ export const useSyncStore = create<SyncState>()(
                             .catch(() => {})
                     }, 2500)
                 } catch (e) {
-                    if ((e as Error & { corruptPayload?: boolean })?.corruptPayload && !_corruptRestoreInFlight) {
+                    if ((e as Error & { corruptPayload?: boolean })?.corruptPayload && !syncRuntime.corruptRestoreInFlight) {
                         try {
                             const restoreRes = await resilientFetch(`${apiPath}/sync/${id}/restore`, {
                                 method: 'POST',
@@ -853,11 +771,11 @@ export const useSyncStore = create<SyncState>()(
                             })
                             if (restoreRes.ok) {
                                 trace('sync', 'pull.corrupt-restored', { accountId: id })
-                                _corruptRestoreInFlight = true
+                                syncRuntime.corruptRestoreInFlight = true
                                 try {
                                     return await get().login(id, password, isSilent, bypassGuard, deviceUnlock)
                                 } finally {
-                                    _corruptRestoreInFlight = false
+                                    syncRuntime.corruptRestoreInFlight = false
                                 }
                             }
                         } catch (restoreErr) {
@@ -912,12 +830,12 @@ export const useSyncStore = create<SyncState>()(
                     }
                 }
 
-                _lastPushedHash = null
-                _pendingRetry = false
-                _accountsHydrated = false
-                if (_syncDebounceTimer) { clearTimeout(_syncDebounceTimer); _syncDebounceTimer = null }
-                if (_onlineHandler) { window.removeEventListener('online', _onlineHandler); _onlineHandler = null }
-                if (_syncBC) { _syncBC.close(); _syncBC = null }
+                syncRuntime.lastPushedHash = null
+                syncRuntime.pendingRetry = false
+                resetAccountsHydration()
+                if (syncRuntime.syncDebounceTimer) { clearTimeout(syncRuntime.syncDebounceTimer); syncRuntime.syncDebounceTimer = null }
+                if (syncRuntime.onlineHandler) { window.removeEventListener('online', syncRuntime.onlineHandler); syncRuntime.onlineHandler = null }
+                if (syncRuntime.syncBC) { syncRuntime.syncBC.close(); syncRuntime.syncBC = null }
                 clearSyncCredentialCaches()
                 import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
                 import('@/lib/canonical-base').then(({ clearCanonicalBases }) => clearCanonicalBases()).catch(() => {})
@@ -934,7 +852,7 @@ export const useSyncStore = create<SyncState>()(
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
                 })
-                _lastSyncedAccountCount = null
+                syncRuntime.lastSyncedAccountCount = null
                 clearRepublishState()
 
                 const { useWatchEventStore } = await import('@/store/watchEventStore')
@@ -996,7 +914,7 @@ export const useSyncStore = create<SyncState>()(
                 // SAFETY LOCK: If we haven't successfully synced FROM the cloud yet,
                 // we are NOT allowed to sync TO the cloud. This prevents stale clients
                 // from overwriting the source of truth with their old local state.
-                if (isAuto && (!_accountsHydrated || !isInitialSyncCompleted)) {
+                if (isAuto && (!isAccountsHydrationComplete() || !isInitialSyncCompleted)) {
                     if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for hydration and initial pull")
                     return false
                 }
@@ -1006,9 +924,9 @@ export const useSyncStore = create<SyncState>()(
                 // Server Protection: Strict Debounce check for auto-syncs
                 // Instead of dropping, we defer the sync so the *last* change always pushes
                 if (isAuto) {
-                    if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer)
-                    _syncDebounceTimer = setTimeout(() => {
-                        _syncDebounceTimer = null
+                    if (syncRuntime.syncDebounceTimer) clearTimeout(syncRuntime.syncDebounceTimer)
+                    syncRuntime.syncDebounceTimer = setTimeout(() => {
+                        syncRuntime.syncDebounceTimer = null
                         get().syncToRemote(false, true)
                     }, 1500)
                     set({ isSyncing: false })
@@ -1064,10 +982,10 @@ export const useSyncStore = create<SyncState>()(
                     const { shouldBlockEmptyAccountPush } = await import('@/lib/sync-guards')
                     if (shouldBlockEmptyAccountPush({
                         currentAccountCount: accountCount,
-                        lastSyncedAccountCount: _lastSyncedAccountCount,
+                        lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount,
                         isManualPush: !isAuto && !isDebounced,
                     })) {
-                        trace('sync', 'push.blocked-empty-accounts', { accountId: auth.id, lastSyncedAccountCount: _lastSyncedAccountCount })
+                        trace('sync', 'push.blocked-empty-accounts', { accountId: auth.id, lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount })
                         console.warn('[Sync] Blocked automatic push of 0 accounts (data-loss guard, issue #34). If you intentionally deleted all accounts, use a manual sync to force it.')
                         throw new Error('Blocked push of 0 accounts: local state contradicts the last synced cloud copy. Restore accounts or trigger a manual sync to force-push.')
                     }
@@ -1089,7 +1007,7 @@ export const useSyncStore = create<SyncState>()(
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
                         watchEventRollups: watchExport.rollups,
-                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, _lastPulledDeletedWatchEvents ?? {}),
+                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
                         salt: saltBase64,
                         name: auth.name,
                         avatar: auth.avatar ?? null,
@@ -1117,7 +1035,7 @@ export const useSyncStore = create<SyncState>()(
 
                     forceCanonicalRepublish = consumeForceFlag()
                     const stateHash = await computeHash(stringifiedState)
-                    if (!forceCanonicalRepublish && !forceFull && _lastPushedHash !== null && stateHash === _lastPushedHash) {
+                    if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
                             get().addLogEntry({ type: 'push', status: 'success', message: 'No local changes to push - checking cloud.', isAuto: false })
@@ -1238,8 +1156,8 @@ export const useSyncStore = create<SyncState>()(
                         return false
                     }
 
-                    _lastPushedHash = stateHash
-                    _lastSyncedAccountCount = accountCount
+                    syncRuntime.lastPushedHash = stateHash
+                    syncRuntime.lastSyncedAccountCount = accountCount
                     import('@/store/account/accountImportExport').then(({ setLastPushedAt }) => setLastPushedAt(Date.now())).catch(() => {})
                     if (typeof resData.contentHash === 'string') {
                         set({ lastSyncedCloudEtag: resData.contentHash })
@@ -1283,7 +1201,7 @@ export const useSyncStore = create<SyncState>()(
                         isAuto
                     })
                     trace('sync', 'push.success', { accountId: auth.id, isAuto, bytes: payloadBytes, compressed: isCompressed, timing: Date.now() - pushStart })
-                    _pendingRetry = false
+                    syncRuntime.pendingRetry = false
                     resetRepublishAttempts()
 
                     try {
@@ -1295,7 +1213,7 @@ export const useSyncStore = create<SyncState>()(
                 } catch (e) {
                     const message = (e as Error).message
                     if (import.meta.env.DEV) console.error("Sync error:", apiPath, e)
-                    if (isAuto) _pendingRetry = true
+                    if (isAuto) syncRuntime.pendingRetry = true
                     get().addLogEntry({
                             type: 'push',
                             status: 'error',
@@ -1303,7 +1221,7 @@ export const useSyncStore = create<SyncState>()(
                             isAuto
                         })
                     trace('sync', 'push.error', { accountId: auth.id, isAuto, error: message, timing: Date.now() - pushStart })
-                    if (!isAuto && !isDebounced && _appReady) {
+                    if (!isAuto && !isDebounced && syncRuntime.appReady) {
                         toast({ variant: "destructive", title: "Save Failed", description: message })
                     }
                     return false
@@ -1416,7 +1334,7 @@ export const useSyncStore = create<SyncState>()(
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
                         const remoteDeleted = (data.deletedWatchEvents && typeof data.deletedWatchEvents === 'object') ? data.deletedWatchEvents as Record<string, number> : {}
-                        _lastPulledDeletedWatchEvents = remoteDeleted
+                        syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
                         const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...(data.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
@@ -1491,7 +1409,7 @@ export const useSyncStore = create<SyncState>()(
             },
 
             reset: () => {
-                _accountsHydrated = false
+                resetAccountsHydration()
                 set({
                     auth: { id: '', password: '', name: '', avatar: null, isAuthenticated: false },
                     serverUrl: '',
@@ -1545,17 +1463,17 @@ if (typeof window !== 'undefined') {
 
     import('@/lib/device-session').then(({ reactivateDeviceSessionIfNeeded }) => reactivateDeviceSessionIfNeeded()).catch(() => {})
 
-    _onlineHandler = () => {
-        if (_pendingRetry) {
-            _pendingRetry = false
+    syncRuntime.onlineHandler = () => {
+        if (syncRuntime.pendingRetry) {
+            syncRuntime.pendingRetry = false
             useSyncStore.getState().syncToRemote(true).catch(() => {})
         }
     }
-    window.addEventListener('online', _onlineHandler)
+    window.addEventListener('online', syncRuntime.onlineHandler)
 
     try {
-        _syncBC = new BroadcastChannel('aio-sync')
-        _syncBC.onmessage = (event) => {
+        syncRuntime.syncBC = new BroadcastChannel('aio-sync')
+        syncRuntime.syncBC.onmessage = (event) => {
             if (event.data?.type === 'sync-complete') {
                 const state = useSyncStore.getState()
                 if (!state.auth.isAuthenticated) return

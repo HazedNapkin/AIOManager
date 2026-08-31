@@ -17,29 +17,55 @@ export interface DocSearchResult {
     content: string
 }
 
+interface DocSearchEntry {
+    doc: IndexedDoc
+    title: string
+    description: string
+    headingText: string
+    body: string
+    headings: Array<{ id: string; content: string; lower: string }>
+}
+
+// Lowercasing every doc body per keystroke dominated search cost. The docs array reference is
+// stable for the app lifetime, so the lowercase index is built once per reference — if that
+// ever stops holding, this cache silently thrashes and must become an explicit rebuild.
+const entryCache = new WeakMap<IndexedDoc[], DocSearchEntry[]>()
+
+function getEntries(docs: IndexedDoc[]): DocSearchEntry[] {
+    const cached = entryCache.get(docs)
+    if (cached) return cached
+    const entries = docs.map(doc => ({
+        doc,
+        title: doc.title.toLowerCase(),
+        description: doc.description.toLowerCase(),
+        headingText: doc.headings.map(h => h.content).join(' ').toLowerCase(),
+        body: doc.body.toLowerCase(),
+        headings: doc.headings.map(h => ({ id: h.id, content: String(h.content ?? ''), lower: String(h.content ?? '').toLowerCase() })),
+    }))
+    entryCache.set(docs, entries)
+    return entries
+}
+
 export function searchIndexed(query: string, docs: IndexedDoc[]): DocSearchResult[] {
     const q = query.trim().toLowerCase()
     if (!q) return []
     const terms = q.split(/\s+/).filter(Boolean)
 
     const scored: Array<{ score: number; results: DocSearchResult[] }> = []
-    for (const doc of docs) {
-        const title = doc.title.toLowerCase()
-        const headingText = doc.headings.map(h => h.content).join(' ').toLowerCase()
-        const hay = `${title} ${doc.description.toLowerCase()} ${headingText} ${doc.body.toLowerCase()}`
+    for (const entry of getEntries(docs)) {
+        const hay = `${entry.title} ${entry.description} ${entry.headingText} ${entry.body}`
         if (!terms.every(t => hay.includes(t))) continue
 
         let score = 0
-        if (title.includes(q)) score += 100
-        if (terms.every(t => title.includes(t))) score += 40
-        if (headingText.includes(q)) score += 20
-        if (doc.description.toLowerCase().includes(q)) score += 10
+        if (entry.title.includes(q)) score += 100
+        if (terms.every(t => entry.title.includes(t))) score += 40
+        if (entry.headingText.includes(q)) score += 20
+        if (entry.description.includes(q)) score += 10
 
-        const results: DocSearchResult[] = [{ id: doc.id, url: doc.url, type: 'page', content: doc.title }]
-        for (const h of doc.headings) {
-            const headingContent = String(h.content ?? '')
-            if (terms.some(t => headingContent.toLowerCase().includes(t))) {
-                results.push({ id: `${doc.id}-${h.id}`, url: `${doc.url}#${h.id}`, type: 'heading', content: headingContent })
+        const results: DocSearchResult[] = [{ id: entry.doc.id, url: entry.doc.url, type: 'page', content: entry.doc.title }]
+        for (const h of entry.headings) {
+            if (terms.some(t => h.lower.includes(t))) {
+                results.push({ id: `${entry.doc.id}-${h.id}`, url: `${entry.doc.url}#${h.id}`, type: 'heading', content: h.content })
             }
         }
         scored.push({ score, results })
