@@ -9,6 +9,8 @@ export const syncRuntime = {
     lastPushedHash: null as string | null,
     corruptRestoreInFlight: false,
     lastPulledDeletedWatchEvents: null as Record<string, number> | null,
+    lastPulledNotesTrash: null as import('./notesStore').Note[] | null,
+    lastPulledVaultTombstones: null as import('./vaultStore').VaultTombstone[] | null,
     pendingRetry: false,
     syncDebounceTimer: null as ReturnType<typeof setTimeout> | null,
     lastSyncedAccountCount: null as number | null,

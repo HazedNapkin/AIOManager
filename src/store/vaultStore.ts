@@ -45,7 +45,7 @@ function normalizeTombstones(tombstones: unknown): VaultTombstone[] {
     return Array.from(merged.values())
 }
 
-function mergeTombstones(...sets: VaultTombstone[][]): VaultTombstone[] {
+export function mergeTombstones(...sets: VaultTombstone[][]): VaultTombstone[] {
     return normalizeTombstones(sets.flat())
 }
 

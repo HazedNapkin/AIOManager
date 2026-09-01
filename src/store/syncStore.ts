@@ -17,6 +17,7 @@ import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { serverHasStremioCredential, canonicalMembershipChanged } from '@/lib/canonical-visibility'
 import { needsCredentialHeal } from '@/lib/credential-heal'
 import { mergeDeletedEventMaps } from '@/lib/event-tombstones'
+import { mergeNotesTrash, filterNotesByTrash } from '@/lib/notes-tombstones'
 import {
     bindRepublishHost,
     learnServerCredentialedAccounts,
@@ -641,12 +642,18 @@ export const useSyncStore = create<SyncState>()(
                         const { useNotesStore } = await import('@/store/notesStore')
                         await useNotesStore.getState().importNotes(syncData.notes)
                         if (Array.isArray(syncData.notesTrash)) {
+                            syncRuntime.lastPulledNotesTrash = syncData.notesTrash
                             await useNotesStore.getState().importTrash(syncData.notesTrash)
                         }
+                    } else if (Array.isArray(syncData.notesTrash)) {
+                        syncRuntime.lastPulledNotesTrash = syncData.notesTrash
+                        const { useNotesStore } = await import('@/store/notesStore')
+                        await useNotesStore.getState().importTrash(syncData.notesTrash)
                     }
                     if (Array.isArray(syncData.vault) || Array.isArray(syncData.vaultTombstones)) {
                         const { useVaultStore } = await import('./vaultStore')
                         await useVaultStore.getState().initialize()
+                        syncRuntime.lastPulledVaultTombstones = (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
                         await useVaultStore.getState().importVault((syncData.vault || []) as import('@/types/vault').VaultKey[], (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
                     }
 
@@ -992,6 +999,16 @@ export const useSyncStore = create<SyncState>()(
                     if (useVaultStore.getState().isLocked && useAuthStore.getState().encryptionKey) {
                         await useVaultStore.getState().initialize()
                     }
+                    // Merge local tombstones with the last-pulled cloud sets so a stale push
+                    // can never wipe another device's deletion and resurrect data
+                    const vaultState = useVaultStore.getState()
+                    const { mergeTombstones } = await import('./vaultStore')
+                    const mergedVaultTombstones = mergeTombstones(vaultState.tombstones, syncRuntime.lastPulledVaultTombstones ?? [])
+                    const vaultTombById = new Map(mergedVaultTombstones.map(t => [t.id, t.deletedAt]))
+                    const notesState = (await import('@/store/notesStore')).useNotesStore.getState()
+                    const localNotes = await notesState.getAllNotesWithContent()
+                    const mergedNotesTrash = mergeNotesTrash(notesState.trash, syncRuntime.lastPulledNotesTrash ?? [])
+
                     const watchExport = useWatchEventStore.getState().export()
                     const state = {
                         ...exportedAccounts,
@@ -1000,10 +1017,13 @@ export const useSyncStore = create<SyncState>()(
                             rules: useFailoverStore.getState().rules,
                             webhook: useFailoverStore.getState().webhook
                         },
-                        vault: useVaultStore.getState().keys,
-                        vaultTombstones: useVaultStore.getState().tombstones,
-                        notes: await (await import('@/store/notesStore')).useNotesStore.getState().getAllNotesWithContent(),
-                        notesTrash: (await import('@/store/notesStore')).useNotesStore.getState().trash,
+                        vault: vaultState.keys.filter(k => {
+                            const trashedAt = vaultTombById.get(k.id)
+                            return !trashedAt || trashedAt < (k.updatedAt || 0)
+                        }),
+                        vaultTombstones: mergedVaultTombstones,
+                        notes: filterNotesByTrash(localNotes, mergedNotesTrash),
+                        notesTrash: mergedNotesTrash,
                         watchEvents: watchExport.events,
                         watchSnapshot: watchExport.snapshot,
                         watchEventRollups: watchExport.rollups,
@@ -1320,6 +1340,7 @@ export const useSyncStore = create<SyncState>()(
                     }
                     if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
                         await useVaultStore.getState().initialize()
+                        syncRuntime.lastPulledVaultTombstones = (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
                         await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
                     }
                     if (Array.isArray(data.watchEvents)) {
@@ -1344,6 +1365,7 @@ export const useSyncStore = create<SyncState>()(
                         try { localStorage.setItem('aio-discover-prefs', JSON.stringify(data.discoverPrefs)) } catch {}
                     }
                     if (Array.isArray(data.notesTrash)) {
+                        syncRuntime.lastPulledNotesTrash = data.notesTrash
                         const { useNotesStore } = await import('@/store/notesStore')
                         await useNotesStore.getState().importTrash(data.notesTrash)
                     }
