@@ -500,7 +500,7 @@ export function SettingsPage() {
                                         title="Click to copy the build identifier"
                                     >
                                         <span className="text-muted-foreground">Build</span>
-                                        <span className="font-mono font-medium">{__BUILD_COMMIT__}</span>
+                                        <span className="font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
                                     </button>
                                 </div>
                             </div>
