@@ -24,6 +24,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } fr
 import { Input } from '@/components/ui/input'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AddonCard } from './AddonCard'
+import { useProfileOperations } from './useProfileOperations'
+import { useAddonFlagOperations } from './useAddonFlagOperations'
+import { useAddonHeavyOperations } from './useAddonHeavyOperations'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { AccountPickerDialog } from '../accounts/AccountPickerDialog'
 import { AddonReorderDialog } from './AddonReorderDialog'
@@ -44,15 +47,11 @@ import { FloatingActionBar } from '@/components/ui/floating-action-bar'
 import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { AccountSetupCreateDialog } from '@/components/accounts/AccountSetupCreateDialog'
-import { useConfetti } from '@/components/ui/confetti'
-import { mapConcurrent } from '@/lib/concurrency'
 import { SYNCED_SETTINGS_EVENT } from '@/lib/synced-settings'
-import type { AddonCollectionDiff } from '@/lib/addon-collection-diff'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -67,27 +66,6 @@ import { Label } from '@/components/ui/label'
 
 interface AddonListProps {
   accountId: string
-}
-
-const ADDON_REINSTALL_CONCURRENCY = 4
-const BULK_ACCOUNT_CONCURRENCY = 5
-const BULK_ADDON_FETCH_CONCURRENCY = 4
-
-function getProfileSwitchDescription(result: {
-  targetName: string
-  addonChanges: AddonCollectionDiff
-  remoteWriteSkipped: boolean
-}) {
-  const { addonChanges } = result
-  const parts = []
-  if (addonChanges.installs > 0) parts.push(`${addonChanges.installs} installed`)
-  if (addonChanges.updates > 0) parts.push(`${addonChanges.updates} updated`)
-  if (addonChanges.removals > 0) parts.push(`${addonChanges.removals} removed`)
-  if (addonChanges.orderChanged) parts.push('order updated')
-
-  const summary = parts.length > 0 ? parts.join(', ') : 'No add-on changes needed'
-  const writeSummary = result.remoteWriteSkipped ? 'No remote add-on write needed.' : 'Remote add-on collection updated.'
-  return `${result.targetName}: ${summary}. ${writeSummary}`
 }
 
 export function AddonList({ accountId }: AddonListProps) {
@@ -109,6 +87,21 @@ export function AddonList({ accountId }: AddonListProps) {
   const encryptionKey = useAuthStore((state) => state.encryptionKey)
   const syncAccount = useAccountStore(state => state.syncAccount)
   const { toast } = useToast()
+  const {
+    profileToDelete,
+    setProfileToDelete,
+    profileToEdit,
+    setProfileToEdit,
+    profileEditName,
+    setProfileEditName,
+    profileEditLoading,
+    isCreateProfileOpen,
+    setIsCreateProfileOpen,
+    handleSwitchProfile,
+    handleDeleteProfile,
+    handleSaveProfile,
+    handleCreateProfileConfirm,
+  } = useProfileOperations(accountId)
 
   const failoverRules = useFailoverStore(
     useShallow((state) => state.rules.filter(r => r.accountId === accountId))
@@ -148,11 +141,6 @@ export function AddonList({ accountId }: AddonListProps) {
 
   const [bulkSaveOpen, setBulkSaveOpen] = useState(false)
   const [bulkUrlReplaceOpen, setBulkUrlReplaceOpen] = useState(false)
-
-  const extractTransportUrl = (id: string) => {
-    const idx = id.lastIndexOf('::')
-    return idx > 0 ? id.substring(0, idx) : id
-  }
 
   const tabParam = searchParams.get('tab')
   const validTabs = ['addons', 'failover', 'failover-history', 'failover-webhooks', 'changelog', 'connections'] as const
@@ -362,63 +350,6 @@ export function AddonList({ accountId }: AddonListProps) {
   const [updatingAll, setUpdatingAll] = useState(false)
   const [showBulkAccountPicker, setShowBulkAccountPicker] = useState(false)
   const [isBulkActionLoading, setIsBulkActionLoading] = useState(false)
-  const confetti = useConfetti()
-
-  const [profileToDelete, setProfileToDelete] = useState<{ id: string, name: string } | null>(null)
-  const [profileToEdit, setProfileToEdit] = useState<{ id: string, name: string } | null>(null)
-  const [profileEditName, setProfileEditName] = useState('')
-  const [profileEditLoading, setProfileEditLoading] = useState(false)
-  const [isCreateProfileOpen, setIsCreateProfileOpen] = useState(false)
-
-  const handleSwitchProfile = useCallback(async (targetProfileId: string) => {
-    try {
-      const { useAccountStore } = await import('@/store/accountStore')
-      const result = await useAccountStore.getState().switchProfile(accountId, targetProfileId)
-      toast({ title: 'Setup Switched', description: getProfileSwitchDescription(result) })
-    } catch (err) {
-      toast({ variant: 'destructive', title: 'Swap Failed', description: 'Failed to switch setup' })
-    }
-  }, [accountId, toast])
-
-  const handleDeleteProfile = useCallback(async () => {
-    if (!profileToDelete) return
-    try {
-      const { useAccountStore } = await import('@/store/accountStore')
-      await useAccountStore.getState().deleteSubProfile(accountId, profileToDelete.id)
-      toast({ title: 'Setup Deleted', description: `Deleted ${profileToDelete.name}` })
-    } catch (err) {
-      toast({ variant: 'destructive', title: 'Deletion Failed', description: 'Failed to delete setup' })
-    } finally {
-      setProfileToDelete(null)
-    }
-  }, [accountId, profileToDelete, toast])
-
-  const handleSaveProfile = useCallback(async () => {
-    if (!profileToEdit || !profileEditName.trim()) return
-    setProfileEditLoading(true)
-    try {
-      const { useAccountStore } = await import('@/store/accountStore')
-      await useAccountStore.getState().renameSubProfile(accountId, profileToEdit.id, profileEditName)
-      toast({ title: 'Setup Renamed', description: `Renamed to ${profileEditName}` })
-      setProfileToEdit(null)
-    } catch (err) {
-      toast({ variant: 'destructive', title: 'Failed to rename setup', description: `Could not rename setup` })
-    } finally {
-      setProfileEditLoading(false)
-    }
-  }, [accountId, profileToEdit, profileEditName, toast])
-
-  const handleCreateProfileConfirm = useCallback(async (name: string, clone: boolean) => {
-    try {
-      const { useAccountStore } = await import('@/store/accountStore')
-      toast({ title: 'Creating Setup...', description: clone ? `Copying current setup to ${name}` : `Creating empty setup ${name}` })
-      await useAccountStore.getState().createSubProfile(accountId, name, clone)
-      confetti.fire({ particleCount: 80, spread: 70, origin: { x: 0.5, y: 0.4 } })
-      toast({ title: 'Setup Created', description: `Created and switched to ${name}` })
-    } catch (err) {
-      toast({ variant: 'destructive', title: 'Failed to create setup', description: `Could not create setup` })
-    }
-  }, [accountId, confetti, toast])
 
   const addonIndexMap = useMemo(() => {
     const map = new Map<AddonDescriptor, number>()
@@ -561,416 +492,32 @@ export function AddonList({ accountId }: AddonListProps) {
     }
   }, [account, addons, toast, updateLatestVersions, syncAccount, accountId, checkRules, pullServerState, checkingUpdates])
 
-  const handleUpdateAddon = useCallback(
-    async (_accountId: string, transportUrl: string) => {
-      if (!account) return
-      await useAccountStore.getState().reinstallAddon(accountId, transportUrl)
-    },
-    [account, accountId]
-  )
-
-  const handleProtectAll = useCallback(async () => {
-    if (!account) return
-
-    try {
-      const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, true)
-
-      toast({
-        title: changedCount > 0 ? 'Addons Protected' : 'Already Protected',
-        description: changedCount > 0
-          ? `Protected ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No add-ons needed to change.'
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed to Protect Addons',
-        description: error instanceof Error ? error.message : 'Unknown error'
-      })
-    }
-  }, [account, accountId, toast])
-
-  const handleUnprotectAll = useCallback(async () => {
-    if (!account) return
-
-    try {
-      const changedCount = await useAccountStore.getState().bulkProtectAddons(accountId, false)
-
-      toast({
-        title: changedCount > 0 ? 'Addons Unprotected' : 'Already Unprotected',
-        description: changedCount > 0
-          ? `Unprotected ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No add-ons needed to change.'
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed to Unprotect Addons',
-        description: error instanceof Error ? error.message : 'Unknown error'
-      })
-    }
-  }, [account, accountId, toast])
-
-  const handleHideConfigureAll = useCallback(async () => {
-    if (!account || addons.length === 0) return
-    try {
-      const changedCount = await useAccountStore.getState().bulkSetHideConfigure(accountId, true)
-      toast({
-        title: changedCount > 0 ? 'Configure Buttons Hidden' : 'Already Hidden',
-        description: changedCount > 0
-          ? `Hidden configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No addons need changes.'
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed',
-        description: error instanceof Error ? error.message : 'Could not hide configure buttons.'
-      })
-    }
-  }, [account, accountId, addons.length, toast])
-
-  const handleShowConfigureAll = useCallback(async () => {
-    if (!account || addons.length === 0) return
-    try {
-      const changedCount = await useAccountStore.getState().bulkSetHideConfigure(accountId, false)
-      toast({
-        title: changedCount > 0 ? 'Configure Buttons Shown' : 'Already Visible',
-        description: changedCount > 0
-          ? `Shown configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No addons need changes.'
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed',
-        description: error instanceof Error ? error.message : 'Could not show configure buttons.'
-      })
-    }
-  }, [account, accountId, addons.length, toast])
-
-  const handleEnableAll = useCallback(async () => {
-    if (!account || addons.length === 0) return
-    const allUrls = addons.map(a => a.transportUrl)
-    try {
-      await useAccountStore.getState().bulkToggleAddonEnabled(accountId, allUrls, true)
-      toast({ title: 'All Addons Enabled', description: `Enabled ${allUrls.length} addon${allUrls.length !== 1 ? 's' : ''}.` })
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Failed', description: 'Could not enable addons.' })
-    }
-  }, [account, addons, accountId, toast])
-
-  const handleDisableAll = useCallback(async () => {
-    if (!account || addons.length === 0) return
-    const allUrls = addons.map(a => a.transportUrl)
-    try {
-      await useAccountStore.getState().bulkToggleAddonEnabled(accountId, allUrls, false)
-      toast({ title: 'All Addons Disabled', description: `Disabled ${allUrls.length} addon${allUrls.length !== 1 ? 's' : ''}.` })
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Failed', description: 'Could not disable addons.' })
-    }
-  }, [account, addons, accountId, toast])
-
-  const handleProtectSelected = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-      const changedCount = await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, true)
-
-      toast({
-        title: changedCount > 0 ? 'Selection Protected' : 'Already Protected',
-        description: changedCount > 0
-          ? `Protected ${changedCount} selected addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No selected add-ons needed changes.'
-      })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Protection Failed',
-        description: 'Could not protect selected addons.'
-      })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleUnprotectSelected = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-      const changedCount = await useAccountStore.getState().bulkProtectSelectedAddons(accountId, urls, false)
-
-      toast({
-        title: changedCount > 0 ? 'Selection Unprotected' : 'Already Unprotected',
-        description: changedCount > 0
-          ? `Unprotected ${changedCount} selected addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No selected add-ons needed changes.'
-      })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Unprotection Failed',
-        description: 'Could not unprotect selected addons.'
-      })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleHideConfigureSelected = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-      const changedCount = await useAccountStore.getState().bulkSetHideConfigureSelected(accountId, urls, true)
-      toast({
-        title: changedCount > 0 ? 'Configure Button Hidden' : 'Already Hidden',
-        description: changedCount > 0
-          ? `Hidden configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No selected addons needed changes.'
-      })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (error) {
-      toast({ variant: 'destructive', title: 'Failed', description: error instanceof Error ? error.message : 'Could not hide configure buttons.' })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleShowConfigureSelected = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-      const changedCount = await useAccountStore.getState().bulkSetHideConfigureSelected(accountId, urls, false)
-      toast({
-        title: changedCount > 0 ? 'Configure Button Shown' : 'Already Visible',
-        description: changedCount > 0
-          ? `Shown configure button on ${changedCount} addon${changedCount !== 1 ? 's' : ''}.`
-          : 'No selected addons needed changes.'
-      })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (error) {
-      toast({ variant: 'destructive', title: 'Failed', description: error instanceof Error ? error.message : 'Could not show configure buttons.' })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleBulkEnable = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-    const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-    try {
-      await useAccountStore.getState().bulkToggleAddonEnabled(accountId, urls, true)
-      toast({ title: 'Addons Enabled', description: `Enabled ${urls.length} addon${urls.length !== 1 ? 's' : ''}.` })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Failed', description: 'Could not enable addons.' })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleBulkDisable = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-    const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-    try {
-      await useAccountStore.getState().bulkToggleAddonEnabled(accountId, urls, false)
-      toast({ title: 'Addons Disabled', description: `Disabled ${urls.length} addon${urls.length !== 1 ? 's' : ''}.` })
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'Failed', description: 'Could not disable addons.' })
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
+  const {
+    handleUpdateAddon,
+    handleProtectAll,
+    handleUnprotectAll,
+    handleHideConfigureAll,
+    handleShowConfigureAll,
+    handleEnableAll,
+    handleDisableAll,
+    handleProtectSelected,
+    handleUnprotectSelected,
+    handleHideConfigureSelected,
+    handleShowConfigureSelected,
+    handleBulkEnable,
+    handleBulkDisable,
+  } = useAddonFlagOperations({ accountId, account, addons, selectedAddonUrls, setSelectedAddonUrls, setIsSelectionMode })
 
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const handleCreateRule = useCallback(async () => {
-    if (!account || selectedAddonUrls.size < 2) {
-      toast({
-        variant: 'destructive',
-        title: 'Selection too small',
-        description: 'Select at least 2 addons to create an autopilot chain.'
-      })
-      return
-    }
-
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-
-      const { useFailoverStore } = await import('@/store/failoverStore')
-      const failoverStore = useFailoverStore.getState()
-
-      await failoverStore.addRule(accountId, urls)
-
-      toast({
-        title: 'Autopilot Rule Created',
-        description: `Created a new rule with ${urls.length} addon${urls.length !== 1 ? 's' : ''}. Switching to configuration...`
-      })
-
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-
-      setSearchParams({ tab: 'failover' }, { replace: true })
-
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Rule Creation Failed',
-        description: error instanceof Error ? error.message : 'Unknown error'
-      })
-    }
-  }, [account, accountId, selectedAddonUrls, toast, setSearchParams])
-
-  const handleUpdateAll = useCallback(async () => {
-    if (!account) return
-
-    const addonsToUpdate = updatesAvailable.map((addon) => ({ id: addon.manifest.id, url: addon.transportUrl }))
-    if (addonsToUpdate.length === 0) {
-      toast({ title: 'No Updates', description: 'All addons are already up to date.' })
-      return
-    }
-
-    setUpdatingAll(true)
-    setRefreshProgress({ status: 'running', current: 0, total: addonsToUpdate.length, label: 'Updating addons', detail: `Reinstalling ${addonsToUpdate.length} addon${addonsToUpdate.length !== 1 ? 's' : ''}...` })
-    try {
-
-      const { successCount } = await useAccountStore.getState().reinstallAddons(
-        accountId,
-        addonsToUpdate.map(item => item.url),
-        ADDON_REINSTALL_CONCURRENCY,
-        (current, total) => setRefreshProgress(prev => ({ ...prev, current, total, detail: `${current} of ${total} addons updated` }))
-      )
-
-      setRefreshProgress({ status: 'complete', current: addonsToUpdate.length, total: addonsToUpdate.length, label: 'Updates complete', detail: `Successfully updated ${successCount} of ${addonsToUpdate.length}` })
-      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 3000)
-      toast({
-        title: 'Updates Complete',
-        description: `Successfully updated ${successCount} of ${addonsToUpdate.length} addon${addonsToUpdate.length !== 1 ? 's' : ''}`,
-      })
-    } catch (error) {
-      setRefreshProgress({ status: 'error', current: 0, total: addonsToUpdate.length, label: 'Update failed', detail: 'Failed to update addons' })
-      setTimeout(() => setRefreshProgress({ status: 'idle', current: 0, total: 0, label: '' }), 5000)
-      toast({
-        title: 'Update Failed',
-        description: 'Failed to update addons',
-        variant: 'destructive',
-      })
-    } finally {
-      setUpdatingAll(false)
-    }
-  }, [account, updatesAvailable, accountId, toast])
-
-  const handleReinstallSelected = useCallback(async () => {
-    if (!account || selectedAddonUrls.size === 0) return
-
-    setUpdatingAll(true)
-    try {
-      const urls = Array.from(selectedAddonUrls).map(extractTransportUrl)
-      const { successCount } = await useAccountStore.getState().reinstallAddons(
-        accountId,
-        urls,
-        ADDON_REINSTALL_CONCURRENCY
-      )
-
-      toast({
-        title: 'Reinstallation Complete',
-        description: `Successfully reinstalled ${successCount} of ${urls.length} addon${urls.length !== 1 ? 's' : ''}.`,
-      })
-
-      setIsSelectionMode(false)
-      setSelectedAddonUrls(new Set())
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Reinstall Failed',
-        description: 'Failed to reinstall selected addons.'
-      })
-    } finally {
-      setUpdatingAll(false)
-    }
-  }, [account, accountId, selectedAddonUrls, toast])
-
-  const handleReinstallAll = useCallback(async () => {
-    if (!account) return
-    setUpdatingAll(true)
-    try {
-      const urls = addons.map(a => a.transportUrl)
-      const { successCount } = await useAccountStore.getState().reinstallAddons(
-        accountId,
-        urls,
-        ADDON_REINSTALL_CONCURRENCY
-      )
-      toast({
-        title: 'Reinstallation Complete',
-        description: `Successfully reinstalled ${successCount} of ${urls.length} addon${urls.length !== 1 ? 's' : ''}.`,
-      })
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'Reinstall Failed',
-        description: 'Failed to reinstall addons.'
-      })
-    } finally {
-      setUpdatingAll(false)
-    }
-  }, [account, accountId, addons, toast])
-
-  const handleBulkCloneToAccounts = useCallback(async (targetAccountIds: string[]) => {
-    if (targetAccountIds.length === 0 || selectedAddonUrls.size === 0) return
-
-    setIsBulkActionLoading(true)
-    let successCount = 0
-    let failCount = 0
-
-    const selectedAddonsList = addons.filter((_, index) => selectedAddonUrls.has(`${addons[index].transportUrl}::${index}`))
-    const selectedAddonUrlsToInstall = selectedAddonsList.map(addon => addon.transportUrl)
-
-    await mapConcurrent(targetAccountIds, BULK_ACCOUNT_CONCURRENCY, async (targetId) => {
-      try {
-        const result = await useAccountStore.getState().installAddonsToAccount(
-          targetId,
-          selectedAddonUrlsToInstall,
-          BULK_ADDON_FETCH_CONCURRENCY
-        )
-        successCount += result.successCount
-        failCount += result.failCount
-      } catch (err) {
-        if (import.meta.env.DEV) console.error(`Failed to deploy addons to ${targetId}:`, err)
-        failCount += selectedAddonsList.length
-      }
-    })
-
-    toast({
-      title: 'Bulk Clone Complete',
-      description: `Successfully processed ${successCount} installation${successCount !== 1 ? 's' : ''}. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
-    })
-    setIsBulkActionLoading(false)
-    setShowBulkAccountPicker(false)
-    setIsSelectionMode(false)
-    setSelectedAddonUrls(new Set())
-  }, [selectedAddonUrls, addons, toast])
-
-  const handleBulkDeployToAll = useCallback(async () => {
-    const targetAccountIds = accounts
-      .filter(acc => acc.id !== accountId)
-      .map(acc => acc.id)
-
-    if (targetAccountIds.length === 0) {
-      toast({
-        title: 'No other accounts',
-        description: 'You need at least one other account to deploy to.'
-      })
-      return
-    }
-
-    if (selectedAddonUrls.size === 0) return
-
-    setIsBulkActionLoading(true)
-    try {
-      await handleBulkCloneToAccounts(targetAccountIds)
-    } finally {
-      setIsBulkActionLoading(false)
-    }
-  }, [accounts, accountId, selectedAddonUrls, handleBulkCloneToAccounts, toast])
+  const {
+    handleCreateRule,
+    handleUpdateAll,
+    handleReinstallSelected,
+    handleReinstallAll,
+    handleBulkCloneToAccounts,
+    handleBulkDeployToAll,
+  } = useAddonHeavyOperations({ accountId, account, addons, accounts, updatesAvailable, selectedAddonUrls, setSearchParams, setUpdatingAll, setRefreshProgress, setIsSelectionMode, setSelectedAddonUrls, setIsBulkActionLoading, setShowBulkAccountPicker })
 
   const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
   const privacyLevelNames = useUIStore((state) => state.privacyLevelNames)
@@ -1275,7 +822,6 @@ export function AddonList({ accountId }: AddonListProps) {
                         <Wand2 className="h-4 w-4 text-primary" />
                       Find &amp; Replace URL
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     {addons.some(a => !a.flags?.protected) ? (
                       <DropdownMenuItem className="gap-2" onClick={handleProtectAll}>
                         <AnimatedShieldIcon className="h-4 w-4 text-primary" />
@@ -1306,7 +852,6 @@ export function AddonList({ accountId }: AddonListProps) {
                         Show Configure All
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem className="gap-2" onClick={() => setShowClearAllConfirm(true)} disabled={!hasPlatformConnection(account) || addons.length === 0}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                         Clear All Addons

@@ -34,6 +34,7 @@ import {
   type PreviewStat,
 } from './bulk-actions/registry'
 import { AccountAvatar } from './AccountAvatar'
+import { AddonTag } from '@/components/addons/AddonTag'
 import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Info, LayoutGrid, Library, Loader2, PlusCircle, ShieldCheck, Trash2, Search, Tags, X } from 'lucide-react'
 import { useState, useEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Switch } from '@/components/ui/switch'
@@ -1039,8 +1040,16 @@ export function BatchOperationsDialog({
                             textClassName="text-xs"
                           />
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               <p className="text-sm font-medium truncate">{savedAddon.name}</p>
+                              {savedAddon.tags.slice(0, 2).map(tag => (
+                                <AddonTag key={tag} tag={tag} isCompact className="shrink-0 hidden sm:inline-flex" />
+                              ))}
+                              {savedAddon.tags.length > 2 && (
+                                <span className="text-xs text-muted-foreground/60 shrink-0 hidden sm:inline">
+                                  +{savedAddon.tags.length - 2}
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs text-muted-foreground truncate">{savedAddon.manifest.name}</p>
                           </div>

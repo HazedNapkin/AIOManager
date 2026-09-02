@@ -132,22 +132,95 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
   ({ className, children, hideClose = false, ...props }, ref) => {
     const { onOpenChange, titleId } = React.useContext(DialogContext)
     const state = props['data-state'] || 'open'
+    const touchStartY = React.useRef<number | null>(null)
+    const dismissEligible = React.useRef(false)
+    const sheetRef = React.useRef<HTMLDivElement>(null)
+    const [dragOffset, setDragOffset] = React.useState(0)
+
+    // The sheet can be overflow-hidden while a nested element does the scrolling; dismissal
+    // must yield to whichever container the finger is actually scrolling
+    const scrollOwnerFor = (target: EventTarget) => {
+        const sheet = sheetRef.current
+        let node: Element | null = target instanceof Element ? target : null
+        while (node && node !== sheet) {
+            if (node instanceof HTMLElement) {
+                const overflowY = window.getComputedStyle(node).overflowY
+                if (overflowY === 'auto' || overflowY === 'scroll') return node
+            }
+            node = node.parentElement
+        }
+        return sheet
+    }
+
+    const handleTouchStart = (e: React.TouchEvent) => {
+        touchStartY.current = e.touches[0].clientY
+        const sheet = sheetRef.current
+        if (sheet) {
+            const rect = sheet.getBoundingClientRect()
+            dismissEligible.current = e.touches[0].clientY - rect.top < rect.height / 2
+        }
+    }
+
+    const handleTouchMove = (e: React.TouchEvent) => {
+        if (touchStartY.current === null) return
+        const y = e.touches[0].clientY
+        const delta = y - touchStartY.current
+        if (Math.abs(delta) < 12) return
+        if (!dismissEligible.current) {
+            touchStartY.current = null
+            return
+        }
+        const owner = scrollOwnerFor(e.target)
+        if (owner && owner.scrollTop > 0) {
+            touchStartY.current = null
+            setDragOffset(0)
+            return
+        }
+        setDragOffset(Math.max(0, delta))
+    }
+
+    const handleTouchEnd = () => {
+        const dismiss = dragOffset > 80
+        touchStartY.current = null
+        if (dismiss) {
+            onOpenChange?.(false)
+            return
+        }
+        setDragOffset(0)
+    }
+
     return (
       <div
-        ref={ref}
+        ref={node => {
+            sheetRef.current = node
+            if (typeof ref === 'function') ref(node)
+            else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node
+        }}
         aria-labelledby={titleId}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={dragOffset > 0 ? { transform: `translateY(${dragOffset}px)`, transition: 'none' } : undefined}
         className={cn(
-          'fixed left-[50%] top-[50%] z-50 grid w-[95vw] sm:w-full max-w-lg gap-4 p-4 sm:p-6 overflow-y-auto overflow-x-hidden max-h-[85vh] sm:max-h-[95vh]',
-          'rounded-2xl border border-border/40',
-          'bg-card',
-          'shadow-[0_24px_64px_hsl(0_0%_0%/0.24)]',
+          'fixed z-50 grid w-full gap-4 overflow-y-auto overflow-x-hidden',
+          // Mobile: bottom sheet anchored to the bottom of the viewport
+          'left-0 right-0 bottom-0 top-auto max-h-[92vh] p-4',
+          'rounded-t-2xl rounded-b-none border-t border-border/40',
+          'bg-card shadow-[0_-8px_32px_hsl(0_0%_0%/0.24)]',
+          'max-[639px]:animate-in max-[639px]:slide-in-from-bottom max-[639px]:duration-300',
+          'motion-reduce:animate-none motion-reduce:transition-none',
+          // sm and up: centered modal
+          'sm:left-[50%] sm:right-auto sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%]',
+          'sm:max-w-lg sm:max-h-[95vh] sm:rounded-2xl sm:border sm:border-border/40',
+          'sm:shadow-[0_24px_64px_hsl(0_0%_0%/0.24)]',
+          'sm:p-6',
           'transition-opacity duration-150 ease-out',
-          'translate-x-[-50%] translate-y-[-50%]',
           state === 'open' ? 'opacity-100' : 'opacity-0',
           className
         )}
         {...props}
       >
+        <div aria-hidden="true" className="mx-auto mb-1 h-1 w-9 shrink-0 rounded-full bg-border/70 sm:hidden" />
         {children}
         {!hideClose && (
           <button

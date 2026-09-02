@@ -48,3 +48,14 @@ export function rebuildRuleFromServerState(payload: Record<string, unknown>, acc
 
     return stripUndefinedRuleFields(rule)
 }
+
+/**
+ * Swap detection for poll-driven convergence (Nuvio "Swap & Hide"): true when the
+ * server's enforced active tier differs from the local copy. Normalized compare, so
+ * trailing slashes, /manifest.json suffixes, stremio:// scheme and case never produce
+ * false swaps. An empty server-side active URL is "no statement", not a swap.
+ */
+export function didActiveTierChange(previousActiveUrl: string | undefined, nextActiveUrl: string | undefined): boolean {
+    if (!nextActiveUrl) return false
+    return normalizeAddonUrl(nextActiveUrl) !== normalizeAddonUrl(previousActiveUrl || '')
+}

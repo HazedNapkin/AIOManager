@@ -7,9 +7,11 @@ import { globalHealthCache, healthCheckInFlight, serverState } from '../state.js
 import { isSafeUrlResolved } from '../utils/ssrf.js'
 import { safeFetchWithRedirects } from '../utils/safe-fetch.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
-import { trace } from '../utils/trace.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { isUnifiedEnforcement } from '../config.js'
+import { applyOneActiveFlags } from './one-active.js'
+import { getGlobalWebhook } from './global-webhook.js'
+import { createHealthChecker, HEALTH_CACHE_TTL_MS } from './health-checks.js'
 
 async function mapConcurrent(items, limit, worker) {
     const results = new Array(items.length)
@@ -33,7 +35,6 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const AUTOPILOT_SCAN_CHUNK_SIZE = Math.max(100, parseInt(process.env.AUTOPILOT_SCAN_CHUNK_SIZE || '500', 10) || 500)
     const AUTOPILOT_MAX_RULES_PER_CYCLE = Math.max(AUTOPILOT_SCAN_CHUNK_SIZE, parseInt(process.env.AUTOPILOT_MAX_RULES_PER_CYCLE || '10000', 10) || 10000)
     const AUTOPILOT_CYCLE_BUDGET_MS = Math.max(5000, parseInt(process.env.AUTOPILOT_CYCLE_BUDGET_MS || '120000', 10) || 120000)
-    const HEALTH_CACHE_TTL_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_HEALTH_CACHE_TTL_MS || '30000', 10) || 30000)
     const RULE_RECHECK_MS = Math.max(10000, parseInt(process.env.AUTOPILOT_RULE_RECHECK_MS || '30000', 10) || 30000)
     // Steady-rule heartbeat cadence; keeps persisted last_check fresh well under the client's 15-min staleness threshold
     const RULE_HEARTBEAT_MS = Math.max(30_000, parseInt(process.env.AUTOPILOT_HEARTBEAT_MS || '300000', 10) || 300000)
@@ -46,10 +47,6 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     const ruleFetchCache = new Map()
     let ruleFetchCacheBytes = 0
     const ruleCacheStats = { hits: 0, misses: 0, bytesSaved: 0, windowStart: Date.now() }
-
-    const customCheckCache = new Map()
-    const customCheckInFlight = new Map()
-    const CUSTOM_CHECK_CACHE_TTL = 30000
 
     const ruleCacheEntryBytes = (row) =>
         Buffer.byteLength(row.addon_list || '', 'utf8') +
@@ -140,178 +137,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Disabled rule ${rule.id} after repeated decrypt failures.`)
         }
     }
+    const { checkAddonHealthInternal, getHealthLatency, checkCustomUrlsHealth } = createHealthChecker(fastify)
 
-    const checkAddonHealthInternal = async (url, context = 'Autopilot') => {
-        const normalizedUrl = normalizeAddonUrl(url).toLowerCase()
-
-        const cached = globalHealthCache.get(normalizedUrl)
-        if (cached && Date.now() - cached.timestamp < HEALTH_CACHE_TTL_MS) {
-            return cached.isHealthy
-        }
-
-        const inFlight = healthCheckInFlight.get(normalizedUrl)
-        if (inFlight) return inFlight
-
-        const healthPromise = _performHealthCheck(url, normalizedUrl, context)
-        healthCheckInFlight.set(normalizedUrl, healthPromise)
-        return healthPromise
-    }
-
-    const getHealthLatency = (url) => {
-        const normalizedUrl = normalizeAddonUrl(url).toLowerCase()
-        return globalHealthCache.get(normalizedUrl)?.latencyMs ?? null
-    }
-
-    const _performHealthCheck = async (url, normalizedUrl, context = 'Autopilot') => {
-        try {
-            const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            let domain = url
-            try { domain = new URL(url).origin } catch (e) { }
-
-            const performCheck = async (target, timeoutMs, retries = 1) => {
-                let checkQueueKey = target
-                try { checkQueueKey = new URL(target).origin } catch (e) { }
-                return enqueueProxyRequest(target, async () => {
-                    for (let attempt = 0; attempt <= retries; attempt++) {
-                        try {
-                            const controller1 = new AbortController()
-                            const timeout1 = setTimeout(() => controller1.abort(), timeoutMs)
-
-                            const res1 = await fetch(target, {
-                                method: 'HEAD',
-                                signal: controller1.signal,
-                                redirect: 'manual',
-                                headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
-                            })
-                            clearTimeout(timeout1)
-                            if (res1.ok || res1.status === 405 || res1.status === 401 || res1.status === 403 || (res1.status >= 300 && res1.status < 400)) return true
-
-                            const controller2 = new AbortController()
-                            const timeout2 = setTimeout(() => controller2.abort(), timeoutMs)
-
-                            const res2 = await fetch(target, {
-                                method: 'GET',
-                                signal: controller2.signal,
-                                redirect: 'manual',
-                                headers: { 'User-Agent': userAgent, 'Accept': 'application/json, text/plain, */*' }
-                            })
-                            clearTimeout(timeout2)
-                            if (res2.ok || res2.status === 401 || res2.status === 403 || (res2.status >= 300 && res2.status < 400)) return true
-
-                            if (res2.status === 429) {
-                                fastify.log.warn({ category: 'Autopilot' }, `Health check rate limited (429), deferring: ${truncateUrl(normalizedUrl)}`)
-                                return true
-                            }
-
-                            if (res2.status >= 500 && attempt < retries) continue
-                            return false
-                        } catch (err) {
-                            const isTimeout = err.name === 'AbortError'
-                            const isNetworkError = ['ECONNRESET', 'ETIMEDOUT', 'EADDRINUSE', 'ECONNREFUSED', 'EAI_AGAIN'].includes(err.code)
-                            const isTLSError = ['CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'TLS_ERROR'].some(c => err.message?.includes(c) || err.code === c)
-
-                            if (isTLSError) return true
-                            if (attempt < retries && (isTimeout || isNetworkError)) {
-                                await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000))
-                                continue
-                            }
-                            return false
-                        }
-                    }
-                    return false
-                }, checkQueueKey)
-            }
-
-            const startTime = Date.now()
-            const isHealthy = await performCheck(domain, 15000) || await performCheck(url, 15000)
-            const latencyMs = Date.now() - startTime
-
-            if (!isHealthy) {
-                fastify.log.warn({ category: context }, `[Health] Host ${domain} is unreachable.`)
-            }
-
-            if (globalHealthCache.size > 20000) {
-                const pruneNow = Date.now()
-                for (const [key, val] of globalHealthCache.entries()) {
-                    if (pruneNow - val.timestamp > HEALTH_CACHE_TTL_MS) globalHealthCache.delete(key)
-                }
-                if (globalHealthCache.size > 15000) {
-                    while (globalHealthCache.size > 10000) {
-                        const oldestKey = globalHealthCache.keys().next().value
-                        if (oldestKey === undefined) break
-                        globalHealthCache.delete(oldestKey)
-                    }
-                }
-            }
-            globalHealthCache.set(normalizedUrl, { isHealthy, latencyMs, timestamp: Date.now() })
-            return isHealthy
-        } finally {
-            healthCheckInFlight.delete(normalizedUrl)
-        }
-    }
-
-    const CUSTOM_CHECK_TIMEOUT_MS = 10000
-
-    const performSingleCustomCheck = async (checkUrl) => {
-        if (!(await isSafeUrlResolved(checkUrl))) {
-            return false
-        }
-        let queueKey = checkUrl
-        try { queueKey = new URL(checkUrl).origin } catch (e) { }
-        return enqueueProxyRequest(checkUrl, async () => {
-            const controller = new AbortController()
-            const timeout = setTimeout(() => controller.abort(), CUSTOM_CHECK_TIMEOUT_MS)
-            try {
-                const res = await safeFetchWithRedirects(checkUrl, { signal: controller.signal, methodFallback: true })
-                if (!res) return false
-                return res.ok || res.status === 401 || res.status === 403
-            } finally {
-                clearTimeout(timeout)
-            }
-        }, queueKey)
-    }
-
-    const checkCustomUrlsHealth = async (urls, ruleId, accountId) => {
-        if (!Array.isArray(urls) || urls.length === 0) return true
-        trace('autopilot.customCheck', 'start', { ruleId, urlCount: urls.length })
-        const results = await mapConcurrent(urls, 5, async (checkUrl) => {
-            const normalized = normalizeAddonUrl(checkUrl).toLowerCase()
-            const cached = customCheckCache.get(normalized)
-            if (cached && Date.now() - cached.ts < CUSTOM_CHECK_CACHE_TTL) {
-                return cached.healthy
-            }
-            const existing = customCheckInFlight.get(normalized)
-            if (existing) return existing
-            const promise = (async () => {
-                let healthy = false
-                try {
-                    healthy = await performSingleCustomCheck(checkUrl)
-                } catch (err) {
-                    healthy = false
-                    trace('autopilot.customCheck', 'error', { ruleId, url: checkUrl, error: err?.message || String(err) })
-                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Custom check error for ${truncateUrl(checkUrl)}: ${err?.message}`)
-                }
-                customCheckCache.set(normalized, { healthy, ts: Date.now() })
-                if (customCheckCache.size > 2000) {
-                    const nowTs = Date.now()
-                    for (const [key, val] of customCheckCache.entries()) {
-                        if (nowTs - val.ts > CUSTOM_CHECK_CACHE_TTL) customCheckCache.delete(key)
-                    }
-                }
-                if (!healthy) {
-                    trace('autopilot.customCheck', 'failed', { ruleId, url: checkUrl })
-                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Custom check failed for ${truncateUrl(checkUrl)}`)
-                } else {
-                    trace('autopilot.customCheck', 'passed', { ruleId, url: checkUrl })
-                }
-                return healthy
-            })()
-            customCheckInFlight.set(normalized, promise)
-            promise.finally(() => customCheckInFlight.delete(normalized))
-            return promise
-        })
-        return results.every(r => r === true)
-    }
 
     const sanitizeManifest = (manifest, transportUrl = '') => {
         const isUnknown = !manifest?.name || manifest?.name === 'Unknown Addon' || manifest?.name === 'Restoring Addon...'
@@ -391,6 +218,14 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const remoteAddonMap = new Map((remoteAddons || []).map(a => [normalizeAddonUrl(a.transportUrl).toLowerCase(), a]));
         const remoteIdMap = new Map((remoteAddons || []).filter(a => a.manifest?.id).map(a => [a.manifest.id, a]));
         const processedRemoteNormUrls = new Set();
+        const managedChainSet = new Set(managedChain);
+        const localNormUrlCounts = new Map();
+        const localIdsInChain = new Set();
+        for (const l of (localAddons || [])) {
+            const norm = normalizeAddonUrl(l.transportUrl).toLowerCase();
+            localNormUrlCounts.set(norm, (localNormUrlCounts.get(norm) || 0) + 1);
+            if (l.manifest?.id && managedChainSet.has(norm)) localIdsInChain.add(l.manifest.id);
+        }
         const finalAddons = [];
 
         const isObsoleteGhost = (remoteAddon) => {
@@ -399,12 +234,9 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             const id = remoteAddon.manifest?.id;
             if (!id) return false;
 
-            if (managedChain.includes(normRemote)) return false;
+            if (managedChainSet.has(normRemote)) return false;
 
-            return (localAddons || []).some(local =>
-                local.manifest?.id === id &&
-                managedChain.includes(normalizeAddonUrl(local.transportUrl).toLowerCase())
-            );
+            return localIdsInChain.has(id);
         };
 
         (localAddons || []).forEach(localAddon => {
@@ -416,9 +248,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             if (!remoteAddon && idLocal) {
                 const potentialSwap = remoteIdMap.get(idLocal)
                 if (potentialSwap) {
-                    const isClaimedByExactUrl = (localAddons || []).some(l =>
-                        l !== localAddon && normalizeAddonUrl(l.transportUrl).toLowerCase() === normalizeAddonUrl(potentialSwap.transportUrl).toLowerCase()
-                    )
+                    const swapNorm = normalizeAddonUrl(potentialSwap.transportUrl).toLowerCase()
+                    const isClaimedByExactUrl = (localNormUrlCounts.get(swapNorm) || 0) > (normLocal === swapNorm ? 1 : 0)
                     if (!isClaimedByExactUrl) {
                         remoteAddon = potentialSwap
                     }
@@ -512,24 +343,43 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const remoteAddons = await stremioDriver.readAddons(authKey)
 
         const normalizedChain = chain.map(u => normalizeAddonUrl(u).toLowerCase());
+        const normalizedChainSet = new Set(normalizedChain);
         const normalizedActive = normalizeAddonUrl(activeUrl).toLowerCase();
 
         const baseAddonList = (storedAddonList && storedAddonList.length > 0)
             ? [...storedAddonList]
             : [...remoteAddons];
 
+        // Indexes preserve first-match order; baseNormSet must grow with every push below.
+        const remoteByNormUrl = new Map();
+        for (const a of remoteAddons) {
+            const key = normalizeAddonUrl(a.transportUrl).toLowerCase();
+            if (!remoteByNormUrl.has(key)) remoteByNormUrl.set(key, a);
+        }
+        const storedByNormUrl = new Map();
+        const storedIdsByNormUrl = new Map();
+        for (const s of storedAddonList || []) {
+            const key = normalizeAddonUrl(s.transportUrl).toLowerCase();
+            if (!storedByNormUrl.has(key)) storedByNormUrl.set(key, s);
+            if (s.manifest?.id) {
+                if (!storedIdsByNormUrl.has(key)) storedIdsByNormUrl.set(key, new Set());
+                storedIdsByNormUrl.get(key).add(s.manifest.id);
+            }
+        }
+        const baseNormSet = new Set(baseAddonList.map(a => normalizeAddonUrl(a.transportUrl).toLowerCase()));
+
         for (let idx = 0; idx < normalizedChain.length; idx++) {
             const normUrl = normalizedChain[idx];
-            const exists = baseAddonList.some(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+            const exists = baseNormSet.has(normUrl);
             if (!exists) {
-                const remote = remoteAddons.find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+                const remote = remoteByNormUrl.get(normUrl);
 
-                const remoteById = remoteAddons.find(a =>
-                    a.manifest?.id &&
-                    storedAddonList.some(s => s.manifest?.id === a.manifest.id && normalizeAddonUrl(s.transportUrl).toLowerCase() === normUrl)
-                );
+                const candidateIds = storedIdsByNormUrl.get(normUrl);
+                const remoteById = candidateIds
+                    ? remoteAddons.find(a => a.manifest?.id && candidateIds.has(a.manifest.id))
+                    : undefined;
 
-                const stored = (storedAddonList || []).find(a => normalizeAddonUrl(a.transportUrl).toLowerCase() === normUrl);
+                const stored = storedByNormUrl.get(normUrl);
 
                 let isHealthy = await checkAddonHealthInternal(chain[idx])
                 if (!isHealthy) {
@@ -573,12 +423,13 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                         metadata: stored?.metadata || remoteById?.metadata || {}
                     });
                 }
+                baseNormSet.add(normUrl);
             }
         }
 
         const updatedLocalAddons = baseAddonList.map(addon => {
             const normalizedUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            if (normalizedChain.includes(normalizedUrl)) {
+            if (normalizedChainSet.has(normalizedUrl)) {
                 const isTarget = normalizedUrl === normalizedActive
                 return {
                     ...addon,
@@ -599,12 +450,12 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         mergedAddons.forEach(a => {
             if (!a.manifest?.id || mergedIdCounts.get(a.manifest.id) > 1) return
             const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
-            if (normalizedChain.includes(normUrl)) mergedChainIdMap.set(a.manifest.id, normUrl)
+            if (normalizedChainSet.has(normUrl)) mergedChainIdMap.set(a.manifest.id, normUrl)
         })
         const drifted = []
         const auditedAddons = mergedAddons.map(addon => {
             const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            const effectiveUrl = normalizedChain.includes(normUrl)
+            const effectiveUrl = normalizedChainSet.has(normUrl)
                 ? normUrl
                 : (addon.manifest?.id && mergedChainIdMap.has(addon.manifest.id) ? mergedChainIdMap.get(addon.manifest.id) : null)
             if (!effectiveUrl) return addon
@@ -646,7 +497,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         return finalAddons
     }
 
-    const enforceConnectionOnly = async (rule, reconciledAddons) => {
+    const enforceConnectionOnly = async (rule, reconciledAddons, chain = [], activeUrl = null) => {
         if (!reconciler?.enforceAccount) return { synced: [] }
         const connections = await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)
         const targets = (connections || []).filter(c =>
@@ -656,11 +507,15 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only rule has no matching enabled connection. Skipping enforcement.`)
             return { synced: [] }
         }
-        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, {})
+        // Chain guard: refuses writes that would drop the managed chain or its active tier.
+        const guardOpts = (Array.isArray(chain) && chain.length > 0)
+            ? { requiredUrls: chain, requiredActiveUrl: activeUrl }
+            : {}
+        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, guardOpts)
         if (result.synced.length > 0) {
             fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only enforcement pushed to ${result.synced.join(', ')}.`)
         }
-        return { synced: result.synced }
+        return { synced: result.synced, chainGuardSkipped: result.chainGuardSkipped === true }
     }
 
     const syncStremioLive = async (authKeyOrDescriptor, chain, activeUrl, accountId, ruleId, storedAddonList = [], forceReinstall = false) => {
@@ -668,7 +523,12 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const authKey = descriptor.authKey
         if (!authKey) {
             const rule = { account_id: accountId, id: ruleId, owner_sync_user: descriptor.ownerSyncUser, connection_id: descriptor.connectionId, platform: descriptor.platform }
-            await enforceConnectionOnly(rule, storedAddonList)
+            const result = await enforceConnectionOnly(rule, storedAddonList, chain, activeUrl)
+            if (result.chainGuardSkipped) {
+                // Broken chain state: skip so the engine can reconstitute on the next pass.
+                fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Chain guard skipped enforcement for rule ${ruleId}: stored addon list does not carry the active chain tier.`)
+                return null
+            }
             return storedAddonList
         }
         try {
@@ -935,8 +795,9 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     stabilization[normUrl] = { failures: 0, successes: newSuccesses, latencyMs: getHealthLatency(url) }
                 }
             } else {
+                // Unclamped on purpose: the threshold below is a trigger comparison only.
                 const prevFailures = stabilization[normUrl]?.failures || 0
-                const newFailures = Math.min(prevFailures + 1, FAILOVER_THRESHOLD)
+                const newFailures = prevFailures + 1
                 if (stabilization[normUrl]?.successes !== 0 || prevFailures !== newFailures) {
                     stabilization[normUrl] = { failures: newFailures, successes: 0, latencyMs: null }
                 }
@@ -980,44 +841,10 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const decryptedNormalizedActive = currentActiveNorm
         let normalizedTarget = normalizeAddonUrl(targetActiveUrl).toLowerCase()
         const normalizedChain = normalizedChainUrls
+        const normalizedChainSet = new Set(normalizedChain)
 
-        const idCounts = new Map()
-        addonList.forEach(addon => {
-            if (!addon.manifest?.id) return
-            idCounts.set(addon.manifest.id, (idCounts.get(addon.manifest.id) || 0) + 1)
-        })
-        const duplicateIds = new Set([...idCounts.entries()].filter(([, c]) => c > 1).map(([id]) => id))
-
-        const chainIdMap = new Map()
-        addonList.forEach(addon => {
-            if (!addon.manifest?.id) return
-            if (duplicateIds.has(addon.manifest.id)) return
-            const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            const idx = normalizedChain.indexOf(normUrl)
-            if (idx !== -1) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
-        })
-
-        let violationDetected = false
-        const updatedAddonList = addonList.map(addon => {
-            const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
-            let effectiveUrl = normUrl
-            let isChainMember = normalizedChain.includes(normUrl)
-
-            if (!isChainMember && addon.manifest?.id && chainIdMap.has(addon.manifest.id)) {
-                isChainMember = true
-                effectiveUrl = chainIdMap.get(addon.manifest.id)
-            }
-
-            if (isChainMember) {
-                const shouldBeEnabled = effectiveUrl === normalizedTarget
-                if (addon.flags?.enabled !== shouldBeEnabled) violationDetected = true
-                return {
-                    ...addon,
-                    flags: { ...(addon.flags || {}), enabled: shouldBeEnabled }
-                }
-            }
-            return addon
-        })
+        // Every writer must derive identical one-active flags via the shared helper.
+        const { list: updatedAddonList, violationDetected } = applyOneActiveFlags(addonList, normalizedChain, normalizedTarget)
 
         let hasChanged = normalizedTarget !== decryptedNormalizedActive
 
@@ -1055,11 +882,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     liveAddons.forEach(a => {
                         if (!a.manifest?.id || liveIdCounts.get(a.manifest.id) > 1) return
                         const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
-                        if (normalizedChain.includes(normUrl)) liveChainIdMap.set(a.manifest.id, normUrl)
+                        if (normalizedChainSet.has(normUrl)) liveChainIdMap.set(a.manifest.id, normUrl)
                     })
                     deepAuditDrift = liveAddons.some(a => {
                         const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
-                        const effectiveUrl = normalizedChain.includes(normUrl)
+                        const effectiveUrl = normalizedChainSet.has(normUrl)
                             ? normUrl
                             : (a.manifest?.id && liveChainIdMap.has(a.manifest.id) ? liveChainIdMap.get(a.manifest.id) : null)
                         if (!effectiveUrl) return false
@@ -1077,6 +904,34 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit read failed: ${auditErr.message}`)
                 }
             }
+        } else if (snapshotLooksClean && hasConnectionTarget && reconciler?.resolveConnections && reconciler.auditConnections) {
+            // Hourly drift audit: catches Nuvio-side changes the echo and reconcile paths miss.
+            if (Date.now() - (lastDeepAuditToSave || 0) >= RULE_DEEP_AUDIT_MS) {
+                lastDeepAuditToSave = Date.now()
+                try {
+                    const auditTargets = (await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user) || [])
+                        .filter(c => c.enabled && c.platform !== 'stremio' && (!rule.connection_id || c.id === rule.connection_id))
+                    if (auditTargets.length > 0) {
+                        const auditCanonical = updatedAddonList.filter(a => a?.flags?.enabled !== false)
+                        const audits = await reconciler.auditConnections(rule.account_id, auditTargets, auditCanonical)
+                        for (const audit of audits) {
+                            if (!Array.isArray(audit.addons)) continue
+                            const enabledChain = new Set()
+                            for (const live of audit.addons) {
+                                const norm = normalizeAddonUrl(live.transportUrl || live.url || '').toLowerCase()
+                                if (normalizedChainSet.has(norm) && (live.flags?.enabled ?? live.enabled) !== false) enabledChain.add(norm)
+                            }
+                            if (!(enabledChain.size === 1 && enabledChain.has(normalizedTarget))) {
+                                deepAuditDrift = true
+                                fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit (connection) found live collection drift from the one-active chain state on ${audit.platform}. Forcing enforcement.`)
+                                break
+                            }
+                        }
+                    }
+                } catch (auditErr) {
+                    fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit (connection) read failed: ${auditErr.message}`)
+                }
+            }
         }
 
         const needsSync = hasChanged || violationDetected || deepAuditDrift
@@ -1089,7 +944,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
             try {
                 if (!decryptedAuthKey) {
-                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList)
+                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList, chain, targetActiveUrl)
                     if (synced.length === 0) throw new Error('Connection enforcement failed')
                     reconciledList = updatedAddonList
                     syncSucceeded = true
@@ -1116,12 +971,15 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (!result.synced.includes('stremio')) throw new Error('Stremio enforcement failed')
                     syncSucceeded = true
                     const syncedPlatforms = result.synced.map(p => p === 'stremio' ? 'Stremio' : p)
-                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${syncedPlatforms.join(', ')}.`)
+                    const failedPlatforms = connectionTargets.map(c => c.platform).filter(p => !result.synced.includes(p))
+                    const failedNote = failedPlatforms.length > 0 ? ` (push failed: ${failedPlatforms.join(', ')})` : ''
+                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${syncedPlatforms.join(', ')}.${failedNote}`)
                 } else {
                     reconciledList = await syncStremioLive(decryptedAuthKey, chain, targetActiveUrl, rule.account_id, rule.id, updatedAddonList, hasChanged)
                     syncSucceeded = true
 
                     const syncedPlatforms = ['Stremio']
+                    const failedPlatforms = []
                     if (hasChanged && reconciler) {
                         try {
                             const conns = await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)
@@ -1131,10 +989,12 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 syncedPlatforms.push(...targets.map(c => c.platform))
                             }
                         } catch (connErr) {
+                            failedPlatforms.push('connection sync')
                             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection sync failed: ${connErr.message}`)
                         }
                     }
-                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${syncedPlatforms.join(', ')}.`)
+                    const failedNote = failedPlatforms.length > 0 ? ` (push failed: ${failedPlatforms.join(', ')})` : ''
+                    fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${syncedPlatforms.join(', ')}.${failedNote}`)
                 }
 
                 if (hasChanged) {
@@ -1155,11 +1015,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     const cooldownPassed = now - lastNotification >= cooldownMs
 
                     if (isRecovery || cooldownPassed) {
-                        const decryptedWebhook = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
-                        if (!decryptedWebhook) {
-                            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook decryption failed or empty. Skipping notification.`)
+                        // Resolution order: decrypted per-rule webhook -> owner's global
+                        // webhook (the UI's "Use global webhook" default) -> none.
+                        let webhookUrl = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
+                        let webhookSource = 'rule'
+                        if (rule.webhook_url && !webhookUrl) {
+                            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Per-rule webhook blob present but undecryptable; falling back to the global webhook.`)
+                        }
+                        if (!webhookUrl) {
+                            webhookUrl = await getGlobalWebhook(rule.owner_sync_user)
+                            webhookSource = 'global'
+                        }
+                        if (!webhookUrl) {
+                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] No webhook configured (rule + global). Skipping notification.`)
                         } else {
-                            await sendNotification(decryptedWebhook, {
+                            await sendNotification(webhookUrl, {
                                 type,
                                 message: msg,
                                 messageTemplate: rule.message_template || null,
@@ -1171,7 +1041,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                                 fromUrl: chain[0],
                             })
                             shouldUpdateNotificationTime = true
-                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook sent: ${type}`)
+                            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook sent (${webhookSource}): ${type}`)
                         }
                     } else {
                         fastify.log.debug({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Webhook skipped (cooldown: ${Math.round((cooldownMs - (now - lastNotification)) / 1000)}s remaining)`)

@@ -277,7 +277,7 @@ export async function installAddonToAccount(accountId: string, addonUrl: string,
         }
 
         const baseAddons = await reconcileInstallBase(account)
-        const mergedAddons = mergeAddons(baseAddons, [normalizedAddon], { keepMissingLocal: true })
+        const mergedAddons = mergeAddons(baseAddons, [normalizedAddon], { keepMissingLocal: true, instanceMatch: 'adopt-remote-url' })
         const finalAddons = dedupeAddonsByTransportUrl(mergedAddons).map(addon => ({
             ...addon,
             manifest: getEffectiveManifest(addon)

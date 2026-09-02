@@ -74,12 +74,20 @@ async function deflateRaw(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<Ar
     return new Uint8Array(ab)
 }
 
-// anchorVideoId MUST be the LAST-watched episode (videos[max set bit].id); callers must repoint it when the max bit is cleared.
-export async function encodeWatchedBitfield(indices: number[], anchorVideoId: string, length: number): Promise<string> {
-    const bytes = new Uint8Array(Math.max(1, Math.ceil(length / 8)))
+// The anchor id and the declared length must derive from the SAME max set bit, exactly like
+// stremio-core's writer (last_index_of(true)): anchor = videos[max(indices)].id, length =
+// max(indices) + 1. Callers used to pass a stale anchor id with a freshly edited bitfield,
+// desynchronising the two halves of the string on decode.
+export async function encodeWatchedBitfield(indices: number[], videos: { id: string }[]): Promise<string> {
+    if (indices.length === 0) throw new Error('encodeWatchedBitfield: no watched indices')
+    const maxIdx = Math.max(...indices)
+    const anchor = videos[maxIdx]
+    if (!anchor || !anchor.id) throw new Error('encodeWatchedBitfield: anchor video missing from list')
+    const length = maxIdx + 1
+    const bytes = new Uint8Array(Math.ceil(length / 8))
     for (const idx of indices) {
         if (idx < 0 || idx >= length) continue
         bytes[idx >> 3] |= 1 << (idx & 7)
     }
-    return `${anchorVideoId}:${length}:${bytesToBase64(await deflateRaw(bytes))}`
+    return `${anchor.id}:${length}:${bytesToBase64(await deflateRaw(bytes))}`
 }

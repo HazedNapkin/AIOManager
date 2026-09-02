@@ -11,6 +11,8 @@ import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useSyncStore } from '@/store/syncStore'
+import { useVaultStore } from '@/store/vaultStore'
+import { useNotesStore } from '@/store/notesStore'
 import { useTheme } from '@/contexts/ThemeContext'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 
@@ -32,6 +34,14 @@ export function DangerZone() {
 
     const savedAddonsCount = Object.keys(library).length
     const failoverRulesCount = useFailoverStore((s) => s.rules.length)
+    const vaultKeysCount = useVaultStore((s) => s.keys.length)
+    const clearVault = useVaultStore((s) => s.clearVault)
+    const notesCount = useNotesStore((s) => s.notes.length)
+    const trashCount = useNotesStore((s) => s.trash.length)
+    const trashAllNotes = useNotesStore((s) => s.trashAllNotes)
+    const emptyTrash = useNotesStore((s) => s.emptyTrash)
+
+    const notesTotalCount = notesCount + trashCount
 
     const [unsafeMode, setUnsafeMode] = useState(false)
     const [pendingAction, setPendingAction] = useState<DangerAction | null>(null)
@@ -45,6 +55,17 @@ export function DangerZone() {
     const executeDeleteAllAddons = async () => {
         await resetAddons()
         toast({ title: 'Saved Addons Deleted', description: 'All saved addons have been removed.' })
+    }
+
+    const executeWipeVault = async () => {
+        await clearVault()
+        toast({ title: 'Vault Wiped', description: 'All vault entries have been removed.' })
+    }
+
+    const executeWipeNotes = async () => {
+        await trashAllNotes()
+        await emptyTrash()
+        toast({ title: 'Notes Wiped', description: 'All notes have been removed.' })
     }
 
     const executePurgeAutopilot = async () => {
@@ -144,7 +165,7 @@ export function DangerZone() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <Button
                         variant="outline"
                         size="sm"
@@ -189,6 +210,36 @@ export function DangerZone() {
                     >
                         <Trash2 className="h-4 w-4" />
                         Purge Autopilot ({failoverRulesCount})
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-10 gap-2 rounded-xl border-destructive/40 bg-background/40 text-destructive transition-[transform,opacity,box-shadow] hover:bg-destructive hover:text-white disabled:opacity-40"
+                        onClick={() => requestDangerAction({
+                            title: 'Wipe all vault entries?',
+                            description: `This permanently removes all ${vaultKeysCount} vault entr${vaultKeysCount === 1 ? 'y' : 'ies'} from this device and syncs the erasure across devices.`,
+                            confirmText: 'Wipe Vault',
+                            action: executeWipeVault,
+                        })}
+                        disabled={vaultKeysCount === 0 || !unsafeMode || isRunning}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        Wipe Vault ({vaultKeysCount})
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-10 gap-2 rounded-xl border-destructive/40 bg-background/40 text-destructive transition-[transform,opacity,box-shadow] hover:bg-destructive hover:text-white disabled:opacity-40"
+                        onClick={() => requestDangerAction({
+                            title: 'Wipe all notes?',
+                            description: `This permanently removes all ${notesTotalCount} note${notesTotalCount !== 1 ? 's' : ''}, including anything in Deleted.`,
+                            confirmText: 'Wipe Notes',
+                            action: executeWipeNotes,
+                        })}
+                        disabled={notesTotalCount === 0 || !unsafeMode || isRunning}
+                    >
+                        <Trash2 className="h-4 w-4" />
+                        Wipe Notes ({notesTotalCount})
                     </Button>
                     <Button
                         variant="destructive"

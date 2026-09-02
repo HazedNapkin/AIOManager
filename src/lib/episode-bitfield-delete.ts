@@ -34,8 +34,12 @@ export async function planEpisodeBitfieldDelete(args: {
 
     if (videos == null) return { kind: 'fail', reason: 'no-videos' }
 
-    const maxWatched = videos[decoded.watchedIndices[decoded.watchedIndices.length - 1]]
-    if (!maxWatched || maxWatched.id !== decoded.videoId) return { kind: 'fail', reason: 'anchor-mismatch' }
+    // The anchor only has to EXIST in the video list: stremio-core never guarantees it sits
+    // at the highest set bit (its own writer falls back to last_index_of(true).unwrap_or(0)),
+    // so requiring max-bit equality misclassified valid states as mismatches. Ordering
+    // misalignment still fails closed below, when a set bit resolves to no real video.
+    if (!videos.some(v => v.id === decoded.videoId)) return { kind: 'fail', reason: 'anchor-mismatch' }
+    if (decoded.watchedIndices.some(i => !videos[i])) return { kind: 'fail', reason: 'anchor-mismatch' }
 
     const targetIdx = decoded.watchedIndices.find(i => {
         const v = videos[i]
@@ -48,7 +52,7 @@ export async function planEpisodeBitfieldDelete(args: {
     if (remaining.length === 0) return { kind: 'remove-row' }
 
     const anchor = videos[remaining[remaining.length - 1]]
-    const watched = await encodeWatchedBitfield(remaining, anchor.id, decoded.length)
+    const watched = await encodeWatchedBitfield(remaining, videos)
     const rewritten: LibraryItem = {
         ...row,
         state: {

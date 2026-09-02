@@ -110,7 +110,7 @@ export function DiscoverToolbar({
           )}
         </div>
 
-        <div className="flex items-center gap-2 sm:ml-auto shrink-0">
+        <div className="flex items-center gap-2 flex-wrap sm:ml-auto sm:flex-nowrap sm:shrink-0">
           {showSort && (
             <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
               <Button

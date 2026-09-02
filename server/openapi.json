@@ -1031,6 +1031,22 @@
         }
       }
     },
+    "/api/autopilot/global-webhook": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/autopilot/test-url": {
       "post": {
         "responses": {
@@ -1125,6 +1141,25 @@
     },
     "/api/activity/trigger": {
       "post": {
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/api/activity/events/{eventId}": {
+      "delete": {
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "eventId",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"

@@ -171,7 +171,7 @@ export function InstallSavedAddonDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[92vh]">
+      <DialogContent className="flex max-h-[calc(100dvh-1rem)] max-w-5xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[92vh] sm:max-w-5xl">
         <DialogHeader className="p-5 pb-2 pr-14 sm:p-6 sm:pb-3 sm:pr-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 space-y-1">

@@ -379,6 +379,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {resolvedConnections.map(conn => {
                             const state = accountStates[conn.id]
+                            const needsSignIn = conn.platform === 'stremio' && !conn.credentials?.authKey
                             const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
                             const maskedConnEmail = connEmail ? maskEmailLevel(connEmail, emailPrivacyLevel) : undefined
                             const premium = conn.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined
@@ -387,7 +388,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                 <ConnectionCard
                                     key={conn.id}
                                     connection={conn}
-                                    status={state?.status || conn.status}
+                                    status={needsSignIn ? 'pending' : (state?.status || conn.status)}
                                     lastSync={state?.lastSync || conn.lastSync}
                                     lastError={state?.lastError}
                                     syncing={isSyncing === accountId}
@@ -395,7 +396,9 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
                                     email={maskedConnEmail}
                                     badge={
-                                        nuvioMember || premium !== undefined ? (
+                                        needsSignIn ? (
+                                            <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-warning">Needs sign-in</span>
+                                        ) : nuvioMember || premium !== undefined ? (
                                             <>
                                                 {premium?.active && <StremioSupportersBadge />}
                                                 {premium && !premium.active && (

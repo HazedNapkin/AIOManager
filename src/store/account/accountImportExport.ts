@@ -608,7 +608,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                         const tombstones = mergeTombstones(matchedAccount.deletedAddons, ra.deletedAddons)
                         const mergedAddons = mode === 'mirror'
                             ? filterResurrected(ra.addons, [], tombstones)
-                            : mergeAddons(matchedAccount.addons, filterResurrected(ra.addons, matchedAccount.addons, tombstones))
+                            : mergeAddons(matchedAccount.addons, filterResurrected(ra.addons, matchedAccount.addons, tombstones), { instanceMatch: 'adopt-remote-url' })
                         return { addons: mergedAddons, deletedAddons: reconcileTombstones(tombstones, mergedAddons) }
                     })(),
                     connections: mergeConnections(matchedAccount.connections, ra.connections, mode) ?? matchedAccount.connections,

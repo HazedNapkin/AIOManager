@@ -1289,11 +1289,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                     '!grid-cols-none !gap-0 !p-0',
                     // Structure
                     'flex flex-col overflow-hidden',
-                    '!left-0 !right-0 !top-auto !bottom-0 !translate-x-0 !translate-y-0',
-                    '!max-w-full !w-full !h-[92vh] !max-h-[92vh] !rounded-t-3xl !rounded-b-none',
-                    'max-[639px]:animate-in max-[639px]:slide-in-from-bottom max-[639px]:duration-300',
-                    'sm:!left-[50%] sm:!right-auto sm:!top-[50%] sm:!bottom-auto sm:!translate-x-[-50%] sm:!translate-y-[-50%]',
-                    'sm:!max-w-6xl sm:!max-h-[92vh] sm:!h-auto sm:!rounded-2xl bg-card text-card-foreground',
+                    '!h-[92vh] !max-h-[92vh] !rounded-t-3xl',
+                    'sm:!max-w-6xl sm:!max-h-[92vh] sm:!h-auto text-card-foreground',
                 )}
                 hideClose
             >

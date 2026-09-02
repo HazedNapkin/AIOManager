@@ -1,22 +1,11 @@
 import { Button } from "@/components/ui/button"
 import { StatusChip } from "@/components/ui/status-chip"
 import { ToolbarShell } from "@/components/ui/toolbar-shell"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAccountStore } from "@/store/accountStore"
-import { useFailoverStore, readScopeBackups, readScopeDecisions, recordScopeDecision, clearScopeBackup } from "@/store/failoverStore"
-import type { FailoverScopeBackup } from "@/store/failoverStore"
-import type { AddonDescriptor } from "@/types/addon"
-import { SquircleOverlay } from "@/components/ui/squircle-overlay"
-import { AddonIcon } from "@/components/ui/addon-icon"
-import { useHistoryStore } from "@/store/historyStore"
+import { useFailoverStore } from "@/store/failoverStore"
+import type { FailoverRule } from "@/store/failoverStore"
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -24,14 +13,8 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog"
-import { ArrowRight, ChevronDown, CircleDot, AlertTriangle, Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, GripVertical, MoreVertical, Shield, Star, ArrowRightLeft } from "lucide-react"
-import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react"
+import { Activity, Trash2, Plus, History, Pencil, Webhook, Check, Copy, Download, FlaskConical, XCircle, Loader2, Play, Pause, MoreVertical, Shield } from "lucide-react"
+import { useState, useMemo, useCallback, useRef } from "react"
 import {
     DndContext,
     closestCenter,
@@ -47,262 +30,21 @@ import {
     SortableContext,
     sortableKeyboardCoordinates,
     verticalListSortingStrategy,
-    useSortable,
 } from '@dnd-kit/sortable'
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers'
-import { CSS } from '@dnd-kit/utilities'
 import { identifyAddon } from "@/lib/addon-identifier"
 import { toast } from "@/hooks/use-toast"
-import { apiFetch } from "@/lib/http-client"
-import { formatDistanceToNow } from "date-fns"
 import { checkAddonHealth } from "@/lib/addon-health"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { Tooltip } from "@/components/ui/tooltip"
-import { EmptyState } from "@/components/common/EmptyState"
-import { FailoverEmptyState } from "@/components/common/PageEmptyStates"
 import { RuleConfidenceLayer } from "@/components/accounts/RuleConfidenceLayer"
+import { FailoverHistory } from "@/components/accounts/FailoverHistory"
+import { SortableChainTier, SortableRuleWrapper } from "@/components/accounts/SortableFailoverTiers"
+import { WebhooksPanel, testWebhook } from "@/components/accounts/WebhooksPanel"
+import { RuleDialog } from "@/components/accounts/RuleDialog"
+import type { CustomCheckEntry } from "@/components/accounts/RuleDialog"
 import { normalizeAddonUrl } from "@/lib/utils"
-import { findClosestChainAddon, findStaleScopeEntries, getUrlHostname, isSameCheckUrl, restoreScopedChecks, validateCustomCheckScopes } from "@/lib/failover-scope"
-import type { ScopeValidationError } from "@/lib/failover-scope"
-
-async function testWebhook(
-    url: string | undefined,
-    accountId: string,
-    toastFn: (opts: { title: string; description: string; variant?: 'default' | 'destructive' }) => void,
-    accountName?: string
-) {
-    if (!url) return
-    try {
-        const { useSyncStore } = await import('@/store/syncStore')
-        const { serverUrl } = useSyncStore.getState()
-        const baseUrl = serverUrl || ''
-
-        const result = await apiFetch('/autopilot/test-webhook', {
-            method: 'POST',
-            baseUrl: baseUrl.startsWith('http') ? baseUrl : undefined,
-            body: { webhookUrl: url, accountName, accountId },
-        })
-        if (!result.ok) throw new Error(result.error || `Server returned ${result.status}`)
-        toastFn({ title: 'Test Sent', description: 'Check your notification channel.' })
-    } catch (err) {
-        toastFn({ title: 'Test Failed', description: 'Invalid URL or server error.', variant: 'destructive' })
-    }
-}
-
-type CustomCheckEntry = { url: string; appliesTo: string[] }
-
-const normalizeCustomChecks = (raw: unknown): CustomCheckEntry[] => {
-    if (!Array.isArray(raw)) return []
-    return raw
-        .map((item): CustomCheckEntry => {
-            if (typeof item === 'string') return { url: item, appliesTo: [] }
-            if (item && typeof item === 'object') {
-                const obj = item as { url?: unknown; appliesTo?: unknown }
-                return {
-                    url: typeof obj.url === 'string' ? obj.url : '',
-                    appliesTo: Array.isArray(obj.appliesTo)
-                        ? obj.appliesTo.filter((u): u is string => typeof u === 'string')
-                        : []
-                }
-            }
-            return { url: '', appliesTo: [] }
-        })
-        .slice(0, 5)
-}
-
-interface SortableChainTierProps {
-    id: string
-    url: string
-    idx: number
-    chainLength: number
-    isActiveInRule: boolean
-    isTier1: boolean
-    isFailedOver: boolean
-    addonName: string
-    addonLogo?: string
-    getTierClassName: (active: boolean, tier1: boolean) => string
-}
-
-const SortableChainTier = memo(function SortableChainTier({
-    id, idx, chainLength, isActiveInRule, isTier1, isFailedOver,
-    addonName, addonLogo, getTierClassName
-}: SortableChainTierProps) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-    const style = {
-        transform: CSS.Translate.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-        zIndex: isDragging ? 10 : 'auto' as const,
-    }
-
-    return (
-        <div ref={setNodeRef} style={style} className="flex flex-col">
-            <div className={`flex items-center gap-3 py-3 px-4 rounded-xl relative z-10 transition-colors ${getTierClassName(isActiveInRule, isTier1)}`}>
-                <div
-                    {...attributes}
-                    {...listeners}
-                    className="shrink-0 cursor-grab active:cursor-grabbing text-foreground/60 hover:text-foreground/60 transition-colors"
-                    style={{ touchAction: 'none' }}
-                >
-                    <GripVertical className="w-4 h-4" />
-                </div>
-                <div className="relative w-5 h-5 shrink-0 flex items-center justify-center">
-                    <SquircleOverlay />
-                    <span className="relative z-10 text-xs font-bold text-muted-foreground">{idx + 1}</span>
-                </div>
-                <AddonIcon
-                    name={addonName}
-                    logo={addonLogo}
-                    className="h-7 w-7"
-                    textClassName="text-xs"
-                    imageClassName="p-0.5"
-                />
-                <span className="font-bold truncate text-sm flex-1">{addonName}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                    {isTier1 && (
-                        <Tooltip content="Primary failover addon">
-                            <span aria-label="Primary failover addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/25 bg-primary/12 text-primary/80">
-                                <Star className="h-3 w-3 fill-current" />
-                            </span>
-                        </Tooltip>
-                    )}
-                    {isFailedOver && (
-                        <Tooltip content="Currently active">
-                            <span aria-label="Currently active" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
-                                <CircleDot className="h-3 w-3" />
-                            </span>
-                        </Tooltip>
-                    )}
-                </div>
-            </div>
-            {idx < chainLength - 1 && (
-                <div className="w-full flex items-center justify-center py-1 opacity-30">
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                </div>
-            )}
-        </div>
-    )
-})
-
-interface SortableDialogTierProps {
-    id: number
-    index: number
-    url: string
-    chainLength: number
-    localAddons: AddonDescriptor[]
-    chain: string[]
-    addons: AddonDescriptor[]
-    updateChainUrl: (index: number, url: string) => void
-    removeFromChain: (index: number) => void
-}
-
-const SortableDialogTier = memo(function SortableDialogTier({
-    id, index, url, chainLength, localAddons, chain, addons,
-    updateChainUrl, removeFromChain
-}: SortableDialogTierProps) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-    const style = {
-        transform: CSS.Translate.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-        zIndex: isDragging ? 10 : 'auto' as const,
-    }
-    return (
-        <div ref={setNodeRef} style={style} className="bg-muted/30 border border-border/40 rounded-2xl px-4 py-3 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <div
-                        {...attributes}
-                        {...listeners}
-                        className="shrink-0 cursor-grab active:cursor-grabbing text-foreground/40 hover:text-foreground/60 transition-colors"
-                        style={{ touchAction: 'none' }}
-                    >
-                        <GripVertical className="w-4 h-4" />
-                    </div>
-                    <span className="font-mono text-xs font-medium text-muted-foreground uppercase">TIER {index + 1}</span>
-                </div>
-                <button
-                    className="text-foreground/60 hover:text-destructive transition-colors disabled:opacity-30 disabled:hover:text-foreground/60"
-                    onClick={() => removeFromChain(index)}
-                    disabled={chainLength <= 2}
-                    aria-label="Remove tier"
-                >
-                    <Trash2 className="w-3.5 h-3.5" />
-                </button>
-            </div>
-            <Select value={url} onValueChange={(val) => updateChainUrl(index, val)}>
-                <SelectTrigger className="w-full bg-transparent border-0 p-0 h-8 hover:bg-transparent focus:ring-0 shadow-none text-base font-medium focus-visible:ring-0">
-                    <SelectValue placeholder={`Select Tier ${index + 1} addon...`}>
-                        {(() => {
-                            const selectedAddon = addons.find(a => a.transportUrl === url)
-                            if (!selectedAddon) return null
-                            return (
-                                <div className="flex items-center gap-2">
-                                    <AddonIcon
-                                        name={selectedAddon.metadata?.customName || selectedAddon.manifest.name}
-                                        logo={selectedAddon.metadata?.customLogo || selectedAddon.manifest.logo}
-                                        className="h-5 w-5"
-                                        textClassName="text-xs"
-                                        imageClassName="p-0.5"
-                                    />
-                                    <span className="truncate">{selectedAddon.metadata?.customName || selectedAddon.manifest.name}</span>
-                                </div>
-                            )
-                        })()}
-                    </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                    {localAddons
-                        .filter(addon => !chain.some((u, i) => i !== index && u === addon.transportUrl))
-                        .map(addon => (
-                        <SelectItem key={addon.transportUrl} value={addon.transportUrl}>
-                            <div className="flex items-center gap-2">
-                                <AddonIcon
-                                    name={addon.metadata?.customName || addon.manifest.name}
-                                    logo={addon.metadata?.customLogo || addon.manifest.logo}
-                                    className="h-5 w-5"
-                                    textClassName="text-xs"
-                                    imageClassName="p-0.5"
-                                />
-                                <span>{addon.metadata?.customName || addon.manifest.name}</span>
-                            </div>
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-        </div>
-    )
-})
-
-const SortableRuleWrapper = memo(function SortableRuleWrapper({
-    id, children,
-}: {
-    id: string
-    children: React.ReactNode
-}) {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-    const style = {
-        transform: CSS.Translate.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-        zIndex: isDragging ? 10 : 'auto' as const,
-    }
-    return (
-        <div ref={setNodeRef} style={style} className="relative min-w-0">
-            <div
-                {...attributes}
-                {...listeners}
-                className="absolute left-0 top-6 cursor-grab active:cursor-grabbing text-foreground/30 hover:text-foreground/60 transition-colors z-20 px-0.5"
-                style={{ touchAction: 'none' }}
-            >
-                <GripVertical className="w-4 h-4" />
-            </div>
-            {children}
-        </div>
-    )
-})
+import { apiFetch } from "@/lib/http-client"
 
 export type FailoverView = 'rules' | 'history' | 'webhooks'
 
@@ -326,38 +68,19 @@ export function FailoverManager({
     const updateRule = useFailoverStore(s => s.updateRule)
     const removeRule = useFailoverStore(s => s.removeRule)
     const reorderRules = useFailoverStore(s => s.reorderRules)
-    const webhook = useFailoverStore(s => s.webhook)
-    const setWebhook = useFailoverStore(s => s.setWebhook)
     const lastWorkerRun = useFailoverStore(s => s.lastWorkerRun)
     const lastCycle = useFailoverStore(s => s.lastCycle)
     const toggleAllRulesForAccount = useFailoverStore(s => s.toggleAllRulesForAccount)
     const isAutopilotLive = !!lastWorkerRun && (Date.now() - new Date(lastWorkerRun).getTime()) < 120_000
 
-    const [chain, setChain] = useState<string[]>(["", ""])
-    const [editingRuleId, setEditingRuleId] = useState<string | null>(null)
-    const [webhookUrl, setWebhookUrl] = useState("")
-    const [showWebhookConfirm, setShowWebhookConfirm] = useState(false)
     const [simulatingRuleId, setSimulatingRuleId] = useState<string | null>(null)
     const [simulationResults, setSimulationResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string }>>({})
     const [simulatedCustomChecks, setSimulatedCustomChecks] = useState<CustomCheckEntry[]>([])
-    const [customCheckResults, setCustomCheckResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string }>>({})
-
-    const [ruleName, setRuleName] = useState("")
-    const [cooldownMinutes, setCooldownMinutes] = useState<string>("")
-    const [ruleWebhookUrl, setRuleWebhookUrl] = useState("")
-    const [ruleNotifyMode, setRuleNotifyMode] = useState<'default' | 'custom' | 'off'>('default')
-    const [ruleMessageTemplate, setRuleMessageTemplate] = useState("")
+    const [customCheckResults, setCustomCheckResults] = useState<Record<string, { healthy: boolean; checking: boolean; error?: string; code?: number }>>({})
     const [isRuleDialogOpen, setIsRuleDialogOpen] = useState(false)
+    const [editingRule, setEditingRule] = useState<FailoverRule | null>(null)
     const [ruleToDelete, setRuleToDelete] = useState<string | null>(null)
-    const [customChecks, setCustomChecks] = useState<Array<{ url: string; appliesTo: string[] }>>([])
-    const [urlTestResults, setUrlTestResults] = useState<Record<number, { status: 'ok' | 'fail' | 'checking'; code?: number; error?: string }>>({})
-    const [expandedChecks, setExpandedChecks] = useState<Set<number>>(new Set())
     const [localActiveFailoverTab, setLocalActiveFailoverTab] = useState<FailoverView>("rules")
-    const [scopeError, setScopeError] = useState<ScopeValidationError | null>(null)
-    const [replacementPicker, setReplacementPicker] = useState<{ checkIndex: number; unmatchedUrl: string; closestUrl?: string } | null>(null)
-    const [scopeBackups, setScopeBackups] = useState<Record<string, FailoverScopeBackup>>({})
-    const [scopeDecidedRuleIds, setScopeDecidedRuleIds] = useState<string[]>([])
-    const checkRowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
     const activeFailoverTab = activeView ?? localActiveFailoverTab
     const handleFailoverTabChange = useCallback((value: string) => {
         const next = value as FailoverView
@@ -367,54 +90,10 @@ export function FailoverManager({
         onActiveViewChange?.(next)
     }, [activeView, onActiveViewChange])
 
-    const resetForm = () => {
-        setChain(["", ""])
-        setRuleName("")
-        setCooldownMinutes("")
-        setRuleWebhookUrl("")
-        setRuleNotifyMode('default')
-        setRuleMessageTemplate("")
-        setCustomChecks([])
-        setUrlTestResults({})
-        setExpandedChecks(new Set())
-        setScopeError(null)
-        setReplacementPicker(null)
-        setEditingRuleId(null)
-        setIsRuleDialogOpen(false)
-    }
-
-    useEffect(() => {
-        setWebhookUrl(webhook.url)
-    }, [webhook.url])
-
-    useEffect(() => {
-        if (!isRuleDialogOpen || !editingRuleId) return
-        let cancelled = false
-        void (async () => {
-            const [backups, decided] = await Promise.all([readScopeBackups(), readScopeDecisions()])
-            if (cancelled) return
-            setScopeBackups(backups)
-            setScopeDecidedRuleIds(decided)
-        })()
-        return () => { cancelled = true }
-    }, [isRuleDialogOpen, editingRuleId])
-
-    const handleSaveWebhook = () => {
-        if (webhook.url && webhookUrl && webhook.url !== webhookUrl) {
-            setShowWebhookConfirm(true)
-            return
-        }
-        doSaveWebhook()
-    }
-
-    const doSaveWebhook = () => {
-        setWebhook(webhookUrl, !!webhookUrl)
-        setShowWebhookConfirm(false)
-        if (webhookUrl) {
-            toast({ title: 'Notifications Enabled', description: 'Discord or Slack webhook saved.' })
-        } else {
-            toast({ title: 'Notifications Disabled', description: 'Webhook removed.' })
-        }
+    const openRuleEditor = (rule: FailoverRule) => {
+        setEditingRule(rule)
+        handleFailoverTabChange("rules")
+        setIsRuleDialogOpen(true)
     }
 
     const otherAccountsWithRules = useMemo(() => {
@@ -442,208 +121,6 @@ export function FailoverManager({
         }
         return merged
     }, [accounts, accountId])
-
-    const hasDuplicateChainUrls = (urls: string[]) => {
-        const seen = new Set<string>()
-        for (const url of urls) {
-            const normalizedUrl = normalizeAddonUrl(url)
-            if (seen.has(normalizedUrl)) return true
-            seen.add(normalizedUrl)
-        }
-        return false
-    }
-
-    const handleSaveRule = async () => {
-        const filteredChain = chain.filter(url => !!url)
-        if (filteredChain.length < 2) {
-            toast({ title: "Invalid Rule", description: "An autopilot chain needs at least 2 addons.", variant: "destructive" })
-            return
-        }
-        if (hasDuplicateChainUrls(filteredChain)) {
-            toast({ title: "Duplicate Addon", description: "Each Autopilot tier needs a different addon URL.", variant: "destructive" })
-            return
-        }
-
-        const cooldownMs = cooldownMinutes ? parseInt(cooldownMinutes) * 60 * 1000 : undefined
-
-        const notifyEnabled = ruleNotifyMode !== 'off'
-        const webhookUrl = ruleNotifyMode === 'custom' ? ruleWebhookUrl.trim() : ''
-
-        const messageTemplate = ruleMessageTemplate.trim() || undefined
-        const filteredCustomChecks = customChecks
-            .map(c => ({ url: c.url.trim(), appliesTo: c.appliesTo }))
-            .filter(c => c.url.length > 0)
-            .slice(0, 5)
-
-        const scopeIssue = validateCustomCheckScopes(filteredChain, filteredCustomChecks)
-        if (scopeIssue) {
-            setScopeError(scopeIssue)
-            setExpandedChecks(prev => new Set(prev).add(scopeIssue.checkIndex))
-            checkRowRefs.current.get(scopeIssue.checkIndex)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-            return
-        }
-        setScopeError(null)
-
-        if (editingRuleId) {
-            const existingRule = rules.find(r => r.id === editingRuleId)
-            const chainChanged = !existingRule || JSON.stringify(existingRule.priorityChain) !== JSON.stringify(filteredChain)
-            await updateRule(editingRuleId, {
-                priorityChain: filteredChain,
-                activeUrl: chainChanged ? filteredChain[0] : existingRule!.activeUrl,
-                name: ruleName.trim() || undefined,
-                cooldown_ms: cooldownMs,
-                notifyEnabled,
-                webhookUrl,
-                messageTemplate,
-                customCheckUrls: filteredCustomChecks,
-            })
-            toast({ title: "Rule Updated", description: "Rule settings modified." })
-            setEditingRuleId(null)
-        } else {
-            await addRule(accountId, filteredChain, ruleName.trim() || undefined, cooldownMs, webhookUrl, notifyEnabled, messageTemplate, filteredCustomChecks)
-            toast({ title: "Rule Created", description: "Autopilot is now monitoring this chain." })
-        }
-
-        resetForm()
-    }
-
-    const addToChain = () => setChain([...chain, ""])
-    const removeFromChain = (index: number) => setChain(chain.filter((_, i) => i !== index))
-    const updateChainUrl = (index: number, url: string) => {
-        const newChain = [...chain]
-        newChain[index] = url
-        setChain(newChain)
-    }
-
-    const addCustomCheck = () => {
-        if (customChecks.length < 5) {
-            setCustomChecks([...customChecks, { url: '', appliesTo: [] }])
-        }
-    }
-    const removeCustomCheck = (index: number) => {
-        setCustomChecks(customChecks.filter((_, i) => i !== index))
-        setExpandedChecks(prev => {
-            const next = new Set<number>()
-            prev.forEach(i => {
-                if (i < index) next.add(i)
-                else if (i > index) next.add(i - 1)
-            })
-            return next
-        })
-        setUrlTestResults(prev => {
-            const next: Record<number, { status: 'ok' | 'fail' | 'checking'; code?: number; error?: string }> = {}
-            Object.entries(prev).forEach(([key, value]) => {
-                const i = Number(key)
-                if (i < index) next[i] = value
-                else if (i > index) next[i - 1] = value
-            })
-            return next
-        })
-    }
-    const updateCustomCheckUrl = (index: number, url: string) => {
-        const next = [...customChecks]
-        next[index] = { ...next[index], url }
-        setCustomChecks(next)
-    }
-    const toggleAddonForCheck = (checkIndex: number, addonUrl: string) => {
-        const current = customChecks[checkIndex].appliesTo
-        if (!current.includes(addonUrl) && current.length >= 10) return
-        const next = [...customChecks]
-        if (current.includes(addonUrl)) {
-            next[checkIndex].appliesTo = current.filter(u => u !== addonUrl)
-        } else {
-            next[checkIndex].appliesTo = [...current, addonUrl]
-        }
-        setCustomChecks(next)
-    }
-    const getUnassignedAddons = (checkIndex: number) => {
-        const assigned = new Set(customChecks[checkIndex].appliesTo)
-        return chain.filter(url => !!url && !assigned.has(url))
-    }
-    const toggleExpand = (index: number) => {
-        setExpandedChecks(prev => {
-            const next = new Set(prev)
-            if (next.has(index)) next.delete(index)
-            else next.add(index)
-            return next
-        })
-    }
-
-    const chainUrls = chain.filter(url => !!url)
-    const staleUrlsByCheck = customChecks.map(c => findStaleScopeEntries(chainUrls, c.appliesTo))
-    const hasEmptyScopeCheck = customChecks.some(c => c.url.trim().length > 0 && c.appliesTo.length === 0)
-    const activeScopeBackup = editingRuleId ? scopeBackups[editingRuleId] : undefined
-    const restorableBackupChecks = activeScopeBackup?.checks.filter(b =>
-        b.appliesTo.length > 0 && customChecks.some(c => c.appliesTo.length === 0 && isSameCheckUrl(b.url, c.url))
-    ) || []
-    const showRestoreModal = !!editingRuleId && isRuleDialogOpen && restorableBackupChecks.length > 0 && !scopeDecidedRuleIds.includes(editingRuleId)
-    const showLegacyBanner = !!editingRuleId && isRuleDialogOpen && !activeScopeBackup && hasEmptyScopeCheck
-
-    const applyReplacement = (checkIndex: number, pickedUrl: string) => {
-        const staleUrl = replacementPicker?.unmatchedUrl
-        if (!staleUrl) return
-        setCustomChecks(prev => prev.map((c, i) => {
-            if (i !== checkIndex) return c
-            const withoutStale = c.appliesTo.filter(u => u !== staleUrl)
-            return { ...c, appliesTo: withoutStale.includes(pickedUrl) || withoutStale.length >= 10 ? withoutStale : [...withoutStale, pickedUrl] }
-        }))
-        setReplacementPicker(null)
-        setScopeError(null)
-    }
-
-    const focusFirstEmptyScopeCheck = () => {
-        const index = customChecks.findIndex(c => c.url.trim().length > 0 && c.appliesTo.length === 0)
-        if (index === -1) return
-        setExpandedChecks(prev => new Set(prev).add(index))
-        checkRowRefs.current.get(index)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-
-    const handleScopeDecision = async (choice: 'restore' | 'keep' | 'dismiss') => {
-        const ruleId = editingRuleId
-        if (!ruleId) return
-        if (choice === 'restore') {
-            const restored = restoreScopedChecks(customChecks, restorableBackupChecks)
-            setCustomChecks(restored)
-            const initialExpanded = new Set<number>()
-            restored.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
-            setExpandedChecks(initialExpanded)
-            await updateRule(ruleId, { customCheckUrls: restored })
-            await clearScopeBackup(ruleId)
-            setScopeBackups(prev => {
-                const next = { ...prev }
-                delete next[ruleId]
-                return next
-            })
-            toast({ title: 'Scope Restored', description: 'The original addon associations are back on this rule.' })
-        }
-        await recordScopeDecision(ruleId)
-        setScopeDecidedRuleIds(prev => prev.includes(ruleId) ? prev : [...prev, ruleId])
-    }
-    const testCustomCheckUrl = async (index: number) => {
-        const url = customChecks[index]?.url.trim()
-        if (!url) return
-        setUrlTestResults(prev => ({ ...prev, [index]: { status: 'checking' } }))
-        try {
-            const { useSyncStore } = await import('@/store/syncStore')
-            const { serverUrl } = useSyncStore.getState()
-            const baseUrl = serverUrl || ''
-            const result = await apiFetch<{ ok?: boolean; status?: number; error?: string }>('/autopilot/test-url', {
-                method: 'POST',
-                baseUrl: baseUrl.startsWith('http') ? baseUrl : undefined,
-                body: { url },
-            })
-            if (!result.ok) {
-                setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: result.error || `Server error (${result.status})` } }))
-                return
-            }
-            const data = result.data
-            setUrlTestResults(prev => ({ ...prev, [index]: { status: data?.ok ? 'ok' : 'fail', code: data?.status, error: data?.error } }))
-        } catch {
-            setUrlTestResults(prev => ({ ...prev, [index]: { status: 'fail', error: 'Request failed' } }))
-        }
-    }
-
-
 
     const handleDuplicateRule = async (rule: typeof rules[0]) => {
         await addRule(accountId, [...rule.priorityChain], rule.name, rule.cooldown_ms, rule.webhookUrl, rule.notifyEnabled, rule.messageTemplate, rule.customCheckUrls?.map(c => ({ ...c })) || [])
@@ -718,15 +195,29 @@ export function FailoverManager({
             }))
 
             try {
-                const health = await checkAddonHealth(url)
+                const { useSyncStore } = await import('@/store/syncStore')
+                const { serverUrl } = useSyncStore.getState()
+                const result = await apiFetch<{ ok?: boolean; status?: number; error?: string }>('/autopilot/test-url', {
+                    method: 'POST',
+                    baseUrl: (serverUrl || '').startsWith('http') ? serverUrl : undefined,
+                    body: { url },
+                })
+                if (!result.ok) {
+                    setCustomCheckResults(prev => ({
+                        ...prev,
+                        [url]: { healthy: false, checking: false, error: result.error || `Server error (${result.status})` }
+                    }))
+                    continue
+                }
+                const data = result.data
                 setCustomCheckResults(prev => ({
                     ...prev,
-                    [url]: { healthy: health.isOnline, checking: false, error: health.error }
+                    [url]: { healthy: !!data?.ok, checking: false, error: data?.error, code: data?.status }
                 }))
             } catch (err) {
                 setCustomCheckResults(prev => ({
                     ...prev,
-                    [url]: { healthy: false, checking: false, error: 'Check failed' }
+                    [url]: { healthy: false, checking: false, error: 'Request failed' }
                 }))
             }
         }
@@ -767,14 +258,6 @@ export function FailoverManager({
         }, 800)
     }, [updateRule])
 
-    const handleDialogChainDragEnd = useCallback((event: DragEndEvent) => {
-        const { active, over } = event
-        if (!over || active.id === over.id) return
-        const oldIndex = Number(active.id)
-        const newIndex = Number(over.id)
-        if (isNaN(oldIndex) || isNaN(newIndex)) return
-        setChain(prev => arrayMove(prev, oldIndex, newIndex))
-    }, [])
 
     const handleRuleReorder = useCallback((event: DragEndEvent) => {
         const { active, over } = event
@@ -868,594 +351,28 @@ export function FailoverManager({
                 )}
 
                 <TabsContent value="webhooks" className="space-y-6">
-                    <div className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <h3 className="flex items-center gap-2 text-lg font-bold">
-                                    <Webhook className="w-5 h-5 text-primary" />
-                                    Global Webhook
-                                </h3>
-                                <div className="flex items-center gap-2 mt-2">
-                                    <StatusChip variant={webhook.url ? 'success' : 'muted'}>
-                                        <span className={`h-1.5 w-1.5 rounded-full ${webhook.url ? 'bg-success' : 'bg-muted-foreground/40'}`} />
-                                        {webhook.url ? 'Active' : 'Not configured'}
-                                    </StatusChip>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">Fallback for all rules unless a rule has its own custom webhook.</p>
-                            </div>
-                        </div>
-                        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-                            <Input
-                                placeholder="https://discord.com/api/webhooks/... or Slack URL"
-                                value={webhookUrl}
-                                onChange={(e) => setWebhookUrl(e.target.value)}
-                                className="bg-muted/30 border-border rounded-lg"
-                            />
-                            <div className="flex gap-2">
-                                <Button size="sm" onClick={handleSaveWebhook}>Set Webhook</Button>
-                                {webhook.url && (
-                                    <Button
-                                        size="sm"
-                                        className="bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                                        onClick={() => testWebhook(webhook.url, accountId, toast, account.name)}
-                                    >
-                                        Test
-                                    </Button>
-                                )}
-                            </div>
-                        </div>
-                        <p className="text-xs text-muted-foreground/60 pt-1">
-                            Supports Discord, Slack, and generic JSON webhooks. Platform is detected automatically from the URL.
-                        </p>
-                    </div>
-
-                    <div className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
-                        <div>
-                            <h3 className="flex items-center gap-2 text-lg font-bold">
-                                <Webhook className="w-5 h-5 text-primary" />
-                                Per-Rule Webhooks
-                            </h3>
-                            <p className="text-xs text-muted-foreground mt-1">Rules with a custom webhook configured. Edit a rule to change its webhook.</p>
-                        </div>
-                        {accountRules.filter(r => r.webhookUrl && r.notifyEnabled !== false).length === 0 ? (
-                            <EmptyState
-                                icon={<Webhook className="h-6 w-6" />}
-                                title="No rules have a custom webhook configured"
-                                description="Rules use the global webhook by default. Edit a rule to override it with a per-rule webhook URL."
-                            />
-                        ) : (
-                            <div className="space-y-2">
-                                {accountRules.filter(r => r.webhookUrl && r.notifyEnabled !== false).map(rule => (
-                                    <div key={rule.id} className="flex items-center justify-between bg-muted/20 border border-border/40 rounded-xl px-4 py-3 gap-3">
-                                        <div className="flex flex-col gap-0.5 min-w-0">
-                                            <span className="text-sm font-medium truncate">
-                                                {rule.name || `Rule ${rule.id.slice(0, 8)}`}
-                                            </span>
-                                            <span className="text-xs font-mono text-muted-foreground truncate max-w-xs">
-                                                {rule.webhookUrl}
-                                            </span>
-                                        </div>
-                                        <div className="flex gap-2 shrink-0">
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setChain([...rule.priorityChain])
-                                                    setRuleName(rule.name || '')
-                                                    setCooldownMinutes(rule.cooldown_ms ? String(Math.round(rule.cooldown_ms / 60000)) : '')
-                                                    setRuleNotifyMode(rule.notifyEnabled === false ? 'off' : rule.webhookUrl ? 'custom' : 'default')
-                                                    setRuleWebhookUrl(rule.webhookUrl || '')
-                                                    setRuleMessageTemplate(rule.messageTemplate || '')
-                                                    const normalizedChecks = normalizeCustomChecks(rule.customCheckUrls)
-                                                    setCustomChecks(normalizedChecks)
-                                                    const initialExpanded = new Set<number>()
-                                                    normalizedChecks.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
-                                                    setExpandedChecks(initialExpanded)
-                                                    setUrlTestResults({})
-                                                    setEditingRuleId(rule.id)
-                                                    handleFailoverTabChange("rules")
-                                                    setIsRuleDialogOpen(true)
-                                                }}
-                                                className="gap-1.5"
-                                            >
-                                                <Pencil className="w-3.5 h-3.5" /> Edit
-                                            </Button>
-                                            <Button
-                                                size="sm"
-                                                className="bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                                                onClick={() => testWebhook(rule.webhookUrl, accountId, toast, account.name)}
-                                            >
-                                                Test
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    <WebhooksPanel
+                        accountId={accountId}
+                        accountName={account.name}
+                        accountRules={accountRules}
+                        onEditRule={openRuleEditor}
+                    />
                 </TabsContent>
 
                 <TabsContent value="rules" className="space-y-6">
 
-                    <Dialog open={isRuleDialogOpen} onOpenChange={(open) => { if (!open) resetForm() }}>
-                        <DialogContent
-                            className='!grid-cols-none !gap-0 !p-0 flex flex-col overflow-hidden !left-0 !right-0 !top-auto !bottom-0 !translate-x-0 !translate-y-0 !max-w-full !w-full !h-[92vh] !max-h-[92vh] !rounded-t-3xl !rounded-b-none max-[639px]:animate-in max-[639px]:slide-in-from-bottom max-[639px]:duration-300 motion-reduce:animate-none motion-reduce:transition-none sm:!left-[50%] sm:!right-auto sm:!top-[50%] sm:!bottom-auto sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:!max-w-2xl sm:!max-h-[92vh] sm:!h-auto sm:!rounded-2xl bg-card text-card-foreground'
-                        >
-                            <div aria-hidden="true" className="mx-auto mt-2.5 mb-1 h-1 w-9 rounded-full bg-border/70 sm:hidden" />
-                            <div className="shrink-0 bg-card px-4 pb-3 pt-1 sm:px-8 sm:pb-5 sm:pt-3">
-                                <DialogTitle className="flex items-center gap-2 min-w-0">
-                                    {editingRuleId
-                                        ? <><Pencil className="w-5 h-5 text-primary" /> Edit Priority Chain</>
-                                        : <><Plus className="w-5 h-5 text-primary" /> Create New Autopilot Rule</>
-                                    }
-                                </DialogTitle>
-                                <p className="text-sm text-foreground/60 mt-2">
-                                    Pick addons in priority order. If one goes down, Autopilot switches to the next automatically.
-                                </p>
-                            </div>
-
-                            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-                                <div className="space-y-5 px-4 py-4 sm:px-8 sm:py-6">
-
-                            <div className="space-y-1.5 pt-4">
-                                <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Rule Name (Optional)</label>
-                                <Input
-                                    placeholder="e.g. My Primary Movies"
-                                    value={ruleName}
-                                    onChange={(e) => setRuleName(e.target.value)}
-                                    className="bg-muted/30 border-border rounded-xl"
-                                />
-                            </div>
-
-                            <DndContext
-                                sensors={dragSensors}
-                                collisionDetection={closestCenter}
-                                onDragEnd={handleDialogChainDragEnd}
-                                modifiers={[restrictToVerticalAxis]}
-                            >
-                                <SortableContext
-                                    items={chain.map((_, i) => i)}
-                                    strategy={verticalListSortingStrategy}
-                                >
-                                    <div className="space-y-3">
-                                        {chain.map((url, index) => (
-                                            <SortableDialogTier
-                                                key={index}
-                                                id={index}
-                                                index={index}
-                                                url={url}
-                                                chainLength={chain.length}
-                                                localAddons={localAddons}
-                                                chain={chain}
-                                                addons={addons}
-                                                updateChainUrl={updateChainUrl}
-                                                removeFromChain={removeFromChain}
-                                            />
-                                        ))}
-                                    </div>
-                                </SortableContext>
-                            </DndContext>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={addToChain}
-                                className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-12 rounded-2xl gap-2 mt-3"
-                            >
-                                <Plus className="w-4 h-4" /> Add Fallback Tier
-                            </Button>
-
-                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
-                                <div className="space-y-0.5">
-                                    <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
-                                    <p className="text-xs text-muted-foreground/60">Watch a provider your addons depend on, like TorBox's API. When it goes down, the addons associated with it are skipped. Use the provider's API URL — never your addon URLs.</p>
-                                </div>
-
-                                {showLegacyBanner && (
-                                    <div className="rounded-xl border border-warning/25 bg-warning/[0.07] px-3 py-2.5 flex items-start gap-2.5">
-                                        <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-                                        <p className="text-xs leading-relaxed text-foreground/80 flex-1 pt-0.5">
-                                            Saved before a recent fix, this check's scope may have been widened to all addons. Review the addons it applies to.
-                                        </p>
-                                        <Button size="sm" variant="outline" className="h-7 px-3 text-xs shrink-0" onClick={focusFirstEmptyScopeCheck}>
-                                            Review
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {scopeError && customChecks[scopeError.checkIndex]?.appliesTo.includes(scopeError.unmatchedUrl) && (() => {
-                                    const { checkIndex, unmatchedUrl, closestUrl } = scopeError
-                                    const checkHostname = getUrlHostname(customChecks[checkIndex].url)
-                                    const staleName = getAddonNameForUrl(unmatchedUrl)
-                                    const closestName = closestUrl ? getAddonNameForUrl(closestUrl) : undefined
-                                    return (
-                                        <div role="alert" className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 space-y-2.5">
-                                            <div className="flex items-start gap-2 text-destructive">
-                                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                                                <p className="text-sm leading-relaxed">
-                                                    Custom check for <span className="font-semibold">{checkHostname}</span> is scoped to '{staleName}', which isn't in this failover chain.
-                                                    {closestName && <span> Closest match: '{closestName}'.</span>}
-                                                </p>
-                                            </div>
-                                            <div className="flex flex-wrap gap-2 pl-6">
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-8"
-                                                    onClick={() => {
-                                                        toggleAddonForCheck(checkIndex, unmatchedUrl)
-                                                        setScopeError(null)
-                                                    }}
-                                                >
-                                                    Remove association
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-8"
-                                                    onClick={() => {
-                                                        setReplacementPicker({ checkIndex, unmatchedUrl, closestUrl })
-                                                        setExpandedChecks(prev => new Set(prev).add(checkIndex))
-                                                    }}
-                                                >
-                                                    Pick replacement
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    )
-                                })()}
-
-                                {customChecks.map((check, index) => {
-                                    const result = urlTestResults[index]
-                                    const isExpanded = expandedChecks.has(index)
-                                    const unassigned = getUnassignedAddons(index)
-                                    const staleUrls = staleUrlsByCheck[index] || []
-                                    return (
-                                        <div
-                                            key={index}
-                                            ref={(el) => {
-                                                if (el) checkRowRefs.current.set(index, el)
-                                                else checkRowRefs.current.delete(index)
-                                            }}
-                                            className="rounded-xl border border-border/40 bg-muted/10 p-3 space-y-2"
-                                        >
-                                            <div className="flex gap-2 items-center">
-                                                <Input
-                                                    placeholder="https://api.torbox.app/v1/api/user/me"
-                                                    value={check.url}
-                                                    onChange={(e) => updateCustomCheckUrl(index, e.target.value)}
-                                                    className="bg-muted/30 border-border rounded-xl"
-                                                />
-                                                <Button
-                                                    size="sm"
-                                                    className="shrink-0 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                                                    onClick={() => testCustomCheckUrl(index)}
-                                                    disabled={!check.url.trim() || result?.status === 'checking'}
-                                                >
-                                                    {result?.status === 'checking' ? (
-                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                                    ) : 'Test'}
-                                                </Button>
-                                                <button
-                                                    className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
-                                                    onClick={() => removeCustomCheck(index)}
-                                                    aria-label="Remove URL"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                            {result && result.status !== 'checking' && (
-                                                <div className={`flex items-center gap-1.5 text-xs ml-1 ${result.status === 'ok' ? 'text-success' : 'text-destructive'}`}>
-                                                    {result.status === 'ok' ? (
-                                                        <Check className="w-3.5 h-3.5" />
-                                                    ) : (
-                                                        <XCircle className="w-3.5 h-3.5" />
-                                                    )}
-                                                    <span>
-                                                        {result.status === 'ok'
-                                                            ? `Healthy (HTTP ${result.code})`
-                                                            : result.error
-                                                                ? `Failed: ${result.error}`
-                                                                : `Failed (HTTP ${result.code})`}
-                                                    </span>
-                                                </div>
-                                            )}
-
-                                            <div className="space-y-1.5">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => toggleExpand(index)}
-                                                    className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase hover:text-foreground/80 transition-colors ml-0.5"
-                                                >
-                                                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                                    Associated with
-                                                    <span className="normal-case font-mono text-[10px] text-foreground/50">
-                                                        {check.appliesTo.length > 0
-                                                            ? `${check.appliesTo.length} addon${check.appliesTo.length !== 1 ? 's' : ''}`
-                                                            : 'all'}
-                                                    </span>
-                                                    {staleUrls.length > 0 && (
-                                                        <span className="normal-case font-mono text-[10px] text-warning">
-                                                            ({staleUrls.length} not in chain)
-                                                        </span>
-                                                    )}
-                                                </button>
-                                                {isExpanded && (
-                                                    <div className="space-y-1.5">
-                                                        {check.appliesTo.length === 0 ? (
-                                                            <p className="text-xs text-muted-foreground/70 px-3 py-2 bg-muted/30 rounded-xl">
-                                                                All addons in chain (not recommended unless all share the same provider)
-                                                            </p>
-                                                        ) : (
-                                                            check.appliesTo.map(addonUrl => {
-                                                                const addon = getAddonForUrl(addonUrl)
-                                                                const addonName = addon?.metadata?.customName || identifyAddon(addonUrl, addon?.manifest).name
-                                                                const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
-                                                                const isStale = staleUrls.includes(addonUrl)
-                                                                return (
-                                                                    <div key={addonUrl} className={`rounded-xl px-3 py-2 flex items-center gap-2 ${isStale ? 'border border-warning/25 bg-warning/[0.08]' : 'bg-muted/30'}`}>
-                                                                        <AddonIcon
-                                                                            name={addonName}
-                                                                            logo={addonLogo}
-                                                                            className="h-5 w-5"
-                                                                            textClassName="text-xs"
-                                                                            imageClassName="p-0.5"
-                                                                        />
-                                                                        <span className="text-sm truncate flex-1">{addonName}</span>
-                                                                        {isStale && (
-                                                                            <Tooltip content="Doesn't apply while this addon is out of the chain; reactivates automatically if it returns.">
-                                                                                <StatusChip variant="warning" size="sm" className="cursor-help shrink-0">
-                                                                                    Not in chain — inactive
-                                                                                </StatusChip>
-                                                                            </Tooltip>
-                                                                        )}
-                                                                        {isStale ? (
-                                                                            <>
-                                                                                <Tooltip content="Remove this dormant association">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
-                                                                                        onClick={() => toggleAddonForCheck(index, addonUrl)}
-                                                                                        aria-label="Remove association"
-                                                                                    >
-                                                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                                                    </button>
-                                                                                </Tooltip>
-                                                                                <Tooltip content="Replace with an addon from this chain">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        className="text-foreground/60 hover:text-foreground transition-colors shrink-0 px-1"
-                                                                                        onClick={() => setReplacementPicker({
-                                                                                            checkIndex: index,
-                                                                                            unmatchedUrl: addonUrl,
-                                                                                            closestUrl: findClosestChainAddon(addonUrl, chainUrls),
-                                                                                        })}
-                                                                                        aria-label="Replace association"
-                                                                                    >
-                                                                                        <ArrowRightLeft className="w-3.5 h-3.5" />
-                                                                                    </button>
-                                                                                </Tooltip>
-                                                                            </>
-                                                                        ) : (
-                                                                            <button
-                                                                                type="button"
-                                                                                className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
-                                                                                onClick={() => toggleAddonForCheck(index, addonUrl)}
-                                                                                aria-label="Remove addon"
-                                                                            >
-                                                                                <Trash2 className="w-3.5 h-3.5" />
-                                                                            </button>
-                                                                        )}
-                                                                    </div>
-                                                                )
-                                                            })
-                                                        )}
-                                                        {replacementPicker?.checkIndex === index && chainUrls.length > 0 && (() => {
-                                                            const staleName = getAddonNameForUrl(replacementPicker.unmatchedUrl)
-                                                            return (
-                                                                <div className="space-y-1">
-                                                                    <Select
-                                                                        key={`replace-${index}-${replacementPicker.unmatchedUrl}`}
-                                                                        defaultOpen
-                                                                        onValueChange={(val) => applyReplacement(index, val)}
-                                                                    >
-                                                                        <SelectTrigger className="w-full bg-primary/5 border border-primary/30 hover:bg-primary/10 text-foreground h-9 rounded-xl gap-2 font-normal">
-                                                                            <ArrowRightLeft className="w-3.5 h-3.5 text-primary" />
-                                                                            <SelectValue placeholder={`Replace ${staleName} with…`} />
-                                                                        </SelectTrigger>
-                                                                        <SelectContent>
-                                                                            {chainUrls.map(url => {
-                                                                                const addon = getAddonForUrl(url)
-                                                                                const addonName = addon?.metadata?.customName || identifyAddon(url, addon?.manifest).name
-                                                                                const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
-                                                                                const isSuggested = !!replacementPicker.closestUrl && url === replacementPicker.closestUrl
-                                                                                return (
-                                                                                    <SelectItem key={url} value={url}>
-                                                                                        <div className="flex items-center gap-2">
-                                                                                            <AddonIcon
-                                                                                                name={addonName}
-                                                                                                logo={addonLogo}
-                                                                                                className="h-5 w-5"
-                                                                                                textClassName="text-xs"
-                                                                                                imageClassName="p-0.5"
-                                                                                            />
-                                                                                            <span>{addonName}</span>
-                                                                                            {isSuggested && (
-                                                                                                <StatusChip variant="primary" size="sm">Suggested</StatusChip>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    </SelectItem>
-                                                                                )
-                                                                            })}
-                                                                        </SelectContent>
-                                                                    </Select>
-                                                                    <button
-                                                                        type="button"
-                                                                        className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
-                                                                        onClick={() => setReplacementPicker(null)}
-                                                                    >
-                                                                        Cancel replacement
-                                                                    </button>
-                                                                </div>
-                                                            )
-                                                        })()}
-                                                        {unassigned.length > 0 && check.appliesTo.length < 10 && (
-                                                            <Select
-                                                                key={`add-${index}-${check.appliesTo.join(',')}`}
-                                                                onValueChange={(val) => toggleAddonForCheck(index, val)}
-                                                            >
-                                                                <SelectTrigger className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-9 rounded-xl gap-2 font-normal">
-                                                                    <Plus className="w-3.5 h-3.5" />
-                                                                    <SelectValue placeholder="Add addon from chain" />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {unassigned.map(url => {
-                                                                        const addon = getAddonForUrl(url)
-                                                                        const addonName = addon?.metadata?.customName || identifyAddon(url, addon?.manifest).name
-                                                                        const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
-                                                                        return (
-                                                                            <SelectItem key={url} value={url}>
-                                                                                <div className="flex items-center gap-2">
-                                                                                    <AddonIcon
-                                                                                        name={addonName}
-                                                                                        logo={addonLogo}
-                                                                                        className="h-5 w-5"
-                                                                                        textClassName="text-xs"
-                                                                                        imageClassName="p-0.5"
-                                                                                    />
-                                                                                    <span>{addonName}</span>
-                                                                                </div>
-                                                                            </SelectItem>
-                                                                        )
-                                                                    })}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-
-                                {customChecks.length < 5 && (
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={addCustomCheck}
-                                        className="w-full bg-muted/30 border border-dashed border-border/40 hover:bg-muted/50 text-foreground/60 hover:text-foreground h-9 rounded-xl gap-2"
-                                    >
-                                        <Plus className="w-3.5 h-3.5" /> Add URL
-                                    </Button>
-                                )}
-                            </div>
-
-                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
-                                <label className="text-xs font-medium text-muted-foreground uppercase">Notifications</label>
-
-                                <Select
-                                    value={ruleNotifyMode}
-                                    onValueChange={(val: 'default' | 'custom' | 'off') => setRuleNotifyMode(val)}
-                                >
-                                    <SelectTrigger className="bg-muted/30 border-border rounded-xl">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="default">Use global webhook</SelectItem>
-                                        <SelectItem value="custom">Custom webhook for this rule</SelectItem>
-                                        <SelectItem value="off">Off — no notifications for this rule</SelectItem>
-                                    </SelectContent>
-                                </Select>
-
-                                {ruleNotifyMode !== 'off' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Notification Cooldown (minutes)</label>
-                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Minimum time between notifications for this rule. Prevents alert spam during repeated failovers.</p>
-                                        <Input
-                                            type="number"
-                                            placeholder="10"
-                                            value={cooldownMinutes}
-                                            onChange={(e) => setCooldownMinutes(e.target.value)}
-                                            className="bg-muted/30 border-border rounded-xl"
-                                        />
-                                    </div>
-                                )}
-
-                                {ruleNotifyMode === 'custom' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Custom Webhook URL</label>
-                                        <div className="flex gap-2">
-                                            <Input
-                                                placeholder="https://discord.com/api/webhooks/... or Slack URL"
-                                                value={ruleWebhookUrl}
-                                                onChange={(e) => setRuleWebhookUrl(e.target.value)}
-                                                className="bg-muted/30 border-border rounded-xl"
-                                            />
-                                            {ruleWebhookUrl && (
-                                                <Button
-                                                    size="sm"
-                                                    className="shrink-0 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
-                                                    onClick={() => testWebhook(ruleWebhookUrl.trim(), accountId, toast, account.name)}
-                                                >
-                                                    Test
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {ruleNotifyMode !== 'off' && (
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-medium text-muted-foreground uppercase ml-1">Message Template (Optional)</label>
-                                        <p className="text-xs text-muted-foreground/60 ml-1 -mt-0.5 mb-1">Customize the notification message. Use {`{{rule}}`}, {`{{primary}}`}, {`{{backup}}`}, {`{{account}}`} as placeholders.</p>
-                                        <Textarea
-                                            placeholder="Autopilot triggered for {{rule}} on {{account}}: {{primary}} → {{backup}}"
-                                            value={ruleMessageTemplate}
-                                            onChange={(e) => setRuleMessageTemplate(e.target.value)}
-                                            className="bg-muted/30 border-border rounded-xl min-h-[60px] resize-none"
-                                        />
-                                    </div>
-                                )}
-                            </div>
-
-                                </div>
-                            </div>
-
-                            <div className="shrink-0 bg-card px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8">
-                                <div className="flex justify-end gap-3 [&_button]:h-11 [&_button]:rounded-full [&_button]:px-5">
-                                    <Button variant="ghost" onClick={resetForm}>
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        size="sm"
-                                        className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
-                                        onClick={handleSaveRule}
-                                        disabled={chain.filter(u => !!u).length < 2}
-                                    >
-                                        {editingRuleId ? "Update Chain" : "Enable Autopilot"}
-                                    </Button>
-                                </div>
-                            </div>
-                        </DialogContent>
-                    </Dialog>
-
-                    <Dialog open={showRestoreModal} onOpenChange={(open) => { if (!open) void handleScopeDecision('dismiss') }}>
-                        <DialogContent className="sm:max-w-md">
-                            <DialogHeader>
-                                <DialogTitle className="flex items-center gap-2">
-                                    <AlertTriangle className="w-5 h-5 text-warning" />
-                                    Restore check scope?
-                                </DialogTitle>
-                            </DialogHeader>
-                            <p className="text-sm text-foreground/70 leading-relaxed">
-                                A backup of this rule's original check scope was found on this device. It was widened to all addons by a sync bug that's now fixed.
-                            </p>
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-2 pt-2 [&_button]:rounded-full [&_button]:px-4">
-                                <Button variant="ghost" onClick={() => void handleScopeDecision('dismiss')}>Not now</Button>
-                                <Button variant="outline" onClick={() => void handleScopeDecision('keep')}>Keep as global (applies to all addons)</Button>
-                                <Button onClick={() => void handleScopeDecision('restore')}>Restore scope</Button>
-                            </div>
-                        </DialogContent>
-                    </Dialog>
+                    <RuleDialog
+                        open={isRuleDialogOpen}
+                        onOpenChange={(nextOpen) => { setIsRuleDialogOpen(nextOpen); if (!nextOpen) setEditingRule(null) }}
+                        editingRule={editingRule}
+                        accountId={accountId}
+                        accountName={account.name}
+                        localAddons={localAddons}
+                        addons={addons}
+                        getAddonForUrl={getAddonForUrl}
+                        getAddonNameForUrl={getAddonNameForUrl}
+                        dragSensors={dragSensors}
+                    />
 
                     <div className="space-y-4">
                         {!showViewTabs && (
@@ -1497,7 +414,7 @@ export function FailoverManager({
                                             <Button
                                                 size="sm"
                                                 onClick={() => {
-                                                    resetForm()
+                                                    setEditingRule(null)
                                                     setIsRuleDialogOpen(true)
                                                 }}
                                                 className="gap-1.5 h-8 text-xs font-medium"
@@ -1615,7 +532,7 @@ export function FailoverManager({
                                     <Button
                                         size="sm"
                                         onClick={() => {
-                                            resetForm()
+                                            setEditingRule(null)
                                             setIsRuleDialogOpen(true)
                                         }}
                                         className="gap-1.5 h-8 text-xs font-medium"
@@ -1707,22 +624,7 @@ export function FailoverManager({
                                                             <FlaskConical className="w-4 h-4" />
                                                             Simulate Check
                                                         </DropdownMenuItem>
-                                                        <DropdownMenuItem className="gap-2" onClick={() => {
-                                                            setChain([...rule.priorityChain])
-                                                            setRuleName(rule.name || '')
-                                                            setCooldownMinutes(rule.cooldown_ms ? String(Math.round(rule.cooldown_ms / 60000)) : '')
-                                                            setRuleNotifyMode(rule.notifyEnabled === false ? 'off' : rule.webhookUrl ? 'custom' : 'default')
-                                                            setRuleWebhookUrl(rule.webhookUrl || '')
-                                                            setRuleMessageTemplate(rule.messageTemplate || '')
-                                                            const normalizedChecks = normalizeCustomChecks(rule.customCheckUrls)
-                                                            setCustomChecks(normalizedChecks)
-                                                            const initialExpanded = new Set<number>()
-                                                            normalizedChecks.forEach((c, i) => { if (c.appliesTo.length > 0) initialExpanded.add(i) })
-                                                            setExpandedChecks(initialExpanded)
-                                                            setUrlTestResults({})
-                                                            setEditingRuleId(rule.id)
-                                                            setIsRuleDialogOpen(true)
-                                                        }}>
+                                                        <DropdownMenuItem className="gap-2" onClick={() => openRuleEditor(rule)}>
                                                             <Pencil className="w-4 h-4" />
                                                             Edit Chain
                                                         </DropdownMenuItem>
@@ -1854,7 +756,10 @@ export function FailoverManager({
                                                                         {result?.checking ? (
                                                                             <Loader2 className="w-3 h-3 text-primary animate-spin" />
                                                                         ) : result?.healthy ? (
-                                                                            <Check className="w-3 h-3 text-success" />
+                                                                            <span className="flex items-center gap-1">
+                                                                                <Check className="w-3 h-3 text-success" />
+                                                                                {result.code ? <span className="font-mono text-[10px] text-success/70">{result.code}</span> : null}
+                                                                            </span>
                                                                         ) : result ? (
                                                                             <div className="flex items-center gap-1.5">
                                                                                 {!result.healthy && result.error && (
@@ -1864,6 +769,7 @@ export function FailoverManager({
                                                                                         </span>
                                                                                     </Tooltip>
                                                                                 )}
+                                                                                {result.code ? <span className="text-xs font-mono text-foreground/60">{result.code}</span> : null}
                                                                                 <XCircle className="w-3 h-3 text-destructive" />
                                                                             </div>
                                                                         ) : (
@@ -1947,15 +853,6 @@ export function FailoverManager({
             </Tabs>
 
             <ConfirmationDialog
-                open={showWebhookConfirm}
-                onOpenChange={setShowWebhookConfirm}
-                title="Replace Webhook URL?"
-                description="You already have a webhook configured. Are you sure you want to replace it with this new URL?"
-                confirmText="Replace Webhook"
-                onConfirm={doSaveWebhook}
-            />
-
-            <ConfirmationDialog
                 open={!!ruleToDelete}
                 onOpenChange={(open) => !open && setRuleToDelete(null)}
                 title="Delete Rule?"
@@ -1965,205 +862,5 @@ export function FailoverManager({
                 onConfirm={() => { if (ruleToDelete) { removeRule(ruleToDelete); setRuleToDelete(null) } }}
             />
         </div >
-    )
-}
-
-type FailoverAddon = AddonDescriptor & { manifestUrl?: string }
-
-const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active' | 'failed' | 'idle'; addons: FailoverAddon[] }) => {
-    const normUrl = normalizeAddonUrl(url).toLowerCase()
-    const addon = addons.find(a => {
-        const aNorm = normalizeAddonUrl(a.transportUrl || '').toLowerCase()
-        return aNorm === normUrl || (a.manifestUrl && normalizeAddonUrl(a.manifestUrl).toLowerCase() === normUrl)
-    })
-    const displayName = addon?.metadata?.customName || addon?.manifest?.name || identifyAddon(url).name
-    const logo = addon?.metadata?.customLogo || addon?.manifest?.logo || identifyAddon(url).logo
-
-    const styles: Record<string, { wrapper: string; dot: string }> = {
-        active: { wrapper: 'border-success/30 bg-success/10 text-success', dot: 'bg-success shadow-sm shadow-success/30' },
-        failed: { wrapper: 'border-destructive/30 bg-destructive/10 text-destructive', dot: 'bg-destructive shadow-sm shadow-destructive/30' },
-        idle: { wrapper: 'border-border/30 bg-muted/20 text-muted-foreground', dot: 'bg-muted-foreground/25' },
-    }
-    const s = styles[status]
-
-    return (
-        <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${s.wrapper}`}>
-            <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
-            {logo ? (
-                <img src={logo} alt="" className="h-4 w-4 rounded-sm object-contain" loading="lazy" />
-            ) : null}
-            <Tooltip content={url}>
-            <span className="truncate max-w-[120px]">{displayName}</span>
-        </Tooltip>
-        </span>
-    )
-})
-ChainPill.displayName = 'ChainPill'
-
-function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]; accountId: string }) {
-    const allLogs = useHistoryStore(s => s.logs)
-    const initialize = useHistoryStore(s => s.initialize)
-    const clearLogs = useHistoryStore(s => s.clearLogs)
-    const rulesCount = useFailoverStore(s => s.rules.filter(rule => rule.accountId === accountId).length)
-    const logs = useMemo(() => allLogs.filter(l => l.accountId === accountId), [allLogs, accountId])
-    const [showClearConfirm, setShowClearConfirm] = useState(false)
-    const [isClearing, setIsClearing] = useState(false)
-
-    const handleClearLogs = async () => {
-        setIsClearing(true)
-        try {
-            await clearLogs()
-            setShowClearConfirm(false)
-        } finally {
-            setIsClearing(false)
-        }
-    }
-
-    const resolveUrlToName = (url: string) => {
-        if (!url || !url.startsWith('http')) return url;
-        const cleanUrl = url.replace(/[,.]$/, '');
-        const normClean = normalizeAddonUrl(cleanUrl).toLowerCase();
-        const addon = addons.find(a => {
-            const aNorm = normalizeAddonUrl(a.transportUrl || '').toLowerCase()
-            return aNorm === normClean || (a.manifestUrl && normalizeAddonUrl(a.manifestUrl).toLowerCase() === normClean)
-        });
-        let name = cleanUrl;
-        if (addon) {
-            name = addon.metadata?.customName || identifyAddon(cleanUrl, addon.manifest).name;
-        } else {
-            try {
-                name = new URL(cleanUrl).hostname;
-            } catch {
-                name = cleanUrl;
-            }
-        }
-        return url.replace(cleanUrl, name);
-    }
-
-    useEffect(() => {
-        initialize()
-    }, [initialize, accountId])
-
-    if (logs.length === 0) {
-        return (
-            <FailoverEmptyState rulesCount={rulesCount} addonsCount={addons.length} />
-        )
-    }
-
-    return (
-        <>
-        <div className="bg-card border border-border/40 rounded-2xl p-5 mb-6 shadow-sm">
-            <div className="flex items-center justify-between mb-5">
-                <div>
-                    <h3 className="text-lg font-bold">Event Log</h3>
-                    <p className="text-sm text-foreground/60">Recent autopilot and recovery actions.</p>
-                </div>
-                <Button size="sm" variant="outline" onClick={() => setShowClearConfirm(true)} disabled={isClearing}>
-                    {isClearing ? 'Clearing...' : 'Clear Log'}
-                </Button>
-            </div>
-            <div className="space-y-3">
-                {logs.map((log) => {
-                    const logDate = log.timestamp ? new Date(log.timestamp) : null;
-                    const isValidLogDate = logDate && !isNaN(logDate.getTime());
-
-                    let Icon = Activity;
-                    let typeColor = 'text-muted-foreground';
-                    let typeVariant: 'muted' | 'primary' | 'success' | 'destructive' = 'muted';
-                    let cardBg = 'bg-muted/20';
-                    let iconBg = 'bg-muted/40';
-
-                    if (log.type === 'failover') {
-                        Icon = AlertTriangle;
-                        typeColor = 'text-destructive';
-                        typeVariant = 'destructive';
-                        cardBg = 'bg-destructive/5';
-                        iconBg = 'bg-destructive/15';
-                    } else if (log.type === 'recovery') {
-                        Icon = Check;
-                        typeColor = 'text-success';
-                        typeVariant = 'success';
-                        cardBg = 'bg-success/5';
-                        iconBg = 'bg-success/15';
-                    } else if (log.type === 'self-healing') {
-                        Icon = Activity;
-                        typeColor = 'text-primary';
-                        typeVariant = 'primary';
-                        cardBg = 'bg-primary/5';
-                        iconBg = 'bg-primary/15';
-                    }
-
-                    const chain = (log.metadata?.chain as string[] | undefined)
-                    const activeUrl = log.metadata?.activeUrl as string | undefined
-                    const latencyMs = log.metadata?.latencyMs as number | undefined
-
-                    return (
-                        <div key={log.id} className={`rounded-xl border border-border/30 ${cardBg} p-4`}>
-                            <div className="flex items-start gap-3">
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
-                                    <Icon className={`w-4 h-4 ${typeColor}`} />
-                                </div>
-                                <div className="flex-1 min-w-0 space-y-2.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2">
-                                            <StatusChip variant={typeVariant} size="sm">
-                                                {log.type}
-                                            </StatusChip>
-                                            {latencyMs != null && (
-                                                <span className="text-xs font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
-                                                    {latencyMs < 1000 ? `${Math.round(latencyMs)}ms` : `${(latencyMs / 1000).toFixed(1)}s`}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <span className="font-mono text-[11px] text-muted-foreground/50 shrink-0">
-                                            {isValidLogDate && logDate ? formatDistanceToNow(logDate, { addSuffix: true }) : 'Unknown time'}
-                                        </span>
-                                    </div>
-                                    {chain && chain.length > 0 ? (
-                                        <div className="flex flex-wrap items-center gap-1.5">
-                                            {chain.map((url, i) => {
-                                                const isActive = activeUrl && normalizeAddonUrl(url).toLowerCase() === normalizeAddonUrl(activeUrl).toLowerCase()
-                                                const isPrimary = i === 0
-                                                const isFailed = log.type === 'failover' && isPrimary
-                                                const status = isActive ? 'active' : isFailed ? 'failed' : 'idle'
-                                                return (
-                                                    <span key={i} className="flex items-center gap-1.5">
-                                                        <ChainPill url={url} status={status} addons={addons} />
-                                                        {i < chain.length - 1 && (
-                                                            <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/25 shrink-0" />
-                                                        )}
-                                                    </span>
-                                                )
-                                            })}
-                                        </div>
-                                    ) : (
-                                        <div className="text-sm font-medium truncate">
-                                            {resolveUrlToName(log.primaryName || 'System')}
-                                        </div>
-                                    )}
-                                    <div className="text-[11px] text-foreground/40 leading-relaxed">
-                                        {log.message.split(' ').map(word => word.startsWith('http') ? resolveUrlToName(word) : word).join(' ')}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )
-                })}
-            </div>
-        </div>
-        <ConfirmationDialog
-            open={showClearConfirm}
-            onOpenChange={(open) => {
-                if (!open && isClearing) return
-                setShowClearConfirm(open)
-            }}
-            title="Clear Event Log?"
-            description="This will permanently remove saved autopilot history. This cannot be undone."
-            confirmText="Clear Log"
-            isDestructive
-            isLoading={isClearing}
-            onConfirm={() => { void handleClearLogs() }}
-        />
-        </>
     )
 }

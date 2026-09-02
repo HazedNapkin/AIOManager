@@ -29,6 +29,7 @@ import {
     UserPlus, Eye, EyeOff, Users,
 } from 'lucide-react'
 import { mapConcurrent } from '@/lib/concurrency'
+import { KNOWN_AIOSTREAMS_INSTANCES, mergeInstanceOptions } from '@/lib/known-instances'
 import { useNavigate } from 'react-router-dom'
 
 interface AIOStreamsActionsTabProps {
@@ -66,6 +67,11 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
         targetOptions.forEach(t => urls.add(t.baseUrl))
         return Array.from(urls)
     }, [baseUrl, targetOptions])
+
+    const selectOptions = useMemo(
+        () => mergeInstanceOptions(instanceUrls, KNOWN_AIOSTREAMS_INSTANCES),
+        [instanceUrls]
+    )
 
     const [createBaseUrl, setCreateBaseUrl] = useState(baseUrl)
     const [customUrl, setCustomUrl] = useState('')
@@ -300,9 +306,9 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         <SelectValue placeholder="Select instance" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {instanceUrls.map(url => (
-                                            <SelectItem key={url} value={url}>
-                                                <span className="font-mono text-xs truncate max-w-[250px]">{url}</span>
+                                        {selectOptions.map(o => (
+                                            <SelectItem key={o.value} value={o.value}>
+                                                <span className="font-mono text-xs truncate max-w-[250px]">{o.label}</span>
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
@@ -435,9 +441,9 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         <SelectValue placeholder="Select instance" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {instanceUrls.map(url => (
-                                            <SelectItem key={url} value={url}>
-                                                <span className="font-mono text-xs truncate max-w-[250px]">{url}</span>
+                                        {selectOptions.map(o => (
+                                            <SelectItem key={o.value} value={o.value}>
+                                                <span className="font-mono text-xs truncate max-w-[250px]">{o.label}</span>
                                             </SelectItem>
                                         ))}
                                     </SelectContent>

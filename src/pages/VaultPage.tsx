@@ -367,6 +367,7 @@ export function VaultPage() {
     const forceRefreshAll = useProviderStore(s => s.forceRefreshAll)
     const isRefreshing = useProviderStore(s => s.isRefreshing)
     const removeKey = useVaultStore(s => s.removeKey)
+    const clearVault = useVaultStore(s => s.clearVault)
     const saveFailed = useVaultStore(s => s.saveFailed)
 
     const [activeFilter, setActiveFilter] = useState<ActiveFilter>({ type: 'smart', id: 'all' })
@@ -376,6 +377,8 @@ export function VaultPage() {
     const [editingKey, setEditingKey] = useState<VaultKey | null>(null)
     const [deleteConfirmation, setDeleteConfirmation] = useState<{ open: boolean; id: string; name: string }>({ open: false, id: '', name: '' })
     const [isDeleting, setIsDeleting] = useState(false)
+    const [eraseAllOpen, setEraseAllOpen] = useState(false)
+    const [isErasing, setIsErasing] = useState(false)
     const [desktopFilterOpen, setDesktopFilterOpen] = useState(true)
     const [mobileDetailId, setMobileDetailId] = useState<string | null>(null)
     const [mobileFilterOpen, setMobileFilterOpen] = useState(true)
@@ -494,6 +497,21 @@ export function VaultPage() {
             setIsDeleting(false)
         }
     }, [deleteConfirmation, removeKey, selectedId])
+
+    const confirmEraseAll = useCallback(async () => {
+        setIsErasing(true)
+        try {
+            await clearVault()
+            toast({ title: 'Vault Cleared', description: 'All vault entries have been erased.' })
+            setEraseAllOpen(false)
+            setSelectedId(null)
+            setMobileDetailId(null)
+        } catch (e) {
+            toast({ title: 'Failed to clear vault', description: e instanceof Error ? e.message : 'Please try again.', variant: 'destructive' })
+        } finally {
+            setIsErasing(false)
+        }
+    }, [clearVault])
 
     if (!encryptionKey) {
         return (
@@ -637,7 +655,7 @@ export function VaultPage() {
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-16rem)] lg:min-h-[500px]">
             {/* Desktop Notes-style layout: navigation on the left, details on the right. */}
             <div className="hidden lg:flex gap-6 h-full w-full">
-                <section className="flex w-[440px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm xl:w-[460px]">
+                <section className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm">
                     {desktopFilterOpen ? (
                         <>
                             <div className="flex items-center gap-2 px-5 pt-5 pb-4 shrink-0">
@@ -698,6 +716,17 @@ export function VaultPage() {
                                     >
                                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                                         Refresh All
+                                    </Button>
+                                </Tooltip>
+                                <Tooltip content="Erase every vault entry" side="top">
+                                    <Button
+                                        variant="ghost"
+                                        onClick={() => setEraseAllOpen(true)}
+                                        disabled={keys.length === 0}
+                                        className="w-full justify-start gap-2 text-xs text-muted-foreground hover:text-destructive"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Erase All
                                     </Button>
                                 </Tooltip>
                             </div>
@@ -940,6 +969,18 @@ export function VaultPage() {
                                     Refresh All
                                 </Button>
                             </Tooltip>
+                            <Tooltip content="Erase every vault entry" side="top">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setEraseAllOpen(true)}
+                                    disabled={keys.length === 0}
+                                    className="h-9 w-full justify-start gap-2 text-xs text-muted-foreground hover:text-destructive"
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    Erase All
+                                </Button>
+                            </Tooltip>
                         </div>
                     ) : mobileDetailId ? (
                         <div className="relative">
@@ -1010,6 +1051,17 @@ export function VaultPage() {
                 isDestructive={true}
                 isLoading={isDeleting}
                 onConfirm={confirmDelete}
+            />
+            <ConfirmationDialog
+                open={eraseAllOpen}
+                onOpenChange={setEraseAllOpen}
+                title="Erase All Entries"
+                description={`Are you sure you want to erase all ${keys.length} vault entries? This cannot be undone.`}
+                confirmText="Erase All"
+                isDestructive={true}
+                isLoading={isErasing}
+                disabled={keys.length === 0}
+                onConfirm={confirmEraseAll}
             />
         </div>
         </div>

@@ -221,6 +221,7 @@ export function registerSyncRoutes(fastify) {
         const bodyStr = JSON.stringify(data)
         const contentHash = crypto.createHash('sha256').update(bodyStr).digest('hex')
         const clientSyncedAt = data.syncedAt ? new Date(data.syncedAt).getTime() : 0
+        const force = data.force === true
         // contentHint is the client's hash of its logical state (pre-syncedAt stamp); unlike
         // content_hash (over the random-IV envelope, never stable), a match proves the logical
         // content is unchanged so archive/rewrite/apiKeys churn and the updated_at bump skip.
@@ -292,7 +293,7 @@ export function registerSyncRoutes(fastify) {
                 }
 
                 const serverUpdated = row.updated_at || 0
-                if (clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
+                if (!force && clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', keysChanged, timing: Date.now() - postStart })
                     if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)

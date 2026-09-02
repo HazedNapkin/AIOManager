@@ -1,11 +1,10 @@
 // Maps a decoded WatchedBitField onto real episodes via the series' ordered Cinemeta video list,
 // with a fail-closed anchor checksum so we never log an episode the user did not watch.
 //
-// The anchor (decoded.videoId) is the LAST-watched episode, so it must equal videos[maxWatchedBit].id.
-// If it doesn't, the bitfield was built against a different ordering than we fetched (kitsu-anchored
-// bitfield vs a cinemeta tt list, reordered/extended meta, etc.) -> return null, emit nothing.
-// Validated against real items: every tt-anchored show matches (incl. Law & Order SVU's 441 eps with
-// a specials offset); kitsu-anchored shows correctly fail the checksum.
+// stremio-core indexes the bitfield against the series' videos sorted by (season, episode,
+// released) — Cinemeta returns them in arbitrary (and occasionally changing) order, so every
+// list this module hands out is sorted ONCE at fetch (sortMetaVideos) and every consumer
+// (anchor checks, index mapping, re-encode) sees the order stremio-core used.
 
 import localforage from 'localforage'
 import { deduped } from './request-dedupe.ts'
@@ -14,6 +13,7 @@ export interface MetaVideo {
     id: string
     season?: number | null
     episode?: number | null
+    released?: string | null
 }
 
 export interface WatchedEpisode {
@@ -50,6 +50,20 @@ export function resolveWatchedEpisodes(decoded: DecodedLike | null, videos: Meta
 const META_TTL_MS = 6 * 60 * 60 * 1000
 const META_CACHE_MAX = 1000
 const metaCache = new Map<string, { videos: MetaVideo[]; ts: number }>()
+
+// Mirrors stremio-core's LibraryItemState::watched_bitfield() ordering: (season, episode,
+// released). Sorting at the fetch boundary means cache, IndexedDB persistence and every
+// consumer agree on one index space — a raw-order list would mis-map every bit after the
+// first out-of-order video.
+export function sortMetaVideos(videos: MetaVideo[]): MetaVideo[] {
+    return [...videos].sort((a, b) => {
+        const seasonDelta = (a.season ?? 0) - (b.season ?? 0)
+        if (seasonDelta !== 0) return seasonDelta
+        const episodeDelta = (a.episode ?? 0) - (b.episode ?? 0)
+        if (episodeDelta !== 0) return episodeDelta
+        return (a.released ?? '').localeCompare(b.released ?? '')
+    })
+}
 
 const PERSIST_TTL_MS = 24 * 60 * 60 * 1000
 const PERSIST_PREFIX = 'cinemeta:'
@@ -96,8 +110,10 @@ export async function fetchSeriesVideos(seriesId: string): Promise<MetaVideo[] |
 async function fetchVideosOnce(base: string): Promise<MetaVideo[] | null> {
     const persisted = await readPersistedVideos(base)
     if (persisted) {
-        metaCache.set(base, { videos: persisted, ts: Date.now() })
-        return persisted
+        // Re-sort persisted lists too: entries written before the sort landed are in raw order.
+        const videos = sortMetaVideos(persisted)
+        metaCache.set(base, { videos, ts: Date.now() })
+        return videos
     }
 
     try {
@@ -106,8 +122,9 @@ async function fetchVideosOnce(base: string): Promise<MetaVideo[] | null> {
         const res = await fetch(`https://v3-cinemeta.strem.io/meta/series/${base}.json`, { signal: ctrl.signal }).finally(() => clearTimeout(t))
         if (!res.ok) return null
         const json = await res.json()
-        const videos = json?.meta?.videos
-        if (!Array.isArray(videos)) return null
+        const raw = json?.meta?.videos
+        if (!Array.isArray(raw)) return null
+        const videos = sortMetaVideos(raw)
 
         if (metaCache.size >= META_CACHE_MAX) {
             const oldest = [...metaCache.entries()].sort((a, b) => a[1].ts - b[1].ts).slice(0, metaCache.size - META_CACHE_MAX + 1)

@@ -24,27 +24,6 @@ function normalizeUrl(url) {
     return normalized.toLowerCase()
 }
 
-function diffAddons(canonical, platform) {
-    const canonicalUrls = new Map(canonical.map(a => [normalizeUrl(a.transportUrl), a]))
-    const platformUrls = new Map(platform.map(a => [normalizeUrl(a.transportUrl || a.url), a]))
-
-    const additions = []
-    for (const [url, addon] of platformUrls) {
-        if (!canonicalUrls.has(url)) {
-            additions.push({ url, addon })
-        }
-    }
-
-    const missing = []
-    for (const [url, addon] of canonicalUrls) {
-        if (!platformUrls.has(url)) {
-            missing.push({ url, addon })
-        }
-    }
-
-    return { additions, missing, canonicalUrls, platformUrls }
-}
-
 // syncUser scopes the lookup to the owning user. The HTTP endpoint (providers.js) MUST pass the
 // authenticated user so a caller can't resolve another user's stored credentials by accountId
 // (cross-tenant IDOR). Server-trusted callers (the autopilot worker, which derives account_id from
@@ -276,6 +255,24 @@ function manifestSignature(m) {
     })
 }
 
+// Stable fingerprint of a canonical list over the diff-compared fields (url, manifest
+// signature, custom name), sorted so list order never changes the hash. Consumed by
+// auditConnections' fresh-in-sync skip; order-swap re-reads are indistinguishable to
+// reconcileAccount's diff, so a skip armed under one is valid for the other.
+function canonicalFingerprint(canonical) {
+    return JSON.stringify(
+        canonical.map(a => [
+            normalizeUrl(a.transportUrl),
+            manifestSignature(a.manifest),
+            a?.metadata?.customName || ''
+        ]).sort()
+    )
+}
+
+// Minimum window in which a connection verifiably matching this exact canonical is not
+// re-read by the audit (in-memory only; restart re-reads, the conservative direction).
+const MIN_RECONCILE_INTERVAL_MS = 5 * 60 * 1000
+
 // Platform writes replace the full addon list, so two writes racing on one connection
 // land in nondeterministic order (route immediate-enforcement vs worker cycle vs client
 // reconcile). Serialize per connection; different connections still run in parallel.
@@ -488,12 +485,29 @@ export function createReconciler(fastify) {
     }
 
     const enforceAccount = async (accountId, connections, canonical, opts = {}) => {
-        const { stremioWriter } = opts
+        const { stremioWriter, requiredUrls, requiredActiveUrl } = opts
         tickCycleCounter(accountId)
         const canon = (Array.isArray(canonical) ? canonical : []).filter(a => a?.flags?.enabled !== false)
         const start = Date.now()
         trace('reconciler', 'enforceAccount.start', { accountId, canonicalCount: canon.length })
         const synced = []
+
+        // Chain guard (spec F2): an enforced list that would drop every managed
+        // chain member (all disabled -> "neither installed") or lose the active
+        // tier must never reach a platform. Computed once, after the enabled
+        // filter: survivors are chain URLs actually present-and-enabled in canon.
+        // Skip means NO write, NO recordSuccess (arming the fresh-in-sync guard
+        // with an unwritten list would poison it), NO recordFailure (a data
+        // problem must not back off the connection).
+        if (Array.isArray(requiredUrls) && requiredUrls.length > 0) {
+            const canonUrlSet = new Set(canon.map(a => normalizeUrl(a.transportUrl)))
+            const survivors = requiredUrls.map(u => normalizeUrl(u)).filter(u => canonUrlSet.has(u))
+            if (survivors.length === 0 || !survivors.includes(normalizeUrl(requiredActiveUrl))) {
+                fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Chain guard: enforced list drops the managed chain (required: ${requiredUrls.length}, survivors: ${survivors.length}, active present: ${survivors.includes(normalizeUrl(requiredActiveUrl))}); skipping write.`)
+                trace('reconciler', 'enforceAccount.chainGuard', { accountId, required: requiredUrls.length, survivors: survivors.length })
+                return { synced: [], connectionStates: getConnectionStates(accountId), chainGuardSkipped: true }
+            }
+        }
 
         for (const connection of (connections || []).filter(c => c.enabled)) {
             const connId = connection.id
@@ -573,6 +587,47 @@ export function createReconciler(fastify) {
         }
     }
 
+    // Deep-audit read path for connection-only rules: returns each connection's live
+    // collection via the same driver/read machinery as reconcileAccount, without
+    // writing. A connection in backoff or fresh-verified in-sync for this exact
+    // canonical (the #19 guard) is skipped, never fought. Read errors surface as
+    // skipped entries with no recordFailure — the audit observes, it does not punish.
+    const auditConnections = async (accountId, connections, canonical) => {
+        const canon = (Array.isArray(canonical) ? canonical : []).filter(a => a?.flags?.enabled !== false)
+        const canonHash = canonicalFingerprint(canon)
+        const results = []
+        for (const connection of (connections || []).filter(c => c.enabled)) {
+            const connId = connection.id
+            if (shouldSkip(accountId, connId)) {
+                results.push({ connectionId: connId, platform: connection.platform, skipped: 'backoff' })
+                continue
+            }
+            const state = getState(accountId, connId)
+            if (
+                state.lastInSync === true &&
+                state.lastCanonicalHash === canonHash &&
+                Date.now() - (state.lastSync || 0) < MIN_RECONCILE_INTERVAL_MS
+            ) {
+                trace('reconciler', 'audit-skip', { accountId, connectionId: connId, reason: 'fresh-in-sync' })
+                results.push({ connectionId: connId, platform: connection.platform, skipped: 'fresh-in-sync' })
+                continue
+            }
+            try {
+                const driver = await loadDriver(connection.platform, connection.credentials || {}, connection)
+                if (!driver) {
+                    results.push({ connectionId: connId, platform: connection.platform, skipped: 'no-driver' })
+                    continue
+                }
+                const addons = await readPlatformAddons(driver, connection)
+                results.push({ connectionId: connId, platform: connection.platform, addons: Array.isArray(addons) ? addons : [] })
+            } catch (err) {
+                trace('reconciler', 'audit-connection-error', { accountId, connectionId: connId, error: err?.message || String(err) })
+                results.push({ connectionId: connId, platform: connection.platform, skipped: 'read-error' })
+            }
+        }
+        return results
+    }
+
     const getConnectionStates = (accountId) => {
         const states = {}
         for (const [key, state] of connectionState.entries()) {
@@ -587,6 +642,7 @@ export function createReconciler(fastify) {
         reconcileAccount,
         enforceAccount,
         reconcilePlugins,
+        auditConnections,
         resolveConnections,
         getConnectionStates,
         recordSuccess,

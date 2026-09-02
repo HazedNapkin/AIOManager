@@ -5,6 +5,7 @@ import { normalizeAddonUrl } from './utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from './concurrency'
 import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
+import { getAddonInstanceKey } from '@/lib/addon-instance-identity'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 
 export async function mergeAddons(
@@ -47,12 +48,18 @@ export async function mergeAddons(
       effectiveMetadata.customName = savedAddon.name
     }
 
-    // This prevents duplicates if the URL protocol/trailing-slash changed
+    // This prevents duplicates if the URL protocol/trailing-slash changed.
+    // Instance-key fallback: deploying a saved config-URL addon (AIOStreams,
+    // AIOMetadata) whose encrypted config segment changed must REPLACE the
+    // same-instance entry in place ("reinstall in its own spot"), not append a
+    // second card. Distinct instance uuids/origins keep distinct keys, so
+    // multiple instances of one manifest id are still never collapsed.
     const normInstallUrl = normalizeAddonUrl(installUrl)
+    const savedInstanceKey = getAddonInstanceKey({ transportUrl: installUrl, manifest: savedAddon.manifest })
     const existingIndex = updatedAddons.findIndex((a) => {
       const normA = normalizeAddonUrl(a.transportUrl)
-      // STRICT: Match ONLY by URL to support multiple instances of same Manifest ID
-      return normA === normInstallUrl
+      // STRICT: Match ONLY by URL (or instance key) to support multiple instances of same Manifest ID
+      return normA === normInstallUrl || getAddonInstanceKey(a) === savedInstanceKey
     })
 
     if (existingIndex >= 0) {

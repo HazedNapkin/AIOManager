@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import mdx from 'fumadocs-mdx/vite'
 import * as MdxConfig from './source.config'
 import path from 'path'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '')
@@ -11,7 +12,12 @@ export default defineConfig(({ mode }) => {
 
     return {
         base: '/',
+        // Without this, an unset NODE_ENV lets react-dom bundle its development build into production.
+        define: {
+            'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || mode),
+        },
         plugins: [
+            ...(process.env.ANALYZE ? [visualizer({ json: true, filename: 'bundle-stats.json', gzipSize: true })] : []),
             {
                 name: 'fix-fumadocs-glob',
                 enforce: 'pre',

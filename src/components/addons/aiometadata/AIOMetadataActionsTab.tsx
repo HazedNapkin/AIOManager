@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { CopyButton } from '@/components/ui/copy-button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { KNOWN_AIOMETADATA_INSTANCES, mergeInstanceOptions } from '@/lib/known-instances'
 import { useToast } from '@/hooks/use-toast'
 import { useAccountStore } from '@/store/accountStore'
 import {
@@ -50,6 +51,11 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
         targetOptions.forEach(t => urls.add(t.baseUrl))
         return Array.from(urls)
     }, [baseUrl, targetOptions])
+
+    const selectOptions = useMemo(
+        () => mergeInstanceOptions(instanceUrls, KNOWN_AIOMETADATA_INSTANCES),
+        [instanceUrls]
+    )
 
     const [createBaseUrl, setCreateBaseUrl] = useState(baseUrl)
     const [customUrl, setCustomUrl] = useState('')
@@ -190,7 +196,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                     <Select value={createBaseUrl} onValueChange={setCreateBaseUrl}>
                         <SelectTrigger className="h-11 font-mono text-sm"><SelectValue placeholder="Select instance" /></SelectTrigger>
                         <SelectContent>
-                            {instanceUrls.map(url => <SelectItem key={url} value={url}><span className="font-mono text-xs truncate max-w-[250px]">{url}</span></SelectItem>)}
+                            {selectOptions.map(o => <SelectItem key={o.value} value={o.value}><span className="font-mono text-xs truncate max-w-[250px]">{o.label}</span></SelectItem>)}
                         </SelectContent>
                     </Select>
                     <button type="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">Custom URL…</button>

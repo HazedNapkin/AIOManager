@@ -1,9 +1,12 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import type { AddonDescriptor } from '@/types/addon'
-import { getHostnameIdentifier } from '@/lib/addon-identifier'
-import { normalizeAddonUrl as _normalizeAddonUrl } from '@/lib/addon-url'
-import { trace } from '@/lib/trace'
+// Imported relative-with-extension (not via the @/ alias) so this module stays
+// resolvable under the node:test runner, which does not map path aliases.
+import { getHostnameIdentifier } from './addon-identifier.ts'
+import { normalizeAddonUrl as _normalizeAddonUrl } from './addon-url.ts'
+import { trace } from './trace.ts'
+import { claimInstanceRemotes } from './addon-instance-identity.ts'
 
 const NON_ALPHANUMERIC_REGEX = /[^a-z0-9]/g
 const CANONICAL_URL_CACHE = new Map<string, string>()
@@ -270,15 +273,19 @@ export function hasFallbackAddonIdentity(addon: Pick<AddonDescriptor, 'transport
  * Source of Truth: Remote presence determines "enabled" status, but local flags and metadata are preserved.
  */
 
-export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean } = {}) {
+export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean; instanceMatch?: 'adopt-remote-url' | 'keep-local-url' } = {}) {
   trace('merge', 'enter', { local: localAddons.length, remote: remoteAddons.length, keepMissingLocal: !!options.keepMissingLocal })
-  let merged = 0, netNew = 0, keptMissingLocal = 0, keptSpecial = 0, dropped = 0
+  let merged = 0, netNew = 0, keptMissingLocal = 0, keptSpecial = 0, dropped = 0, instanceMatched = 0
   const remoteAddonMap = new Map<string, AddonDescriptor>()
 
   remoteAddons.forEach((a) => {
     const norm = normalizeAddonUrl(a.transportUrl)
     if (!remoteAddonMap.has(norm)) remoteAddonMap.set(norm, a)
   })
+
+  const instanceClaims = options.instanceMatch
+    ? claimInstanceRemotes(localAddons, remoteAddons)
+    : new Map<AddonDescriptor, AddonDescriptor>()
 
   const processedRemoteNormUrls = new Set<string>()
   const finalAddons: AddonDescriptor[] = []
@@ -290,10 +297,12 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
     const normLocal = normalizeAddonUrl(localAddon.transportUrl)
 
     const remoteAddon = remoteAddonMap.get(normLocal)
+    const instanceRemote = remoteAddon ? undefined : instanceClaims.get(localAddon)
 
     const isRecentLocalChange = localAddon.metadata?.lastUpdated && (now - localAddon.metadata.lastUpdated < MANIFEST_GRACE_PERIOD)
 
-    if (remoteAddon) {
+    if (remoteAddon || instanceRemote) {
+      const matchedRemote = remoteAddon || instanceRemote!
       const isSubstantial = (addon: AddonDescriptor | undefined) => {
         const m = addon?.manifest;
         if (!addon || !m || !m.name || m.name === 'Unknown Addon' || hasFallbackAddonName(addon)) return false;
@@ -302,13 +311,13 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         return v !== '0.0.0' && v !== '' && hasResources;
       };
 
-      const remoteManifest = remoteAddon.manifest;
+      const remoteManifest = matchedRemote.manifest;
       const localManifest = localAddon.manifest;
-      const useLocalManifest = (isSubstantial(localAddon) && !isSubstantial(remoteAddon)) || isRecentLocalChange;
+      const useLocalManifest = (isSubstantial(localAddon) && !isSubstantial(matchedRemote)) || isRecentLocalChange;
 
       let mergedMetadata = localAddon.metadata
         ? { ...localAddon.metadata }
-        : (remoteAddon.metadata ? { ...remoteAddon.metadata } : undefined)
+        : (matchedRemote.metadata ? { ...matchedRemote.metadata } : undefined)
 
       if (!useLocalManifest && localManifest && remoteManifest) {
         const localIsFallback = hasFallbackAddonName({ transportUrl: localAddon.transportUrl, manifest: localManifest })
@@ -334,22 +343,28 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       const finalManifest = useLocalManifest ? localManifest : remoteManifest;
 
       finalAddons.push({
-        ...remoteAddon,
-        transportUrl: localAddon.transportUrl,
+        ...matchedRemote,
+        // Instance matches carry a config-URL change: adopt the remote URL when
+        // the remote is the newer state (sync fold, install, deploy), keep the
+        // local one when local is authoritative (hub read).
+        transportUrl: instanceRemote
+          ? (options.instanceMatch === 'keep-local-url' ? localAddon.transportUrl : instanceRemote.transportUrl)
+          : localAddon.transportUrl,
         manifest: finalManifest,
         flags: {
-          ...remoteAddon.flags,
+          ...matchedRemote.flags,
           protected: localAddon.flags?.protected,
-          enabled: isRecentLocalChange ? (localAddon.flags?.enabled !== false) : (remoteAddon.flags?.enabled !== false),
+          enabled: isRecentLocalChange ? (localAddon.flags?.enabled !== false) : (matchedRemote.flags?.enabled !== false),
         },
         metadata: mergedMetadata,
         catalogOverrides: localAddon.catalogOverrides,
         note: localAddon.note,
       })
 
-      processedRemoteNormUrls.add(normalizeAddonUrl(remoteAddon.transportUrl))
+      processedRemoteNormUrls.add(normalizeAddonUrl(matchedRemote.transportUrl))
       processedRemoteNormUrls.add(normLocal)
-      merged++
+      if (instanceRemote) instanceMatched++
+      else merged++
     } else {
       const hasCustomizations = localAddon.metadata?.customName || localAddon.metadata?.customLogo || localAddon.metadata?.customDescription;
       const isProtected = localAddon.flags?.protected;
@@ -384,7 +399,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
     }
   })
 
-  trace('merge', 'result', { local: localAddons.length, remote: remoteAddons.length, out: finalAddons.length, merged, netNew, keptMissingLocal, keptSpecial, dropped })
+  trace('merge', 'result', { local: localAddons.length, remote: remoteAddons.length, out: finalAddons.length, merged, netNew, keptMissingLocal, keptSpecial, dropped, instanceMatched })
   return finalAddons
 }
 

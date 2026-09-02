@@ -5,6 +5,15 @@ import { normalizeHydraAddonInput } from '../utils/addon-shape.js'
 const DEFAULT_TIMEOUT = 15000
 const HEALTH_TIMEOUT = 8000
 
+// A remote Hydra instance cannot resolve another device's loopback/private addon URLs;
+// pushing them makes the whole collection write fail with 400.
+const isLocalHostname = (url) => {
+    try {
+        const h = new URL(url).hostname
+        return h === 'localhost' || h === '127.0.0.1' || h === '::1' || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+    } catch { return true }
+}
+
 export async function createHydraClient(config) {
     const base = (config.baseUrl || '').replace(/\/+$/, '')
     if (!base || !(await isSafeUrlResolved(base))) {
@@ -50,6 +59,7 @@ export async function createHydraClient(config) {
             const flat = (addons || []).map(a => {
                 const n = normalizeHydraAddonInput(a)
                 if (!n) return null
+                if (isLocalHostname(n.transportUrl)) return null
                 return {
                     transportUrl: n.transportUrl,
                     id: n.manifest.id,
