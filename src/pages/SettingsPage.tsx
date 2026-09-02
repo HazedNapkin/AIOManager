@@ -41,6 +41,7 @@ import {
     Users,
     Activity,
     Mail,
+    Info,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
@@ -472,6 +473,37 @@ export function SettingsPage() {
                     <TabsContent value="general" className="mt-0">
                         <div className="grid gap-4 sm:gap-6">
                             <AccountSection />
+
+                            <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
+                                        <SquircleOverlay />
+                                        <Info className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-semibold">About</h3>
+                                        <p className="text-xs sm:text-sm text-muted-foreground">Version and build information for this installation</p>
+                                    </div>
+                                </div>
+                                <div className="mt-4 space-y-1 text-sm">
+                                    <div className="flex items-center justify-between border-b border-border/25 pb-2">
+                                        <span className="text-muted-foreground">Version</span>
+                                        <span className="font-medium">{__BUILD_VERSION__}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(__BUILD_COMMIT__)
+                                            toast({ title: 'Copied', description: `Build ${__BUILD_COMMIT__} copied to clipboard.` })
+                                        }}
+                                        className="flex w-full items-center justify-between pt-1 text-left"
+                                        title="Click to copy the build identifier"
+                                    >
+                                        <span className="text-muted-foreground">Build</span>
+                                        <span className="font-mono font-medium">{__BUILD_COMMIT__}</span>
+                                    </button>
+                                </div>
+                            </div>
 
                             <InstallAppCard />
 

@@ -39,12 +39,41 @@ export interface RosterProfile {
 }
 
 const DEFAULT_BACKEND = 'default'
+const DEFAULT_LOGIN = 'default'
 
 /** Keep in sync with ACCOUNT_COLORS length in src/lib/utils.ts (type-only home keeps this module dependency-free). */
 const ACCOUNT_COLORS_LENGTH = 10
 
-export function profileClaimKey(profile: Pick<RosterProfile, 'platform' | 'profileId' | 'baseUrl'>): string {
-    return `${profile.platform}|${profile.baseUrl || DEFAULT_BACKEND}|${profile.profileId}`
+export interface RosterProfile {
+    platform: string
+    /** Nuvio: numeric profile_index as string. Stremio: Supporters profile id. */
+    profileId: string
+    /** Backend scoping for Nuvio; omitted means the default backend. */
+    baseUrl?: string
+    /** Upstream-deleted profiles keep showing as 'gone' while an account still claims them. */
+    upstreamDeleted?: boolean
+    /** Stable per-upstream-login scope (e.g. hashed login email/auth). Profiles from
+     *  different Nuvio logins must never collide, even at the same profile_index. */
+    loginId?: string
+}
+
+export function profileClaimKey(profile: Pick<RosterProfile, 'platform' | 'profileId' | 'baseUrl' | 'loginId'>): string {
+    return `${profile.platform}|${profile.baseUrl || DEFAULT_BACKEND}|${profile.loginId || DEFAULT_LOGIN}|${profile.profileId}`
+}
+
+/**
+ * Stable scope for a platform connection's credentials: the upstream login the
+ * connection belongs to. Derived profile accounts share their parent login, so
+ * parent and derived resolve to the same scope; different logins never collide
+ * even when their profile indexes match.
+ */
+export function loginScope(credentials: Record<string, unknown> | undefined | null): string {
+    if (!credentials) return ''
+    const c = credentials as Record<string, string>
+    const identity = c.email || c.username || c.authKey || c.password || ''
+    let hash = 5381
+    for (let i = 0; i < identity.length; i++) hash = ((hash << 5) + hash + identity.charCodeAt(i)) >>> 0
+    return hash.toString(36)
 }
 
 function normalizeProfileId(value: unknown): string {
@@ -67,7 +96,7 @@ export function getProfileClaims(accounts: Account[]): Map<string, ProfileClaim>
             if (conn.platform === 'nuvio') {
                 const profileId = normalizeProfileId(credentials.profileId)
                 if (!profileId) continue
-                claims.set(profileClaimKey({ platform: 'nuvio', profileId, baseUrl: credentials.baseUrl }), {
+                claims.set(profileClaimKey({ platform: 'nuvio', profileId, baseUrl: credentials.baseUrl, loginId: loginScope(credentials) }), {
                     accountId: account.id,
                     accountName: account.name,
                     accountEmail: account.email,
@@ -79,7 +108,9 @@ export function getProfileClaims(accounts: Account[]): Map<string, ProfileClaim>
                 })
             } else if (conn.platform === 'stremio') {
                 // Supporters sub-profile identity stamped onto profile-scoped
-                // accounts when they were added via Profile Quick-Add.
+                // accounts when they were added via Profile Quick-Add. The
+                // stremioProfileId is the globally unique Stremio user id, so
+                // no login scoping is needed here (unlike Nuvio's index).
                 const profileId = normalizeProfileId(credentials.stremioProfileId)
                 if (!profileId) continue
                 claims.set(profileClaimKey({ platform: 'stremio', profileId }), {

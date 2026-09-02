@@ -83,6 +83,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           pull: true
           push: false
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
@@ -100,6 +102,8 @@ jobs:
           # filled from the finished manifest in the merge job instead.
           outputs: |
             type=image,name=${{ env.REGISTRY }}/${{ steps.img.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 

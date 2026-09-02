@@ -130,16 +130,15 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
 
     const sanitizeAddonForStremio = (addon) => {
         const manifest = addon?.manifest || {}
+        const url = String(addon?.transportUrl || '')
+        const id = manifest.id || `managed-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`
         return {
             ...addon,
             manifest: {
                 ...manifest,
-                id: manifest.id || 'unknown',
-                name: manifest.name || deriveAddonName(addon?.transportUrl || ''),
-                version: manifest.version || '0.0.0',
-                description: manifest.description || '',
-                types: Array.isArray(manifest.types) ? manifest.types : [],
-                resources: Array.isArray(manifest.resources) ? manifest.resources : []
+                id,
+                name: manifest.name || deriveAddonName(url),
+                version: manifest.version || '0.0.0'
             }
         }
     }
