@@ -7,6 +7,8 @@ RUN npm ci
 COPY server/package*.json ./server/
 RUN cd server && npm ci
 COPY . .
+ARG GIT_COMMIT=dev
+ENV GIT_COMMIT=${GIT_COMMIT}
 RUN npm run build
 
 # Stage 2: Production Dependencies

@@ -19,7 +19,7 @@ import { NUVIO_BACKUP_COPY } from './nuvio-backup-copy'
 import { useAccountStore } from '@/store/accountStore'
 import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
-import { getProfileClaims, resolveProfileState, profileClaimKey } from '@/lib/profile-claims'
+import { getProfileClaims, resolveProfileState, profileClaimKey, loginScope } from '@/lib/profile-claims'
 import type { ProfileRosterState } from '@/lib/profile-claims'
 import { ProfileQuickAddReview } from './ProfileQuickAddReview'
 import type { ProfileQuickAddEntry as NuvioQuickAddEntry } from '@/store/account/profileQuickAdd'
@@ -213,16 +213,17 @@ function ProfilesSection({ accountId, connection, status }: { accountId: string;
     }, [accounts])
 
     const rosterBackend = connection.credentials?.baseUrl
+    const rosterLogin = loginScope(connection.credentials)
 
     const rowState = (p: NuvioProfileRow): ProfileRosterState =>
         resolveProfileState(
-            { platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend },
+            { platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend, loginId: rosterLogin },
             claims,
             accountId,
             connection.id,
         )
 
-    const claimedOnRow = (p: NuvioProfileRow) => claims.get(profileClaimKey({ platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend }))
+    const claimedOnRow = (p: NuvioProfileRow) => claims.get(profileClaimKey({ platform: 'nuvio', profileId: String(p.profile_index), baseUrl: rosterBackend, loginId: rosterLogin }))
 
     const used = new Set(profiles.map(p => p.profile_index))
     let nextIdx = 1

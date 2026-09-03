@@ -20,7 +20,7 @@ import { useAccountStore, persistAccounts } from '../accountStore'
 import { useConnectionStore } from '../connectionStore'
 import { nuvioAuth } from '@/api/hydra-providers'
 import { triggerSync } from '@/lib/sync-trigger'
-import { getProfileClaims, profileClaimKey } from '@/lib/profile-claims'
+import { getProfileClaims, profileClaimKey, loginScope } from '@/lib/profile-claims'
 
 export const PROFILE_EXPIRY_JITTER_MAX_MS = 30 * 60 * 1000
 
@@ -114,7 +114,7 @@ export async function addNuvioProfiles(
 
             // Decision 4 claim guard: a same-device rerun must not double-add.
             const claims = getProfileClaims(useAccountStore.getState().accounts)
-            if (claims.has(profileClaimKey({ platform: 'nuvio', profileId: String(profileIndex), baseUrl }))) {
+            if (claims.has(profileClaimKey({ platform: 'nuvio', profileId: String(profileIndex), baseUrl, loginId: loginScope(connection.credentials) }))) {
                 results.push({ entry, accountId: null, ok: false, skipped: true, error: 'Already added' })
                 continue
             }

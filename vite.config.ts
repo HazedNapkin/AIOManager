@@ -4,17 +4,30 @@ import tailwindcss from '@tailwindcss/vite'
 import mdx from 'fumadocs-mdx/vite'
 import * as MdxConfig from './source.config'
 import path from 'path'
+import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '')
     const port = env.PORT || '16100'
+    const pkg = JSON.parse(readFileSync('./package.json', 'utf8'))
+    const buildCommit = process.env.GIT_COMMIT
+        || (() => {
+            try {
+                return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+            } catch {
+                return 'dev'
+            }
+        })()
 
     return {
         base: '/',
         // Without this, an unset NODE_ENV lets react-dom bundle its development build into production.
         define: {
             'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || mode),
+            __BUILD_VERSION__: JSON.stringify(pkg.version),
+            __BUILD_COMMIT__: JSON.stringify(buildCommit),
         },
         plugins: [
             ...(process.env.ANALYZE ? [visualizer({ json: true, filename: 'bundle-stats.json', gzipSize: true })] : []),
