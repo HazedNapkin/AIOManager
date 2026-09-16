@@ -1,5 +1,6 @@
 import { normalizeAddonUrl } from '@/lib/utils'
 import { filterResurrected } from '@/lib/addon-tombstones'
+import { evaluateAbsorbOutcome } from './absorb-outcome'
 import { trace } from '@/lib/trace'
 import { mapConcurrent } from '@/lib/concurrency'
 import type { Account } from '@/types/account'
@@ -103,6 +104,10 @@ export interface AbsorbResult {
     addons: AddonDescriptor[]
     failedReadConnIds: Set<string>
     changed: boolean
+    // A connection served addons the user had deleted. They were filtered locally, but
+    // the connection's own list still holds them - the caller must push the cleaned
+    // list back so the deletion propagates instead of resurrecting on every cycle.
+    propagateDeletions: boolean
 }
 
 export async function absorbConnectionAddons(account: Account, accountId: string): Promise<AbsorbResult> {
@@ -110,10 +115,14 @@ export async function absorbConnectionAddons(account: Account, accountId: string
     trace('discovery.absorb', 'discovered', { accountId, raw: rawDiscovered.length, failedConns: failedReadConnIds.size })
     const existing = account.addons || []
     const discovered = filterResurrected(rawDiscovered, existing, account.deletedAddons)
+    const tombstonedCount = rawDiscovered.length - discovered.length
     trace('discovery.absorb', 'post-tombstone', { accountId, survived: discovered.length, stripped: rawDiscovered.length - discovered.length })
     if (discovered.length === 0) {
         trace('discovery.absorb', 'noop', { accountId })
-        return { addons: existing, failedReadConnIds, changed: false }
+        // A tombstone-only discovery still needs its deletion written back to the
+        // connection, or the stale remote list resurrects the addons on every cycle.
+        const outcome = evaluateAbsorbOutcome(rawDiscovered.length, 0, tombstonedCount)
+        return { addons: existing, failedReadConnIds, changed: outcome.changed, propagateDeletions: outcome.propagateDeletions }
     }
 
     const { fetchAddonManifest } = await import('@/api/addons')
@@ -146,10 +155,11 @@ export async function absorbConnectionAddons(account: Account, accountId: string
     }))
 
     const surviving = newDescriptors
-    if (surviving.length === 0) return { addons: existing, failedReadConnIds, changed: false }
+    if (surviving.length === 0) return { addons: existing, failedReadConnIds, changed: false, propagateDeletions: tombstonedCount > 0 }
     // Absorb is an additive union: keepMissingLocal stops the mirror-drop from removing hub addons.
     trace('discovery.absorb', 'absorbed', { accountId, newAddons: newDescriptors.length, existing: existing.length })
-    return { addons: mergeAddons(existing, surviving, { keepMissingLocal: true }), failedReadConnIds, changed: true }
+    const outcome = evaluateAbsorbOutcome(rawDiscovered.length, surviving.length, tombstonedCount)
+    return { addons: mergeAddons(existing, surviving, { keepMissingLocal: true }), failedReadConnIds, changed: outcome.changed, propagateDeletions: outcome.propagateDeletions }
 }
 
 export function invalidateConnectionCache(connectionId?: string) {

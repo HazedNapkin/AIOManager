@@ -289,18 +289,20 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
 
     let failedReadConnIds = new Set<string>()
     let discoveryChanged = false
+    let propagateDeletions = false
     if (currentAccount.connections?.some(c => c.enabled)) {
         const { absorbConnectionAddons } = await import('@/lib/connection-discovery')
         const absorb = await absorbConnectionAddons({ ...currentAccount, addons: finalAddons }, id)
         if (!useAuthStore.getState().encryptionKey) return { changed: false, authKeyRefreshed }
         failedReadConnIds = absorb.failedReadConnIds
+        propagateDeletions = absorb.propagateDeletions
         if (absorb.changed) {
             finalAddons = absorb.addons
             discoveryChanged = true
         }
     }
 
-    trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length })
+    trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length, propagateDeletions })
 
     const prevAddons = currentAccount.addons
     const addonsChanged = fingerprintAddonList(prevAddons) !== fingerprintAddonList(finalAddons)
@@ -358,8 +360,8 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     }
 
     let reconcileStates: Record<string, { status?: ConnectionStatus; lastError?: string }> | null = null
-    trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || (discoveryChanged && updatedAccount.connections?.some(c => c.enabled))) })
-    if (forceRefresh || (discoveryChanged && updatedAccount.connections?.some(c => c.enabled))) {
+    trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || (discoveryChanged || propagateDeletions) && updatedAccount.connections?.some(c => c.enabled)) })
+    if (forceRefresh || ((discoveryChanged || propagateDeletions) && updatedAccount.connections?.some(c => c.enabled))) {
         pushPromises.push(
             (async () => {
                 try {
