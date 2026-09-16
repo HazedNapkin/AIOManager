@@ -299,6 +299,12 @@ export function AccountList() {
 
   const checkRules = useFailoverStore((state) => state.checkRules)
   const isSelectionActive = isSelectionMode || selectedAccountIds.size > 0
+  // The 2-per-row pairing rule for the narrow toolbar grid - see accountsToolbarButtonCount.
+  // Update All renders col-span-full above the grid, so it never joins the pairing pool.
+  const accountsToolbarButtonCount = 3
+    + (totalChangelogCount > 0 ? 1 : 0)
+    + (accounts.length >= 2 ? 1 : 0)
+  const addAccountSpansFull = accountsToolbarButtonCount % 2 === 1
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -567,7 +573,7 @@ export function AccountList() {
             <span>{isSelectionActive ? 'Cancel' : 'Select'}</span>
           </Button>
           {!isSelectionActive && (
-            <Button size="sm" className="w-full gap-1.5 h-8 text-xs font-medium sm:w-auto" onClick={() => openAddAccountDialog()}>
+            <Button size="sm" className={`w-full gap-1.5 h-8 text-xs font-medium ${addAccountSpansFull ? 'col-span-full' : ''} sm:w-auto sm:col-span-auto`} onClick={() => openAddAccountDialog()}>
               <Plus className="h-3.5 w-3.5" />
               <span className="sm:hidden">Add</span>
               <span className="hidden sm:inline">Add Account</span>

@@ -40,13 +40,24 @@ export function getAddonInstanceKey(addon: Pick<AddonDescriptor, 'transportUrl' 
     .replace(/\/+$/, '')
     .split('/')
     .filter(Boolean)
-  const stableSegments = allSegments.filter(
-    (segment) => UUID_SEGMENT.test(segment) || segment.length <= MAX_STABLE_SEGMENT_LENGTH
+  // stremio/u/<alias> is server-resolved routing for the same instance - drop the pair.
+  const withoutAlias: string[] = []
+  for (let i = 0; i < allSegments.length; i++) {
+    if (allSegments[i] === 'u' && i + 1 < allSegments.length) { i++; continue }
+    withoutAlias.push(allSegments[i])
+  }
+  const droppedConfig = withoutAlias.some(
+    (segment) => !UUID_SEGMENT.test(segment) && segment.length > MAX_STABLE_SEGMENT_LENGTH
   )
-  const droppedVolatile = stableSegments.length !== allSegments.length
+  // manifest.id embedding the instance uuid (AIOStreams truncates it) makes the matching uuid path segment redundant.
+  const idCompact = manifestId.toLowerCase().replace(/[^0-9a-z]/g, '')
+  const stableSegments = withoutAlias.filter((segment) => {
+    if (UUID_SEGMENT.test(segment) && idCompact.includes(segment.replace(/-/g, '').slice(0, 8))) return false
+    return UUID_SEGMENT.test(segment) || segment.length <= MAX_STABLE_SEGMENT_LENGTH
+  })
   const stablePath = stableSegments.map((segment) => segment.toLowerCase()).join('/')
   // Query is identity unless config lives in the path - dropping it would collapse dual-config addons.
-  const querySuffix = droppedVolatile ? '' : parsed.search
+  const querySuffix = droppedConfig ? '' : parsed.search
 
   return `${origin.toLowerCase()}|${manifestId}|${stablePath}${querySuffix}`
 }

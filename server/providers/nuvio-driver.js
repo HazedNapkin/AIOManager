@@ -77,9 +77,12 @@ export function createNuvioDriver(options = {}) {
         if (/^\d+$/.test(stringId)) return parseInt(stringId, 10)
 
         let profiles = []
+        let profilesRpcFailed = false
         try {
             profiles = await rpc('sync_pull_profiles', {}, accessToken)
-        } catch { }
+        } catch {
+            profilesRpcFailed = true
+        }
 
         if (Array.isArray(profiles) && stringId) {
             const match = profiles.find(p => p.id === stringId)
@@ -89,7 +92,9 @@ export function createNuvioDriver(options = {}) {
             }
         }
 
-        if (opts.strict && stringId) {
+        // A self-hosted backend has no sync_pull_profiles RPC - treat it as single-profile
+        // and write to the primary. Refuse only on enumerated profiles with no id match.
+        if (opts.strict && stringId && !profilesRpcFailed) {
             const err = new Error('Could not resolve the Nuvio profile to write; refusing to fall back to the primary profile')
             err.status = 404
             throw err

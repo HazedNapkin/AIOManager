@@ -29,6 +29,7 @@ export interface SyncedSettings {
     privacyLevelNames?: number
     privacyLevelUrls?: number
     privacyLevelProfiles?: number
+    privacyLevelEmail?: number
     libraryViewMode?: SyncedViewMode
     accountsView?: SyncedViewMode
     addonListView?: SyncedViewMode
@@ -46,6 +47,7 @@ const STORAGE_KEYS = {
     privacyLevelNames: 'aioman:privacy-level-names',
     privacyLevelUrls: 'aioman:privacy-level-urls',
     privacyLevelProfiles: 'aioman:privacy-level-profiles',
+    privacyLevelEmail: 'aioman:privacy-level-email',
     libraryViewMode: 'aioman:library-view-mode',
     accountsView: 'aioman:accounts-view',
     addonListView: 'aioman:addon-list-view',
@@ -218,6 +220,7 @@ export function readSyncedSettings(): SyncedSettings {
         privacyLevelNames: readNumber(STORAGE_KEYS.privacyLevelNames, uiState.privacyLevelNames ?? 0),
         privacyLevelUrls: readNumber(STORAGE_KEYS.privacyLevelUrls, uiState.privacyLevelUrls ?? 0),
         privacyLevelProfiles: readNumber(STORAGE_KEYS.privacyLevelProfiles, uiState.privacyLevelProfiles ?? 0),
+        privacyLevelEmail: readNumber(STORAGE_KEYS.privacyLevelEmail, uiState.privacyLevelEmail ?? 0),
         libraryViewMode: uiState.libraryViewMode,
         accountsView: uiState.accountsView,
         addonListView: uiState.addonListView,
@@ -286,6 +289,11 @@ export function applySyncedSettings(settings: SyncedSettings | undefined, overwr
         setStorageItem(STORAGE_KEYS.privacyLevelProfiles, String(settings.privacyLevelProfiles))
         useUIStore.setState({ privacyLevelProfiles: settings.privacyLevelProfiles })
         applied.privacyLevelProfiles = settings.privacyLevelProfiles
+    }
+    if (typeof settings.privacyLevelEmail === 'number' && shouldWrite(STORAGE_KEYS.privacyLevelEmail)) {
+        setStorageItem(STORAGE_KEYS.privacyLevelEmail, String(settings.privacyLevelEmail))
+        useUIStore.setState({ privacyLevelEmail: settings.privacyLevelEmail })
+        applied.privacyLevelEmail = settings.privacyLevelEmail
     }
 
     if (isViewMode(settings.libraryViewMode) && shouldWrite(STORAGE_KEYS.libraryViewMode)) {

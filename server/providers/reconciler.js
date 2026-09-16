@@ -388,6 +388,17 @@ export function createReconciler(fastify) {
     const NETWORK_ERROR_COOLDOWN_MS = 2 * 60 * 1000  // 2 minutes for transient network issues
 
     const shouldSkip = (accountId, connId) => {
+        // A fresh client collection write means the hub is momentarily behind the platforms.
+        const writes = fastify.clientCollectionWrites
+        if (writes) {
+            const last = Math.max(
+                writes.get(accountId) || 0,
+                writes.get('Bulk Op') || 0,
+                writes.get('Profile Swap') || 0,
+                writes.get('Clear All') || 0
+            )
+            if (Date.now() - last < 20000) return true
+        }
         const state = getState(accountId, connId)
         if (state.status === 'expired') {
             // Auth errors get a LONG cooldown. Supabase bans IPs that hit auth too frequently.

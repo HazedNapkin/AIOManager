@@ -5,11 +5,11 @@ import {
     fetchAddonManifest as apiFetchAddonManifest,
 } from '@/api/addons'
 import { mergeAddons, normalizeAddonUrl, hasFallbackAddonName } from '@/lib/utils'
-import { filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
+import { filterResurrectedAuto, loadResurrectionSightings, saveResurrectionSightings, reconcileTombstones } from '@/lib/addon-tombstones'
 import { trace } from '@/lib/trace'
 import { fingerprintAddonList } from '@/lib/addon-fingerprint'
 import { mapConcurrent } from '@/lib/concurrency'
-import { isSyncEligibleConnection } from '@/types/connection'
+import { isSyncEligibleConnection, type ConnectionStatus } from '@/types/connection'
 import { useAuthStore } from '@/store/authStore'
 import { AddonDescriptor } from '@/types/addon'
 import type { Account } from '@/types/account'
@@ -82,8 +82,10 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
             }
         })
 
-    const survivingRemote = filterResurrected(normalizedAddons, account.addons, account.deletedAddons)
-    trace('sync.merge', 'post-tombstone', { accountId: account.id, afterTombstone: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length })
+    const adoption = filterResurrectedAuto(normalizedAddons, account.addons, account.deletedAddons, loadResurrectionSightings())
+    saveResurrectionSightings(adoption.nextSightings)
+    const survivingRemote = adoption.kept
+    trace('sync.merge', 'post-tombstone', { accountId: account.id, survived: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length, autoAdopted: adoption.adopted.length })
     const survivingUrls = new Set(survivingRemote.map(a => normalizeAddonUrl(a.transportUrl)))
     const strippedByTombstone = normalizedAddons
         .filter(a => !survivingUrls.has(normalizeAddonUrl(a.transportUrl)))
@@ -341,14 +343,22 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
 
     const pushPromises: Promise<void>[] = []
     trace('sync.core', 'writeback-gate', { accountId: id, willPushStremio: !!(useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)), reason: forceRefresh ? 'forceRefresh' : discoveryChanged ? 'discoveryChanged' : 'passive-skip' })
+    // A dead connection is reported on the connection, never allowed to abort the
+    // cycle - an abort here skips triggerSync() below and starves the cloud push.
+    let stremioWriteError: unknown = null
     if (useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)) {
         pushPromises.push(
             updateAddons(stremioAuthKey, finalAddons, currentAccount.id, { previousCollection: currentAccount.addons })
-                .catch(err => { if (!isTransientSyncError(err)) throw err })
+                .catch(err => {
+                    if (isTransientSyncError(err)) return
+                    if (isAuthError(err)) throw err
+                    stremioWriteError = err
+                })
         )
     }
 
-    trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || discoveryChanged) })
+    let reconcileStates: Record<string, { status?: ConnectionStatus; lastError?: string }> | null = null
+    trace('sync.core', 'push-connections-gate', { accountId: id, willPush: !!(forceRefresh || (discoveryChanged && updatedAccount.connections?.some(c => c.enabled))) })
     if (forceRefresh || (discoveryChanged && updatedAccount.connections?.some(c => c.enabled))) {
         pushPromises.push(
             (async () => {
@@ -357,6 +367,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
                     const pushConnections = (updatedAccount.connections || []).filter(c => !failedReadConnIds.has(c.id))
                     const reconcileResult = await triggerReconciliation(id, updatedAccount.primaryConnectionId, pushConnections, finalAddons)
                     if (reconcileResult.connectionStates && Object.keys(reconcileResult.connectionStates).length > 0) {
+                        reconcileStates = reconcileResult.connectionStates as Record<string, { status?: ConnectionStatus; lastError?: string }>
                         import('@/store/connectionStore').then(({ useConnectionStore }) => {
                             useConnectionStore.setState(s => ({
                                 connectionStates: {
@@ -374,6 +385,32 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     }
 
     await Promise.all(pushPromises)
+
+    // Correct the optimistic per-connection stamps with the real write outcomes, so a
+    // failing Nuvio/Stremio connection shows its error instead of a false 'active'.
+    if (stremioWriteError || reconcileStates) {
+        const statusFor = (err: unknown): ConnectionStatus => (isAuthError(err) ? 'expired' : 'error')
+        const correctedConnections = (updatedAccount.connections ?? []).map(c => {
+            if (!c.enabled) return c
+            if (stremioWriteError && c.platform === 'stremio') {
+                return {
+                    ...c,
+                    status: statusFor(stremioWriteError),
+                    lastError: stremioWriteError instanceof Error ? stremioWriteError.message : String(stremioWriteError),
+                    lastErrorAt: Date.now(),
+                }
+            }
+            const st = reconcileStates?.[c.id]
+            if (st?.status) {
+                return { ...c, status: st.status, lastError: st.lastError ?? c.lastError, lastErrorAt: Date.now() }
+            }
+            return c
+        })
+        updatedAccount = { ...updatedAccount, connections: correctedConnections }
+        const correctedAccounts = store.getState().accounts.map((acc) => (acc.id === id ? updatedAccount : acc))
+        store.setState({ accounts: correctedAccounts })
+        persistAccounts(correctedAccounts)
+    }
 
     return { changed: addonsChanged || discoveryChanged || authKeyRefreshed, authKeyRefreshed }
 }

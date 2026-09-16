@@ -77,3 +77,86 @@ export function reconcileTombstones(tombstones: Tombstones | undefined, mergedAd
     }
     return out
 }
+
+// Tombstoned addons persistently re-pushed by other tools (AIOM Hydra sync) are intentional re-adds - adopt after 3 sightings.
+export const AUTO_ADOPT_THRESHOLD = 3
+
+export type ResurrectionSightings = Record<string, number>
+
+export interface ResurrectionFilterResult<T> {
+    kept: T[]
+    adopted: T[]
+    suppressedCount: number
+    nextSightings: ResurrectionSightings
+}
+
+export function filterResurrectedAuto<T extends AddonLike>(
+    remote: T[],
+    local: AddonLike[],
+    tombstones: Tombstones | undefined,
+    sightings: ResurrectionSightings,
+    now = Date.now(),
+    ttl = DEFAULT_TTL_MS
+): ResurrectionFilterResult<T> {
+    const localKeys = new Set(local.map(a => normUrl(a.transportUrl)).filter(Boolean))
+    const nextSightings: ResurrectionSightings = { ...sightings }
+    const kept: T[] = []
+    const adopted: T[] = []
+    let suppressedCount = 0
+    for (const addon of remote) {
+        const k = key(addon.transportUrl)
+        const tombstoned = k !== '' && tombstones?.[k] !== undefined && now - tombstones[k] < ttl
+        if (!k || localKeys.has(k) || !tombstoned) { kept.push(addon); continue }
+        const count = (nextSightings[k] || 0) + 1
+        if (count >= AUTO_ADOPT_THRESHOLD) {
+            delete nextSightings[k]
+            markResurrectionAdopted(k)
+            kept.push(addon)
+            adopted.push(addon)
+            continue
+        }
+        nextSightings[k] = count
+        suppressedCount++
+    }
+    return { kept, adopted, suppressedCount, nextSightings }
+}
+
+const ADOPTED_STORAGE_KEY = 'aioman:adopted-tombstones'
+
+// Persistently tracks URLs the auto-adopt has adopted, so a stale E2E blob merge
+// doesn't re-create the tombstone and re-suppress an intentionally re-added addon.
+export function markResurrectionAdopted(urlKey: string): void {
+    try {
+        if (typeof localStorage === 'undefined') return
+        const raw = localStorage.getItem(ADOPTED_STORAGE_KEY)
+        const adopted = raw ? JSON.parse(raw) : {}
+        adopted[urlKey] = Date.now()
+        localStorage.setItem(ADOPTED_STORAGE_KEY, JSON.stringify(adopted))
+    } catch {}
+}
+
+export function isResurrectionAdopted(urlKey: string): boolean {
+    try {
+        if (typeof localStorage === 'undefined') return false
+        const raw = localStorage.getItem(ADOPTED_STORAGE_KEY)
+        const adopted = raw ? JSON.parse(raw) : {}
+        return adopted[urlKey] !== undefined
+    } catch { return false }
+}
+
+const SIGHTINGS_STORAGE_KEY = 'aioman:tombstone-sightings'
+
+export function loadResurrectionSightings(): ResurrectionSightings {
+    try {
+        if (typeof localStorage === 'undefined') return {}
+        const raw = localStorage.getItem(SIGHTINGS_STORAGE_KEY)
+        return raw ? JSON.parse(raw) : {}
+    } catch { return {} }
+}
+
+export function saveResurrectionSightings(s: ResurrectionSightings): void {
+    try {
+        if (typeof localStorage === 'undefined') return
+        localStorage.setItem(SIGHTINGS_STORAGE_KEY, JSON.stringify(s))
+    } catch {}
+}

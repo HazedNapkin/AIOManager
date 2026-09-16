@@ -418,6 +418,13 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
 
         syncManager.addPendingRemoval(accountId, transportUrl)
 
+        try {
+            const { useFailoverStore } = await import('@/store/failoverStore')
+            await useFailoverStore.getState().removeUrlFromRules(accountId, transportUrl)
+        } catch (e) {
+            if (import.meta.env.DEV) console.warn('[RemoveAddon] Failover chain cleanup failed:', e)
+        }
+
         const updatedAddons = account.addons.filter(
             (a) => normalizeAddonUrl(a.transportUrl) !== normalizeAddonUrl(transportUrl)
         )
@@ -468,6 +475,13 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
 
         transportUrl = addonToRemove.transportUrl
         syncManager.addPendingRemoval(accountId, transportUrl)
+
+        try {
+            const { useFailoverStore } = await import('@/store/failoverStore')
+            await useFailoverStore.getState().removeUrlFromRules(accountId, transportUrl)
+        } catch (e) {
+            if (import.meta.env.DEV) console.warn('[RemoveByIndex] Failover chain cleanup failed:', e)
+        }
 
         if (addonToRemove.flags?.protected) {
             throw new Error(
@@ -554,6 +568,15 @@ export async function bulkDeleteAddons(accountId: string, keptAddons: AddonDescr
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
         persistAccounts(accounts)
+
+        try {
+            const { useFailoverStore } = await import('@/store/failoverStore')
+            for (const url of removedUrls) {
+                await useFailoverStore.getState().removeUrlFromRules(accountId, url)
+            }
+        } catch (e) {
+            if (import.meta.env.DEV) console.warn('[BulkDelete] Failover chain cleanup failed:', e)
+        }
 
         backgroundSync(accountId, account, timestamped, { allowCollectionShrink: true }, 'bulk-delete')
     } catch (error) {
@@ -1066,6 +1089,16 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
         )
         store.setState({ accounts })
         persistAccounts(accounts)
+
+        try {
+            const { useFailoverStore } = await import('@/store/failoverStore')
+            for (const url of removedUrls) {
+                await useFailoverStore.getState().removeUrlFromRules(accountId, url)
+            }
+        } catch (e) {
+            if (import.meta.env.DEV) console.warn('[LocalRemove] Failover chain cleanup failed:', e)
+        }
+
         backgroundSync(accountId, account, updatedAddons, { allowCollectionShrink: true }, 'local-remove')
     } finally {
         releaseMutex()

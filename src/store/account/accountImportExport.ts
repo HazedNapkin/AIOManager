@@ -1,5 +1,5 @@
 import { mergeAddons } from '@/lib/utils'
-import { mergeTombstones, filterResurrected, reconcileTombstones } from '@/lib/addon-tombstones'
+import { mergeTombstones, filterResurrected, reconcileTombstones, isResurrectionAdopted } from '@/lib/addon-tombstones'
 import { readSyncedSettings } from '@/lib/synced-settings'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
@@ -560,7 +560,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     hideLastWatched: ra.hideLastWatched ?? matchedAccount.hideLastWatched,
                     hideAddonPreview: ra.hideAddonPreview ?? matchedAccount.hideAddonPreview,
                     hidePlatformLogos: ra.hidePlatformLogos ?? matchedAccount.hidePlatformLogos,
-                    avatar: ra.avatar ?? matchedAccount.avatar,
+                    avatar: matchedAccount.avatar ?? ra.avatar,
                     apiKey: ra.apiKey ?? matchedAccount.apiKey ?? safeUUID(),
                     profiles: (() => {
                         const localProfiles = matchedAccount.profiles || []
@@ -597,6 +597,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                         // Union both devices' tombstones, suppress resurrected addons (a delete on
                         // either device wins), then self-heal the set against the merged result.
                         const tombstones = mergeTombstones(matchedAccount.deletedAddons, ra.deletedAddons)
+                        for (const adoptedKey of Object.keys(tombstones)) {
+                            if (isResurrectionAdopted(adoptedKey)) delete tombstones[adoptedKey]
+                        }
                         const mergedAddons = mode === 'mirror'
                             ? filterResurrected(ra.addons, [], tombstones)
                             : mergeAddons(matchedAccount.addons, filterResurrected(ra.addons, matchedAccount.addons, tombstones), { instanceMatch: 'adopt-remote-url' })
@@ -611,6 +614,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 processedLocalIds.add(matchedAccount.id)
             } else {
                 const importedTombstones = mergeTombstones(undefined, ra.deletedAddons)
+                for (const adoptedKey of Object.keys(importedTombstones)) {
+                    if (isResurrectionAdopted(adoptedKey)) delete importedTombstones[adoptedKey]
+                }
                 const importedAddons = filterResurrected(ra.addons, [], importedTombstones)
                 const importedAccount = {
                     ...ra,

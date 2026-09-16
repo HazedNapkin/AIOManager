@@ -373,7 +373,7 @@ export class StremioClient {
 
       const proxyAuthHeaders = shouldFetchDirectly ? {} : await getProxyAuthHeaders()
       const response = await resilientFetch(fetchUrl, {
-        timeout: 5000,
+        timeout: 15000,
         headers: shouldFetchDirectly ? {} : { ...proxyAuthHeaders, 'x-account-context': accountContext },
         retries: retries
       })

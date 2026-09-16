@@ -1139,6 +1139,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
           ...(lastUsed && !Number.isNaN(lastUsed.getTime()) && { lastUsed }),
           tags: Array.isArray(newItem.tags) ? newItem.tags : [],
           profileId: newItem.profileId as string | undefined,
+          ...(typeof newItem.sortOrder === 'number' && { sortOrder: newItem.sortOrder }),
           ...(metadata && { metadata }),
           ...(catalogOverrides && { catalogOverrides }),
           ...(typeof newItem.autoRestore === 'boolean' && { autoRestore: newItem.autoRestore }),
