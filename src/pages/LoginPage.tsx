@@ -206,8 +206,10 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 setLoginError('Invalid password')
             } else {
                 setUnlockFailures(0)
-                if (auth.isAuthenticated && auth.id) {
-                    useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass } }))
+                if (auth.id) {
+                    useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass, isAuthenticated: true } }))
+                    // Local unlock restores IndexedDB only - deferred pull so the identity and avatar land like a normal login.
+                    setTimeout(() => useSyncStore.getState().refreshFromCloud(), 1500)
                 }
                 void maybeRememberDevice()
                 toast({ title: "Welcome back", description: "Signed in successfully." })

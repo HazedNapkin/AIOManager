@@ -207,10 +207,11 @@ async function createList(name: string): Promise<{ id: string | null; status: nu
     if (match) return { id: match.id, status: 200 }
 
     const result = await pmdbPost('lists', { name, is_public: false })
-    if (result.data) {
-        const id = result.data.list_id ?? result.data.id
-        if (typeof id === 'string') return { id, status: result.status }
-    }
+    const body = result.data
+    const item = body && typeof body.item === 'object' && body.item !== null ? body.item as Record<string, unknown> : null
+    const rawId = item?.id ?? body?.list_id ?? body?.id
+    if (typeof rawId === 'string' && rawId) return { id: rawId, status: result.status }
+    if (typeof rawId === 'number' && rawId > 0) return { id: String(rawId), status: result.status }
 
     const retry = await findExistingLists()
     const retryMatch = retry.find(l => normalizeName(l.name) === normalizeName(name))
@@ -349,6 +350,12 @@ export async function publishRail(
     if (cacheDirty) saveImdbTmdbCache(imdbCache)
 
     const newItemHashes = new Set(resolvedItems.map(itemHash))
+    // All-unresolved reconciliation wipes the list to nothing; leave it untouched instead.
+    if (resolvedItems.length === 0) {
+        result.unresolved = rail.items.length
+        result.error = 'No rail items could be resolved to TMDB ids - list left unchanged'
+        return result
+    }
     const toAdd: PmdbRailItem[] = []
     for (const item of resolvedItems) {
         const tmdbId = Number(item.id.replace('tmdb:', ''))

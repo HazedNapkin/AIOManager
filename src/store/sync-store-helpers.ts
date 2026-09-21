@@ -11,6 +11,8 @@ export const syncRuntime = {
     lastPulledDeletedWatchEvents: null as Record<string, number> | null,
     lastPulledNotesTrash: null as import('./notesStore').Note[] | null,
     lastPulledVaultTombstones: null as import('./vaultStore').VaultTombstone[] | null,
+    // Preserved on push when this device has no avatar; mirrors the pull's upgrade-only identity rule.
+    lastPulledCloudAvatar: null as string | null,
     pendingRetry: false,
     syncDebounceTimer: null as ReturnType<typeof setTimeout> | null,
     lastSyncedAccountCount: null as number | null,
@@ -75,6 +77,22 @@ export function readIdentityProfile(): { id: string | null; name: string; avatar
 
 export function writeIdentityProfile(id: string, name: string, avatar: string | null): void {
     try { localStorage.setItem(IDENTITY_KEY, JSON.stringify({ id, name, avatar })) } catch {}
+}
+
+// Upgrade-only identity resolution: a non-empty cloud value wins, otherwise the same-account
+// local fallback applies. An empty cloud value can never erase what this device has.
+export function resolveCloudIdentity(
+    cloud: Record<string, unknown>,
+    accountId: string,
+    localAuth: { name: string; avatar: string | null },
+): { name: string; avatar: string | null } {
+    const profile = readIdentityProfile()
+    const sameAccount = profile.id === accountId
+    const fallbackName = sameAccount ? (localAuth.name || profile.name) : ''
+    const fallbackAvatar = sameAccount ? (localAuth.avatar ?? profile.avatar) : null
+    const name = (typeof cloud.name === 'string' && cloud.name) ? cloud.name : fallbackName
+    const avatar = (typeof cloud.avatar === 'string' && cloud.avatar) ? cloud.avatar : fallbackAvatar
+    return { name, avatar }
 }
 
 export const LEGACY_SYNC_PASSWORD_KEY = 'aioman-sync-password'

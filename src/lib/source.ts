@@ -49,24 +49,27 @@ export const source = loader({
     },
 });
 
-const indexedDocs: IndexedDoc[] = files.filter(f => f.type === 'page').map(f => {
-    const path = f.path as string
-    const data = f.data as { title?: string; description?: string; structuredData?: { headings?: Array<{ id?: string; content?: string }>; contents?: Array<{ content?: string }> } }
-    // fumadocs-mdx's structuredData carries already-extracted plain text: headings ({id, content})
-    // and contents (body split by section). Use it instead of toc, whose title is a ReactNode, so
-    // calling .toLowerCase() on that threw and silently aborted every search.
-    const sd = data.structuredData ?? {}
-    const headings = (sd.headings ?? []) as Array<{ id?: string; content?: string }>
-    const contents = (sd.contents ?? []) as Array<{ content?: string }>
-    return {
-        id: path || 'index',
-        title: data.title || path || 'Home',
-        url: path ? `/kronorium/${path}` : '/kronorium',
-        description: data.description || '',
-        headings: headings.map((h) => ({ id: h.id ?? '', content: h.content ?? '' })),
-        body: contents.map(c => c.content ?? '').join(' '),
-    }
-})
+    const indexedDocs: IndexedDoc[] = files.filter(f => f.type === 'page').map(f => {
+        const path = f.path as string
+        const data = f.data as { title?: string; description?: string; structuredData?: { headings?: Array<{ id?: string; content?: string }>; contents?: Array<{ content?: string }> } }
+        // fumadocs-mdx's structuredData carries already-extracted plain text: headings ({id, content})
+        // and contents (body split by section). Use it instead of toc, whose title is a ReactNode, so
+        // calling .toLowerCase() on that threw and silently aborted every search.
+        const sd = data.structuredData ?? {}
+        const headings = (sd.headings ?? []) as Array<{ id?: string; content?: string }>
+        const contents = (sd.contents ?? []) as Array<{ content?: string }>
+        // Section landing pages (folder/index.mdx) live at the folder root in fumadocs' loader -
+        // an indexed '/kronorium/addons/index' url would 404 where '/kronorium/addons' resolves.
+        const canonicalPath = path && path !== 'index' ? path.replace(/\/index$/, '') : ''
+        return {
+            id: path || 'index',
+            title: data.title || path || 'Home',
+            url: canonicalPath ? `/kronorium/${canonicalPath}` : '/kronorium',
+            description: data.description || '',
+            headings: headings.map((h) => ({ id: h.id ?? '', content: h.content ?? '' })),
+            body: contents.map(c => c.content ?? '').join(' '),
+        }
+    })
 
 // In-memory client search. fumadocs' static client always fetches an exported index from a URL
 // (no such endpoint in this SPA), so we wire this through useDocsSearch({ client }) instead.

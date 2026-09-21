@@ -5,9 +5,10 @@ const RPC_PATH = `${REST_PATH}/rpc`
 const RPC_TIMEOUT_MS = 30000
 const REST_TIMEOUT_MS = 15000
 
-import { trace } from '@/lib/trace'
-import { mapAvatarRows } from '@/lib/nuvio-avatar'
-import type { NuvioAvatar } from '@/lib/nuvio-avatar'
+import { trace } from '../trace'
+import { mapAvatarRows } from '../nuvio-avatars.ts'
+import { resolveProfileIndexWith } from './nuvio-profile.ts'
+import type { NuvioAvatar } from '../nuvio-avatars.ts'
 
 interface NuvioError extends Error {
     status?: number
@@ -70,30 +71,13 @@ export function createNuvioDriver(options: { baseUrl?: string; publishableKey?: 
         throw lastErr
     }
 
-    async function resolveProfileIndex(accessToken: string, profileId?: string | number, opts: { strict?: boolean } = {}): Promise<number> {
-        if (typeof profileId === 'number' && Number.isFinite(profileId) && profileId > 0) return profileId
-        const stringId = String(profileId || '').trim()
-        if (/^\d+$/.test(stringId)) return parseInt(stringId, 10)
-
-        let profiles: Array<Record<string, unknown>> = []
-        try { profiles = await rpc('sync_pull_profiles', {}, accessToken) } catch {}
-        if (Array.isArray(profiles) && stringId) {
-            const match = profiles.find(p => p.id === stringId)
-            if (match) {
-                const idx = (match.profile_index ?? match.profileIndex) as number
-                if (Number.isFinite(idx) && idx > 0) return idx
-            }
-        }
-        if (opts.strict && stringId) {
-            const err: NuvioError = new Error('Could not resolve the Nuvio profile to write; refusing to fall back to the primary profile')
-            err.status = 404
-            throw err
-        }
-        if (!Array.isArray(profiles) || profiles.length === 0) return 1
-        if (profiles.find(p => (p.profile_index ?? p.profileIndex) === 1)) return 1
-        const fallbackIdx = (profiles[0].profile_index ?? profiles[0].profileIndex) as number
-        if (Number.isFinite(fallbackIdx) && fallbackIdx > 0) return fallbackIdx
-        return 1
+    const resolveProfileIndex = async (accessToken: string, profileId?: string | number, opts: { strict?: boolean } = {}): Promise<number> => {
+        const { index } = await resolveProfileIndexWith(
+            () => rpc('sync_pull_profiles', {}, accessToken),
+            profileId,
+            opts,
+        )
+        return index
     }
 
     return {

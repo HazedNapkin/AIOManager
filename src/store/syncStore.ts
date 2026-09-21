@@ -46,6 +46,7 @@ import {
     isAccountsHydrationComplete,
     LEGACY_SYNC_PASSWORD_KEY,
     syncRuntime,
+    resolveCloudIdentity,
 } from './sync-store-helpers'
 export { markAccountsHydrated, readIdentityProfile, getSyncApiPath } from './sync-store-helpers'
 import {
@@ -167,6 +168,7 @@ export const useSyncStore = create<SyncState>()(
                     auth: { ...state.auth, avatar }
                 }))
                 writeIdentityProfile(get().auth.id, get().auth.name, avatar)
+                if (avatar === null) syncRuntime.lastPulledCloudAvatar = null
                 get().syncToRemote(true).catch(e => { if (import.meta.env.DEV) console.error(e) })
             },
 
@@ -467,6 +469,7 @@ export const useSyncStore = create<SyncState>()(
                             notesTrash: Array.isArray(d.notesTrash) ? d.notesTrash : [],
                             salt: d.salt,
                             name: d.name,
+                            avatar: d.avatar,
                             syncedAt: d.syncedAt,
                             lastSeenVersion: d.lastSeenVersion || null,
                             settings: d.settings ? {
@@ -495,6 +498,15 @@ export const useSyncStore = create<SyncState>()(
                             throw new Error("Invalid server response. Make sure the backend is running correctly.")
                         }
                         throw new Error("Failed to decrypt cloud data. Verify your password.")
+                    }
+
+                    // Identity restore must precede the vault unlock: an unlock failure can never skip it.
+                    {
+                        const pre = resolveCloudIdentity(data as Record<string, unknown>, id, get().auth)
+                        if (pre.name !== get().auth.name || pre.avatar !== get().auth.avatar || readIdentityProfile().id !== id) {
+                            writeIdentityProfile(id, pre.name, pre.avatar)
+                            set({ auth: { ...get().auth, name: pre.name, avatar: pre.avatar } })
+                        }
                     }
 
                     // This ensures we can still decrypt local account authKeys for reconciliation
@@ -567,6 +579,8 @@ export const useSyncStore = create<SyncState>()(
                         return
                     }
                     const syncData = data as Record<string, unknown>
+                    // Prime before any import runs: a mid-import failure must not leave the post-login push free to erase the cloud avatar.
+                    syncRuntime.lastPulledCloudAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : null
                     const localLastSync = get().lastSyncedAt
                     const remoteLastSync = syncData.syncedAt as string | undefined
 
@@ -693,14 +707,9 @@ export const useSyncStore = create<SyncState>()(
 
                     // Identity is upgrade-only on pull: an empty name/avatar in the cloud
                     // (a stale push from another device) can never erase what this device has.
-                    // The local fallback only applies to the SAME account (no cross-account bleed).
-                    const localAuth = get().auth
-                    const profile = readIdentityProfile()
-                    const sameAccount = profile.id === id
-                    const fallbackName = sameAccount ? (localAuth.name || profile.name) : ''
-                    const fallbackAvatar = sameAccount ? (localAuth.avatar ?? profile.avatar) : null
-                    const restoredName = (syncData.name as string) || fallbackName
-                    const restoredAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : fallbackAvatar
+                    const identity = resolveCloudIdentity(syncData, id, get().auth)
+                    const restoredName = identity.name
+                    const restoredAvatar = identity.avatar
                     writeIdentityProfile(id, restoredName, restoredAvatar)
                     set({
                         auth: {
@@ -1008,6 +1017,8 @@ export const useSyncStore = create<SyncState>()(
                     const notesState = (await import('@/store/notesStore')).useNotesStore.getState()
                     const localNotes = await notesState.getAllNotesWithContent()
                     const mergedNotesTrash = mergeNotesTrash(notesState.trash, syncRuntime.lastPulledNotesTrash ?? [])
+                    const identityFallback = readIdentityProfile()
+                    const identityAvatarFallback = identityFallback.id === auth.id ? identityFallback.avatar : null
 
                     const watchExport = useWatchEventStore.getState().export()
                     const state = {
@@ -1030,7 +1041,7 @@ export const useSyncStore = create<SyncState>()(
                         deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
                         salt: saltBase64,
                         name: auth.name,
-                        avatar: auth.avatar ?? null,
+                        avatar: auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null,
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
@@ -1314,6 +1325,13 @@ export const useSyncStore = create<SyncState>()(
                     if (data.accounts) {
                         await useAccountStore.getState().importAccounts(JSON.stringify(data), true, 'mirror')
                     }
+                    {
+                        const identity = resolveCloudIdentity(data, auth.id, get().auth)
+                        if (identity.name !== get().auth.name || identity.avatar !== get().auth.avatar) {
+                            writeIdentityProfile(auth.id, identity.name, identity.avatar)
+                            set({ auth: { ...get().auth, name: identity.name, avatar: identity.avatar } })
+                        }
+                    }
                     if (data.addons) {
                         await useAddonStore.getState().importLibrary(data, false, true)
                         await useAddonStore.getState().initialize()
@@ -1372,6 +1390,7 @@ export const useSyncStore = create<SyncState>()(
                     if (data.lastSeenVersion) {
                         set({ lastSeenVersion: data.lastSeenVersion as string | null })
                     }
+                    syncRuntime.lastPulledCloudAvatar = (typeof data.avatar === 'string' && data.avatar) ? data.avatar : null
 
                     set({ lastSyncedAt: new Date().toISOString() })
 

@@ -30,7 +30,7 @@ export async function resilientFetch(
 
     for (let attempt = 0; attempt <= retries; attempt++) {
         const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), timeout);
+        const id = setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeout);
 
         let combinedSignal: AbortSignal;
         if (fetchOptions.signal) {

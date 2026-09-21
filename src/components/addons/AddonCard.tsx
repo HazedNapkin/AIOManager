@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { isCinemetaAddon, detectAllPatches } from '@/lib/cinemeta-utils'
 import { isAIOStreamsAddon, parseAIOStreamsUrl } from '@/lib/aiostreams-utils'
+import { getAddonInstanceKey } from '@/lib/addon-instance-identity'
 import { isAIOMetadataAddon, parseAIOMetadataUrl } from '@/lib/aiometadata-utils'
 import { useNavigate } from 'react-router-dom'
 import { CinemetaManifest } from '@/types/cinemeta'
@@ -353,10 +354,14 @@ export const AddonCard = React.memo(function AddonCard({
   const library = useAddonStore(s => s.library)
   const savedInLibrary = useMemo(() => {
     const strip = (url: string) => url.split('?')[0].replace(/\/+$/, '')
+    const transportKey = getAddonInstanceKey(addon)
     return Object.values(library).some(
-      (s) => s.manifest.id === addon.manifest.id && strip(s.installUrl) === strip(addon.transportUrl)
+      (s) =>
+        s.manifest.id === addon.manifest.id &&
+        (strip(s.installUrl) === strip(addon.transportUrl) ||
+          getAddonInstanceKey({ transportUrl: s.installUrl, manifest: s.manifest }) === transportKey)
     )
-  }, [library, addon.manifest.id, addon.transportUrl])
+  }, [library, addon])
 
   const hasVersionUpdate = latestVersion ? isNewerVersion(addon.manifest.version, latestVersion) : false
   const hasManifestShapeChange = !!manifestChange?.hasManifestShapeChange
@@ -786,7 +791,7 @@ export const AddonCard = React.memo(function AddonCard({
                         <Pencil className="h-4 w-4" />
                         Customize
                       </DropdownMenuItem>
-                      {canSaveToLibrary && (
+                      {canSaveToLibrary && !savedInLibrary && (
                         <DropdownMenuItem className="gap-2 sm:hidden" onClick={(e) => { e.stopPropagation(); openSaveModal(); }} disabled={saving || removing}>
                           <AnimatedHeartIcon className="h-4 w-4" isAnimating={saving} />
                           Save to Library
@@ -884,7 +889,7 @@ export const AddonCard = React.memo(function AddonCard({
                   </Button>
                 </Tooltip>
 
-                {canSaveToLibrary && (
+                {canSaveToLibrary && !savedInLibrary && (
                   <Button size="sm" onClick={openSaveModal} disabled={saving || removing} className="h-8 gap-1.5 border border-primary/25 bg-primary/12 text-xs font-semibold text-primary shadow-none hover:bg-primary/20">
                     <AnimatedHeartIcon className="h-3.5 w-3.5" isAnimating={saving} />
                     Save
@@ -1184,7 +1189,7 @@ export const AddonCard = React.memo(function AddonCard({
                 </Button>
               </Tooltip>
 
-              {canSaveToLibrary && (
+              {canSaveToLibrary && !savedInLibrary && (
                 <Button
                   size="sm"
                   onClick={openSaveModal}
@@ -1201,16 +1206,14 @@ export const AddonCard = React.memo(function AddonCard({
                     size="sm"
                     onClick={handleUpdate}
                     disabled={loading || updating || removing}
-                    className={cn('font-semibold text-xs gap-1.5 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none', canSaveToLibrary && 'col-span-2')}
+                    className="font-semibold text-xs gap-1.5 bg-muted/40 text-foreground/70 border border-border/40 hover:bg-muted/70 shadow-none"
                   >
                     <AnimatedRefreshIcon className="h-3.5 w-3.5" isAnimating={updating} />
                     Reinstall
                   </Button>
                 </Tooltip>
               )}
-            </div>
 
-            <div className="flex gap-1.5 w-full">
               <AddonNoteEditor
                 accountId={accountId}
                 addonTransportUrl={addon.transportUrl}
@@ -1219,6 +1222,7 @@ export const AddonCard = React.memo(function AddonCard({
                 note={addon.note}
                 index={index}
                 asButton
+                className={addon.flags?.protected ? 'col-span-2' : undefined}
               />
 
               {!addon.flags?.protected && (
@@ -1227,9 +1231,9 @@ export const AddonCard = React.memo(function AddonCard({
                   size="sm"
                   onClick={handleRemove}
                   disabled={removing}
-                  className="font-bold gap-2 flex-1 bg-destructive/10 hover:bg-destructive text-destructive hover:text-white border border-destructive/20 transition-[transform,opacity,box-shadow] duration-200"
+                  className="font-bold gap-2 bg-destructive/10 hover:bg-destructive text-destructive hover:text-white border border-destructive/20 transition-[transform,opacity,box-shadow] duration-200"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                   Remove Addon
                 </Button>
               )}

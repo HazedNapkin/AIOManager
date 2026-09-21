@@ -530,6 +530,11 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         const { type, ...payload } = request.body
         const accountContext = request.headers['x-account-context'] || 'Unknown'
         const masked = maskContext(accountContext)
+        // Client writes land on Stremio before their E2E sync blob; the reconciler must not re-assert the stale hub over them.
+        if (type === 'AddonCollectionSet') {
+            if (!fastify.clientCollectionWrites) fastify.clientCollectionWrites = new Map()
+            fastify.clientCollectionWrites.set(accountContext, Date.now())
+        }
 
         const actionMap = {
             'AddonCollectionGet': 'Refreshing Addons',
@@ -611,12 +616,20 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 }
 
                 const apiPath = PREMIUM_PREFS_PATHS[type] || (type.charAt(0).toLowerCase() + type.slice(1))
+                if (type === 'AddonCollectionSet') {
+                    fastify.log.warn({ category: 'DebugTrace' }, `[DebugTrace] Set forward: apiPath=${apiPath} addons=${Array.isArray(payload.addons) ? payload.addons.length : 'none'} urls=${Array.isArray(payload.addons) ? payload.addons.slice(0, 3).map(a => (a.transportUrl || '').slice(0, 40)).join(' | ') : '-'}`)
+                }
                 const response = await fetch('https://api.strem.io/api/' + apiPath, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                     signal: controller.signal
                 })
+                if (type === 'AddonCollectionSet') {
+                    let respHead = ''
+                    try { respHead = (await response.clone().text()).slice(0, 120) } catch {}
+                    fastify.log.warn({ category: 'DebugTrace' }, `[DebugTrace] Set response: status=${response.status} body=${respHead}`)
+                }
 
                 clearTimeout(timeoutId)
 

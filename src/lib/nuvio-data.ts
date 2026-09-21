@@ -1,6 +1,6 @@
 import type { Connection } from '@/types/connection'
 import type { createNuvioDriver } from '@/lib/drivers/nuvio'
-import type { NuvioAvatar } from '@/lib/nuvio-avatar'
+import type { NuvioAvatar } from './nuvio-avatars.ts'
 
 type NuvioDriver = ReturnType<typeof createNuvioDriver>
 

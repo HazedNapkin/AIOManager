@@ -75,7 +75,8 @@ export function bucketsToPmdbRails(buckets: RailBuckets, maxPerRail?: number): P
     const cap = (items: BucketItem[]) => maxPerRail ? items.slice(0, maxPerRail) : items
     const toItems = (items: BucketItem[], type: 'movie' | 'series'): PmdbRailItem[] =>
         cap(items)
-            .filter(i => i.id.startsWith('tmdb:'))
+            // tmdb: ids add directly; tt (imdb) ids resolve via resolveImdbToTmdb in the publisher.
+            .filter(i => i.id.startsWith('tmdb:') || i.id.startsWith('tt'))
             .map(i => ({ id: i.id, type, name: i.title, poster: i.poster }))
 
     const out: PmdbRail[] = []
