@@ -28,6 +28,11 @@ function normalizeUrl(url) {
 // authenticated user so a caller can't resolve another user's stored credentials by accountId
 // (cross-tenant IDOR). Server-trusted callers (the autopilot worker, which derives account_id from
 // owner-scoped rules) may omit it.
+// preferBaseUrled returns the index of the connection already chosen for a platform.
+function preferBaseUrled(connections, platform) {
+    return connections.findIndex(c => c.platform === platform)
+}
+
 async function resolveConnections(accountId, syncUser = null) {
     const rows = await db.query(
         syncUser
@@ -66,6 +71,43 @@ async function resolveConnections(accountId, syncUser = null) {
         }
 
         // one connection per platform; keep the most recent (older rows are stale per-device dupes)
+        if (type === 'nuvio' || type === 'realstream') {
+            let bundle = null
+            try { bundle = JSON.parse(decrypt(row.auth_key, FALLBACK_KEYS)) } catch { continue }
+            if (!bundle?.accessToken) continue
+            // preferBaseUrled: a baseUrl-less bundle pushes to the public api.nuvio.tv, so a
+            // baseUrl-bearing row always outranks a newer dupe that lost the instance URL.
+            const existingIdx = preferBaseUrled(connections, type)
+            if (existingIdx > -1) {
+                const incumbent = connections[existingIdx]
+                if (!incumbent.credentials?.baseUrl && bundle.baseUrl) {
+                    connections[existingIdx] = {
+                        id: row.connection_id,
+                        platform: type,
+                        accountId,
+                        driverType: 'native',
+                        enabled: true,
+                        status: 'active',
+                        credentials: bundle,
+                        consecutiveFailures: 0,
+                        capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
+                    }
+                }
+                continue
+            }
+            connections.push({
+                id: row.connection_id,
+                platform: type,
+                accountId,
+                driverType: 'native',
+                enabled: true,
+                status: 'active',
+                credentials: bundle,
+                consecutiveFailures: 0,
+                capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
+            })
+            continue
+        }
         if (seenPlatforms.has(type)) continue
         seenPlatforms.add(type)
 
@@ -83,23 +125,6 @@ async function resolveConnections(accountId, syncUser = null) {
                     credentials: { authKey },
                     consecutiveFailures: 0,
                     capabilities: ['addons']
-                })
-            }
-        } else if (type === 'nuvio' || type === 'realstream') {
-            let bundle = null
-            try { bundle = JSON.parse(decrypt(row.auth_key, FALLBACK_KEYS)) } catch { continue }
-            if (bundle?.accessToken) {
-                // enabled defaults true: the connection's enabled flag isn't stored server-side yet
-                connections.push({
-                    id: row.connection_id,
-                    platform: type,
-                    accountId,
-                    driverType: 'native',
-                    enabled: true,
-                    status: 'active',
-                    credentials: bundle,
-                    consecutiveFailures: 0,
-                    capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
                 })
             }
         }

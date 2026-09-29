@@ -218,6 +218,28 @@ export function registerProviderRoutes(fastify, reconciler) {
         return { ok: true }
     })
 
+    // Re-auth from a device that lacks the instance URL must never erase the row's stored
+    // self-hosted baseUrl: a baseUrl-less bundle makes every server-side push target api.nuvio.tv.
+    async function preserveExistingNuvioBaseUrl(connectionId, credentialValue) {
+        let incoming = null
+        try { incoming = typeof credentialValue === 'string' ? JSON.parse(credentialValue) : credentialValue } catch { return credentialValue }
+        if (!incoming || typeof incoming !== 'object' || incoming.baseUrl) return credentialValue
+        const existing = await db.get(
+            "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'nuvio' LIMIT 1",
+            [connectionId]
+        )
+        if (!existing?.auth_key) return credentialValue
+        try {
+            const bundle = JSON.parse(decrypt(existing.auth_key, FALLBACK_KEYS))
+            if (bundle?.baseUrl) {
+                incoming.baseUrl = bundle.baseUrl
+                if (!incoming.publishableKey && bundle.publishableKey) incoming.publishableKey = bundle.publishableKey
+                return JSON.stringify(incoming)
+            }
+        } catch { }
+        return credentialValue
+    }
+
     fastify.post('/api/providers/connections/:connectionId/credentials', {
         config: { rateLimit: { max: 30, timeWindow: '1 minute' } }
     }, async (request, reply) => {
@@ -236,7 +258,10 @@ export function registerProviderRoutes(fastify, reconciler) {
         }
 
         const type = ['nuvio', 'realstream', 'hydra'].includes(credentialType) ? credentialType : 'hydra'
-        const credentialValue = typeof credential === 'object' ? JSON.stringify(credential) : credential
+        let credentialValue = typeof credential === 'object' ? JSON.stringify(credential) : credential
+        if (type === 'nuvio') {
+            credentialValue = await preserveExistingNuvioBaseUrl(connectionId, credentialValue)
+        }
         const encrypted = encrypt(credentialValue, PRIMARY_KEY)
         const id = `${type}:${accountId}:${connectionId}`
 
@@ -285,8 +310,11 @@ export function registerProviderRoutes(fastify, reconciler) {
         if (!authUser) { reply.code(401); return { error: 'Unauthorized' } }
 
         const { connectionId } = request.params
-        const { accountId, platform } = request.body || {}
+        const { accountId, platform, baseUrl } = request.body || {}
         if (!accountId || !['nuvio', 'realstream'].includes(platform)) { reply.code(400); return { error: 'Missing accountId or unsupported platform' } }
+        if (baseUrl && typeof baseUrl === 'string' && !(await isSafeUrlResolved(baseUrl))) {
+            reply.code(400); return { error: 'Invalid or unsafe baseUrl' }
+        }
 
         if (platform === 'nuvio') {
             try {
@@ -297,7 +325,7 @@ export function registerProviderRoutes(fastify, reconciler) {
                 if (!owned) { reply.code(404); return { error: 'Connection not found' } }
 
                 const { refreshNuvioToken } = await import('../providers/token-refresh.js')
-                const bundle = await refreshNuvioToken(connectionId, accountId)
+                const bundle = await refreshNuvioToken(connectionId, accountId, { baseUrl: typeof baseUrl === 'string' && baseUrl ? baseUrl : undefined })
                 if (!bundle?.accessToken) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
                 return { accessToken: bundle.accessToken, expiresAt: bundle.expiresAt, profileId: bundle.profileId ?? null }
             } catch (err) {

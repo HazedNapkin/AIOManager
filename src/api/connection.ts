@@ -54,12 +54,13 @@ export async function fetchConnectionToken(
     accountId: string,
     connectionId: string,
     platform: string,
+    baseUrl?: string | null,
 ): Promise<{ accessToken: string; expiresAt: number; profileId: string | null }> {
     const base = getSyncApiPath(useSyncStore.getState().serverUrl)
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/token`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ accountId, platform }),
+        body: JSON.stringify({ accountId, platform, ...(baseUrl ? { baseUrl } : {}) }),
         timeout: 10000,
     })
     if (!res.ok) {

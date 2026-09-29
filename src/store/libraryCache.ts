@@ -478,7 +478,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 try {
                                     let token = getCachedNuvioToken(conn.id)
                                     if (!token) {
-                                        token = await fetchConnectionToken(account.id, conn.id, 'nuvio')
+                                        token = await fetchConnectionToken(account.id, conn.id, 'nuvio', conn.credentials?.baseUrl)
                                         setCachedNuvioToken(conn.id, token)
                                     }
                                     const driver = nuvioDriverFor(conn)

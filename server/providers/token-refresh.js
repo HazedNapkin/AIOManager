@@ -36,11 +36,11 @@ async function persistRotatedToken(connectionId, credentialType, newBundle) {
     throw e
 }
 
-export function refreshNuvioToken(connectionId, accountId) {
-    return singleFlight(`nuvio:${connectionId}`, () => refreshNuvioTokenInner(connectionId, accountId))
+export function refreshNuvioToken(connectionId, accountId, heal) {
+    return singleFlight(`nuvio:${connectionId}`, () => refreshNuvioTokenInner(connectionId, accountId, heal))
 }
 
-async function refreshNuvioTokenInner(connectionId, accountId) {
+async function refreshNuvioTokenInner(connectionId, accountId, heal) {
     const start = Date.now()
     trace('tokenRefresh', 'nuvio.start', { connectionId, accountId })
     const cred = await db.get(
@@ -58,6 +58,15 @@ async function refreshNuvioTokenInner(connectionId, accountId) {
     } catch {
         trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'decrypt-failed' })
         return null
+    }
+
+    // A bundle without baseUrl pushes to the public api.nuvio.tv; persist the heal before
+    // refreshing so the refresh itself targets the client's real backend.
+    if (heal?.baseUrl && !bundle.baseUrl) {
+        bundle.baseUrl = heal.baseUrl
+        if (heal.publishableKey && !bundle.publishableKey) bundle.publishableKey = heal.publishableKey
+        await persistRotatedToken(connectionId, 'nuvio', bundle)
+        trace('tokenRefresh', 'nuvio.baseUrlHealed', { connectionId, accountId })
     }
 
     if (!bundle.refreshToken) {

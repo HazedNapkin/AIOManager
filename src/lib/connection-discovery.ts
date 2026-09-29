@@ -57,7 +57,7 @@ export async function discoverFromConnections(account: Account, accountId: strin
                 const { getCachedNuvioToken, setCachedNuvioToken } = await import('@/lib/nuvio-token-cache')
                 let token = getCachedNuvioToken(conn.id)
                 if (!token) {
-                    token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+                    token = await fetchConnectionToken(accountId, conn.id, 'nuvio', conn.credentials?.baseUrl)
                     setCachedNuvioToken(conn.id, token)
                 }
                 const profileId = conn.credentials?.profileIndex || conn.credentials?.profileId

@@ -39,6 +39,7 @@ async function readJsonCapped(res, maxBytes) {
 
 export function createNuvioDriver(options = {}) {
     const baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')
+    const usedDefaultBase = !options.baseUrl
     const publishableKey = options.publishableKey || DEFAULT_PUBLISHABLE_KEY
 
     const makeHeaders = (accessToken) => ({
@@ -58,7 +59,10 @@ export function createNuvioDriver(options = {}) {
             idempotent: true
         })
         if (!res.ok) {
-            const err = new Error(`Nuvio RPC ${fn} returned ${res.status}`)
+            const fallbackHint = res.status === 401 && usedDefaultBase
+                ? ' No custom Nuvio backend URL is stored for this connection; reconnect it with your self-hosted URL.'
+                : ''
+            const err = new Error(`Nuvio RPC ${fn} returned ${res.status} (target: ${baseUrl}).${fallbackHint}`)
             err.status = res.status
             err.isAuthError = res.status === 401
             // body may not be JSON (proxy 502 HTML, etc.); the status code is the contract
