@@ -291,7 +291,7 @@ export function registerActivityRoutes(fastify, activityEngine) {
         })
 
         const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-        invalidateConnectionCache()
+        invalidateConnectionCache(syncUser)
 
         return { synced: upserted, skipped, pruned, serverStremioCredentialedAccounts: await listStremioCredentialedAccountIds(syncUser) }
     })

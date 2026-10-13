@@ -1,15 +1,24 @@
 // Shared one-active flag derivation, extracted from engine.js for testability.
 
+// Pure string->string; every enforcement pass re-normalizes the same transport URLs
+// across fold, guard and manifest-id matching, so memoize.
+const _normMemo = new Map()
 function normalizeAddonUrl(url) {
     if (!url) return ''
-    let normalized = String(url).trim()
+    const key = String(url)
+    const hit = _normMemo.get(key)
+    if (hit !== undefined) return hit
+    let normalized = key.trim()
     if (!/^(?:https?|stremio):\/\//i.test(normalized)) normalized = `https://${normalized}`
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
     normalized = normalized.replace(/^http:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
     normalized = normalized.replace(/\?.*$/, '')
-    return normalized.toLowerCase()
+    normalized = normalized.toLowerCase()
+    if (_normMemo.size > 5000) _normMemo.clear()
+    _normMemo.set(key, normalized)
+    return normalized
 }
 
 /**
@@ -36,6 +45,11 @@ export function applyOneActiveFlags(list, chainUrls, activeUrl) {
     const normalizedChain = (Array.isArray(chainUrls) ? chainUrls : []).map(u => normalizeAddonUrl(u))
     const normalizedTarget = normalizeAddonUrl(activeUrl)
 
+    // O(1) membership/index lookups: the naive includes/indexOf scans made the
+    // pass O(addons x chain) per call, per chain, per connection, every cycle.
+    const chainSet = new Set(normalizedChain)
+    const chainIndex = new Map(normalizedChain.map((u, i) => [u, i]))
+
     // Duplicate manifest ids cannot identify a chain member reliably.
     const idCounts = new Map()
     addonList.forEach(addon => {
@@ -51,15 +65,15 @@ export function applyOneActiveFlags(list, chainUrls, activeUrl) {
         if (!addon.manifest?.id) return
         if (duplicateIds.has(addon.manifest.id)) return
         const normUrl = normalizeAddonUrl(addon.transportUrl)
-        const idx = normalizedChain.indexOf(normUrl)
-        if (idx !== -1) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
+        const idx = chainIndex.get(normUrl)
+        if (idx !== undefined) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
     })
 
     let violationDetected = false
     const updatedList = addonList.map(addon => {
         const normUrl = normalizeAddonUrl(addon.transportUrl)
         let effectiveUrl = normUrl
-        let isChainMember = normalizedChain.includes(normUrl)
+        let isChainMember = chainSet.has(normUrl)
 
         if (!isChainMember && addon.manifest?.id && chainIdMap.has(addon.manifest.id)) {
             isChainMember = true

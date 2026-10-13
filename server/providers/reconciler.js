@@ -12,8 +12,17 @@ const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
 const connectionCache = new Map()
 const CONNECTION_CACHE_TTL_MS = 30 * 1000
 
-export function invalidateConnectionCache() {
-    connectionCache.clear()
+// Scoped invalidation: a write by user X only drops X's cached views. Passing no
+// syncUser clears everything (kept for server-trusted callers with no user context).
+export function invalidateConnectionCache(syncUser = null) {
+    if (!syncUser) {
+        connectionCache.clear()
+        return
+    }
+    const suffix = `\0${syncUser}`
+    for (const key of connectionCache.keys()) {
+        if (key.endsWith(suffix)) connectionCache.delete(key)
+    }
 }
 
 function getBackoffSkip(consecutiveFailures) {
@@ -25,13 +34,22 @@ function getBackoffSkip(consecutiveFailures) {
     return BACKOFF_SLOTS[slotIndex]
 }
 
+// Memoized: every reconcile pass re-normalizes the same transport URLs across
+// the skip-check, mirror filter and guard comparisons.
+const _urlMemo = new Map()
 function normalizeUrl(url) {
     if (!url) return ''
-    let normalized = url.trim()
+    const key = String(url)
+    const hit = _urlMemo.get(key)
+    if (hit !== undefined) return hit
+    let normalized = key.trim()
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
-    return normalized.toLowerCase()
+    normalized = normalized.toLowerCase()
+    if (_urlMemo.size > 5000) _urlMemo.clear()
+    _urlMemo.set(key, normalized)
+    return normalized
 }
 
 // syncUser scopes the lookup to the owning user. The HTTP endpoint (providers.js) MUST pass the

@@ -43,14 +43,24 @@ export async function storeConnectionCredential(
     connectionId: string,
     credential: string | Record<string, unknown>,
     credentialType?: string,
+    opts?: { adopt?: boolean },
 ): Promise<void> {
     const base = getSyncApiPath(useSyncStore.getState().serverUrl)
+    const body = JSON.stringify({ accountId, credential, credentialType, ...(opts?.adopt ? { adopt: true } : {}) })
     const res = await resilientFetch(`${base}/providers/connections/${connectionId}/credentials`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ accountId, credential, credentialType }),
+        body,
         timeout: 10000,
     })
+    // 409 owned-elsewhere: the platform account is bound to another AIOManager account.
+    // The user just authed a live platform session, so offer the takeover explicitly.
+    if (res.status === 409) {
+        const conflict = await res.json().catch(() => ({ error: 'Conflict' }))
+        const err = new Error(conflict.error || 'Already connected to another account')
+        ;(err as Error & { code?: string }).code = 'owned-elsewhere'
+        throw err
+    }
     if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Unknown error' }))
         throw new Error(body.error || 'Failed to store credentials')

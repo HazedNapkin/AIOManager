@@ -137,7 +137,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Disabled rule ${rule.id} after repeated decrypt failures.`)
         }
     }
-    const { checkAddonHealthInternal, getHealthLatency, checkCustomUrlsHealth } = createHealthChecker(fastify)
+
+    const { checkAddonHealthInternal, getHealthLatency, checkCustomUrlsHealth, prewarmHostResolution } = createHealthChecker(fastify)
 
 
     const sanitizeManifest = (manifest, transportUrl = '') => {
@@ -1233,6 +1234,23 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (totalProcessed >= AUTOPILOT_MAX_RULES_PER_CYCLE || Date.now() >= scanDeadline) break
                     continue
                 }
+
+                // Resolve this chunk's addon hosts concurrently before any probe fires,
+                // so dead hosts stall in parallel instead of serially per rule.
+                try {
+                    const waveUrls = []
+                    for (const rule of rules) {
+                        try {
+                            const chain = JSON.parse(decrypt(rule.priority_chain, FALLBACK_KEYS))
+                            if (Array.isArray(chain)) waveUrls.push(...chain)
+                        } catch { }
+                        try {
+                            const list = JSON.parse(decrypt(rule.addon_list, FALLBACK_KEYS))
+                            if (Array.isArray(list)) for (const a of list) if (a?.url) waveUrls.push(a.url)
+                        } catch { }
+                    }
+                    if (waveUrls.length > 0) await prewarmHostResolution(waveUrls)
+                } catch { }
 
                 const BATCH_SIZE = 20
                 const dirtyUpdates = []

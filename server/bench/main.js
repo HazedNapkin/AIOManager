@@ -110,7 +110,7 @@ function addon(i, chainUrls) {
     return { url, transportUrl: url, name: `Addon ${i}`, enabled: true, flags: { enabled: true }, manifest: { name: `Addon ${i}`, id: `bench.${i}` } }
 }
 
-const CHAIN_URL = (a, r, i) => `http://bench-host-${a}-${r}-${i}/manifest.json`
+const CHAIN_URL = (a, r, i) => `http://bench-addon-${a}-${r}-${i}.local/manifest.json`
 
 async function seed() {
     const now = Date.now()
@@ -174,6 +174,11 @@ async function runScenarios() {
     }
     await seed()
 
+    // Payload-byte ratchet input: the seeded state size is the baseline the sync engine's
+    // own envelopes can be gated against — list bloat shows up here first.
+    const stateRow = await db.get(`SELECT SUM(length(addon_list) + length(priority_chain)) AS b FROM autopilot_rules WHERE id LIKE 'bench-rule-%'`)
+    const stateBytes = Number(stateRow?.b || 0)
+
     const reconciler = createReconciler(app)
     const engine = createAutopilotEngine(app, reconciler)
 
@@ -201,6 +206,7 @@ async function runScenarios() {
             dbQueries: deltas.dbQueries - before.dbQueries,
             outboundRequests: deltas.outboundRequests - before.outboundRequests,
             rowsWritten: deltas.rowsWritten - before.rowsWritten,
+            stateBytes,
             dbMs: Math.round((counts.db.ms || 0) - (before.dbMs || 0)),
             fetchMs: Math.round((counts.fetch.ms || 0) - (before.fetchMs || 0)),
             dbByTable: tableDelta,
@@ -243,6 +249,7 @@ const gated = (r) => ({
     dbQueries: r.dbQueries,
     outboundRequests: r.outboundRequests,
     rowsWritten: r.rowsWritten,
+    stateBytes: r.stateBytes,
 })
 
 export async function main() {

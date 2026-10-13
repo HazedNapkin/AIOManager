@@ -79,14 +79,23 @@ export default defineConfig(({ mode }) => {
         build: {
             rollupOptions: {
                 output: {
-                    manualChunks: {
-                        'vendor-react': ['react', 'react-dom', 'react-router-dom', 'clsx', 'tailwind-merge'],
-                        'vendor-radix': ['@radix-ui/react-checkbox', '@radix-ui/react-select', '@radix-ui/react-tabs', '@radix-ui/react-tooltip', '@radix-ui/react-popover', '@radix-ui/react-alert-dialog', '@radix-ui/react-progress', '@radix-ui/react-scroll-area'],
-                        'vendor-motion': ['framer-motion'],
-                        'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', '@dnd-kit/modifiers'],
-                        'vendor-icons': ['lucide-react'],
-                        'vendor-date': ['date-fns'],
-                        'vendor-charts': ['recharts'],
+                    // fumadocs is Kronorium-only: without its own chunk it gets hoisted into the
+                    // shared eager chunk (~84% of it) and every page loads the docs engine.
+                    manualChunks(id) {
+                        if (id.includes('fumadocs')) return 'kronorium-docs'
+                        const vendorBuckets = {
+                            'vendor-react': ['react', 'react-dom', 'react-router-dom', 'clsx', 'tailwind-merge'],
+                            'vendor-radix': ['@radix-ui/react-checkbox', '@radix-ui/react-select', '@radix-ui/react-tabs', '@radix-ui/react-tooltip', '@radix-ui/react-popover', '@radix-ui/react-alert-dialog', '@radix-ui/react-progress', '@radix-ui/react-scroll-area'],
+                            'vendor-motion': ['framer-motion'],
+                            'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', '@dnd-kit/modifiers'],
+                            'vendor-icons': ['lucide-react'],
+                            'vendor-date': ['date-fns'],
+                            'vendor-charts': ['recharts'],
+                            'vendor-themes': ['next-themes'],
+                        }
+                        for (const [chunk, pkgs] of Object.entries(vendorBuckets)) {
+                            if (pkgs.some(p => id.includes(`node_modules/${p}/`) || id.includes(`node_modules/${p}/`))) return chunk
+                        }
                     }
                 }
             }

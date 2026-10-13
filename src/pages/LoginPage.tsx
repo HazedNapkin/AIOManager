@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSyncStore } from '@/store/syncStore'
+import { journeyStart } from '@/lib/journey-spans'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -118,6 +119,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
 
     const handleContinueWithDevice = async () => {
         setDeviceBusy(true)
+        journeyStart('login')
         try {
             const result = await unlockWithDevice()
             if (result.ok) {
@@ -198,6 +200,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         deactivateDeviceAuth()
         setIsUnlocking(true)
         setLoginError(null)
+        journeyStart('login')
 
         try {
             const success = await unlock(loginPass)
@@ -247,10 +250,12 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         deactivateDeviceAuth()
         setLoading(true)
         setLoginError(null)
+        journeyStart('login')
         try {
             await login(loginId, loginPass)
             void maybeRememberDevice()
         } catch (e) {
+            journeyStart('login') // failed attempt: reset the span so a retry measures cleanly
             setLoginError((e as Error).message)
             if (import.meta.env.DEV) console.error("Login error:", e)
         } finally {
@@ -268,6 +273,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         setLoading(true)
         setLoginError(null)
         const localAuthBackup = clearLocalAuthSecrets()
+        journeyStart('login')
         try {
             await login(effectiveId, loginPass, false, true)
             void maybeRememberDevice()

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import {
-  deriveKey,
-  hashPassword,
+  deriveVerifiedKey,
+  deriveKeyAndHash,
   generateSalt,
   loadSalt,
   saveSalt,
@@ -72,8 +72,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
 
     const salt = saltOverride ?? generateSalt()
-    const hash = await hashPassword(String(password), salt)
-    const key = await deriveKey(String(password), salt)
+    const { hash, key } = await deriveKeyAndHash(String(password), salt)
 
     if (!saveSalt(salt) || !savePasswordHash(hash)) {
       console.warn('Your session may not persist across page reloads.')
@@ -111,13 +110,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
 
 
-    const hash = await hashPassword(String(password), salt)
+    const key = await deriveVerifiedKey(String(password), salt, storedHash)
 
-    if (hash !== storedHash) {
+    if (!key) {
       return false
     }
-
-    const key = await deriveKey(password, salt)
 
     await saveSessionKey(key)
 
@@ -198,11 +195,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (import.meta.env.DEV) console.warn('[Auth] No salt available; generated fresh local encryption metadata for an empty account.')
     }
 
-    const key = await deriveKey(password, salt)
+    const { key, hash } = await deriveKeyAndHash(password, salt)
 
     // Save password hash locally to satisfy isPasswordSetup()
     // This removes the "Master password not set up" barrier for synced accounts
-    const hash = await hashPassword(password, salt)
     if (!savePasswordHash(hash)) {
       console.warn('Your session may not persist across page reloads.')
     }

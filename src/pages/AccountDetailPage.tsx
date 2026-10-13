@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { AddonList } from '@/components/addons/AddonList'
 import { useAccountStore } from '@/store/accountStore'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { journeyEnd } from '@/lib/journey-spans'
 
 export function AccountDetailPage() {
   const { accountId } = useParams<{ accountId: string }>()
@@ -12,6 +13,10 @@ export function AccountDetailPage() {
   const account = accounts.find((acc) => acc.id === accountId)
 
   useDocumentTitle(account?.name || 'Account')
+
+  useEffect(() => {
+    if (hydrated && accounts.length > 0) journeyEnd('open-account')
+  }, [hydrated, accounts.length])
 
   useEffect(() => {
     if (!hydrated) return

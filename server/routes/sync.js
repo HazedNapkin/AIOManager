@@ -27,7 +27,7 @@ function buildMultiRowPlaceholders(numRows, numCols) {
 
 const KV_HISTORY_KEEP = 3
 
-async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
+async function registerApiKeys(tx, id, apiKeys, pushedAccounts, log) {
     const existingKeyAccounts = new Set(
         (await tx.query('SELECT DISTINCT account_id FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.account_id),
     )
@@ -58,6 +58,7 @@ async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
     }
     const dedupedRows = apiKeyRows.filter(Boolean)
     const API_KEY_CHUNK = 100
+    let foreignSkipped = 0
     for (let i = 0; i < dedupedRows.length; i += API_KEY_CHUNK) {
         const chunk = dedupedRows.slice(i, i + API_KEY_CHUNK)
         if (chunk.length === 0) continue
@@ -69,7 +70,20 @@ async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
             ? `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders} ON CONFLICT DO NOTHING`
             : `INSERT OR IGNORE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
         await tx.run(sql, params)
+        // Visibility: anything the conflict path silently dropped is a key this user
+        // pushed but does not own. Count it so the push response can say so.
+        const selPlaceholders = chunk.map((_, j) => `$${j + 2}`).join(',')
+        const registered = await tx.query(
+            `SELECT api_key_hash FROM account_api_keys WHERE sync_user = $1 AND api_key_hash IN (${selPlaceholders})`,
+            [id, ...chunk.map(r => r[2])],
+        )
+        const got = new Set(registered.map(r => r.api_key_hash))
+        foreignSkipped += chunk.filter(r => !got.has(r[2])).length
     }
+    if (foreignSkipped > 0 && log?.warn) {
+        log.warn({ category: 'Sync' }, `registerApiKeys for ${id}: ${foreignSkipped} API key(s) ignored, already registered by another sync user`)
+    }
+    return foreignSkipped
 }
 
 async function archiveCurrentKV(tx, key, authUser) {
@@ -246,6 +260,7 @@ export function registerSyncRoutes(fastify) {
             (await db.query('SELECT api_key_hash FROM account_api_keys WHERE sync_user = $1', [id])).map(r => r.api_key_hash),
         )
         let keysChanged = false
+        let keysSkippedForeign = 0
         for (const h of pushedKeyHashes) { if (!storedKeyHashes.has(h)) { keysChanged = true; break } }
         if (!keysChanged) {
             for (const h of storedKeyHashes) { if (!pushedKeyHashes.has(h)) { keysChanged = true; break } }
@@ -286,22 +301,22 @@ export function registerSyncRoutes(fastify) {
 
                 if (clientHint && row.content_hint === clientHint) {
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hint-match', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
+                    if (keysChanged) keysSkippedForeign = await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null, fastify)
+                    return { success: true, syncedAt: serverTime, skipped: true, keysSkippedForeign, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 if (row.content_hash === contentHash) {
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
+                    if (keysChanged) keysSkippedForeign = await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null, fastify)
+                    return { success: true, syncedAt: serverTime, skipped: true, keysSkippedForeign, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 const serverUpdated = row.updated_at || 0
                 if (!force && clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
                     fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, conflict: true, syncedAt: serverTime, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
+                    if (keysChanged) keysSkippedForeign = await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null, fastify)
+                    return { success: true, conflict: true, syncedAt: serverTime, keysSkippedForeign, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
                 }
 
                 await archiveCurrentKV(tx, id, id)
@@ -334,7 +349,7 @@ export function registerSyncRoutes(fastify) {
 
             const apiKeys = data.apiKeys
             if (apiKeys && typeof apiKeys === 'object') {
-                await registerApiKeys(tx, id, apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
+                keysSkippedForeign = await registerApiKeys(tx, id, apiKeys, Array.isArray(data.accounts) ? data.accounts : null, fastify)
             }
 
             // Server-readable canonical addon lists: the Hydra inbound source for Hubs the
@@ -411,7 +426,7 @@ export function registerSyncRoutes(fastify) {
                 invalidateCanonicalAddons(accountId, id)
             }
             trace('syncRoute', 'push.success', { accountId: id, bytes: storedStr.length, timing: Date.now() - postStart })
-            return { success: true, syncedAt: serverTime, contentHash, serverStremioCredentialedAccounts }
+            return { success: true, syncedAt: serverTime, keysSkippedForeign, contentHash, serverStremioCredentialedAccounts }
         })
         } catch (err) {
             fastify.log.error({ category: 'Sync' }, `POST /api/sync error: ${err.message}`)
@@ -552,7 +567,7 @@ export function registerSyncRoutes(fastify) {
         })
         invalidateCachedAuth('sync:' + id)
         const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-        invalidateConnectionCache()
+        invalidateConnectionCache(id)
         trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })
 
         return { success: true }

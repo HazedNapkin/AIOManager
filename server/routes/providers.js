@@ -263,15 +263,26 @@ export function registerProviderRoutes(fastify, reconciler) {
         const id = `${type}:${accountId}:${connectionId}`
 
         const existing = await db.get('SELECT sync_user FROM server_credentials WHERE id = $1', [id])
-        if (existing && existing.sync_user !== authUser) {
-            fastify.log.warn({ category: 'ConnectionStore' }, `credential PUT 403: id=${id} rowOwner=${existing.sync_user} authUser=${authUser} accountId=${accountId} connectionId=${connectionId}`)
-            reply.code(403); return { error: 'Forbidden' }
+        const foreign = existing && existing.sync_user !== authUser
+        // Adoption: the caller re-authed the platform account itself, so it may claim the
+        // connection row — but only as an explicit opt-in, never as a silent side effect.
+        if (foreign && request.body?.adopt !== true) {
+            fastify.log.warn({ category: 'ConnectionStore' }, `credential PUT conflict: id=${id} rowOwner=${existing.sync_user} authUser=${authUser} accountId=${accountId} connectionId=${connectionId}`)
+            reply.code(409)
+            return {
+                error: 'This connection is already connected to another AIOManager account. Take it over to continue.',
+                code: 'owned-elsewhere',
+            }
         }
 
         if (type === 'nuvio' || type === 'realstream') {
             credentialValue = await preserveExistingInstanceBaseUrl(connectionId, credentialValue, authUser, type)
         }
         const encrypted = encrypt(credentialValue, PRIMARY_KEY)
+
+        if (foreign) {
+            await db.run('UPDATE server_credentials SET sync_user = $1, account_id = $2 WHERE id = $3', [authUser, accountId, id])
+        }
 
         if (db.type === 'postgres') {
             await db.run(`
@@ -286,7 +297,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             `, [id, authUser, accountId, encrypted, connectionId, type, Date.now()])
         }
         const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-        invalidateConnectionCache()
+        invalidateConnectionCache(authUser)
 
         return { ok: true }
     })
@@ -303,7 +314,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             [connectionId, authUser]
         )
         const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-        invalidateConnectionCache()
+        invalidateConnectionCache(authUser)
         return { ok: true }
     })
 
@@ -395,7 +406,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             return { error: 'Conflict', message: 'Profile was updated by another operation. Please retry.' }
         }
         const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-        invalidateConnectionCache()
+        invalidateConnectionCache(authUser)
         return { ok: true }
     })
 

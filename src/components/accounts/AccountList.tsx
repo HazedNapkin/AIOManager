@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { journeyStart, journeyEnd } from '@/lib/journey-spans'
 import type { SavedAddonManifestChangeSummary } from '@/types/saved-addon'
 import { ACCOUNT_CONTEXT_ALL_ACCOUNTS_UPDATE } from '@/lib/account-contexts'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -306,6 +307,11 @@ export function AccountList() {
     + (accounts.length >= 2 ? 1 : 0)
   const addAccountSpansFull = accountsToolbarButtonCount % 2 === 1
 
+  // The accounts grid painting is the finish line of the login journey.
+  useEffect(() => {
+    journeyEnd('login')
+  }, [])
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === '/' && !isSelectionActive) {
@@ -326,6 +332,7 @@ export function AccountList() {
 
   const handleSyncAllAccounts = async () => {
     if (syncingAll || accounts.length === 0) return
+    journeyStart('sync-cycle')
     setSyncingAll(true)
     toast({ title: 'Syncing all accounts...', description: `Force syncing ${accounts.length} account${accounts.length !== 1 ? 's' : ''}` })
     let succeeded = 0
@@ -339,6 +346,7 @@ export function AccountList() {
           failed += 1
         }
       })
+      journeyEnd('sync-cycle', `${succeeded}/${accounts.length}`)
       if (failed > 0) {
         toast({ variant: 'destructive', title: 'Sync Incomplete', description: `Synced ${succeeded} of ${accounts.length} accounts (${failed} failed)` })
       } else {
