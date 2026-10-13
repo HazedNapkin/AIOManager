@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Theme, ThemeOption, THEME_OPTIONS, useTheme, CustomThemeData, ThemePalette } from '@/contexts/ThemeContext'
+import { Theme, ThemeOption, useTheme, CustomThemeData, ThemePalette } from '@/contexts/ThemeContext'
 import { Check, Plus, Pencil, Copy, Upload, Download, Import, Layers } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -249,7 +249,7 @@ interface ThemeSectionProps {
 }
 
 export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
-    const { customThemes, addCustomTheme, getAllThemeOptions } = useTheme()
+    const { customThemes, addCustomTheme, getAllThemeOptions, themeCatalog: THEME_OPTIONS } = useTheme()
     const navigate = useNavigate()
     const fileInputRef = useRef<HTMLInputElement>(null)
     const { toast } = useToast()

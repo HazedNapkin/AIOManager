@@ -83,11 +83,11 @@ export function recordManifestFetchFailure(url: string): void {
     failures.set(key, Date.now())
 }
 
-export function shouldSkipManifestFetch(url: string): boolean {
+export function shouldSkipManifestFetch(url: string, windowMs: number = FAILURE_BACKOFF_MS): boolean {
     const key = url.toLowerCase()
     const failedAt = failures.get(key)
     if (failedAt === undefined) return false
-    if (Date.now() - failedAt > FAILURE_BACKOFF_MS) {
+    if (Date.now() - failedAt > windowMs) {
         failures.delete(key)
         return false
     }

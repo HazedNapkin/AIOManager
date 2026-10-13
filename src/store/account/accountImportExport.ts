@@ -74,36 +74,47 @@ function mergeConnections(
     return merged
 }
 
+// Shapes one addon entry for export. Sync exports strip the embedded manifest:
+// entries carry manifestId, and the same envelope's manifests map is the
+// deduplicated source the import rehydrates from (importAccounts falls back to
+// it when the entry has no manifest). Manual backups keep the manifest embedded
+// so they stay self-contained.
+export function shapeExportAddon(
+    addon: AddonDescriptor,
+    manifestMap: Record<string, AddonDescriptor['manifest']>,
+    forSync: boolean,
+): Record<string, unknown> {
+    const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
+    let exportAddon = addon
+    if (addon.metadata?.customName) {
+        const hostName = getHostnameIdentifier(addon.transportUrl)
+        if (hostName && addon.metadata.customName === hostName) {
+            const { customName: _cn, ...restMeta } = addon.metadata
+            exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
+        }
+    }
+    const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
+    const key = getManifestKey(sanitized)
+    if (!manifestMap[key]) manifestMap[key] = sanitized
+    return {
+        transportUrl: exportAddon.transportUrl,
+        transportName: exportAddon.transportName,
+        manifestId: key,
+        ...(forSync ? {} : { manifest: sanitized }),
+        flags: exportAddon.flags,
+        metadata: exportAddon.metadata,
+        catalogOverrides: exportAddon.catalogOverrides,
+        syncToLibrary: exportAddon.syncToLibrary,
+        note: exportAddon.note,
+    }
+}
+
 async function buildExportData(includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
     const store = await getStore()
     const manifestMap: Record<string, AddonDescriptor['manifest']> = {}
-    const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
 
     const processAddons = (addons: AddonDescriptor[]) => {
-        return addons.map((addon: AddonDescriptor) => {
-            let exportAddon = addon
-            if (addon.metadata?.customName) {
-                const hostName = getHostnameIdentifier(addon.transportUrl)
-                if (hostName && addon.metadata.customName === hostName) {
-                    const { customName: _cn, ...restMeta } = addon.metadata
-                    exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
-                }
-            }
-            const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
-            const key = getManifestKey(sanitized)
-            if (!manifestMap[key]) manifestMap[key] = sanitized
-            return {
-                transportUrl: exportAddon.transportUrl,
-                transportName: exportAddon.transportName,
-                manifestId: key,
-                manifest: sanitized,
-                flags: exportAddon.flags,
-                metadata: exportAddon.metadata,
-                catalogOverrides: exportAddon.catalogOverrides,
-                syncToLibrary: exportAddon.syncToLibrary,
-                note: exportAddon.note,
-            }
-        })
+        return addons.map((addon: AddonDescriptor) => shapeExportAddon(addon, manifestMap, forSync))
     }
 
     const exportedAccounts = await Promise.all(

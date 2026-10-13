@@ -367,9 +367,12 @@ export class StremioClient {
 
       const proxyAuthHeaders = shouldFetchDirectly ? {} : await getProxyAuthHeaders()
       const response = await resilientFetch(fetchUrl, {
-        timeout: 15000,
+        // Explicit (force) fetches fail fast: a dead host gets 8s once and the
+        // failure backoff takes over - the old 15s x 3 retries stalled updates
+        // on dead addons for the better part of a minute per URL.
+        timeout: 8000,
         headers: shouldFetchDirectly ? {} : { ...proxyAuthHeaders, 'x-account-context': accountContext },
-        retries: retries
+        retries: force ? 0 : retries
       })
 
       if (!response.ok) {

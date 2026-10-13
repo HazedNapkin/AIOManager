@@ -2,13 +2,38 @@ import { triggerSync } from '@/lib/sync-trigger'
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 
-// Re-export all types and data so existing imports from '@/contexts/ThemeContext' keep working
-export { THEME_OPTIONS } from '@/data/themes'
+// Re-export types so existing imports from '@/contexts/ThemeContext' keep working.
+// THEME_OPTIONS itself moved behind a dynamic import (61KB of catalog data does not
+// belong in the entry bundle) - the provider exposes the hydrated `themeCatalog`.
 export type { Theme, ThemePalette, ThemeOption, ThemePreview, CompactPalette } from '@/data/themes'
 
-import type { Theme, ThemePalette, ThemeOption } from '@/data/themes'
-import { THEME_OPTIONS as _THEME_OPTIONS, derivePreview } from '@/data/themes'
-const THEME_OPTIONS = _THEME_OPTIONS
+import type { Theme, ThemePalette, ThemeOption, ThemePreview } from '@/data/themes'
+
+// ── Resolved-theme persistence ───────────────────────────────────────────────
+
+const RESOLVED_KEY = 'aioman:resolved-theme-v1'
+
+interface ResolvedThemeBundle {
+    id: string
+    palette: ThemePalette
+    isLight: boolean
+    logoUrl?: string
+}
+
+function readResolvedBundle(): ResolvedThemeBundle | null {
+    try {
+        const raw = localStorage.getItem(RESOLVED_KEY)
+        return raw ? JSON.parse(raw) as ResolvedThemeBundle : null
+    } catch {
+        return null
+    }
+}
+
+function writeResolvedBundle(bundle: ResolvedThemeBundle) {
+    try { localStorage.setItem(RESOLVED_KEY, JSON.stringify(bundle)) } catch {
+        // Storage unavailable (e.g. Safari private mode)
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -103,7 +128,7 @@ function saveCustomThemes(themes: CustomThemeData[]) {
     }
 }
 
-function customToOption(ct: CustomThemeData): ThemeOption {
+function customToOption(ct: CustomThemeData, derivePreviewFn: ((palette: ThemePalette) => ThemePreview) | null): ThemeOption {
     return {
         id: ct.id,
         label: ct.label,
@@ -111,7 +136,7 @@ function customToOption(ct: CustomThemeData): ThemeOption {
         emoji: ct.emoji,
         category: 'standard' as const,
         palette: ct.palette,
-        preview: derivePreview(ct.palette),
+        preview: derivePreviewFn ? derivePreviewFn(ct.palette) : ({ background: ct.palette.primary } as ThemePreview),
         customCss: ct.customCss,
         logoUrl: ct.logoUrl,
     }
@@ -127,6 +152,7 @@ interface ThemeContextType {
     updateCustomTheme: (id: Theme, data: CustomThemeData) => void
     deleteCustomTheme: (id: Theme) => void
     getAllThemeOptions: () => ThemeOption[]
+    themeCatalog: ThemeOption[]
     isLight: boolean
     logoUrl: string | undefined
 }
@@ -138,9 +164,23 @@ const STORAGE_KEY = 'aioman-theme'
 export function ThemeProvider({ children }: { children: ReactNode }) {
     const [customThemes, setCustomThemes] = useState<CustomThemeData[]>(loadCustomThemes)
 
+    // The 61KB theme catalog hydrates in the background; boot applies the persisted
+    // resolved bundle synchronously so there is no flash and no entry-bundle cost.
+    const [themeCatalog, setThemeCatalog] = useState<ThemeOption[]>([])
+    const [derivePreviewFn, setDerivePreviewFn] = useState<((palette: ThemePalette) => ThemePreview) | null>(null)
+
+    useEffect(() => {
+        import('@/data/themes').then(m => {
+            setThemeCatalog(m.THEME_OPTIONS)
+            setDerivePreviewFn(() => m.derivePreview)
+        }).catch(() => { /* catalog stays empty; the persisted bundle keeps the theme applied */ })
+    }, [])
+
+    const bootBundle = useMemo(() => readResolvedBundle(), [])
+
     const getAllThemeOptions = useCallback((): ThemeOption[] => {
-        return [...THEME_OPTIONS, ...customThemes.map(customToOption)]
-    }, [customThemes])
+        return [...themeCatalog, ...customThemes.map(ct => customToOption(ct, derivePreviewFn))]
+    }, [themeCatalog, customThemes, derivePreviewFn])
 
     const location = useLocation()
     const isDocs = location.pathname.startsWith('/kronorium')
@@ -164,26 +204,44 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
                 }
                 localStorage.setItem('aio-theme-migrated-v3', '1')
             }
-            const allOptions = [...THEME_OPTIONS, ...loadCustomThemes().map(customToOption)]
-            const match = saved ? allOptions.find(t => t.id === saved) : undefined
-            return (match ? saved : 'dark') as Theme
+            // Catalog validation happens after hydration; the persisted bundle covers
+            // application until then, so the saved id is trusted here.
+            return (saved ?? bootBundle?.id ?? 'dark') as Theme
         } catch {
             return 'dark'
         }
     })
 
+    // Resolved option: the hydrated catalog wins; the persisted bundle covers the
+    // pre-hydration window for the same id.
+    const resolvedOption = useMemo<ThemeOption | null>(() => {
+        const fromCatalog = themeCatalog.find(t => t.id === theme)
+        if (fromCatalog) return fromCatalog
+        const custom = customThemes.find(t => t.id === theme)
+        if (custom) return customToOption(custom, derivePreviewFn)
+        if (bootBundle && bootBundle.id === theme) {
+            return {
+                id: theme,
+                label: String(theme),
+                description: '',
+                emoji: '',
+                category: 'standard' as const,
+                palette: bootBundle.palette,
+                preview: { background: bootBundle.palette.primary } as ThemePreview,
+                logoUrl: bootBundle.logoUrl,
+            }
+        }
+        return null
+    }, [theme, themeCatalog, customThemes, derivePreviewFn, bootBundle])
+
     const isLight = useMemo(() => {
-        const allOptions = getAllThemeOptions()
-        const themeOption = allOptions.find(t => t.id === theme)
-        if (!themeOption) return false
-        return getLuminance(hslToHex(themeOption.palette.background)) > 0.18
-    }, [theme, getAllThemeOptions])
+        if (!resolvedOption) return false
+        return getLuminance(hslToHex(resolvedOption.palette.background)) > 0.18
+    }, [resolvedOption])
 
     const logoUrl = useMemo(() => {
-        const allOptions = getAllThemeOptions()
-        const themeOption = allOptions.find(t => t.id === theme)
-        return themeOption?.logoUrl
-    }, [theme, getAllThemeOptions])
+        return resolvedOption?.logoUrl
+    }, [resolvedOption])
 
     // Apply theme whenever it changes
     useEffect(() => {
@@ -228,8 +286,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         // Remove any data-theme set by Fumadocs RootProvider on <html>
         document.documentElement.removeAttribute('data-theme')
 
-        const allOptions = getAllThemeOptions()
-        const themeOption = allOptions.find(t => t.id === theme)
+        const themeOption = resolvedOption
         if (themeOption) {
             applyTheme(themeOption.palette)
             document.documentElement.setAttribute('data-theme', theme)
@@ -254,11 +311,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             } else if (existingStyleEl) {
                 existingStyleEl.remove()
             }
+
+            // Persist the resolved bundle: the next boot applies this synchronously,
+            // before the catalog hydrates.
+            writeResolvedBundle({ id: theme, palette: themeOption.palette, isLight, logoUrl: themeOption.logoUrl })
         } else {
             const existingStyleEl = document.getElementById('aioman-custom-theme-css')
             if (existingStyleEl) existingStyleEl.remove()
         }
-    }, [theme, customThemes, getAllThemeOptions, isDocs, isLight])
+    }, [theme, resolvedOption, customThemes, isDocs, isLight])
 
     // Storage event listener for cross-tab or cross-sync reactivity (fix for incognito cloud pull)
     useEffect(() => {
@@ -341,8 +402,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const contextValue = useMemo(() => ({
         theme, setTheme,
         customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme,
-        getAllThemeOptions, isLight, logoUrl
-    }), [theme, setTheme, customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme, getAllThemeOptions, isLight, logoUrl])
+        getAllThemeOptions, themeCatalog, isLight, logoUrl
+    }), [theme, setTheme, customThemes, addCustomTheme, updateCustomTheme, deleteCustomTheme, getAllThemeOptions, themeCatalog, isLight, logoUrl])
 
     return (
         <ThemeContext.Provider value={contextValue}>
