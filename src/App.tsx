@@ -10,7 +10,6 @@ import { useProfileStore } from '@/store/profileStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useSyncStore, markAccountsHydrated } from '@/store/syncStore'
 import { useNotesStore } from '@/store/notesStore'
-import { LoginPage } from '@/pages/LoginPage'
 import { DeviceNameDialog } from '@/components/auth/DeviceNameDialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useNavigate, Routes, Route } from 'react-router-dom'
@@ -27,6 +26,11 @@ const AccountForm = lazy(() => import('@/components/accounts/AccountForm').then(
 const AddonInstaller = lazy(() => import('@/components/addons/AddonInstaller').then(m => ({ default: m.AddonInstaller })))
 const KeybindingsHelp = lazy(() => import('@/components/KeybindingsHelp').then(m => ({ default: m.KeybindingsHelp })))
 const WhatsNewModal = lazy(() => import('@/components/WhatsNewModal').then(m => ({ default: m.WhatsNewModal })))
+
+// LoginPage is route-sized (35KB rendered): lazy like every other page. The login
+// screen is the first thing unauthenticated visitors see, so it keeps the AppLoader
+// fallback instead of shipping inside the entry chunk forever.
+const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })))
 
 function App() {
   const navigate = useNavigate()
@@ -338,7 +342,11 @@ function App() {
       }
     }
 
-    return <LoginPage />
+    return (
+      <Suspense fallback={<AppLoader />}>
+        <LoginPage />
+      </Suspense>
+    )
   }
 
   if (isKronoriumRoute) {

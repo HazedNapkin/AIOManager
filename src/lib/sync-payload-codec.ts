@@ -1,11 +1,19 @@
-import { deflateSync, inflateSync, strToU8, strFromU8 } from 'fflate'
-
 // Wire format for compressed sync payloads: zlib (fflate deflateSync), base64-encoded.
-// The push compressor and pull decompressor live together on purpose — any change
+// The push compressor and pull decompressor live together on purpose - any change
 // MUST round-trip byte-identically, gated by sync-payload-codec.test.ts, which
 // exists because a compressor swap once shipped without one and stored
 // undecodable payloads.
-export function compressSyncPayload(jsonStr: string): string {
+
+// fflate loads on first use: nothing in the boot graph needs 36KB of zlib until a
+// compressed payload actually moves. Memoized so concurrent calls share one import.
+let fflatePromise: Promise<typeof import('fflate')> | null = null
+function loadFflate() {
+    if (!fflatePromise) fflatePromise = import('fflate')
+    return fflatePromise
+}
+
+export async function compressSyncPayload(jsonStr: string): Promise<string> {
+    const { deflateSync, strToU8 } = await loadFflate()
     const bytes = deflateSync(strToU8(jsonStr))
     let binary = ''
     const chunk = 0x8000
@@ -15,7 +23,8 @@ export function compressSyncPayload(jsonStr: string): string {
     return btoa(binary)
 }
 
-export function decompressSyncPayload(base64String: string): string {
+export async function decompressSyncPayload(base64String: string): Promise<string> {
+    const { inflateSync, strFromU8 } = await loadFflate()
     const bytes = Uint8Array.from(atob(base64String), c => c.charCodeAt(0))
     return strFromU8(inflateSync(bytes))
 }

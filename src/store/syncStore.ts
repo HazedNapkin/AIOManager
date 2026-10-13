@@ -114,6 +114,13 @@ interface SyncState {
     reset: () => void
 }
 
+// Login phase log: buffered on window so phase timings survive performance
+// buffer clears, and never throw - instrumentation must not break the pull.
+function logPhase(name: string) {
+    const w = window as unknown as { __loginPhases?: Array<{ name: string; at: number }> }
+    ;(w.__loginPhases ??= []).push({ name, at: performance.now() })
+}
+
 export const useSyncStore = create<SyncState>()(
     persist(
         (set, get) => ({
@@ -416,6 +423,7 @@ export const useSyncStore = create<SyncState>()(
                                 if (!get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
                             }
                             try {
+performance.mark('phase:pull-fetched'); logPhase('pull-fetched')
                                 decryptedStr = deviceUnlock
                                     ? await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceUnlock.syncKey))
                                     : await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
@@ -423,9 +431,11 @@ export const useSyncStore = create<SyncState>()(
                                 throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
                             }
 
+performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
+
                             let payloadStr: string
                             try {
-                                payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+                                payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
                             } catch (decompressErr) {
                                 if (import.meta.env.DEV) console.error('[Sync] Payload decompression failed — cloud copy is corrupt:', decompressErr)
                                 const err = new Error('Cloud data is corrupted (stored payload cannot be decompressed). Sign in on a device that still has your data loaded and sync from there to repair the cloud copy.')
@@ -435,6 +445,20 @@ export const useSyncStore = create<SyncState>()(
 
                             try {
                                 data = JSON.parse(payloadStr)
+                                performance.mark('phase:parse-done')
+                                // Composition probe: per-slice byte weight of the real envelope.
+                                // Read-only - informs the payload diet / sectioning waves.
+                                try {
+                                    const src = data as Record<string, unknown>
+                                    const slices: Record<string, number> = {}
+                                    for (const key of ['accounts', 'addons', 'watchEvents', 'watchSnapshot', 'notes', 'vault', 'failover', 'profiles', 'settings', 'changelog', 'customThemes', 'accountStates', 'apiKeys']) {
+                                        const v = src[key]
+                                        if (v !== undefined && v !== null) slices[key] = JSON.stringify(v).length
+                                    }
+                                    ;(window as unknown as { __envelopeSlices?: Record<string, number> }).__envelopeSlices = slices
+                                    ;(window as unknown as { __envelopeTotal?: number }).__envelopeTotal = payloadStr.length
+                                    try { sessionStorage.setItem('__envelopeProbe', JSON.stringify({ total: payloadStr.length, slices })) } catch { /* probe persistence best-effort */ }
+                                } catch { /* probe never blocks the pull */ }; logPhase('parse-done')
 
                                 // Post-Parse Check: If it PARSED into a literal string "[object Object]", then it's bad.
                                 // But if it's a valid object that happens to CONTAIN that string somewhere, we keep it.
@@ -513,11 +537,22 @@ export const useSyncStore = create<SyncState>()(
                     // even if the cloud salt differs from the local salt.
                     let preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
 
+                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
+                    let localSaltBase64: string | undefined
+                    {
+                        const { loadSalt } = await import('@/lib/crypto')
+                        const localSalt = loadSalt()
+                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
+                    }
+                    // When the salts match, the key unlockFromSync derives decrypts local authKeys
+                    // too - deriving a second one here doubled every full login for nothing.
+                    const saltsAligned = !!cloudSalt && !!localSaltBase64 && cloudSalt === localSaltBase64
+
                     // If no in-memory key (fresh page load / re-login after corruption),
                     // try to derive one from the local salt + password so we can still
                     // decrypt existing local account authKeys during reconciliation.
                     // Remembered sessions already carry the key; nothing to derive.
-                    if (!preUnlockEncryptionKey && !deviceUnlock) {
+                    if (!preUnlockEncryptionKey && !deviceUnlock && !saltsAligned) {
                         const { loadSalt, deriveKey } = await import('@/lib/crypto')
                         const localSalt = loadSalt()
                         if (localSalt) {
@@ -530,13 +565,6 @@ export const useSyncStore = create<SyncState>()(
                         }
                     }
 
-                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
-                    let localSaltBase64: string | undefined
-                    {
-                        const { loadSalt } = await import('@/lib/crypto')
-                        const localSalt = loadSalt()
-                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
-                    }
                     const norm = data as Record<string, unknown>
                     const hasEncryptedData =
                         (Array.isArray(norm.accounts) && norm.accounts.length > 0) ||
@@ -578,6 +606,12 @@ export const useSyncStore = create<SyncState>()(
                         if (import.meta.env.DEV) console.warn('[Sync] Skipping data import - encryption key not available.')
                         return
                     }
+performance.mark('phase:kdf-done'); logPhase('kdf-done')
+                    // Salts aligned: the key unlockFromSync just derived decrypts local authKeys
+                    // too, so the expensive local-salt derivation is skipped entirely.
+                    if (!preUnlockEncryptionKey && saltsAligned) {
+                        preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
+                    }
                     const syncData = data as Record<string, unknown>
                     // Prime before any import runs: a mid-import failure must not leave the post-login push free to erase the cloud avatar.
                     syncRuntime.lastPulledCloudAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : null
@@ -615,8 +649,13 @@ export const useSyncStore = create<SyncState>()(
                                 await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             }
                         }
+performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                     }
 
+                    // Hydration split: only the accounts slice gates first paint. Every other
+                    // slice applies in the background; the push gate (isInitialSyncCompleted)
+                    // stays closed until they all land, so no write can outrun its revalidation.
+                    const applySecondarySlices = async () => {
                     if (syncData.addons) {
                         const localAddons = Object.keys(useAddonStore.getState().library).length
                         const remoteAddons = Array.isArray(syncData.addons) ? syncData.addons : ((syncData.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
@@ -705,6 +744,12 @@ export const useSyncStore = create<SyncState>()(
                         try { localStorage.setItem('aio-discover-prefs', JSON.stringify(syncData.discoverPrefs)) } catch {}
                     }
 
+                    } // end applySecondarySlices
+                    const secondary = applySecondarySlices().catch(err => {
+                        console.warn('[Sync] deferred hydration failed:', err)
+                        get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${(err as Error).message}`, isAuto: isSilent })
+                    })
+
                     // Identity is upgrade-only on pull: an empty name/avatar in the cloud
                     // (a stale push from another device) can never erase what this device has.
                     const identity = resolveCloudIdentity(syncData, id, get().auth)
@@ -722,10 +767,15 @@ export const useSyncStore = create<SyncState>()(
                         lastSyncedAt: new Date().toISOString(),
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
-                        isInitialSyncCompleted: true,
+                        // Closed until every deferred slice lands - the completion flip lives
+                        // in the secondary continuation below. The push gate reads this flag.
+                        isInitialSyncCompleted: false,
                         lastSyncedCloudEtag: responseEtag ?? null,
                         needsReauth: false
                     })
+                    // The flag flips ONLY after the deferred slices settle: the push gate
+                    // refuses every write until then (revalidate-before-write).
+                    void secondary.then(() => { set({ isInitialSyncCompleted: true }) })
                     // After the set: syncSaltB64 may have just been adopted from the cloud,
                     // and the sync key must be exported under that same salt.
                     await persistSessionCredential()
@@ -889,8 +939,8 @@ export const useSyncStore = create<SyncState>()(
                 // so pushes resume instead of silently skipping ("no in-session credentials").
                 const sessionCred = auth.isAuthenticated ? getSessionSyncCredential(auth.id) : null
                 const hasSessionCredentials = !!auth.password || !!sessionCred || (await isDeviceSessionActive())
-                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials) {
-                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : 'account state not hydrated'
+                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials || !isInitialSyncCompleted) {
+                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : !isInitialSyncCompleted ? 'initial pull still applying' : 'account state not hydrated'
                     // Credentialless-but-otherwise-operational is the corpse state of the refresh
                     // bug: skipping silently kept it invisible. Raise the re-auth state so the
                     // dashboard banners the stopped sync (live bug #51, part 2).
@@ -1087,7 +1137,7 @@ export const useSyncStore = create<SyncState>()(
                     let isCompressed = false
                     if (shouldCompress) {
                         try {
-                            compressedPayload = compressSyncPayload(stampedState)
+                            compressedPayload = await compressSyncPayload(stampedState)
                             isCompressed = true
                         } catch {}
                     }
@@ -1316,7 +1366,7 @@ export const useSyncStore = create<SyncState>()(
                             if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                             decryptedStr = await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceSyncKey))
                         }
-                        const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+                        const payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
                         data = JSON.parse(payloadStr) as Record<string, unknown>
                     } else {
                         data = raw

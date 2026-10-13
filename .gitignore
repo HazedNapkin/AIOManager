@@ -82,3 +82,5 @@ aio.db
 .source/
 !server/tests/connection-cache-decisions.test.js
 !server/tests/connection-cache-decisions.test.js
+
+bundle-stats.json

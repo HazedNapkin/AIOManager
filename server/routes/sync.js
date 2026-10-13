@@ -196,6 +196,12 @@ export function registerSyncRoutes(fastify) {
                 }
             }
             const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
+            // canonicalAddons is write-only from the client's perspective: pushed for the
+            // server-side hub fold, never consumed from a pull. Shipping it back cost ~23%
+            // of the wire on real accounts for data the client discards.
+            if (syncData && typeof syncData === 'object' && 'canonicalAddons' in syncData) {
+                delete syncData.canonicalAddons
+            }
             trace('syncRoute', 'pull.success', { accountId: id, bytes: payloadBytes, timing: Date.now() - start })
             if (row.content_hash) reply.header('ETag', row.content_hash)
             return syncData && typeof syncData === 'object' ? syncData : {}
