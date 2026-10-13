@@ -36,7 +36,7 @@ async function withNuvio<T>(
 ): Promise<T> {
     const { fetchConnectionToken } = await import('@/api/connection')
     const { nuvioDriverFor } = await import('@/lib/drivers/factory')
-    const token = await fetchConnectionToken(accountId, conn.id, 'nuvio', conn.credentials?.baseUrl)
+    const token = await fetchConnectionToken(accountId, conn, 'nuvio')
     const profileId = token.profileId ?? conn.credentials?.profileId
     return fn(nuvioDriverFor(conn), token.accessToken, profileId)
 }

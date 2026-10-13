@@ -3,8 +3,7 @@ import { decrypt, encrypt } from '../crypto.js'
 import { FALLBACK_KEYS, PRIMARY_KEY } from '../keys.js'
 import { trace } from '../utils/trace.js'
 
-const REFRESH_BUFFER_MS = 5 * 60 * 1000
-
+export const REFRESH_BUFFER_MS = 5 * 60 * 1000
 const refreshInFlight = new Map()
 function singleFlight(key, fn) {
     const existing = refreshInFlight.get(key)
@@ -14,16 +13,19 @@ function singleFlight(key, fn) {
     return p
 }
 
-async function persistRotatedToken(connectionId, credentialType, newBundle) {
+async function persistRotatedToken(connectionId, credentialType, newBundle, syncUser) {
     const encrypted = encrypt(JSON.stringify(newBundle), PRIMARY_KEY)
     const now = Date.now()
     let lastErr = null
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
             await db.run(
-                'UPDATE server_credentials SET auth_key = $1, updated_at = $2 WHERE connection_id = $3 AND credential_type = $4',
-                [encrypted, now, connectionId, credentialType]
+                syncUser
+                    ? 'UPDATE server_credentials SET auth_key = $1, updated_at = $2 WHERE connection_id = $3 AND credential_type = $4 AND sync_user = $5'
+                    : 'UPDATE server_credentials SET auth_key = $1, updated_at = $2 WHERE connection_id = $3 AND credential_type = $4',
+                syncUser ? [encrypted, now, connectionId, credentialType, syncUser] : [encrypted, now, connectionId, credentialType]
             )
+            import('./reconciler.js').then(m => m.invalidateConnectionCache()).catch(() => { })
             return
         } catch (err) {
             lastErr = err
@@ -36,16 +38,25 @@ async function persistRotatedToken(connectionId, credentialType, newBundle) {
     throw e
 }
 
-export function refreshNuvioToken(connectionId, accountId, heal) {
-    return singleFlight(`nuvio:${connectionId}`, () => refreshNuvioTokenInner(connectionId, accountId, heal))
+async function probeBackend(baseUrl, healthPath) {
+    try {
+        const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${healthPath}`, { signal: AbortSignal.timeout(8000) })
+        return res.ok
+    } catch { return false }
 }
 
-async function refreshNuvioTokenInner(connectionId, accountId, heal) {
+export function refreshNuvioToken(connectionId, accountId, heal, syncUser) {
+    return singleFlight(`nuvio:${connectionId}`, () => refreshNuvioTokenInner(connectionId, accountId, heal, syncUser))
+}
+
+async function refreshNuvioTokenInner(connectionId, accountId, heal, syncUser) {
     const start = Date.now()
     trace('tokenRefresh', 'nuvio.start', { connectionId, accountId })
     const cred = await db.get(
-        "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'nuvio' LIMIT 1",
-        [connectionId]
+        syncUser
+            ? "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'nuvio' AND sync_user = $2 ORDER BY updated_at DESC LIMIT 1"
+            : "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'nuvio' ORDER BY updated_at DESC LIMIT 1",
+        syncUser ? [connectionId, syncUser] : [connectionId]
     )
     if (!cred?.auth_key) {
         trace('tokenRefresh', 'nuvio.skip', { connectionId, accountId, reason: 'no-credential' })
@@ -61,12 +72,19 @@ async function refreshNuvioTokenInner(connectionId, accountId, heal) {
     }
 
     // A bundle without baseUrl pushes to the public api.nuvio.tv; persist the heal before
-    // refreshing so the refresh itself targets the client's real backend.
-    if (heal?.baseUrl && !bundle.baseUrl) {
-        bundle.baseUrl = heal.baseUrl
-        if (heal.publishableKey && !bundle.publishableKey) bundle.publishableKey = heal.publishableKey
-        await persistRotatedToken(connectionId, 'nuvio', bundle)
-        trace('tokenRefresh', 'nuvio.baseUrlHealed', { connectionId, accountId })
+    // refreshing so the refresh itself targets the client's real backend. The URL must answer
+    // its discovery endpoint first, and only replaces a stored one that no longer answers.
+    const healUrl = typeof heal?.baseUrl === 'string' ? heal.baseUrl.replace(/\/+$/, '') : ''
+    if (healUrl && healUrl !== bundle.baseUrl) {
+        const healAnswers = await probeBackend(healUrl, '/.well-known/nuvio')
+        const storedAnswers = bundle.baseUrl ? await probeBackend(bundle.baseUrl, '/.well-known/nuvio') : false
+        if (healAnswers && !storedAnswers) {
+            bundle.baseUrl = healUrl
+            await persistRotatedToken(connectionId, 'nuvio', bundle, syncUser)
+            trace('tokenRefresh', 'nuvio.baseUrlHealed', { connectionId, accountId })
+        } else {
+            trace('tokenRefresh', 'nuvio.healRejected', { connectionId, accountId, reason: storedAnswers ? 'stored-still-live' : 'probe-failed' })
+        }
     }
 
     if (!bundle.refreshToken) {
@@ -96,7 +114,7 @@ async function refreshNuvioTokenInner(connectionId, accountId, heal) {
             publishableKey: bundle.publishableKey || null,
         }
 
-        await persistRotatedToken(connectionId, 'nuvio', newBundle)
+        await persistRotatedToken(connectionId, 'nuvio', newBundle, syncUser)
         trace('tokenRefresh', 'nuvio.success', { connectionId, accountId, timing: Date.now() - start })
         return newBundle
     } catch (err) {
@@ -108,16 +126,18 @@ async function refreshNuvioTokenInner(connectionId, accountId, heal) {
     }
 }
 
-export function refreshRealStreamToken(connectionId) {
-    return singleFlight(`realstream:${connectionId}`, () => refreshRealStreamTokenInner(connectionId))
+export function refreshRealStreamToken(connectionId, syncUser, heal) {
+    return singleFlight(`realstream:${connectionId}`, () => refreshRealStreamTokenInner(connectionId, syncUser, heal))
 }
 
-async function refreshRealStreamTokenInner(connectionId) {
+async function refreshRealStreamTokenInner(connectionId, syncUser, heal) {
     const start = Date.now()
     trace('tokenRefresh', 'realstream.start', { connectionId })
     const cred = await db.get(
-        "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'realstream' LIMIT 1",
-        [connectionId]
+        syncUser
+            ? "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'realstream' AND sync_user = $2 ORDER BY updated_at DESC LIMIT 1"
+            : "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'realstream' ORDER BY updated_at DESC LIMIT 1",
+        syncUser ? [connectionId, syncUser] : [connectionId]
     )
     if (!cred?.auth_key) {
         trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'no-credential' })
@@ -130,6 +150,19 @@ async function refreshRealStreamTokenInner(connectionId) {
     } catch {
         trace('tokenRefresh', 'realstream.skip', { connectionId, reason: 'decrypt-failed' })
         return null
+    }
+
+    const healUrl = typeof heal?.baseUrl === 'string' ? heal.baseUrl.replace(/\/+$/, '') : ''
+    if (healUrl && healUrl !== bundle.baseUrl) {
+        const healAnswers = await probeBackend(healUrl, '/api/health')
+        const storedAnswers = bundle.baseUrl ? await probeBackend(bundle.baseUrl, '/api/health') : false
+        if (healAnswers && !storedAnswers) {
+            bundle.baseUrl = healUrl
+            await persistRotatedToken(connectionId, 'realstream', bundle, syncUser)
+            trace('tokenRefresh', 'realstream.baseUrlHealed', { connectionId })
+        } else {
+            trace('tokenRefresh', 'realstream.healRejected', { connectionId, reason: storedAnswers ? 'stored-still-live' : 'probe-failed' })
+        }
     }
 
     if (!bundle.accessToken) {
@@ -155,7 +188,7 @@ async function refreshRealStreamTokenInner(connectionId) {
             email: bundle.email,
             password: bundle.password,
         }
-        await persistRotatedToken(connectionId, 'realstream', newBundle)
+        await persistRotatedToken(connectionId, 'realstream', newBundle, syncUser)
         trace('tokenRefresh', 'realstream.success', { connectionId, path: 'refresh', timing: Date.now() - start })
         return newBundle
     } catch (err) {
@@ -175,7 +208,7 @@ async function refreshRealStreamTokenInner(connectionId) {
                     email: bundle.email,
                     password: bundle.password,
                 }
-                await persistRotatedToken(connectionId, 'realstream', newBundle)
+                await persistRotatedToken(connectionId, 'realstream', newBundle, syncUser)
                 trace('tokenRefresh', 'realstream.success', { connectionId, path: 'reauth', timing: Date.now() - start })
                 return newBundle
             } catch (reauthErr) {

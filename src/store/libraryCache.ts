@@ -478,7 +478,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 try {
                                     let token = getCachedNuvioToken(conn.id)
                                     if (!token) {
-                                        token = await fetchConnectionToken(account.id, conn.id, 'nuvio', conn.credentials?.baseUrl)
+                                        token = await fetchConnectionToken(account.id, conn, 'nuvio')
                                         setCachedNuvioToken(conn.id, token)
                                     }
                                     const driver = nuvioDriverFor(conn)
@@ -572,7 +572,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 try {
                                     const userId = conn.credentials?.userId || ''
                                     if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
-                                    const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
+                                    const token = await fetchConnectionToken(account.id, conn, 'realstream')
                                     const driver = realStreamDriverFor(conn)
                                     const progress = await driver.readWatchProgress(token.accessToken, userId).catch(async (e) => {
                                         if (!isAuthError(e)) throw e

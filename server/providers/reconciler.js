@@ -2,9 +2,19 @@ import db from '../db.js'
 import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { trace } from '../utils/trace.js'
+import { REFRESH_BUFFER_MS } from './token-refresh.js'
 
 const BACKOFF_THRESHOLD = 3
 const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
+
+// Connections change rarely but are resolved per rule and per audit; a short-lived cache
+// keeps one scan cycle on a single read. Any credential write clears it outright.
+const connectionCache = new Map()
+const CONNECTION_CACHE_TTL_MS = 30 * 1000
+
+export function invalidateConnectionCache() {
+    connectionCache.clear()
+}
 
 function getBackoffSkip(consecutiveFailures) {
     if (consecutiveFailures < BACKOFF_THRESHOLD) return 0
@@ -28,12 +38,25 @@ function normalizeUrl(url) {
 // authenticated user so a caller can't resolve another user's stored credentials by accountId
 // (cross-tenant IDOR). Server-trusted callers (the autopilot worker, which derives account_id from
 // owner-scoped rules) may omit it.
-// preferBaseUrled returns the index of the connection already chosen for a platform.
-function preferBaseUrled(connections, platform) {
-    return connections.findIndex(c => c.platform === platform)
+function nativeConnection(type, accountId, row, bundle) {
+    return {
+        id: row.connection_id,
+        platform: type,
+        accountId,
+        driverType: 'native',
+        enabled: true,
+        status: 'active',
+        credentials: bundle,
+        consecutiveFailures: 0,
+        capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
+    }
 }
 
 async function resolveConnections(accountId, syncUser = null) {
+    const cacheKey = `${accountId}\0${syncUser ?? ''}`
+    const hit = connectionCache.get(cacheKey)
+    if (hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) return hit.connections
+
     const rows = await db.query(
         syncUser
             ? 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC'
@@ -72,40 +95,18 @@ async function resolveConnections(accountId, syncUser = null) {
 
         // one connection per platform; keep the most recent (older rows are stale per-device dupes)
         if (type === 'nuvio' || type === 'realstream') {
+            const existingIdx = connections.findIndex(c => c.platform === type)
+            if (existingIdx > -1 && connections[existingIdx].credentials?.baseUrl) continue
             let bundle = null
             try { bundle = JSON.parse(decrypt(row.auth_key, FALLBACK_KEYS)) } catch { continue }
             if (!bundle?.accessToken) continue
-            // preferBaseUrled: a baseUrl-less bundle pushes to the public api.nuvio.tv, so a
-            // baseUrl-bearing row always outranks a newer dupe that lost the instance URL.
-            const existingIdx = preferBaseUrled(connections, type)
             if (existingIdx > -1) {
-                const incumbent = connections[existingIdx]
-                if (!incumbent.credentials?.baseUrl && bundle.baseUrl) {
-                    connections[existingIdx] = {
-                        id: row.connection_id,
-                        platform: type,
-                        accountId,
-                        driverType: 'native',
-                        enabled: true,
-                        status: 'active',
-                        credentials: bundle,
-                        consecutiveFailures: 0,
-                        capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
-                    }
-                }
+                // a baseUrl-less bundle pushes to the public api, so a baseUrl-bearing row
+                // outranks a newer dupe that lost the instance URL
+                if (bundle.baseUrl) connections[existingIdx] = nativeConnection(type, accountId, row, bundle)
                 continue
             }
-            connections.push({
-                id: row.connection_id,
-                platform: type,
-                accountId,
-                driverType: 'native',
-                enabled: true,
-                status: 'active',
-                credentials: bundle,
-                consecutiveFailures: 0,
-                capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
-            })
+            connections.push(nativeConnection(type, accountId, row, bundle))
             continue
         }
         if (seenPlatforms.has(type)) continue
@@ -130,6 +131,8 @@ async function resolveConnections(accountId, syncUser = null) {
         }
     }
 
+    if (connectionCache.size > 500) connectionCache.delete(connectionCache.keys().next().value)
+    connectionCache.set(cacheKey, { at: Date.now(), connections })
     return connections
 }
 
@@ -158,21 +161,24 @@ async function loadDriver(platform, credentials, connection) {
         }
 
         if (connection?.id) {
-            try {
-                const { refreshNuvioToken } = await import('./token-refresh.js')
-                const fresh = await refreshNuvioToken(connection.id, connection.accountId)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        refreshToken: fresh.refreshToken,
-                        expiresAt: fresh.expiresAt,
-                        profileId: fresh.profileId ?? connection.credentials?.profileId,
+            const expiresAt = connection.credentials?.expiresAt
+            if (!expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshNuvioToken } = await import('./token-refresh.js')
+                    const fresh = await refreshNuvioToken(connection.id, connection.accountId)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            refreshToken: fresh.refreshToken,
+                            expiresAt: fresh.expiresAt,
+                            profileId: fresh.profileId ?? connection.credentials?.profileId,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired) {
+                        throw err
+                    }
                 }
             }
         }
@@ -186,20 +192,23 @@ async function loadDriver(platform, credentials, connection) {
         })
 
         if (connection?.id) {
-            try {
-                const { refreshRealStreamToken } = await import('./token-refresh.js')
-                const fresh = await refreshRealStreamToken(connection.id)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        userId: fresh.userId ?? connection.credentials?.userId,
-                        expiresAt: fresh.expiresAt,
+            const expiresAt = connection.credentials?.expiresAt
+            if (!expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshRealStreamToken } = await import('./token-refresh.js')
+                    const fresh = await refreshRealStreamToken(connection.id)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            userId: fresh.userId ?? connection.credentials?.userId,
+                            expiresAt: fresh.expiresAt,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired) {
+                        throw err
+                    }
                 }
             }
         }

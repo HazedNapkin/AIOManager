@@ -63,7 +63,11 @@ async function registerApiKeys(tx, id, apiKeys, pushedAccounts) {
         if (chunk.length === 0) continue
         const placeholders = buildMultiRowPlaceholders(chunk.length, 4)
         const params = chunk.flat()
-        const sql = `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
+        // A hash already registered under a different sync user must never 500 the whole
+        // push; keys are bound to whoever registered them first.
+        const sql = db.type === 'postgres'
+            ? `INSERT INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders} ON CONFLICT DO NOTHING`
+            : `INSERT OR IGNORE INTO account_api_keys (account_id, sync_user, api_key_hash, created_at) VALUES ${placeholders}`
         await tx.run(sql, params)
     }
 }
@@ -547,6 +551,8 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM kv_store_history WHERE key = $1', [id])
         })
         invalidateCachedAuth('sync:' + id)
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache()
         trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })
 
         return { success: true }

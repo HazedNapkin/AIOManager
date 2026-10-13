@@ -625,6 +625,34 @@ export async function initializeDatabase(fastify) {
                 throw e
             }
 
+            // Older schema versions carried a single-column UNIQUE(api_key_hash) constraint,
+            // which bricks every push that re-registers a key already bound to another sync
+            // user. The per-user composite above is the intended contract; drop any legacy
+            // single-column unique constraint or index left on the table.
+            try {
+                const staleConstraints = await db.query(`
+                    SELECT conname FROM pg_constraint
+                    WHERE conrelid = 'account_api_keys'::regclass AND contype = 'u'
+                      AND pg_get_constraintdef(oid) ILIKE '%api_key_hash%'
+                      AND pg_get_constraintdef(oid) NOT ILIKE '%sync_user%'
+                `)
+                for (const c of staleConstraints) {
+                    await db.run(`ALTER TABLE account_api_keys DROP CONSTRAINT IF EXISTS ${c.conname}`)
+                    fastify.log.warn({ category: 'Database' }, `account_api_keys: dropped legacy single-column unique constraint ${c.conname}.`)
+                }
+                const staleIdx = await db.query(`
+                    SELECT indexname FROM pg_indexes
+                    WHERE tablename = 'account_api_keys' AND indexdef ILIKE '%UNIQUE%'
+                      AND indexdef ILIKE '%(api_key_hash)%' AND indexdef NOT ILIKE '%sync_user%'
+                `)
+                for (const i of staleIdx) {
+                    await db.run(`DROP INDEX IF EXISTS ${i.indexname}`)
+                    fastify.log.warn({ category: 'Database' }, `account_api_keys: dropped legacy single-column unique index ${i.indexname}.`)
+                }
+            } catch (e) {
+                fastify.log.warn({ category: 'Database' }, `account_api_keys legacy unique cleanup failed: ${e.message}`)
+            }
+
             fastify.log.info({ category: 'Database' }, 'Postgres Migration: Verified columns and types for encryption support.')
         } else {
             // SQLite doesn't have IF NOT EXISTS for columns, so we check first
@@ -735,6 +763,40 @@ export async function initializeDatabase(fastify) {
                 await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
             } catch (e) {
                 fastify.log.error({ category: 'Database' }, `Failed to create idx_api_keys_user_hash: ${e.message}`)
+                throw e
+            }
+            // Older schema versions baked UNIQUE(api_key_hash) into the table definition itself.
+            // A single-column unique bricks every push that carries an API key already registered
+            // under a different sync user, so rebuild the table without it. The composite
+            // per-user index above is the intended uniqueness contract.
+            try {
+                const apiIdxList = await db.query(`PRAGMA index_list('account_api_keys')`)
+                const legacyAuto = apiIdxList.find(i => i.origin === 'u' && String(i.name).startsWith('sqlite_autoindex'))
+                if (legacyAuto) {
+                    const staleCols = (await db.query(`PRAGMA index_info('${legacyAuto.name}')`)).map(c => c.name)
+                    if (staleCols.length === 1 && staleCols[0] === 'api_key_hash') {
+                        await db.exec(`
+                            CREATE TABLE account_api_keys_rebuild (
+                                account_id TEXT NOT NULL,
+                                sync_user TEXT NOT NULL,
+                                api_key_hash TEXT NOT NULL,
+                                created_at BIGINT NOT NULL DEFAULT 0,
+                                last_used_at BIGINT,
+                                UNIQUE (sync_user, api_key_hash)
+                            )
+                        `)
+                        await db.exec(`INSERT INTO account_api_keys_rebuild (account_id, sync_user, api_key_hash, created_at, last_used_at)
+                                       SELECT account_id, sync_user, api_key_hash, created_at, last_used_at FROM account_api_keys`)
+                        await db.exec(`DROP TABLE account_api_keys`)
+                        await db.exec(`ALTER TABLE account_api_keys_rebuild RENAME TO account_api_keys`)
+                        await db.run(`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON account_api_keys (api_key_hash)`)
+                        await db.run(`CREATE INDEX IF NOT EXISTS idx_api_keys_sync_user ON account_api_keys (sync_user)`)
+                        await db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_hash ON account_api_keys (sync_user, api_key_hash)`)
+                        fastify.log.warn({ category: 'Database' }, 'account_api_keys: rebuilt to drop the legacy single-column UNIQUE(api_key_hash) constraint.')
+                    }
+                }
+            } catch (e) {
+                fastify.log.error({ category: 'Database' }, `account_api_keys rebuild failed: ${e.message}`)
                 throw e
             }
         }

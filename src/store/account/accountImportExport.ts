@@ -181,8 +181,9 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
         version: '2.0.0',
         exportedAt: new Date().toISOString(),
         manifests: manifestMap,
-        accounts: exportedAccounts,
-        apiKeys,
+        // API keys are deliberately excluded from file backups: they are plaintext live
+        // credentials, and the import path rotates keys for every imported account anyway.
+        accounts: exportedAccounts.map(({ apiKey: _apiKey, ...rest }) => rest),
         profiles: useProfileStore.getState().profiles.map((p) => ({
             ...p,
             createdAt: new Date(p.createdAt).toISOString(),
@@ -691,7 +692,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
             if (backup && backup.length > 0) {
                 if (import.meta.env.DEV) console.warn(`[Import] Final accounts would be empty but backup has ${backup.length}. Restoring from backup.`)
-                const restoredBackup = localDecryptionKey
+                let restoredBackup = localDecryptionKey
                     ? await Promise.all(backup.map(async (account) => {
                         try {
                             const rawAuthKey = await decrypt(getStremioAuthKey(account), getReadEncryptionKey())
@@ -706,6 +707,8 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                         }
                     }))
                     : backup
+                // Same rule as the plain-import path: restored accounts rotate their API keys.
+                restoredBackup = restoredBackup.map(a => ({ ...a, apiKey: crypto.randomUUID() }))
                 store.setState({ accounts: restoredBackup })
                 await localforage.setItem(STORAGE_KEY, restoredBackup)
                 setTimeout(() => triggerSync(), 500)
@@ -721,13 +724,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             }
         }
 
-        const apiKeysMap = data.apiKeys as Record<string, string> | undefined
-        if (apiKeysMap && typeof apiKeysMap === 'object') {
-            finalAccounts = finalAccounts.map(a => ({
-                ...a,
-                apiKey: apiKeysMap[a.id] || a.apiKey,
-            }))
-        }
+        // Imported API keys authenticate as the account that minted them. Rotate on import
+        // so every account in the receiving instance owns its own credential.
+        finalAccounts = finalAccounts.map(a => ({ ...a, apiKey: crypto.randomUUID() }))
 
         store.setState({ accounts: finalAccounts, hydrated: true })
         persistAccounts(finalAccounts)

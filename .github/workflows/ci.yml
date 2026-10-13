@@ -30,3 +30,7 @@ jobs:
         run: npm --prefix server run test:smoke
         env:
           ENCRYPTION_KEY: test-encryption-key-32bytes-long!!
+      - name: Engine performance ratchet (bench)
+        run: npm --prefix server run bench
+        env:
+          ENCRYPTION_KEY: bench-encryption-key-32bytes!

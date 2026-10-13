@@ -62,7 +62,7 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
     const { nuvioDriverFor } = await import('@/lib/drivers/factory')
     const driver = nuvioDriverFor(conn)
     const { fetchConnectionToken } = await import('@/api/connection')
-    const token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+    const token = await fetchConnectionToken(accountId, conn, 'nuvio')
     const { setCachedNuvioToken } = await import('@/lib/nuvio-token-cache')
     setCachedNuvioToken(conn.id, token)
     const { resolveNuvioPushProfile } = await import('@/lib/nuvio-profile-resolve')
@@ -87,7 +87,7 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
 
 async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string) {
     const { fetchConnectionToken } = await import('@/api/connection')
-    const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
+    const token = await fetchConnectionToken(accountId, conn, 'realstream')
 
     const { realStreamDriverFor } = await import('@/lib/drivers/factory')
     // userId is a stable PocketBase identity set at auth time; it never changes between refreshes.

@@ -1,0 +1,19 @@
+{
+  "scenarios": {
+    "autopilot.cold": {
+      "dbQueries": 11,
+      "outboundRequests": 18,
+      "rowsWritten": 0
+    },
+    "autopilot.warm": {
+      "dbQueries": 1,
+      "outboundRequests": 0,
+      "rowsWritten": 0
+    },
+    "sync.reconcile": {
+      "dbQueries": 0,
+      "outboundRequests": 36,
+      "rowsWritten": 0
+    }
+  }
+}

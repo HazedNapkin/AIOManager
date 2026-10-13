@@ -52,12 +52,12 @@ export async function triggerReconciliation(
 
 export async function fetchConnectionToken(
     accountId: string,
-    connectionId: string,
+    conn: { id: string; credentials?: Record<string, string> },
     platform: string,
-    baseUrl?: string | null,
 ): Promise<{ accessToken: string; expiresAt: number; profileId: string | null }> {
     const base = getSyncApiPath(useSyncStore.getState().serverUrl)
-    const res = await resilientFetch(`${base}/providers/connections/${connectionId}/token`, {
+    const baseUrl = conn.credentials?.baseUrl
+    const res = await resilientFetch(`${base}/providers/connections/${conn.id}/token`, {
         method: 'POST',
         headers: await getAuthHeaders(),
         body: JSON.stringify({ accountId, platform, ...(baseUrl ? { baseUrl } : {}) }),

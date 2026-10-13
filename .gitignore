@@ -80,3 +80,5 @@ aio.db
 *.db-wal
 
 .source/
+!server/tests/connection-cache-decisions.test.js
+!server/tests/connection-cache-decisions.test.js

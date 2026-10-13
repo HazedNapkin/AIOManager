@@ -93,7 +93,7 @@ async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): P
         try {
             let token = getCachedNuvioToken(conn.id)
             if (!token) {
-                token = await fetchConnectionToken(account.id, conn.id, 'nuvio')
+                token = await fetchConnectionToken(account.id, conn, 'nuvio')
                 setCachedNuvioToken(conn.id, token)
             }
             const driver = nuvioDriverFor(conn)
@@ -130,7 +130,7 @@ async function deleteRealStreamWatchItems(account: Account, items: ActivityItem[
         try {
             const userId = conn.credentials?.userId || ''
             if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
-            const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
+            const token = await fetchConnectionToken(account.id, conn, 'realstream')
             const driver = realStreamDriverFor(conn)
             await driver.deleteWatchProgress(token.accessToken, userId, entries)
             trace('activityDelete', 'realstream.connection.ok', { accountId: account.id, connectionId: conn.id, entries: entries.length })
