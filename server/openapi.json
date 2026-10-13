@@ -357,6 +357,34 @@
         }
       }
     },
+    "/api/stremio-meta-batch": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "requests"
+                ],
+                "properties": {
+                  "requests": {
+                    "type": "array"
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/api/aiostreams-proxy/user": {
       "post": {
         "requestBody": {

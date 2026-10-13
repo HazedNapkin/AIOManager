@@ -527,6 +527,39 @@ export class StremioClient {
     }
   }
 
+  // Batched DatastoreMeta pre-check for the library refresh: one round trip covers every
+  // account whose mtime snapshot can prove the library unchanged, instead of one request
+  // per account (13 today; 150 at fleet scale, each a full client<->server RT). Entries are
+  // index-ordered; a slot is null when that account's upstream fetch failed (dead platform,
+  // auth error) and the caller must fall back to that account's full path.
+  // Dedicated /api/stremio-meta-batch route (own rate-limit bucket, parity with the single
+  // request path's worst-case upstream load). Chunks at 25 to bound both the request body
+  // and the server's fan-out wave.
+  async getLibraryMetaBatch(entries: Array<{ authKey: string; accountContext?: string }>): Promise<Array<Array<[string, number]> | null>> {
+    const out: Array<Array<[string, number]> | null> = []
+    const CHUNK = 25
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const chunk = entries.slice(i, i + CHUNK)
+      const start = Date.now()
+      const data = await serverPost('/api/stremio-meta-batch', {
+        requests: chunk.map(e => ({ authKey: e.authKey, accountContext: e.accountContext })),
+      })
+      trace('stremio', 'api-call', { method: 'DatastoreMetaBatch', timing: Date.now() - start, accounts: chunk.length })
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get library meta batch')
+      }
+      const result = data?.result as unknown
+      if (!Array.isArray(result) || result.length !== chunk.length) {
+        throw new Error('Malformed batch meta response')
+      }
+      for (const row of result) {
+        out.push(Array.isArray(row) ? (row as Array<[string, number]>) : null)
+      }
+    }
+    return out
+  }
+
   async testCORS(): Promise<boolean> {
     try {
       await fetch(`${API_BASE}/api/addonCollectionGet`, {
