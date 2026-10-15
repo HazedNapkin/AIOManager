@@ -4,6 +4,7 @@ import { VaultKey, VaultState } from '@/types/vault'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
 import localforage from 'localforage'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
 
 const STORAGE_KEY = 'aioman:key-vault'
 const TOMBSTONE_KEY = `${STORAGE_KEY}:tombstones`
@@ -17,13 +18,13 @@ export interface VaultTombstone {
 
 interface VaultStore extends VaultState {
     tombstones: VaultTombstone[]
-    initialize: () => Promise<void>
+    initialize: (ownership?: SyncOwnership) => Promise<void>
     addKey: (key: Omit<VaultKey, 'id' | 'updatedAt'>) => Promise<void>
     removeKey: (id: string) => Promise<void>
     updateKey: (id: string, key: Partial<VaultKey>) => Promise<void>
     moveKey: (id: string, direction: 'up' | 'down') => Promise<void>
     clearVault: () => Promise<void>
-    importVault: (keys: VaultKey[], tombstones?: VaultTombstone[]) => Promise<void>
+    importVault: (keys: VaultKey[], tombstones?: VaultTombstone[], ownership?: SyncOwnership) => Promise<void>
     saveFailed: boolean
     resetSaveFailed: () => void
 }
@@ -49,7 +50,11 @@ export function mergeTombstones(...sets: VaultTombstone[][]): VaultTombstone[] {
     return normalizeTombstones(sets.flat())
 }
 
-async function persistTombstones(tombstones: VaultTombstone[]) {
+async function persistTombstones(tombstones: VaultTombstone[], ownership?: SyncOwnership) {
+    // The vault writes span awaits (encrypt, the keys write before this one): a
+    // tombstone dispatch that outlives its session must not land in the
+    // namespace that replaced it.
+    ownership?.assert()
     await localforage.setItem(TOMBSTONE_KEY, tombstones)
 }
 
@@ -62,28 +67,44 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
     saveFailed: false,
     resetSaveFailed: () => set({ saveFailed: false }),
 
-    initialize: async () => {
+    initialize: async (ownership?: SyncOwnership) => {
+        // Own-capture before the first read: the auth-subscriber and boot callers
+        // pass no context, and a hydration caller's context must cover every
+        // branch, not just the encrypted success path.
+        const own = ownership ?? captureSyncOwnership()
         const { encryptionKey } = useAuthStore.getState()
         if (!encryptionKey) {
+            own.assert()
             set({ isLocked: true })
             return
         }
 
+        own.assert()
         set({ loading: true, error: null })
         try {
             const tombstones = normalizeTombstones(await localforage.getItem<VaultTombstone[]>(TOMBSTONE_KEY))
+            own.assert()
             const encryptedData = await localforage.getItem<string>(STORAGE_KEY)
+            own.assert()
             if (!encryptedData) {
+                // The empty branch publishes the tombstones it just read: without
+                // the fence a resumed initialization would hand them to the session
+                // that replaced this one.
                 set({ keys: [], tombstones, isLocked: false, loading: false })
                 return
             }
 
             const decryptedData = await decrypt(encryptedData, encryptionKey)
             const keys = JSON.parse(decryptedData) as VaultKey[]
+            // Sync hydration spans awaits: a workspace switch mid-read must not
+            // publish this namespace's decrypted keys into the one that replaced it.
+            own.assert()
             set({ keys, tombstones, isLocked: false, loading: false })
         } catch (error) {
             if (import.meta.env.DEV) console.error('Failed to initialize vault:', error)
-            set({ error: 'Failed to decrypt vault. Your keys might be corrupted or the password changed.', loading: false })
+            // A stale initialization publishes nothing, not even an error state:
+            // the session that replaced it owns the store now.
+            if (own.current()) set({ error: 'Failed to decrypt vault. Your keys might be corrupted or the password changed.', loading: false })
         }
     },
 
@@ -211,7 +232,8 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
         triggerSync()
     },
 
-    importVault: async (keys, tombstones = []) => {
+    importVault: async (keys, tombstones = [], ownership?: SyncOwnership) => {
+        const own = ownership ?? captureSyncOwnership()
         if (import.meta.env.DEV) console.log('[VaultStore] Attempting to import vault keys. Count:', keys?.length)
         const { encryptionKey } = useAuthStore.getState()
         if (!encryptionKey) {
@@ -256,8 +278,16 @@ export const useVaultStore = create<VaultStore>((set, get) => ({
 
         const mergedKeys = Array.from(mergedById.values())
         const encryptedData = await encrypt(JSON.stringify(mergedKeys), encryptionKey)
+        // The encrypt spans awaits: re-verify before dispatching the ciphertext and
+        // before publishing, so a mid-import switch never receives another session's
+        // plaintext or ciphertext and never shows its keys. The tombstone write is
+        // a separate awaited dispatch that would otherwise bind to whichever
+        // namespace is live after the keys write resolves, so it is fenced too.
+        own.assert()
         await localforage.setItem(STORAGE_KEY, encryptedData)
-        await persistTombstones(mergedTombstones)
+        own.assert()
+        await persistTombstones(mergedTombstones, own)
+        own.assert()
 
         set({ keys: mergedKeys, tombstones: mergedTombstones, isLocked: false })
         if (import.meta.env.DEV) console.log('[VaultStore] Vault import successful (merged', keys.length, 'keys into', mergedKeys.length, 'total).')

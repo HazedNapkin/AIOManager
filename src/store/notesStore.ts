@@ -3,6 +3,7 @@ import localforage from 'localforage'
 import { triggerSync } from '@/lib/sync-trigger'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
 
 const OLD_STORAGE_KEY = 'aiom-notes'
 export const NOTES_INDEX_KEY = 'aiom-notes-index'
@@ -99,20 +100,28 @@ function noteTime(note: Pick<Note, 'updatedAt'> | Pick<NoteMeta, 'updatedAt'> | 
     return Number.isFinite(ts) ? ts : 0
 }
 
-async function persistIndex(metas: NoteMeta[]) {
+// The optional ownership fence is for imports that span awaits (sync hydration):
+// ownership is captured before the first await and re-verified before every
+// storage dispatch and before every state publication, so work that outlives its
+// session aborts or stays unpublished instead of leaking into the next namespace.
+async function persistIndex(metas: NoteMeta[], ownership?: SyncOwnership) {
+    ownership?.assert()
     await localforage.setItem(NOTES_INDEX_KEY, metas)
 }
 
-async function persistNote(note: Note) {
+async function persistNote(note: Note, ownership?: SyncOwnership) {
     const stored: Note = { ...note, content: await encryptContent(note.content) }
+    ownership?.assert()
     await localforage.setItem(noteKey(note.id), stored)
 }
 
-async function removeNoteKey(id: string) {
+async function removeNoteKey(id: string, ownership?: SyncOwnership) {
+    ownership?.assert()
     await localforage.removeItem(noteKey(id))
 }
 
-async function persistTrash(trash: Note[]) {
+async function persistTrash(trash: Note[], ownership?: SyncOwnership) {
+    ownership?.assert()
     try {
         await localforage.setItem(NOTES_TRASH_KEY, trash)
     } catch (err) {
@@ -194,16 +203,35 @@ interface NotesStore {
     trashAllNotes: () => Promise<void>
     restoreNote: (id: string) => Promise<void>
     emptyTrash: () => Promise<void>
-    importNotes: (notes: Note[]) => Promise<void>
-    importTrash: (trash: Note[]) => Promise<void>
+    importNotes: (notes: Note[], ownership?: SyncOwnership) => Promise<void>
+    importTrash: (trash: Note[], ownership?: SyncOwnership) => Promise<void>
     getAllNotesWithContent: () => Promise<Note[]>
+    resetLocal: () => void
     saveFailed: boolean
 }
 
-const noteCache = new Map<string, { note: Note; ts: number }>()
+// True when the persisted notes index resolves no entries. The pull path uses
+// it for the empty-local force-apply: a wiped index plus an unchanged-cloud
+// 304 would strand the view at zero until the content changed.
+export async function isLocalNotesStoreEmpty(): Promise<boolean> {
+    try {
+        const index = await localforage.getItem<NoteMeta[]>(NOTES_INDEX_KEY)
+        return !index || !Array.isArray(index) || index.length === 0
+    } catch {
+        return true
+    }
+}
 
-function cachePut(note: Note) {
-    noteCache.set(note.id, { note, ts: Date.now() })
+// Cache entries are scoped to the session epoch that created them. A reset or
+// identity switch bumps the epoch, so async work that outlives its session (a
+// held import resuming after a logout, a late read) can neither serve nor
+// repopulate the next session's cache, even for a same-id relogin where the
+// workspace string is identical.
+const noteCache = new Map<string, { note: Note; ts: number; epoch: number }>()
+let cacheEpoch = 0
+
+function cachePut(note: Note, epoch = cacheEpoch) {
+    noteCache.set(note.id, { note, ts: Date.now(), epoch })
     if (noteCache.size > CACHE_MAX) {
         let oldest = ''
         let oldestTs = Infinity
@@ -214,14 +242,28 @@ function cachePut(note: Note) {
     }
 }
 
-function cacheInvalidate(id: string) {
+// Only entries minted by the live session are readable.
+function cacheGet(id: string): Note | null {
+    const entry = noteCache.get(id)
+    if (!entry || entry.epoch !== cacheEpoch) return null
+    entry.ts = Date.now()
+    return entry.note
+}
+
+function cacheInvalidate(id: string, epoch?: number) {
+    // Scoped invalidation (imports): only drop an entry this import could have
+    // written, so a stale import never evicts the live session's cached note.
+    if (epoch !== undefined) {
+        const entry = noteCache.get(id)
+        if (!entry || entry.epoch !== epoch) return
+    }
     noteCache.delete(id)
 }
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 let pendingPersist: { note: Note; notes: NoteMeta[] } | null = null
 
-async function flushPendingPersist() {
+async function flushPendingPersist(ownership?: SyncOwnership) {
     if (persistTimer) {
         clearTimeout(persistTimer)
         persistTimer = null
@@ -229,8 +271,8 @@ async function flushPendingPersist() {
     const pending = pendingPersist
     if (!pending) return
     pendingPersist = null
-    await persistNote(pending.note)
-    await persistIndex(pending.notes)
+    await persistNote(pending.note, ownership)
+    await persistIndex(pending.notes, ownership)
 }
 
 function schedulePersist(note: Note, notes: NoteMeta[]) {
@@ -260,6 +302,10 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     saveFailed: false,
 
     initialize: async () => {
+        // The reads below span storage awaits: a boot initialization that
+        // outlives its session must not repopulate the cache or active note of
+        // the session that replaced it.
+        const bootEpoch = cacheEpoch
         set({ loading: true })
         try {
             const migrated = await migrateFromOldFormat()
@@ -282,7 +328,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
                     const emergency = JSON.parse(emergencyRaw) as { id?: string; recovered?: boolean }
                     if (emergency.recovered && emergency.id) {
                         const note = await readNoteFromStorage(emergency.id)
-                        if (note) {
+                        if (note && bootEpoch === cacheEpoch) {
                             cachePut(note)
                             set({ activeNote: note })
                         }
@@ -305,15 +351,20 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     },
 
     loadNoteContent: async (id) => {
-        const cached = noteCache.get(id)
+        const cached = cacheGet(id)
         if (cached) {
-            cached.ts = Date.now()
-            set({ activeNote: cached.note })
-            return cached.note
+            set({ activeNote: cached })
+            return cached
         }
         try {
+            // The storage read and decrypt span awaits: capture the epoch first,
+            // so a read that resolves after a reset or identity switch stands
+            // down instead of overwriting the replacement session's live entry
+            // (cache or active note) with the previous session's plaintext.
+            const readEpoch = cacheEpoch
             const note = await readNoteFromStorage(id)
             if (note) {
+                if (readEpoch !== cacheEpoch) return null
                 cachePut(note)
                 set({ activeNote: note })
                 return note
@@ -378,14 +429,18 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     },
 
     deleteNote: async (id) => {
+        // Scope the trailing invalidation to this operation's epoch: the deletes
+        // below span awaits, and a stale one must not evict the next session's
+        // live entry.
+        const opEpoch = cacheEpoch
         const meta = get().notes.find(n => n.id === id)
         const notes = get().notes.filter(n => n.id !== id)
         set({ notes })
 
         let fullNote: Note | null = null
-        const cached = noteCache.get(id)
+        const cached = cacheGet(id)
         if (cached) {
-            fullNote = cached.note
+            fullNote = cached
         } else {
             fullNote = await readNoteFromStorage(id)
         }
@@ -412,18 +467,20 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         }
 
         triggerSync()
-        cacheInvalidate(id)
+        cacheInvalidate(id, opEpoch)
         if (get().activeNote?.id === id) set({ activeNote: null })
     },
 
     trashAllNotes: async () => {
         const notes = get().notes
         if (notes.length === 0) return
+        // Same epoch scoping as deleteNote: the removals below span awaits.
+        const opEpoch = cacheEpoch
         const timestamp = new Date().toISOString()
         const trashItems: Note[] = []
         for (const meta of notes) {
-            const cached = noteCache.get(meta.id)
-            const fullNote = cached ? cached.note : await readNoteFromStorage(meta.id)
+            const cached = cacheGet(meta.id)
+            const fullNote = cached ?? await readNoteFromStorage(meta.id)
             trashItems.push(fullNote
                 ? { ...fullNote, updatedAt: timestamp }
                 : { ...meta, content: '', updatedAt: timestamp })
@@ -434,7 +491,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         await persistTrash(trash)
         for (const meta of notes) {
             await removeNoteKey(meta.id)
-            cacheInvalidate(meta.id)
+            cacheInvalidate(meta.id, opEpoch)
         }
         if (get().activeNote) set({ activeNote: null })
         triggerSync()
@@ -464,8 +521,17 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         triggerSync()
     },
 
-    importNotes: async (incoming) => {
-        await flushPendingPersist()
+    importNotes: async (incoming, ownership) => {
+        // Ownership must be captured before the first await (including the
+        // pending-draft flush): a capture taken after a held write would describe
+        // the workspace that replaced this one. See persistNote above for the
+        // dispatch-level fences; each publication below re-verifies after its awaits.
+        const own = ownership ?? captureSyncOwnership()
+        // The epoch this import mints cache entries under: a resumed import must
+        // never repopulate the cache of the session that replaced it.
+        const importEpoch = cacheEpoch
+        await flushPendingPersist(own)
+        own.assert()
         const sanitized = incoming
             .filter(n => n && typeof n.content === 'string' && n.content.length <= MAX_NOTE_CONTENT)
             .map(n => sanitizeNote(n as unknown as Record<string, unknown>))
@@ -478,6 +544,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         let activeNote = get().activeNote
 
         for (const note of sanitized) {
+            // Fence at the top of every iteration: it guards the cache mutation
+            // below and re-arms after the previous iteration's awaited persist.
+            own.assert()
             const trashed = trashMap.get(note.id)
             if (trashed) {
                 if (noteTime(note) > noteTime(trashed)) {
@@ -492,9 +561,9 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             if (existing && noteTime(existing) >= noteTime(note)) continue
 
             metaMap.set(note.id, toMeta(note))
-            cachePut(note)
+            cachePut(note, importEpoch)
             if (activeNote?.id === note.id) activeNote = note
-            await persistNote(note)
+            await persistNote(note, own)
             notesChanged = true
         }
 
@@ -505,20 +574,25 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             const notes = Array.from(metaMap.values())
             nextState.notes = notes
             nextState.activeNote = activeNote
-            await persistIndex(notes)
+            await persistIndex(notes, own)
+            own.assert()
         }
         if (trashChanged) {
             const trash = Array.from(trashMap.values())
             nextState.trash = trash
-            await persistTrash(trash)
+            await persistTrash(trash, own)
+            own.assert()
         }
         set(nextState)
 
         triggerSync()
     },
 
-    importTrash: async (incoming) => {
-        await flushPendingPersist()
+    importTrash: async (incoming, ownership) => {
+        const own = ownership ?? captureSyncOwnership()
+        const importEpoch = cacheEpoch
+        await flushPendingPersist(own)
+        own.assert()
         const sanitized = incoming
             .filter(n => n && typeof n.content === 'string' && n.content.length <= MAX_NOTE_CONTENT)
             .map(n => sanitizeNote(n as unknown as Record<string, unknown>))
@@ -530,6 +604,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         let activeNote = get().activeNote
 
         for (const note of sanitized) {
+            own.assert()
             const existingTrash = trashMap.get(note.id)
             if (!existingTrash || noteTime(note) > noteTime(existingTrash)) {
                 trashMap.set(note.id, note)
@@ -539,8 +614,8 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             const active = metaMap.get(note.id)
             if (active && noteTime(note) >= noteTime(active)) {
                 metaMap.delete(note.id)
-                cacheInvalidate(note.id)
-                await removeNoteKey(note.id)
+                cacheInvalidate(note.id, importEpoch)
+                await removeNoteKey(note.id, own)
                 if (activeNote?.id === note.id) activeNote = null
                 changed = true
             }
@@ -550,9 +625,13 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
         const notes = Array.from(metaMap.values())
         const trash = Array.from(trashMap.values())
+        // Persist before publishing: a write held across a workspace switch must
+        // abort here instead of publishing the previous session's trash state.
+        own.assert()
+        await persistIndex(notes, own)
+        await persistTrash(trash, own)
+        own.assert()
         set({ notes, trash, activeNote })
-        await persistIndex(notes)
-        await persistTrash(trash)
 
         triggerSync()
     },
@@ -562,19 +641,34 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         const metas = get().notes
         const results: Note[] = []
         for (const meta of metas) {
-            const cached = noteCache.get(meta.id)
+            const cached = cacheGet(meta.id)
             if (cached) {
-                results.push({ ...meta, content: cached.note.content })
+                results.push({ ...meta, content: cached.content })
                 continue
             }
             const note = await readNoteFromStorage(meta.id)
             if (note) {
                 results.push({ ...meta, content: note.content })
-            } else {
-                results.push({ ...meta, content: '' })
             }
+            // An unreadable note (key rotated underneath it) must never push as empty
+            // content: the cloud keeps its last good copy instead of being overwritten
+            // with a blank.
         }
         return results
+    },
+
+    resetLocal: () => {
+        if (persistTimer) {
+            clearTimeout(persistTimer)
+            persistTimer = null
+        }
+        pendingPersist = null
+        noteCache.clear()
+        // Invalidate every entry the previous session minted, including ones a
+        // held import may still write after this reset.
+        cacheEpoch++
+        migrationDone = false
+        set({ notes: [], trash: [], activeNote: null, saveFailed: false })
     },
 }))
 

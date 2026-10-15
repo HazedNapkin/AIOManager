@@ -12,12 +12,15 @@ import { toast } from '@/hooks/use-toast'
 import { deriveSyncToken } from '@/lib/crypto'
 import { resilientFetch } from '@/lib/api-resilience'
 import { compressSyncPayload, decompressSyncPayload } from '@/lib/sync-payload-codec'
+import { decodeSyncBlob, isValidAvatarPayload, isValidWatchPayload } from '@/lib/sync-blob-decode'
 import { applySyncedSettings, readSyncedSettings } from '@/lib/synced-settings'
 import { resolveRestoreSaltPolicy } from '@/lib/salt-policy'
 import { serverHasStremioCredential, canonicalMembershipChanged } from '@/lib/canonical-visibility'
 import { needsCredentialHeal } from '@/lib/credential-heal'
 import { mergeDeletedEventMaps } from '@/lib/event-tombstones'
 import { mergeNotesTrash, filterNotesByTrash } from '@/lib/notes-tombstones'
+import { shouldSendPullEtag } from '@/lib/pull-restore'
+import { setActiveWorkspace, getActiveWorkspaceId, ANON_WORKSPACE_ID } from '@/lib/workspace-persistence'
 import {
     bindRepublishHost,
     learnServerCredentialedAccounts,
@@ -47,6 +50,7 @@ import {
     LEGACY_SYNC_PASSWORD_KEY,
     syncRuntime,
     resolveCloudIdentity,
+    captureSyncOwnership,
 } from './sync-store-helpers'
 export { markAccountsHydrated, readIdentityProfile, getSyncApiPath } from './sync-store-helpers'
 import {
@@ -91,6 +95,9 @@ interface SyncState {
     lastSeenVersion: string | null
     syncSaltB64: string | null
     lastSyncedCloudEtag: string | null
+    // Note count the last applied pull carried. Persisted so the 304 shortcut can
+    // tell "cloud genuinely empty" apart from "local index was wiped underneath us".
+    lastSyncedNotesCount: number | null
     serverStremioCredentialedAccounts: string[] | null
     // True only when an authenticated+unlocked session has NO usable server credential
     // (no in-memory password, no active device session): pushes are impossible and the
@@ -134,6 +141,7 @@ export const useSyncStore = create<SyncState>()(
             lastSeenVersion: null,
             syncSaltB64: null,
             lastSyncedCloudEtag: null,
+            lastSyncedNotesCount: null,
             serverStremioCredentialedAccounts: null,
             needsReauth: false,
             history: [],
@@ -188,16 +196,22 @@ export const useSyncStore = create<SyncState>()(
             refreshFromCloud: async () => {
                 const { auth, isSyncing } = get()
                 if (!auth.isAuthenticated || !auth.id) return
-                if (!auth.password && !(await isDeviceSessionActive())) return
+                if (!auth.password && !getSessionSyncCredential(auth.id) && !(await isDeviceSessionActive())) return
                 if (isSyncing) return
 
                 const releaseSyncLock = await acquireSyncLock()
 
                 set({ isRefreshingFromCloud: true })
                 try {
+                    // The pull owns its own completion flip: 304 sets it directly, the 200
+                    // path flips after the deferred slices land. Forcing it true here opened
+                    // the push gate even when login returned early (e.g. a silent unlock
+                    // failure imported nothing).
                     await get().login(auth.id, auth.password, true, true, await deviceUnlockFromSession())
-                    set({ isInitialSyncCompleted: true })
                 } catch (e) {
+                    // A superseded pull fails silently by design: another session owns
+                    // the screen and already surfaced its own state.
+                    if ((e as Error)?.name === 'SyncOwnershipLostError') return
                     if (import.meta.env.DEV) console.error('[Sync] Post-unlock cloud refresh failed:', e)
                     const message = e instanceof Error ? e.message : 'Unknown sync error'
                     if (message.toLowerCase().includes('decrypt') || message.toLowerCase().includes('password')) {
@@ -282,6 +296,9 @@ export const useSyncStore = create<SyncState>()(
                         throw setupError
                     }
 
+                    // A fresh workspace starts in a fresh namespace; the wipe
+                    // above already cleared the signed-out one.
+                    setActiveWorkspace(newId)
                     writeIdentityProfile(newId, name, null)
                     set({
                         auth: { id: newId, password, name, avatar: null, isAuthenticated: true },
@@ -312,6 +329,23 @@ export const useSyncStore = create<SyncState>()(
 
             login: async (id: string, password: string, isSilent: boolean = false, bypassGuard: boolean = false, deviceUnlock?: { syncKey: CryptoKey }) => {
                 if (get().isSyncing && !bypassGuard) return
+                // Route every write in this pull into the target workspace's
+                // namespace before any import runs. Same id is a no-op, so
+                // silent re-syncs skip the swap. A failed login moves back: a
+                // half-claimed namespace must never receive this session's writes.
+                const priorWorkspace = getActiveWorkspaceId()
+                setActiveWorkspace(id)
+                // Async continuations of THIS pull (deferred hydration, the completion
+                // flip) capture this token and stand down once a newer pull, logout or
+                // workspace switch supersedes it. The bump also clears an outstanding
+                // 304 adoption: a real supersession ends the re-arm.
+                const pullToken = ++syncRuntime.pullSeq
+                syncRuntime.adoptedSeq = null
+                // Ownership for this pull's work: workspace + pull sequence captured
+                // before the first await. Every import re-verifies before its writes
+                // and publications, and a same-id logout/relogin (same workspace
+                // string, new sequence) invalidates the old work like a real switch.
+                const ownership = captureSyncOwnership(pullToken)
                 set({ isSyncing: true })
                 const { serverUrl } = get()
                 const apiPath = getSyncApiPath(serverUrl)
@@ -319,7 +353,11 @@ export const useSyncStore = create<SyncState>()(
                 trace('sync', 'pull.start', { accountId: id, isSilent })
 
                 try {
-                    const syncToken = await deriveSyncToken(password)
+                    // A refreshed password session has no raw password but keeps its
+                    // derived wire credential: the pull authenticates and decrypts with
+                    // it instead of deriving garbage from the empty password.
+                    const sessionPullCred = password ? null : getSessionSyncCredential(id)
+                    const syncToken = password ? await deriveSyncToken(password) : (sessionPullCred?.token ?? await deriveSyncToken(password))
                     const pullHeaders: Record<string, string> = { 'x-sync-password': syncToken }
                     // Bug #52: keep the derived wire credential (+ sync key) in sessionStorage so
                     // the post-refresh session — which never sees the raw password again — stays
@@ -338,14 +376,80 @@ export const useSyncStore = create<SyncState>()(
                     }
                     const storedEtag = get().lastSyncedCloudEtag
                     const sessionUnlocked = !!useAuthStore.getState().encryptionKey
-                    if (storedEtag && sessionUnlocked) pullHeaders['If-None-Match'] = storedEtag
+                    // Empty-local force-apply: the workspace pulled notes before, but the
+                    // local index now resolves none (sign-out wipe, storage eviction). The
+                    // unchanged verdict would freeze an empty view, so the pull re-fetches
+                    // the full state and lets the import restore it.
+                    let localNotesEmpty = false
+                    if (storedEtag && sessionUnlocked && (get().lastSyncedNotesCount ?? 0) > 0) {
+                        try {
+                            const { isLocalNotesStoreEmpty } = await import('@/store/notesStore')
+                            localNotesEmpty = await isLocalNotesStoreEmpty()
+                        } catch { localNotesEmpty = false }
+                    }
+                    const sendPullEtag = shouldSendPullEtag({
+                        storedEtag,
+                        sessionUnlocked,
+                        lastSyncedNotesCount: get().lastSyncedNotesCount,
+                        localNotesEmpty,
+                    })
+                    if (storedEtag && sessionUnlocked && !sendPullEtag) {
+                        trace('sync', 'pull.force-full-empty-local', { accountId: id, isSilent })
+                    }
+                    if (sendPullEtag && storedEtag) pullHeaders['If-None-Match'] = storedEtag
+                    // Avatar out-of-band blob: captured from the response at parse time,
+                    // restored after the inner state applies (function-scope on purpose).
+                    let avatarBlobWire: string | undefined
+                    let watchBlobWire: string | undefined
 
                     const res = await resilientFetch(`${apiPath}/sync/${id}`, {
                         headers: pullHeaders
                     })
 
                     if (res.status === 304) {
-                        set({ isInitialSyncCompleted: true, lastSyncCheckedAt: new Date().toISOString() })
+                        // This response answers a request whose pull was already
+                        // superseded (newer login, logout or reset since the fetch went
+                        // out). Reject it before ANY side effect: no adoption, no gate
+                        // flip, no log entry in the session that replaced this one, no
+                        // credential re-persist. The finally below skips its flag write
+                        // for the same reason.
+                        if (!ownership.current()) return
+                        const hydration = syncRuntime.hydration
+                        // A 304 claims nothing. When it lands while an earlier pull of
+                        // this account is still applying AND this conditional pull is the
+                        // newest actor (it was the bump that invalidated the pending
+                        // work), adopt that pending pull explicitly: its ownership
+                        // re-validates against the adoption slot until the next real
+                        // supersession. The global sequence never rewinds, so no other
+                        // stale actor can revive; a pending MIRROR record is never
+                        // adopted, and neither is work a newer full pull superseded.
+                        const pendingAdopted = !!hydration
+                            && hydration.status === 'pending'
+                            && hydration.kind !== 'mirror'
+                            && hydration.id === id
+                            && pullToken > hydration.seq
+                            && syncRuntime.pullSeq === pullToken
+                        if (pendingAdopted) syncRuntime.adoptedSeq = hydration.seq
+                        // "Unchanged" certifies only state this session fully applied: an
+                        // in-flight or failed hydration, or a record from another account,
+                        // must not ride the shortcut past an unapplied pull. A boot-time 304
+                        // with a persisted etag is the one trusted fallback: that etag was
+                        // minted after a full application (a pull that is about to apply
+                        // clears it first, so a reload can never shortcut from unapplied
+                        // state), and the stores below rehydrate exactly that persisted state.
+                        const unchangedTrusted = hydration
+                            ? hydration.status === 'ok' && hydration.id === id
+                            : !!storedEtag && sessionUnlocked
+                        set({ lastSyncCheckedAt: new Date().toISOString(), ...(unchangedTrusted ? { isInitialSyncCompleted: true } : {}) })
+                        if (!unchangedTrusted && !pendingAdopted) {
+                            get().addLogEntry({
+                                type: 'pull',
+                                status: 'error',
+                                message: 'Cloud is unchanged, but the local copy is not verified complete; pushes stay paused. Pull again to re-apply.',
+                                isAuto: isSilent
+                            })
+                            trace('sync', 'pull.not-modified-unverified', { accountId: id, isSilent })
+                        }
                         await persistSessionCredential()
                         if (!useAccountStore.getState().hydrated) {
                             await useAccountStore.getState().initialize()
@@ -388,6 +492,9 @@ export const useSyncStore = create<SyncState>()(
                         if (deviceUnlock && reason === 'unknown') {
                             throw Object.assign(new Error('This device is no longer recognized. Sign in again to continue.'), { reason })
                         }
+                        if (!password && sessionPullCred) {
+                            throw new Error('Your saved sign-in ended. Sign in again to continue.')
+                        }
                         throw new Error("Incorrect Password. If you've forgotten it, you may need to reset your account.")
                     }
                     if (res.status === 404) throw new Error("Cloud Account not found. Check the ID or Register a new one.")
@@ -404,28 +511,57 @@ export const useSyncStore = create<SyncState>()(
                         throw new Error("Server returned corrupted data ([object Object]). Reset your account.")
                     }
 
+                    // Validation gate: everything below (decrypt, unlock, imports) can
+                    // leave the workspace partially applied. Close the push gate and drop
+                    // the previously certified etag BEFORE that work starts: the stored
+                    // etag describes the pre-pull state, and after a partial application
+                    // a reload must never 304-shortcut from it. completePull re-publishes
+                    // the response etag only after every slice lands. Network-only
+                    // failures (non-OK status, empty body) throw above this line and keep
+                    // both: an outage without a partial application is an offline pause,
+                    // not a corruption state.
+                    set({ isInitialSyncCompleted: false, lastSyncedCloudEtag: null })
+                    // This pull is about to apply cloud state: until its hydration
+                    // settles, an unchanged (304) verdict cannot certify this session.
+                    syncRuntime.hydration = { seq: pullToken, id, status: 'pending', kind: 'pull' }
+
                     let data: unknown
+                    // The salt this response was sealed under, hoisted so the blob
+                    // decode and salt adoption below share one value.
+                    let remoteSyncSalt: Uint8Array | undefined
                     try {
                         const raw = JSON.parse(text) as Record<string, unknown>
+                        avatarBlobWire = typeof raw.avatarBlob === 'string' ? raw.avatarBlob : undefined
+                        watchBlobWire = typeof raw.watchBlob === 'string' ? raw.watchBlob : undefined
                         if (raw.isEncrypted && raw.data) {
                             const { decryptSyncPayload } = await import('@/lib/crypto')
                             let decryptedStr: string
-                            let remoteSyncSalt: Uint8Array | undefined
                             if (raw.syncSalt && typeof raw.syncSalt === 'string') {
                                 remoteSyncSalt = Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
                                 if (!get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
                             }
                             try {
-                                decryptedStr = deviceUnlock
-                                    ? await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceUnlock.syncKey))
-                                    : await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
+                                if (deviceUnlock) {
+                                    decryptedStr = await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceUnlock.syncKey))
+                                } else if (sessionPullCred) {
+                                    decryptedStr = await import('@/lib/crypto').then(async (m) => {
+                                        const sessionSyncKey = await m.importSyncKey(Uint8Array.from(atob(sessionPullCred.syncKey), c => c.charCodeAt(0)))
+                                        return m.decryptSyncPayloadWithKey(raw.data as string, sessionSyncKey)
+                                    })
+                                } else {
+                                    decryptedStr = await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
+                                    // The payload decoded under THIS salt: it is the account's
+                                    // sync salt. Adopt it over a stale stored one so the session
+                                    // key export and future derivations stay on the proven value.
+                                    if (typeof raw.syncSalt === 'string' && raw.syncSalt !== get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
+                                }
                             } catch {
                                 throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
                             }
 
                             let payloadStr: string
                             try {
-                                payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+                                payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
                             } catch (decompressErr) {
                                 if (import.meta.env.DEV) console.error('[Sync] Payload decompression failed — cloud copy is corrupt:', decompressErr)
                                 const err = new Error('Cloud data is corrupted (stored payload cannot be decompressed). Sign in on a device that still has your data loaded and sync from there to repair the cloud copy.')
@@ -513,11 +649,22 @@ export const useSyncStore = create<SyncState>()(
                     // even if the cloud salt differs from the local salt.
                     let preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
 
+                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
+                    let localSaltBase64: string | undefined
+                    {
+                        const { loadSalt } = await import('@/lib/crypto')
+                        const localSalt = loadSalt()
+                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
+                    }
+                    // When the salts match, the key unlockFromSync derives decrypts local authKeys
+                    // too - deriving a second one here doubled every full login for nothing.
+                    const saltsAligned = !!cloudSalt && !!localSaltBase64 && cloudSalt === localSaltBase64
+
                     // If no in-memory key (fresh page load / re-login after corruption),
                     // try to derive one from the local salt + password so we can still
                     // decrypt existing local account authKeys during reconciliation.
                     // Remembered sessions already carry the key; nothing to derive.
-                    if (!preUnlockEncryptionKey && !deviceUnlock) {
+                    if (!preUnlockEncryptionKey && !deviceUnlock && !saltsAligned) {
                         const { loadSalt, deriveKey } = await import('@/lib/crypto')
                         const localSalt = loadSalt()
                         if (localSalt) {
@@ -530,13 +677,6 @@ export const useSyncStore = create<SyncState>()(
                         }
                     }
 
-                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
-                    let localSaltBase64: string | undefined
-                    {
-                        const { loadSalt } = await import('@/lib/crypto')
-                        const localSalt = loadSalt()
-                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
-                    }
                     const norm = data as Record<string, unknown>
                     const hasEncryptedData =
                         (Array.isArray(norm.accounts) && norm.accounts.length > 0) ||
@@ -559,6 +699,11 @@ export const useSyncStore = create<SyncState>()(
                         if (!unlockOk && !isSilent) {
                             throw new Error('Remembered sign-in could not unlock the vault. Sign in again.')
                         }
+                    } else if (!password && useAuthStore.getState().encryptionKey) {
+                        // Session-credential restore: the vault is already unlocked with the
+                        // stable key from boot. Deriving again would key from the empty
+                        // password and clobber both the in-memory key and the stored wrap.
+                        unlockOk = true
                     } else {
                         try {
                             const allowGen = saltPolicy.allowGenerate || (saltPolicy.refuse && bypassGuard)
@@ -575,8 +720,16 @@ export const useSyncStore = create<SyncState>()(
 
                     // Guard: skip all encrypted store operations if unlock failed
                     if (!unlockOk) {
+                        // A silent unlock failure is still a failed login: hand the
+                        // namespace back so no later write lands in the half-claimed target.
+                        if (getActiveWorkspaceId() === id) setActiveWorkspace(priorWorkspace)
                         if (import.meta.env.DEV) console.warn('[Sync] Skipping data import - encryption key not available.')
                         return
+                    }
+                    // Salts aligned: the key unlockFromSync just derived decrypts local authKeys
+                    // too, so the expensive local-salt derivation is skipped entirely.
+                    if (!preUnlockEncryptionKey && saltsAligned) {
+                        preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
                     }
                     const syncData = data as Record<string, unknown>
                     // Prime before any import runs: a mid-import failure must not leave the post-login push free to erase the cloud avatar.
@@ -604,112 +757,286 @@ export const useSyncStore = create<SyncState>()(
 
                         if (!hasRemoteData && hasLocalData) {
                             decision = 'Seed Cloud (local data exists, cloud is empty)'
-                            await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
+                            await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
                             setTimeout(() => get().syncToRemote(true), 1500)
                         } else if (hasRemoteData) {
                             if (isRemoteNewer) {
                                 decision = 'Adopt Remote (cloud is newer, replace local)'
-                                await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'mirror', preUnlockEncryptionKey)
+                                await useAccountStore.getState().importAccounts(syncData, true, 'mirror', preUnlockEncryptionKey, ownership)
                             } else {
                                 decision = 'Merge (equal or local-newer timestamps)'
-                                await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
+                                await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
                             }
                         }
                     }
 
-                    if (syncData.addons) {
+                    // Hydration split: only the accounts slice gates first paint. Every other
+                    // slice applies in the background; the push gate (isInitialSyncCompleted)
+                    // stays closed until they all land, so no write can outrun its revalidation.
+
+                    // Ownership for this pull's background work. fence() re-verifies the
+                    // captured workspace + sequence around every awaited import group, and
+                    // the importers themselves carry the same ownership for their internal
+                    // awaits, so a logout or a newer login mid-hydration stops the old pull
+                    // from writing into (or publishing into) the namespace that replaced it.
+                    // The continuation guard adds the auth install, which does not exist
+                    // until the tail of this function runs.
+                    const pullCurrent = ownership.current
+                    const fence = ownership.assert
+                    // The exact key context that decrypted this response: blobs are sealed
+                    // with the same key on push, so they decode with the proven winner
+                    // instead of re-resolving from mutable store state (a stale stored salt
+                    // used to win there and silently drop both blobs).
+                    const responseKey = deviceUnlock
+                        ? { deviceSyncKey: deviceUnlock.syncKey }
+                        : sessionPullCred
+                            ? { sessionSyncKeyB64: sessionPullCred.syncKey }
+                            : { password, salt: remoteSyncSalt }
+                    // Completion handshake between the deferred slices and the auth install
+                    // below: either may finish first, and the gate opens only when both
+                    // have, in either order. hydrationOk starts false, so a rejecting
+                    // hydration keeps the final install fail-closed.
+                    let authInstalled = false
+                    let hydrationOk = false
+                    // Set when the expected avatar blob cannot be decoded (wrong key,
+                    // corruption, or unexpected content): local display state is fine, but
+                    // the pull stays incomplete for writes so its push can never replace
+                    // the cloud avatar with a payload missing that slice.
+                    let avatarIncomplete: string | null = null
+                    const setHydration = (status: 'ok' | 'failed') => {
+                        // A newer pull owns the record slot by then; never overwrite it.
+                        if (syncRuntime.hydration?.seq === pullToken) syncRuntime.hydration = { seq: pullToken, id, status, kind: 'pull' }
+                    }
+                    const completePull = () => {
+                        // The etag is minted from the response this pull fully applied:
+                        // publishing it on anything less would let a later 304 certify
+                        // state that never landed.
+                        set({ isInitialSyncCompleted: true, lastSyncedCloudEtag: responseEtag ?? null })
+                    }
+
+                    const applySecondarySlices = async () => {
+                    fence()
+                    // Watch history out-of-band restore: decrypt the deferred blob when present
+                    // (new pushes), else read the inner state (legacy pushes). The merged view
+                    // feeds every slice below unchanged.
+                    let secondary = syncData
+                    // True when a watch blob was present but undecodable: the inner state is
+                    // fleet-empty then, so the cloud tombstone map must not overwrite the
+                    // previously-pulled one, and the merged view degrades to local-only.
+                    let watchBlobBroken = false
+                    // Set when an expected blob cannot be decoded: the pull still restores
+                    // local display state, but it stays incomplete for writes.
+                    let pullIncomplete: string | null = null
+                    if (watchBlobWire) {
+                        const decoded = await decodeSyncBlob(watchBlobWire, responseKey)
+                        if (decoded === null) {
+                            watchBlobBroken = true
+                            pullIncomplete = 'Cloud watch history could not be decoded (wrong key or corrupt blob); this pull is incomplete.'
+                            if (import.meta.env.DEV) console.warn('[Sync] Watch blob restore failed; falling back to inner state.')
+                        } else {
+                            try {
+                                const parsed = JSON.parse(decoded) as unknown
+                                // A decodable blob of the wrong SHAPE is an expected
+                                // cloud slice this pull cannot apply: merging it would
+                                // certify a history the device never actually restored.
+                                if (!isValidWatchPayload(parsed)) {
+                                    watchBlobBroken = true
+                                    pullIncomplete = 'Cloud watch history decoded but was not the expected structure; this pull is incomplete.'
+                                    if (import.meta.env.DEV) console.warn('[Sync] Watch blob content was not the expected structure; falling back to inner state.')
+                                } else {
+                                    secondary = { ...syncData, ...parsed }
+                                }
+                            } catch (e) {
+                                watchBlobBroken = true
+                                pullIncomplete = 'Cloud watch history decoded but was not valid JSON; this pull is incomplete.'
+                                if (import.meta.env.DEV) console.warn('[Sync] Watch blob content was not valid JSON; falling back to inner state.', e)
+                            }
+                        }
+                    }
+                    fence()
+                    if (secondary.addons) {
                         const localAddons = Object.keys(useAddonStore.getState().library).length
-                        const remoteAddons = Array.isArray(syncData.addons) ? syncData.addons : ((syncData.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
+                        const remoteAddons = Array.isArray(secondary.addons) ? secondary.addons : ((secondary.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
 
                         if ((!remoteAddons || remoteAddons.length === 0) && localAddons > 0) {
                             if (import.meta.env.DEV) console.warn(`[Sync] Remote has 0 addons (Safety net triggered). Switching to MERGE + PUSH.`)
-                            await useAddonStore.getState().importLibrary(syncData, true, false, true)
+                            await useAddonStore.getState().importLibrary(syncData, true, false, true, ownership)
                             setTimeout(() => get().syncToRemote(true), 1500)
                         } else if (isLocalNewer) {
                             if (import.meta.env.DEV) console.log("[Sync] Local addons are fresher. Merging & Pushing.")
-                            await useAddonStore.getState().importLibrary(syncData, true, false, true)
+                            await useAddonStore.getState().importLibrary(syncData, true, false, true, ownership)
                             setTimeout(() => get().syncToRemote(true), 2000)
                         } else if (isEqual) {
                             if (import.meta.env.DEV) console.log("[Sync] Addons synchronized. Passive import.")
-                            await useAddonStore.getState().importLibrary(syncData, true, true, true)
+                            await useAddonStore.getState().importLibrary(syncData, true, true, true, ownership)
                         } else {
-                            await useAddonStore.getState().importLibrary(syncData, false, true, true)
+                            await useAddonStore.getState().importLibrary(syncData, false, true, true, ownership)
                         }
-                        await useAddonStore.getState().initialize()
+                        await useAddonStore.getState().initialize(ownership)
                     }
-                    if (syncData.profiles && Array.isArray(syncData.profiles)) {
-                        await useProfileStore.getState().importProfiles(syncData.profiles)
+                    fence()
+                    if (secondary.profiles && Array.isArray(secondary.profiles)) {
+                        await useProfileStore.getState().importProfiles(secondary.profiles, ownership)
                     }
-                    if (syncData.failover) {
-                        const fo = syncData.failover as Record<string, unknown>
-                        if (Array.isArray(syncData.failover)) {
-                            await useFailoverStore.getState().importRules(syncData.failover, 'merge', true)
-                        } else if (typeof syncData.failover === 'object') {
-                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, 'merge', true)
+                    if (secondary.failover) {
+                        const fo = secondary.failover as Record<string, unknown>
+                        if (Array.isArray(secondary.failover)) {
+                            await useFailoverStore.getState().importRules(secondary.failover, 'merge', true, ownership)
+                        } else if (typeof secondary.failover === 'object') {
+                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, 'merge', true, ownership)
                             if (fo.webhook) {
-                                await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true)
+                                await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true, ownership)
                             }
                         }
                     }
+                    fence()
 
-                    if (syncData.notes && Array.isArray(syncData.notes)) {
+                    if (secondary.notes && Array.isArray(secondary.notes)) {
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importNotes(syncData.notes)
-                        if (Array.isArray(syncData.notesTrash)) {
-                            syncRuntime.lastPulledNotesTrash = syncData.notesTrash
-                            await useNotesStore.getState().importTrash(syncData.notesTrash)
+                        await useNotesStore.getState().importNotes(secondary.notes, ownership)
+                        syncRuntime.lastPulledNotes = secondary.notes as import('./notesStore').Note[]
+                        set({ lastSyncedNotesCount: secondary.notes.length })
+                        if (Array.isArray(secondary.notesTrash)) {
+                            syncRuntime.lastPulledNotesTrash = secondary.notesTrash
+                            await useNotesStore.getState().importTrash(secondary.notesTrash, ownership)
                         }
-                    } else if (Array.isArray(syncData.notesTrash)) {
-                        syncRuntime.lastPulledNotesTrash = syncData.notesTrash
+                    } else if (Array.isArray(secondary.notesTrash)) {
+                        syncRuntime.lastPulledNotesTrash = secondary.notesTrash
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importTrash(syncData.notesTrash)
+                        await useNotesStore.getState().importTrash(secondary.notesTrash, ownership)
                     }
-                    if (Array.isArray(syncData.vault) || Array.isArray(syncData.vaultTombstones)) {
+                    fence()
+                    if (Array.isArray(secondary.vault) || Array.isArray(secondary.vaultTombstones)) {
                         const { useVaultStore } = await import('./vaultStore')
-                        await useVaultStore.getState().initialize()
-                        syncRuntime.lastPulledVaultTombstones = (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
-                        await useVaultStore.getState().importVault((syncData.vault || []) as import('@/types/vault').VaultKey[], (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
+                        await useVaultStore.getState().initialize(ownership)
+                        // initialize swallows a lost session and returns quietly: the
+                        // caller must re-verify before publishing into the shared
+                        // runtime, or the dead pull's tombstones would steer the next
+                        // push of the session that replaced it.
+                        fence()
+                        syncRuntime.lastPulledVaultTombstones = (secondary.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
+                        await useVaultStore.getState().importVault((secondary.vault || []) as import('@/types/vault').VaultKey[], (secondary.vaultTombstones || []) as import('./vaultStore').VaultTombstone[], ownership)
+                    }
+                    fence()
+
+                    if (secondary.settings) {
+                        applySyncedSettings(secondary.settings as Record<string, unknown>, !isLocalNewer)
                     }
 
-                    if (syncData.settings) {
-                        applySyncedSettings(syncData.settings as Record<string, unknown>, !isLocalNewer)
-                    }
-
+                    fence()
                     {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
-                        const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
-                        const remoteDeleted = (syncData.deletedWatchEvents && typeof syncData.deletedWatchEvents === 'object') ? syncData.deletedWatchEvents as Record<string, number> : {}
-                        syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
+                        const remoteEvents: Record<string, unknown>[] = Array.isArray(secondary.watchEvents) ? secondary.watchEvents as Record<string, unknown>[] : []
+                        const remoteDeleted = (secondary.deletedWatchEvents && typeof secondary.deletedWatchEvents === 'object') ? secondary.deletedWatchEvents as Record<string, number> : {}
+                        // A broken blob means this map is the inner state's fleet-empty one:
+                        // keeping the previously-pulled map preserves the other devices'
+                        // deletion tombstones across this degraded pull.
+                        if (!watchBlobBroken) syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
                         const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values())
                             .sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
-                        const mergedSnapshot = { ...(syncData.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
-                        const remoteRollups = (syncData.watchEventRollups && typeof syncData.watchEventRollups === 'object')
-                            ? syncData.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
+                        const mergedSnapshot = { ...(secondary.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
+                        const remoteRollups = (secondary.watchEventRollups && typeof secondary.watchEventRollups === 'object')
+                            ? secondary.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
                             : undefined
                         useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
 
-                    if (Array.isArray(syncData.customThemes) && syncData.customThemes.length > 0) {
-                        applySyncedSettings({ customThemes: syncData.customThemes }, true)
+                    if (Array.isArray(secondary.customThemes) && secondary.customThemes.length > 0) {
+                        applySyncedSettings({ customThemes: secondary.customThemes }, true)
                     }
 
-                    if (Array.isArray(syncData.discoverFavorites)) {
-                        try { localStorage.setItem('aio-discover-favorites', JSON.stringify(syncData.discoverFavorites)) } catch {}
+                    if (Array.isArray(secondary.discoverFavorites)) {
+                        try { localStorage.setItem('aio-discover-favorites', JSON.stringify(secondary.discoverFavorites)) } catch {}
                     }
 
-                    if (syncData.discoverPrefs && typeof syncData.discoverPrefs === 'object') {
-                        try { localStorage.setItem('aio-discover-prefs', JSON.stringify(syncData.discoverPrefs)) } catch {}
+                    if (secondary.discoverPrefs && typeof secondary.discoverPrefs === 'object') {
+                        try { localStorage.setItem('aio-discover-prefs', JSON.stringify(secondary.discoverPrefs)) } catch {}
                     }
+
+                    // An expected blob that could not be decoded leaves this pull
+                    // incomplete: local display state above is preserved, but the
+                    // rejection below keeps the push gate closed and the sync log
+                    // shows the retry outcome instead of a clean success.
+                    if (pullIncomplete) throw new Error(pullIncomplete)
+                    } // end applySecondarySlices
+                    // Deferred slices apply off the critical path; their outcome decides the
+                    // push gate below. A failed hydration stays fail-closed: isInitialSyncCompleted
+                    // remains false until a pull lands every slice, so a partially restored
+                    // device can never push its partial view over the cloud copy.
+                    applySecondarySlices()
+                        .then(() => {
+                            // The avatar decode failed while slices were still applying:
+                            // the record was already downgraded; stay fail-closed.
+                            if (avatarIncomplete) return
+                            setHydration('ok')
+                            hydrationOk = true
+                            // The auth install may still be ahead of us (the avatar decode
+                            // runs between the two): then the install itself opens the gate.
+                            if (!authInstalled) return
+                            if (!pullCurrent() || get().auth.id !== id || !get().auth.isAuthenticated) return
+                            completePull()
+                        })
+                        .catch(err => {
+                            setHydration('failed')
+                            trace('sync', 'pull.hydration-failed', { accountId: id, isSilent, error: (err as Error).message })
+                            // Superseded work logs nothing into the session that replaced it.
+                            if (!pullCurrent()) return
+                            console.warn('[Sync] deferred hydration failed:', err)
+                            get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${(err as Error).message}`, isAuto: isSilent })
+                        })
 
                     // Identity is upgrade-only on pull: an empty name/avatar in the cloud
                     // (a stale push from another device) can never erase what this device has.
                     const identity = resolveCloudIdentity(syncData, id, get().auth)
                     const restoredName = identity.name
-                    const restoredAvatar = identity.avatar
+                    // Avatar out-of-band restore: the blob is the cloud's authoritative avatar.
+                    // Absent blob (legacy push) keeps the upgrade-only local behavior.
+                    let restoredAvatar = identity.avatar
+                    {
+                        const avatarBlob = avatarBlobWire
+                        if (typeof avatarBlob === 'string' && avatarBlob) {
+                            const decoded = await decodeSyncBlob(avatarBlob, responseKey)
+                            if (decoded !== null) {
+                                try {
+                                    const parsed = JSON.parse(decoded) as unknown
+                                    // Anything but a JSON string (object, null, number)
+                                    // is an avatar slice this pull cannot restore: it
+                                    // must block writes instead of being dropped.
+                                    if (isValidAvatarPayload(parsed)) restoredAvatar = parsed
+                                    else {
+                                        avatarIncomplete = 'Cloud avatar blob decoded but was not the expected JSON; this pull is incomplete.'
+                                        if (import.meta.env.DEV) console.warn('[Sync] Avatar blob content was not the expected JSON string; keeping local avatar for display.')
+                                    }
+                                } catch (e) {
+                                    avatarIncomplete = 'Cloud avatar blob decoded but was not the expected JSON; this pull is incomplete.'
+                                    if (import.meta.env.DEV) console.warn('[Sync] Avatar blob content was not valid JSON; keeping local avatar for display.', e)
+                                }
+                            } else {
+                                avatarIncomplete = 'Cloud avatar could not be decoded (wrong key or corrupt blob); this pull is incomplete.'
+                                if (import.meta.env.DEV) console.warn('[Sync] Avatar blob restore failed; keeping local avatar for display.')
+                            }
+                        }
+                    }
+                    if (avatarIncomplete) {
+                        // An expected cloud slice this device cannot read blocks writes:
+                        // pushing would replace it with a payload missing that slice. The
+                        // hydration may already have recorded ok (slices land while this
+                        // decode runs), so downgrade the record; no 304 can then certify
+                        // this pull, and the install below keeps the gate closed.
+                        if (syncRuntime.hydration?.seq === pullToken) syncRuntime.hydration = { seq: pullToken, id, status: 'failed', kind: 'pull' }
+                        if (pullCurrent()) {
+                            console.warn('[Sync]', avatarIncomplete)
+                            get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${avatarIncomplete}`, isAuto: isSilent })
+                        }
+                    }
+                    // A logout or a newer session during the avatar decode owns the store
+                    // now: installing this session's identity would resurrect a signed-out
+                    // state, so the whole tail stands down with the continuation.
+                    if (!pullCurrent()) return
                     writeIdentityProfile(id, restoredName, restoredAvatar)
                     set({
                         auth: {
@@ -722,10 +1049,15 @@ export const useSyncStore = create<SyncState>()(
                         lastSyncedAt: new Date().toISOString(),
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
-                        isInitialSyncCompleted: true,
-                        lastSyncedCloudEtag: responseEtag ?? null,
+                        // Opens immediately only when hydration already finished (it may
+                        // settle on either side of this install) AND the avatar blob
+                        // decoded; otherwise the deferred continuation opens it. The etag
+                        // publishes with the gate, only after the pull fully applied.
+                        isInitialSyncCompleted: hydrationOk && !avatarIncomplete,
                         needsReauth: false
                     })
+                    authInstalled = true
+                    if (hydrationOk && !avatarIncomplete) completePull()
                     // After the set: syncSaltB64 may have just been adopted from the cloud,
                     // and the sync key must be exported under that same salt.
                     await persistSessionCredential()
@@ -778,6 +1110,11 @@ export const useSyncStore = create<SyncState>()(
                             .catch(() => {})
                     }, 2500)
                 } catch (e) {
+                    // A superseded pull's failure belongs to the session that replaced
+                    // it: no corrupt-restore retry, no namespace yank, no log entry or
+                    // toast in the replacing session. The rethrown error still reaches
+                    // this pull's own caller.
+                    if (!ownership.current()) throw e
                     if ((e as Error & { corruptPayload?: boolean })?.corruptPayload && !syncRuntime.corruptRestoreInFlight) {
                         try {
                             const restoreRes = await resilientFetch(`${apiPath}/sync/${id}/restore`, {
@@ -787,6 +1124,9 @@ export const useSyncStore = create<SyncState>()(
                             })
                             if (restoreRes.ok) {
                                 trace('sync', 'pull.corrupt-restored', { accountId: id })
+                                // Retry from the true prior namespace so the inner login's
+                                // own failure path restores the right workspace.
+                                if (getActiveWorkspaceId() === id) setActiveWorkspace(priorWorkspace)
                                 syncRuntime.corruptRestoreInFlight = true
                                 try {
                                     return await get().login(id, password, isSilent, bypassGuard, deviceUnlock)
@@ -798,6 +1138,9 @@ export const useSyncStore = create<SyncState>()(
                             if (import.meta.env.DEV) console.warn('[Sync] Cloud restore attempt failed:', restoreErr)
                         }
                     }
+                    // Undo the namespace swap unless the flow already routed elsewhere
+                    // (the deleted-workspace wipe lands on anon on purpose).
+                    if (getActiveWorkspaceId() === id) setActiveWorkspace(priorWorkspace)
                     const msg = (e as Error).message
                         ; get().addLogEntry({
                             type: 'pull',
@@ -811,7 +1154,10 @@ export const useSyncStore = create<SyncState>()(
                     }
                     throw e
                 } finally {
-                    set({ isSyncing: false })
+                    // Only the owning pull may clear the flag: a superseded pull's
+                    // finally must not release the in-progress marker of the session
+                    // that replaced it.
+                    if (ownership.current()) set({ isSyncing: false })
                 }
             },
 
@@ -847,8 +1193,16 @@ export const useSyncStore = create<SyncState>()(
                 }
 
                 syncRuntime.lastPushedHash = null
+                syncRuntime.lastPulledNotes = null
                 syncRuntime.pendingRetry = false
                 resetAccountsHydration()
+                // Supersede every in-flight continuation and drop the hydration record:
+                // nothing from the signed-out session may flip the gate, publish an etag,
+                // or certify a later 304. The pull/mirror that loses ownership here no
+                // longer clears isSyncing itself, so sign-out owns the flag reset.
+                syncRuntime.pullSeq++
+                syncRuntime.adoptedSeq = null
+                syncRuntime.hydration = null
                 if (syncRuntime.syncDebounceTimer) { clearTimeout(syncRuntime.syncDebounceTimer); syncRuntime.syncDebounceTimer = null }
                 if (syncRuntime.onlineHandler) { window.removeEventListener('online', syncRuntime.onlineHandler); syncRuntime.onlineHandler = null }
                 if (syncRuntime.syncBC) { syncRuntime.syncBC.close(); syncRuntime.syncBC = null }
@@ -863,8 +1217,10 @@ export const useSyncStore = create<SyncState>()(
                     auth: { id: '', password: '', name: get().auth.name, avatar: get().auth.avatar, isAuthenticated: false },
                     lastSyncedAt: null,
                     lastSyncCheckedAt: null,
+                    isSyncing: false,
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
+                    lastSyncedNotesCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
                 })
@@ -875,6 +1231,14 @@ export const useSyncStore = create<SyncState>()(
                 await useWatchEventStore.getState().reset()
                 await wipeAllData()
                 await resetAllStores({ includeSync: false })
+                // The wipe removed the notes index and blobs: the in-memory metas must
+                // not survive claiming entries that no longer resolve, or the next
+                // sign-in's import skips them on equal timestamps and the store stays
+                // stranded empty.
+                await import('@/store/notesStore').then(({ useNotesStore }) => useNotesStore.getState().resetLocal())
+                // Drop the in-memory namespace after the wipe so late writes
+                // cannot touch the signed-out workspace's backend.
+                setActiveWorkspace(ANON_WORKSPACE_ID)
 
                 toast({ title: "Logged Out", description: "See you next time." })
             },
@@ -889,8 +1253,8 @@ export const useSyncStore = create<SyncState>()(
                 // so pushes resume instead of silently skipping ("no in-session credentials").
                 const sessionCred = auth.isAuthenticated ? getSessionSyncCredential(auth.id) : null
                 const hasSessionCredentials = !!auth.password || !!sessionCred || (await isDeviceSessionActive())
-                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials) {
-                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : 'account state not hydrated'
+                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials || !isInitialSyncCompleted) {
+                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : !isInitialSyncCompleted ? 'initial pull still applying' : 'account state not hydrated'
                     // Credentialless-but-otherwise-operational is the corpse state of the refresh
                     // bug: skipping silently kept it invisible. Raise the re-auth state so the
                     // dashboard banners the stopped sync (live bug #51, part 2).
@@ -1021,6 +1385,17 @@ export const useSyncStore = create<SyncState>()(
                     const identityAvatarFallback = identityFallback.id === auth.id ? identityFallback.avatar : null
 
                     const watchExport = useWatchEventStore.getState().export()
+                    // Watch history out-of-band: 986KB on real accounts rode the inner state,
+                    // paying decrypt+parse+merge on every login. It ships as its own encrypted
+                    // blob and rehydrates in the deferred phase; the inner state keeps the keys
+                    // fleet-empty so legacy readers see an explicitly empty history.
+                    const watchPayload = {
+                        watchEvents: watchExport.events,
+                        watchSnapshot: watchExport.snapshot,
+                        watchEventRollups: watchExport.rollups,
+                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
+                    }
+                    const watchPayloadJson = JSON.stringify(watchPayload)
                     const state = {
                         ...exportedAccounts,
                         addons: safeParse(rawAddons),
@@ -1033,15 +1408,17 @@ export const useSyncStore = create<SyncState>()(
                             return !trashedAt || trashedAt < (k.updatedAt || 0)
                         }),
                         vaultTombstones: mergedVaultTombstones,
-                        notes: filterNotesByTrash(localNotes, mergedNotesTrash),
+                        notes: filterNotesByTrash(localNotes.length === 0 && (syncRuntime.lastPulledNotes?.length ?? 0) > 0 ? syncRuntime.lastPulledNotes! : localNotes, mergedNotesTrash),
                         notesTrash: mergedNotesTrash,
-                        watchEvents: watchExport.events,
-                        watchSnapshot: watchExport.snapshot,
-                        watchEventRollups: watchExport.rollups,
-                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
+                        watchEvents: [],
+                        watchSnapshot: {},
+                        watchEventRollups: undefined,
+                        deletedWatchEvents: {},
                         salt: saltBase64,
                         name: auth.name,
-                        avatar: auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null,
+                        // Avatar moved out-of-band (avatarBlob): a 100-300KB base64 image
+                        // rode every push+pull. Captured below, encrypted with the same key.
+                        avatar: null,
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
@@ -1049,6 +1426,8 @@ export const useSyncStore = create<SyncState>()(
                         profiles: useProfileStore.getState().profiles,
                         settings: readSyncedSettings(),
                     }
+
+                    const avatarValue = auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')
                     const stringifiedState = JSON.stringify(state)
@@ -1065,7 +1444,9 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     forceCanonicalRepublish = consumeForceFlag()
-                    const stateHash = await computeHash(stringifiedState)
+                    // Avatar + watch history participate in the change hash: edits to either
+                    // still push even though neither rides the inner state anymore.
+                    const stateHash = await computeHash(stringifiedState + '|' + (avatarValue ?? '') + '|' + watchPayloadJson)
                     if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
@@ -1087,13 +1468,15 @@ export const useSyncStore = create<SyncState>()(
                     let isCompressed = false
                     if (shouldCompress) {
                         try {
-                            compressedPayload = compressSyncPayload(stampedState)
+                            compressedPayload = await compressSyncPayload(stampedState)
                             isCompressed = true
                         } catch {}
                     }
                     let encryptedState: string
+                    let encryptWithSameKey: ((plaintext: string) => Promise<string>) | null = null
                     if (auth.password) {
                         encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
+                        encryptWithSameKey = (plaintext) => encryptSyncPayload(plaintext, auth.password, syncSalt)
                     } else if (sessionCred) {
                         // Refreshed password-session: encrypt with the session-stored sync key
                         // (exported at login under the same syncSalt) — identical key material
@@ -1101,11 +1484,32 @@ export const useSyncStore = create<SyncState>()(
                         const { importSyncKey, encryptSyncPayloadWithKey } = await import('@/lib/crypto')
                         const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
                         encryptedState = await encryptSyncPayloadWithKey(compressedPayload, sessionSyncKey)
+                        encryptWithSameKey = (plaintext) => encryptSyncPayloadWithKey(plaintext, sessionSyncKey)
                     } else {
                         const deviceSyncKey = await getActiveDeviceSyncKey()
                         if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                         encryptedState = await import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(compressedPayload, deviceSyncKey))
+                        encryptWithSameKey = (plaintext) => import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(plaintext, deviceSyncKey))
                     }
+
+                    // Avatar out-of-band: its own encrypted blob on the body, so the 100-300KB
+                    // base64 image stops riding the inner state on every push and pull.
+                    // Blobs are deflated before encryption: uncompressed, the watch history
+                    // blob made the stored envelope BIGGER than the legacy format.
+                    let avatarBlob: string | undefined
+                    if (avatarValue) {
+                        try {
+                            const deflated = await compressSyncPayload(JSON.stringify(avatarValue))
+                            avatarBlob = await encryptWithSameKey!(deflated)
+                        } catch { /* push without it rather than fail the sync */ }
+                    }
+
+                    // Watch history out-of-band: same pattern, bigger slice (~1MB plaintext).
+                    let watchBlob: string | undefined
+                    try {
+                        const deflatedWatch = await compressSyncPayload(watchPayloadJson)
+                        watchBlob = await encryptWithSameKey!(deflatedWatch)
+                    } catch { /* push without it rather than fail the sync */ }
 
                     // Canonical addon lists for accounts the server can't read itself. A
                     // server-side Stremio credential (serverStremioCredentialedAccounts, learned
@@ -1134,6 +1538,8 @@ export const useSyncStore = create<SyncState>()(
                             data: encryptedState,
                             isEncrypted: true,
                             compressed: isCompressed,
+                            ...(avatarBlob ? { avatarBlob } : {}),
+                            ...(watchBlob ? { watchBlob } : {}),
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
                             force: forcePush,
@@ -1154,6 +1560,7 @@ export const useSyncStore = create<SyncState>()(
                         const profile = readIdentityProfile()
                         set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isInitialSyncCompleted: false, needsReauth: false })
                         clearSyncCredentialCaches()
+                        setActiveWorkspace(ANON_WORKSPACE_ID)
                         import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
                         throw new Error('Sync session expired')
                     }
@@ -1282,96 +1689,231 @@ export const useSyncStore = create<SyncState>()(
             forceMirrorState: async () => {
                 const { auth, serverUrl } = get()
                 if (!auth.isAuthenticated) return
+                // Credential availability is validated BEFORE the operation token is
+                // allocated: a credential-less no-op must not consume a generation and
+                // supersede an in-flight pull or login whose in-progress flag it would
+                // never clean up. The device check awaits, so the identity context is
+                // captured before it and re-verified after - a session that ended
+                // mid-check stands down without touching any state.
                 const sessionCred = getSessionSyncCredential(auth.id)
-                if (!auth.password && !sessionCred && !(await isDeviceSessionActive())) return
+                if (!auth.password && !sessionCred) {
+                    const readAuth = auth
+                    const readWorkspace = getActiveWorkspaceId()
+                    const readSeq = syncRuntime.pullSeq
+                    if (!(await isDeviceSessionActive())) return
+                    if (get().auth !== readAuth || getActiveWorkspaceId() !== readWorkspace || syncRuntime.pullSeq !== readSeq) return
+                }
+                // Ownership (workspace + a fresh monotonic operation token) is captured
+                // BEFORE the first meaningful await, exactly like a pull: a mirror that
+                // starts in one session must never resume into the one that replaced
+                // it, and its token lives in the same generation space as pulls so a
+                // login started mid-mirror supersedes it cleanly. An adoption slot
+                // cannot outlive a mirror: mirroring replaces every slice wholesale.
+                syncRuntime.adoptedSeq = null
+                const mirrorToken = ++syncRuntime.pullSeq
+                const ownership = captureSyncOwnership(mirrorToken)
+                const fence = ownership.assert
                 set({ isSyncing: true })
 
                 const apiPath = getSyncApiPath(serverUrl)
+
+                // Set once the mirror is about to replace local slices: from that point a
+                // failure leaves a mixed state whose prior etag must not be certified.
+                let applicationStarted = false
 
                 try {
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
                         headers: { 'x-sync-password': sessionCred?.token ?? await deriveSyncToken(auth.password) }
                     })
 
+                    // A mirror whose session ended while its fetch was in flight owns
+                    // nothing anymore: stand down before touching any state.
+                    fence()
+
                     if (!res.ok) throw new Error(`Cloud Sync Server error (${res.status})`)
 
                     const text = await res.text()
+                    const responseEtag = res.headers.get('etag')
                     let data: Record<string, unknown>
                     const raw = JSON.parse(text) as Record<string, unknown>
+                    fence()
+                    const avatarBlobWire = typeof raw.avatarBlob === 'string' ? raw.avatarBlob : undefined
+                    const watchBlobWire = typeof raw.watchBlob === 'string' ? raw.watchBlob : undefined
+                    const remoteSyncSalt = raw.syncSalt && typeof raw.syncSalt === 'string'
+                        ? Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
+                        : undefined
 
+                    // The winning inner-state key context: the blobs are sealed with the
+                    // same key, so they decode with the exact branch that decrypted the
+                    // envelope. Resolving them independently let a stale device or session
+                    // credential win the blob decode over the credential that actually
+                    // worked, silently skipping both blobs. Only a legacy plaintext pull
+                    // (which ships no blobs) leaves the empty fallback in place.
+                    let mirrorBlobKeys: import('@/lib/sync-blob-decode').SyncBlobKeys = {}
                     if (raw.isEncrypted && raw.data) {
                         const { decryptSyncPayload: decryptPayload } = await import('@/lib/crypto')
-                        const remoteSyncSalt = raw.syncSalt && typeof raw.syncSalt === 'string'
-                            ? Uint8Array.from(atob(raw.syncSalt), c => c.charCodeAt(0))
-                            : undefined
                         let decryptedStr: string
+                        let innerKey: import('@/lib/sync-blob-decode').SyncBlobKeys
                         if (auth.password) {
                             decryptedStr = await decryptPayload(raw.data as string, auth.password, remoteSyncSalt)
+                            innerKey = { password: auth.password, salt: remoteSyncSalt }
                         } else if (sessionCred) {
                             const { importSyncKey, decryptSyncPayloadWithKey } = await import('@/lib/crypto')
                             const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
                             decryptedStr = await decryptSyncPayloadWithKey(raw.data as string, sessionSyncKey)
+                            innerKey = { sessionSyncKeyB64: sessionCred.syncKey }
                         } else {
                             const deviceSyncKey = await getActiveDeviceSyncKey()
                             if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                             decryptedStr = await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceSyncKey))
+                            innerKey = { deviceSyncKey }
                         }
-                        const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
+                        const payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
+                        fence()
                         data = JSON.parse(payloadStr) as Record<string, unknown>
+                        mirrorBlobKeys = innerKey
                     } else {
                         data = raw
                     }
 
-                    if (data.accounts) {
-                        await useAccountStore.getState().importAccounts(JSON.stringify(data), true, 'mirror')
+                    // A mirror replaces local slices wholesale. Close write trust BEFORE
+                    // any slice applies: from here on, a failure or partial decode leaves
+                    // a mixed state that pushes must not extend and the old etag must not
+                    // certify. Only a complete restore re-opens both.
+                    applicationStarted = true
+                    fence()
+                    set({ isInitialSyncCompleted: false, lastSyncedCloudEtag: null })
+                    syncRuntime.hydration = { seq: mirrorToken, id: auth.id, status: 'pending', kind: 'mirror' }
+
+                    // Mirror is verbatim cloud: the out-of-band blobs carry the avatar and
+                    // watch history on new-format pushes (the inner state ships them
+                    // fleet-empty), so skipping them silently drops those slices. Legacy
+                    // plaintext pulls carry no blobs, so the password fallback never fires
+                    // for one that does.
+                    const mirrorIncomplete: string[] = []
+                    let secondary = data
+                    let watchBlobBroken = false
+                    if (watchBlobWire) {
+                        const decoded = await decodeSyncBlob(watchBlobWire, mirrorBlobKeys)
+                        fence()
+                        if (decoded === null) {
+                            watchBlobBroken = true
+                            mirrorIncomplete.push('cloud watch history')
+                            if (import.meta.env.DEV) console.warn('[Sync] Mirror: watch blob restore failed; falling back to inner state.')
+                        } else {
+                            try {
+                                const parsed = JSON.parse(decoded) as unknown
+                                // A decodable blob of the wrong SHAPE is an expected cloud
+                                // slice this device cannot restore: the mirror is incomplete
+                                // rather than silently applying garbage over the slice.
+                                if (!isValidWatchPayload(parsed)) {
+                                    watchBlobBroken = true
+                                    mirrorIncomplete.push('cloud watch history')
+                                    if (import.meta.env.DEV) console.warn('[Sync] Mirror: watch blob content was not the expected structure; falling back to inner state.')
+                                } else {
+                                    secondary = { ...data, ...parsed }
+                                }
+                            } catch (e) {
+                                watchBlobBroken = true
+                                mirrorIncomplete.push('cloud watch history')
+                                if (import.meta.env.DEV) console.warn('[Sync] Mirror: watch blob content was not valid JSON; falling back to inner state.', e)
+                            }
+                        }
                     }
+                    let mirroredAvatar = data.avatar
+                    if (avatarBlobWire) {
+                        const decoded = await decodeSyncBlob(avatarBlobWire, mirrorBlobKeys)
+                        fence()
+                        if (decoded !== null) {
+                            try {
+                                const parsed = JSON.parse(decoded) as unknown
+                                if (isValidAvatarPayload(parsed)) mirroredAvatar = parsed
+                                else {
+                                    // Decryptable but unreadable is still an expected cloud
+                                    // slice this device cannot restore: the mirror is incomplete.
+                                    mirrorIncomplete.push('cloud avatar')
+                                    if (import.meta.env.DEV) console.warn('[Sync] Mirror: avatar blob content was not the expected JSON string; keeping local avatar for display.')
+                                }
+                            } catch (e) {
+                                mirrorIncomplete.push('cloud avatar')
+                                if (import.meta.env.DEV) console.warn('[Sync] Mirror: avatar blob content was not valid JSON; keeping local avatar for display.', e)
+                            }
+                        } else {
+                            mirrorIncomplete.push('cloud avatar')
+                            if (import.meta.env.DEV) console.warn('[Sync] Mirror: avatar blob restore failed; keeping local avatar for display.')
+                        }
+                    }
+
+                    if (data.accounts) {
+                        fence()
+                        await useAccountStore.getState().importAccounts(data, true, 'mirror', undefined, ownership)
+                    }
+                    fence()
                     {
-                        const identity = resolveCloudIdentity(data, auth.id, get().auth)
+                        const identity = resolveCloudIdentity({ ...data, avatar: mirroredAvatar }, auth.id, get().auth)
                         if (identity.name !== get().auth.name || identity.avatar !== get().auth.avatar) {
                             writeIdentityProfile(auth.id, identity.name, identity.avatar)
                             set({ auth: { ...get().auth, name: identity.name, avatar: identity.avatar } })
                         }
                     }
                     if (data.addons) {
-                        await useAddonStore.getState().importLibrary(data, false, true)
-                        await useAddonStore.getState().initialize()
+                        fence()
+                        await useAddonStore.getState().importLibrary(data, false, true, true, ownership)
+                        await useAddonStore.getState().initialize(ownership)
                     }
                     if (data.profiles && Array.isArray(data.profiles)) {
-                        await useProfileStore.getState().importProfiles(data.profiles)
+                        fence()
+                        await useProfileStore.getState().importProfiles(data.profiles, ownership)
                     }
                     if (data.failover) {
+                        fence()
                         const strategy = 'mirror'
                         if (Array.isArray(data.failover)) {
-                            await useFailoverStore.getState().importRules(data.failover, strategy, true)
+                            await useFailoverStore.getState().importRules(data.failover, strategy, true, ownership)
                         } else if (typeof data.failover === 'object') {
                             const fo = data.failover as Record<string, unknown>
-                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, strategy, true)
-                            if (fo.webhook) await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true)
+                            if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, strategy, true, ownership)
+                            if (fo.webhook) await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true, ownership)
                         }
                     }
                     if (data.settings) {
+                        fence()
                         applySyncedSettings(data.settings as Record<string, unknown>, true)
                     }
                     if (data.notes && Array.isArray(data.notes)) {
+                        fence()
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importNotes(data.notes)
+                        await useNotesStore.getState().importNotes(data.notes, ownership)
+                        fence()
+                        set({ lastSyncedNotesCount: data.notes.length })
                     }
                     if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
-                        await useVaultStore.getState().initialize()
+                        fence()
+                        await useVaultStore.getState().initialize(ownership)
+                        // Same initializer fence as the pull: initialize returns
+                        // quietly on a lost session, so the tombstone publication
+                        // into the shared runtime re-verifies first.
+                        fence()
                         syncRuntime.lastPulledVaultTombstones = (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
-                        await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
+                        await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('./vaultStore').VaultTombstone[], ownership)
                     }
-                    if (Array.isArray(data.watchEvents)) {
+                    fence()
+                    if (Array.isArray(secondary.watchEvents)) {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
-                        const remoteDeleted = (data.deletedWatchEvents && typeof data.deletedWatchEvents === 'object') ? data.deletedWatchEvents as Record<string, number> : {}
-                        syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
+                        const remoteDeleted = (secondary.deletedWatchEvents && typeof secondary.deletedWatchEvents === 'object') ? secondary.deletedWatchEvents as Record<string, number> : {}
+                        // A broken blob leaves this map fleet-empty: keep the previously-pulled
+                        // tombstones instead of clobbering them.
+                        if (!watchBlobBroken) syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
                         const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
-                        ;[...(data.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
+                        ;[...(secondary.watchEvents as Record<string, unknown>[]), ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values()).sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
-                        const mergedSnapshot = { ...((data.watchSnapshot || {}) as Record<string, unknown>), ...local.snapshot }
-                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted)
+                        const mergedSnapshot = { ...((secondary.watchSnapshot || {}) as Record<string, unknown>), ...local.snapshot }
+                        const remoteRollups = (secondary.watchEventRollups && typeof secondary.watchEventRollups === 'object')
+                            ? secondary.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
+                            : undefined
+                        useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
                     if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
                         applySyncedSettings({ customThemes: data.customThemes }, true)
@@ -1383,27 +1925,59 @@ export const useSyncStore = create<SyncState>()(
                         try { localStorage.setItem('aio-discover-prefs', JSON.stringify(data.discoverPrefs)) } catch {}
                     }
                     if (Array.isArray(data.notesTrash)) {
+                        fence()
                         syncRuntime.lastPulledNotesTrash = data.notesTrash
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importTrash(data.notesTrash)
+                        await useNotesStore.getState().importTrash(data.notesTrash, ownership)
                     }
+                    fence()
                     if (data.lastSeenVersion) {
                         set({ lastSeenVersion: data.lastSeenVersion as string | null })
                     }
-                    syncRuntime.lastPulledCloudAvatar = (typeof data.avatar === 'string' && data.avatar) ? data.avatar : null
+                    syncRuntime.lastPulledCloudAvatar = (typeof mirroredAvatar === 'string' && mirroredAvatar) ? mirroredAvatar : null
 
                     set({ lastSyncedAt: new Date().toISOString() })
 
-                        ; get().addLogEntry({
+                    // An expected blob that could not be decoded makes the mirror
+                    // incomplete: writes stay disabled and the etag stays cleared, so the
+                    // next refresh re-fetches in full instead of a 304 certifying the mix.
+                    // Only a complete restore re-opens write trust. Both outcomes write
+                    // only their own record slot and only while this mirror still owns
+                    // the session.
+                    const recordOurs = syncRuntime.hydration?.seq === mirrorToken
+                    if (mirrorIncomplete.length > 0) {
+                        if (recordOurs) syncRuntime.hydration = { seq: mirrorToken, id: auth.id, status: 'failed', kind: 'mirror' }
+                        get().addLogEntry({
+                            type: 'force-mirror',
+                            status: 'error',
+                            message: `Mirror incomplete: ${mirrorIncomplete.join(' and ')} could not be decoded. Check credentials on this device and retry.`,
+                            isAuto: false
+                        })
+                        toast({ variant: 'destructive', title: 'Mirror Incomplete', description: 'Part of the cloud state could not be decoded. Retry once credentials are consistent.' })
+                    } else {
+                        if (recordOurs) syncRuntime.hydration = { seq: mirrorToken, id: auth.id, status: 'ok', kind: 'mirror' }
+                        set({ isInitialSyncCompleted: true, lastSyncedCloudEtag: responseEtag ?? null })
+                        get().addLogEntry({
                             type: 'force-mirror',
                             status: 'success',
                             message: 'Cloud state mirrored verbatim (bypassed merge)',
                             isAuto: false
                         })
 
-                    toast({ title: "Mirror Complete", description: "Local state replaced by cloud data." })
+                        toast({ title: "Mirror Complete", description: "Local state replaced by cloud data." })
+                    }
                 } catch (e) {
+                    // A superseded mirror owns nothing anymore: no trust writes, no log
+                    // entry or toast in the session that replaced it.
+                    if (!ownership.current()) return
                     const msg = (e as Error).message
+                    // A failure after the application boundary may have replaced some
+                    // slices already: keep the mixed state uncertified (the gate and etag
+                    // were closed at the boundary). Earlier failures (network, decrypt)
+                    // changed nothing and keep their prior trust.
+                    if (applicationStarted && syncRuntime.hydration?.seq === mirrorToken) {
+                        syncRuntime.hydration = { seq: mirrorToken, id: auth.id, status: 'failed', kind: 'mirror' }
+                    }
                     toast({ variant: "destructive", title: "Mirror Failed", description: msg })
                         ; get().addLogEntry({
                             type: 'force-mirror',
@@ -1412,7 +1986,10 @@ export const useSyncStore = create<SyncState>()(
                             isAuto: false
                         })
                 } finally {
-                    set({ isSyncing: false })
+                    // Only the owning mirror may clear the flag: a superseded mirror's
+                    // finally must not release the in-progress marker of the session
+                    // that replaced it.
+                    if (ownership.current()) set({ isSyncing: false })
                 }
             },
 
@@ -1443,6 +2020,10 @@ export const useSyncStore = create<SyncState>()(
 
             reset: () => {
                 resetAccountsHydration()
+                syncRuntime.pullSeq++
+                syncRuntime.adoptedSeq = null
+                syncRuntime.hydration = null
+                setActiveWorkspace(ANON_WORKSPACE_ID)
                 set({
                     auth: { id: '', password: '', name: '', avatar: null, isAuthenticated: false },
                     serverUrl: '',
@@ -1453,6 +2034,7 @@ export const useSyncStore = create<SyncState>()(
                     lastActionTimestamp: 0,
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
+                    lastSyncedNotesCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
                 })
@@ -1476,6 +2058,7 @@ export const useSyncStore = create<SyncState>()(
                 lastSeenVersion: state.lastSeenVersion,
                 syncSaltB64: state.syncSaltB64,
                 lastSyncedCloudEtag: state.lastSyncedCloudEtag,
+                lastSyncedNotesCount: state.lastSyncedNotesCount,
                 serverStremioCredentialedAccounts: state.serverStremioCredentialedAccounts,
             }),
             merge: (persistedState, currentState) => ({

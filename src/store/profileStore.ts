@@ -2,6 +2,7 @@ import { triggerSync } from '@/lib/sync-trigger'
 import { Profile } from '@/types/profile'
 import localforage from 'localforage'
 import { create } from 'zustand'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
 
 const STORAGE_KEY = 'aioman:profiles'
 const DELETED_KEY = 'aioman:deleted-profiles'
@@ -17,7 +18,7 @@ interface ProfileState {
     deleteProfile: (id: string) => Promise<void>
     reorderProfiles: (newOrder: Profile[]) => Promise<void>
     getProfile: (id: string) => Profile | undefined
-    importProfiles: (profiles: Profile[]) => Promise<void>
+    importProfiles: (profiles: Profile[], ownership?: SyncOwnership) => Promise<void>
     reset: () => void
 }
 
@@ -117,12 +118,16 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         return get().profiles.find(p => p.id === id)
     },
 
-    importProfiles: async (profilesToImport: Profile[]) => {
+    importProfiles: async (profilesToImport: Profile[], ownership?: SyncOwnership) => {
+        const own = ownership ?? captureSyncOwnership()
         const existingIds = new Set(get().profiles.map(p => p.id))
         let deletedIds: string[] = []
         try {
             deletedIds = await localforage.getItem<string[]>(DELETED_KEY) || []
         } catch {}
+        // The tombstone read and the write both span awaits: re-verify before the
+        // dispatch and after it, so a mid-import switch writes and publishes nothing.
+        own.assert()
         const deletedSet = new Set(deletedIds)
         const newProfiles = profilesToImport.filter(p => !existingIds.has(p.id) && !deletedSet.has(p.id))
 
@@ -135,6 +140,7 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
             if (import.meta.env.DEV) console.error('[ProfileStore] Failed to persist importProfiles:', err)
             throw new Error('Failed to import profiles. Please try again.')
         }
+        own.assert()
         set({ profiles: updated, error: null })
         triggerSync()
     },

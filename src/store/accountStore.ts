@@ -34,10 +34,14 @@ export const safeUUID = () => {
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null
 
-export const persistAccounts = (accounts: Account[]) => {
+// The debounced write fires long after its caller: an ownership context makes a
+// transaction's re-persist stand down instead of writing its snapshot into the
+// namespace that replaced it.
+export const persistAccounts = (accounts: Account[], ownership?: { current: () => boolean }) => {
     if (_persistTimer) clearTimeout(_persistTimer)
     _persistTimer = setTimeout(async () => {
         _persistTimer = null
+        if (ownership && !ownership.current()) return
         try { await localforage.setItem(STORAGE_KEY, accounts) } catch (e) { if (import.meta.env.DEV) console.error('[persistAccounts] Failed to save accounts:', e) }
     }, 300)
 }
@@ -351,7 +355,7 @@ export interface AccountStore {
       bulkDeleteAddons: (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => Promise<void>
       exportAccounts: (includeCredentials: boolean) => Promise<string>
       exportAccountsForSync: () => Promise<Record<string, unknown>>
-      importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
+      importAccounts: (json: string | Record<string, unknown>, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null, ownership?: import('./sync-store-helpers').SyncOwnership) => Promise<void>
       updateAccount: (
             id: string,
             data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }
@@ -924,9 +928,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return exportAccountsForSync()
       },
 
-      importAccounts: async (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => {
+      importAccounts: async (json: string | Record<string, unknown>, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null, ownership?: import('./sync-store-helpers').SyncOwnership) => {
             const { importAccounts } = await import('./account/accountImportExport')
-            return importAccounts(json, isSilent, mode, localDecryptionKey)
+            return importAccounts(json, isSilent, mode, localDecryptionKey, ownership)
       },
 
       updateAccount: async (id: string, data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean }) => {

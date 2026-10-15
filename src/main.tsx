@@ -66,12 +66,20 @@ try {
 }
 
 if (!bootBlocked) {
-  const migration = migrateLocalforageKeys()
+  const migration = migrateLocalforageKeys().then(async () => {
+    if (bootBlocked) return
+    // Rename legacy keys before routing stores to workspace persistence. Both
+    // steps share the boot deadline so a stalled IndexedDB call shows recovery.
+    const { initWorkspacePersistence } = await import('@/lib/workspace-persistence')
+    if (bootBlocked) return
+    await initWorkspacePersistence()
+  })
   const timeout = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 15_000))
   Promise.race([migration, timeout])
-    .then((raced) => { if (raced === 'timeout') { bootBlocked = true; showBootScreen('localforage-migration-timeout', new Error('key migration did not finish in 15s')) } })
+    .then((raced) => { if (raced === 'timeout') { bootBlocked = true; showBootScreen('localforage-migration-timeout', new Error('storage initialization did not finish in 15s')) } })
     .catch((e) => { bootBlocked = true; showBootScreen('localforage-migration', e) })
     .finally(() => {
-      if (!bootBlocked) import('./app-entry').catch((e) => showBootScreen('app-load', e))
+      if (bootBlocked) return
+      import('./app-entry').catch((e) => showBootScreen('app-load', e))
     })
 }
