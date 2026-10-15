@@ -98,6 +98,8 @@ interface SyncState {
     // Note count the last applied pull carried. Persisted so the 304 shortcut can
     // tell "cloud genuinely empty" apart from "local index was wiped underneath us".
     lastSyncedNotesCount: number | null
+    lastAppliedAccountCount: number | null
+    lastAppliedAddonCount: number | null
     serverStremioCredentialedAccounts: string[] | null
     // True only when an authenticated+unlocked session has NO usable server credential
     // (no in-memory password, no active device session): pushes are impossible and the
@@ -142,6 +144,8 @@ export const useSyncStore = create<SyncState>()(
             syncSaltB64: null,
             lastSyncedCloudEtag: null,
             lastSyncedNotesCount: null,
+            lastAppliedAccountCount: null,
+            lastAppliedAddonCount: null,
             serverStremioCredentialedAccounts: null,
             needsReauth: false,
             history: [],
@@ -392,6 +396,10 @@ export const useSyncStore = create<SyncState>()(
                         sessionUnlocked,
                         lastSyncedNotesCount: get().lastSyncedNotesCount,
                         localNotesEmpty,
+                        lastAppliedAccountCount: get().lastAppliedAccountCount,
+                        localAccountCount: useAccountStore.getState().accounts.length,
+                        lastAppliedAddonCount: get().lastAppliedAddonCount,
+                        localAddonCount: Object.keys(useAddonStore.getState().library).length,
                     })
                     if (storedEtag && sessionUnlocked && !sendPullEtag) {
                         trace('sync', 'pull.force-full-empty-local', { accountId: id, isSilent })
@@ -466,8 +474,10 @@ export const useSyncStore = create<SyncState>()(
                         }, 2000)
                         setTimeout(() => {
                             import('@/store/account/accountCanonical')
-                                .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
-                                .then(changed => { if (changed) get().syncToRemote(true).catch(() => {}) })
+                                .then(({ reconcileInboundCanonical }) => {
+                                    if (ownership.current()) return reconcileInboundCanonical(ownership)
+                                })
+                                .then(changed => { if (changed && ownership.current()) get().syncToRemote(true).catch(() => {}) })
                                 .catch(() => {})
                         }, 2500)
                         get().addLogEntry({
@@ -811,7 +821,12 @@ export const useSyncStore = create<SyncState>()(
                         // The etag is minted from the response this pull fully applied:
                         // publishing it on anything less would let a later 304 certify
                         // state that never landed.
-                        set({ isInitialSyncCompleted: true, lastSyncedCloudEtag: responseEtag ?? null })
+                        set({
+                            isInitialSyncCompleted: true,
+                            lastSyncedCloudEtag: responseEtag ?? null,
+                            lastAppliedAccountCount: useAccountStore.getState().accounts.length,
+                            lastAppliedAddonCount: Object.keys(useAddonStore.getState().library).length,
+                        })
                     }
 
                     const applySecondarySlices = async () => {
@@ -926,6 +941,7 @@ export const useSyncStore = create<SyncState>()(
                     fence()
                     {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
+                        fence()
                         const local = useWatchEventStore.getState()
                         const remoteEvents: Record<string, unknown>[] = Array.isArray(secondary.watchEvents) ? secondary.watchEvents as Record<string, unknown>[] : []
                         const remoteDeleted = (secondary.deletedWatchEvents && typeof secondary.deletedWatchEvents === 'object') ? secondary.deletedWatchEvents as Record<string, number> : {}
@@ -945,6 +961,7 @@ export const useSyncStore = create<SyncState>()(
                         useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
 
+                    fence()
                     if (Array.isArray(secondary.customThemes) && secondary.customThemes.length > 0) {
                         applySyncedSettings({ customThemes: secondary.customThemes }, true)
                     }
@@ -1105,8 +1122,10 @@ export const useSyncStore = create<SyncState>()(
                     // a local change to trigger a push, this is what reflects inbound writes.
                     setTimeout(() => {
                         import('@/store/account/accountCanonical')
-                            .then(({ reconcileInboundCanonical }) => reconcileInboundCanonical())
-                            .then(changed => { if (changed) get().syncToRemote(true) })
+                            .then(({ reconcileInboundCanonical }) => {
+                                if (ownership.current()) return reconcileInboundCanonical(ownership)
+                            })
+                            .then(changed => { if (changed && ownership.current()) get().syncToRemote(true) })
                             .catch(() => {})
                     }, 2500)
                 } catch (e) {
@@ -1221,6 +1240,8 @@ export const useSyncStore = create<SyncState>()(
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
                     lastSyncedNotesCount: null,
+                    lastAppliedAccountCount: null,
+                    lastAppliedAddonCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
                 })
@@ -1244,15 +1265,19 @@ export const useSyncStore = create<SyncState>()(
             },
 
             syncToRemote: async (isAuto: boolean = false, isDebounced: boolean = false, forceFull: boolean = false, forcePush: boolean = false): Promise<boolean> => {
+                const ownership = captureSyncOwnership()
                 if (!useAccountStore.getState().hydrated) {
                     await useAccountStore.getState().initialize()
                 }
+                if (!ownership.current()) return false
                 const { auth, serverUrl, isSyncing, isInitialSyncCompleted } = get()
+                const pushCurrent = () => ownership.current() && get().auth.isAuthenticated && get().auth.id === auth.id
                 const { isLocked } = useAuthStore.getState()
                 // Bug #52: a password-session that refreshed keeps its derived session credential,
                 // so pushes resume instead of silently skipping ("no in-session credentials").
                 const sessionCred = auth.isAuthenticated ? getSessionSyncCredential(auth.id) : null
                 const hasSessionCredentials = !!auth.password || !!sessionCred || (await isDeviceSessionActive())
+                if (!ownership.current()) return false
                 if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials || !isInitialSyncCompleted) {
                     const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : !isInitialSyncCompleted ? 'initial pull still applying' : 'account state not hydrated'
                     // Credentialless-but-otherwise-operational is the corpse state of the refresh
@@ -1275,14 +1300,17 @@ export const useSyncStore = create<SyncState>()(
                 }
 
                 const { useWatchEventStore } = await import('@/store/watchEventStore')
+                if (!pushCurrent()) return false
                 if (!useWatchEventStore.getState().initialized) {
                     await useWatchEventStore.getState().load()
+                    if (!pushCurrent()) return false
                     if (!useWatchEventStore.getState().initialized) {
                         if (isAuto) {
                             if (import.meta.env.DEV) console.log("[Sync] Skipping auto-push: Waiting for watch history hydration")
                             return false
                         }
                         await get().refreshFromCloud()
+                        if (!pushCurrent()) return false
                         if (!useWatchEventStore.getState().initialized) {
                             if (!isAuto) get().addLogEntry({ type: 'push', status: 'error', message: 'Push skipped: watch history could not be loaded.', isAuto: false })
                             trace('sync', 'push.guard-reject', { accountId: auth.id, reason: 'watch-store-unhydrated' })
@@ -1322,10 +1350,16 @@ export const useSyncStore = create<SyncState>()(
                 // a failure never blocks the push.
                 try {
                     const { reconcileInboundCanonical } = await import('@/store/account/accountCanonical')
-                    await reconcileInboundCanonical()
+                    if (!pushCurrent()) return false
+                    await reconcileInboundCanonical(ownership)
                 } catch (e) { if (import.meta.env.DEV) console.error('[Sync] Inbound canonical reconcile failed:', e) }
+                if (!pushCurrent()) return false
 
                 const releaseSyncLock = await acquireSyncLock()
+                if (!pushCurrent()) {
+                    releaseSyncLock()
+                    return false
+                }
 
                 const apiPath = getSyncApiPath(serverUrl)
                 const pushStart = Date.now()
@@ -1334,11 +1368,14 @@ export const useSyncStore = create<SyncState>()(
                 try {
                     trace('sync', 'push.start', { accountId: auth.id, isAuto })
                     const { loadSalt } = await import('@/lib/crypto')
+                    ownership.assert()
                     const salt = loadSalt()
                     const saltBase64 = salt ? btoa(String.fromCharCode(...salt)) : undefined
 
                     const exportedAccounts = await useAccountStore.getState().exportAccountsForSync()
+                    ownership.assert()
                     const rawAddons = useAddonStore.getState().exportLibrary(true)
+                    const addonCount = Object.keys(useAddonStore.getState().library).length
 
                     const safeParse = (val: unknown): Record<string, unknown> => {
                         if (!val) return {}
@@ -1360,6 +1397,7 @@ export const useSyncStore = create<SyncState>()(
 
                     const accountCount = Array.isArray(exportedAccounts.accounts) ? exportedAccounts.accounts.length : 0
                     const { shouldBlockEmptyAccountPush } = await import('@/lib/sync-guards')
+                    ownership.assert()
                     if (shouldBlockEmptyAccountPush({
                         currentAccountCount: accountCount,
                         lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount,
@@ -1372,14 +1410,18 @@ export const useSyncStore = create<SyncState>()(
                     if (useVaultStore.getState().isLocked && useAuthStore.getState().encryptionKey) {
                         await useVaultStore.getState().initialize()
                     }
+                    ownership.assert()
                     // Merge local tombstones with the last-pulled cloud sets so a stale push
                     // can never wipe another device's deletion and resurrect data
                     const vaultState = useVaultStore.getState()
                     const { mergeTombstones } = await import('./vaultStore')
+                    ownership.assert()
                     const mergedVaultTombstones = mergeTombstones(vaultState.tombstones, syncRuntime.lastPulledVaultTombstones ?? [])
                     const vaultTombById = new Map(mergedVaultTombstones.map(t => [t.id, t.deletedAt]))
                     const notesState = (await import('@/store/notesStore')).useNotesStore.getState()
+                    ownership.assert()
                     const localNotes = await notesState.getAllNotesWithContent()
+                    ownership.assert()
                     const mergedNotesTrash = mergeNotesTrash(notesState.trash, syncRuntime.lastPulledNotesTrash ?? [])
                     const identityFallback = readIdentityProfile()
                     const identityAvatarFallback = identityFallback.id === auth.id ? identityFallback.avatar : null
@@ -1430,6 +1472,7 @@ export const useSyncStore = create<SyncState>()(
                     const avatarValue = auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')
+                    ownership.assert()
                     const stringifiedState = JSON.stringify(state)
 
                     if (stringifiedState === '[object Object]') {
@@ -1447,11 +1490,12 @@ export const useSyncStore = create<SyncState>()(
                     // Avatar + watch history participate in the change hash: edits to either
                     // still push even though neither rides the inner state anymore.
                     const stateHash = await computeHash(stringifiedState + '|' + (avatarValue ?? '') + '|' + watchPayloadJson)
+                    ownership.assert()
                     if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
                             get().addLogEntry({ type: 'push', status: 'success', message: 'No local changes to push - checking cloud.', isAuto: false })
-                            setTimeout(() => { get().syncFromRemote(true).catch(() => {}) }, 0)
+                            setTimeout(() => { if (pushCurrent()) get().syncFromRemote(true).catch(() => {}) }, 0)
                         }
                         return true
                     }
@@ -1519,6 +1563,7 @@ export const useSyncStore = create<SyncState>()(
                     // assumption. Captured to become the merge base on a CONFIRMED push.
                     const knownServerAccounts = get().serverStremioCredentialedAccounts
                     const { isFoldedHub, clearFoldedHub } = await import('@/lib/folded-hubs')
+                    ownership.assert()
                     const emptiedHubs: string[] = []
                     const canonicalPayload = useAccountStore.getState().accounts.reduce<Record<string, AddonDescriptor[]>>((map, a) => {
                         if (!serverHasStremioCredential(a.id, knownServerAccounts, !!getStremioAuthKey(a))) {
@@ -1528,11 +1573,13 @@ export const useSyncStore = create<SyncState>()(
                         return map
                     }, {})
 
+                    const syncToken = sessionCred?.token ?? await deriveSyncToken(auth.password)
+                    ownership.assert()
                     const res = await resilientFetch(`${apiPath}/sync/${auth.id}`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'x-sync-password': sessionCred?.token ?? await deriveSyncToken(auth.password)
+                            'x-sync-password': syncToken
                         },
                         body: JSON.stringify({
                             data: encryptedState,
@@ -1555,13 +1602,17 @@ export const useSyncStore = create<SyncState>()(
                             emptiedHubs,
                         })
                     })
+                    if (!pushCurrent()) return false
 
                     if (res.status === 401) {
                         const profile = readIdentityProfile()
-                        set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isInitialSyncCompleted: false, needsReauth: false })
+                        set({ auth: { id: '', password: '', name: profile.name, avatar: profile.avatar, isAuthenticated: false }, isSyncing: false, isInitialSyncCompleted: false, needsReauth: false })
                         clearSyncCredentialCaches()
                         setActiveWorkspace(ANON_WORKSPACE_ID)
-                        import('@/lib/device-session').then(({ deactivateDeviceAuth }) => deactivateDeviceAuth()).catch(() => {})
+                        const expiredOwnership = captureSyncOwnership()
+                        import('@/lib/device-session').then(({ deactivateDeviceAuth }) => {
+                            if (expiredOwnership.current() && !get().auth.isAuthenticated) deactivateDeviceAuth()
+                        }).catch(() => {})
                         throw new Error('Sync session expired')
                     }
 
@@ -1575,28 +1626,37 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     const resData = await res.text().then(t => { try { return JSON.parse(t) } catch { return {} } })
+                    if (!pushCurrent()) return false
 
                     if (resData.conflict) {
                         if (import.meta.env.DEV) console.log('[Sync] Server reported conflict. Triggering pull.')
                         import('@/hooks/use-toast').then(({ toast }) => {
+                            if (!pushCurrent()) return
                             toast({
                                 variant: 'warning',
                                 title: 'Cloud was newer',
                                 description: 'Your changes were not pushed because another device synced more recently. Pulling the newer state now.',
                             })
                         }).catch(() => {})
-                        get().refreshFromCloud()
-                            .then(() => {
-                                // Re-stamp after the pull: its imported syncedAt may be stale and would re-trap pushes.
-                                set({ lastSyncedAt: new Date().toISOString() })
-                            })
-                            .catch(e => { if (import.meta.env.DEV) console.error(e) })
+                        // Run after this push's finally releases its flag and lock;
+                        // otherwise refreshFromCloud skips the pull as already syncing.
+                        setTimeout(() => {
+                            if (!pushCurrent()) return
+                            get().refreshFromCloud().catch(e => { if (import.meta.env.DEV) console.error(e) })
+                        }, 0)
                         return false
                     }
 
+                    // Resolve completion helpers before publishing anything. Each import
+                    // can yield to logout or a newer pull, just like the network response.
+                    const [pushMetadata, canonicalBase] = await Promise.all([
+                        import('@/store/account/accountImportExport').catch(() => null),
+                        import('@/lib/canonical-base').catch(() => null),
+                    ])
+                    if (!pushCurrent()) return false
                     syncRuntime.lastPushedHash = stateHash
                     syncRuntime.lastSyncedAccountCount = accountCount
-                    import('@/store/account/accountImportExport').then(({ setLastPushedAt }) => setLastPushedAt(Date.now())).catch(() => {})
+                    pushMetadata?.setLastPushedAt(Date.now())
                     if (typeof resData.contentHash === 'string') {
                         set({ lastSyncedCloudEtag: resData.contentHash })
                     }
@@ -1611,18 +1671,18 @@ export const useSyncStore = create<SyncState>()(
                         ? resData.serverStremioCredentialedAccounts as string[]
                         : null
                     if (needsCredentialHeal(serverCredentialedIds, useAccountStore.getState().accounts.map(a => ({ id: a.id, hasClientStremioKey: !!getStremioAuthKey(a) })))) {
-                        import('@/lib/activity-server').then(m => m.syncCredentialsToServer()).catch(() => { })
+                        import('@/lib/activity-server').then(m => {
+                            if (pushCurrent()) return m.syncCredentialsToServer()
+                        }).catch(() => { })
                     }
 
                     // Advance the merge base ONLY on a confirmed push; base is "what the
                     // server confirmed it received," never "what we hoped to send." If the
                     // push had failed, leaving the base stale would make the next merge
                     // mistake a just-deleted addon for an inbound add and resurrect it.
-                    import('@/lib/canonical-base')
-                        .then(({ setCanonicalBases }) => setCanonicalBases(canonicalPayload))
-                        .catch(() => {})
+                    canonicalBase?.setCanonicalBases(canonicalPayload)
 
-                    set({ lastSyncedAt: new Date().toISOString(), needsReauth: false })
+                    set({ lastSyncedAt: new Date().toISOString(), needsReauth: false, lastAppliedAccountCount: accountCount, lastAppliedAddonCount: addonCount })
 
                     get().addLogEntry({
                         type: 'push',
@@ -1641,6 +1701,7 @@ export const useSyncStore = create<SyncState>()(
                     } catch (e) { if (import.meta.env.DEV) console.error(e) }
                     return true
                 } catch (e) {
+                    if (!pushCurrent()) return false
                     const message = (e as Error).message
                     if (import.meta.env.DEV) console.error("Sync error:", apiPath, e)
                     if (isAuto) syncRuntime.pendingRetry = true
@@ -1656,12 +1717,13 @@ export const useSyncStore = create<SyncState>()(
                     }
                     return false
                 } finally {
-                    set({ isSyncing: false })
+                    if (pushCurrent()) set({ isSyncing: false })
                     releaseSyncLock()
                 }
             },
 
             forcePushState: async () => {
+                const ownership = captureSyncOwnership()
                 const { auth } = get()
                 if (!auth.isAuthenticated) {
                     get().addLogEntry({ type: 'force-push', status: 'error', message: 'Force push failed: not signed in.', isAuto: false })
@@ -1671,6 +1733,7 @@ export const useSyncStore = create<SyncState>()(
                 const deadline = Date.now() + 20000
                 while (get().isSyncing && Date.now() < deadline) {
                     await new Promise(r => setTimeout(r, 200))
+                    if (!ownership.current()) return
                 }
                 if (get().isSyncing) {
                     get().addLogEntry({ type: 'force-push', status: 'error', message: 'Force push cancelled: another sync stayed in progress for 20s.', isAuto: false })
@@ -1678,6 +1741,7 @@ export const useSyncStore = create<SyncState>()(
                 }
 
                 const ok = await get().syncToRemote(false, false, true, true)
+                if (!ownership.current()) return
                 get().addLogEntry({
                     type: 'force-push',
                     status: ok ? 'success' : 'error',
@@ -1900,6 +1964,7 @@ export const useSyncStore = create<SyncState>()(
                     fence()
                     if (Array.isArray(secondary.watchEvents)) {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
+                        fence()
                         const local = useWatchEventStore.getState()
                         const remoteDeleted = (secondary.deletedWatchEvents && typeof secondary.deletedWatchEvents === 'object') ? secondary.deletedWatchEvents as Record<string, number> : {}
                         // A broken blob leaves this map fleet-empty: keep the previously-pulled
@@ -1915,6 +1980,7 @@ export const useSyncStore = create<SyncState>()(
                             : undefined
                         useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
+                    fence()
                     if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
                         applySyncedSettings({ customThemes: data.customThemes }, true)
                     }
@@ -1956,7 +2022,12 @@ export const useSyncStore = create<SyncState>()(
                         toast({ variant: 'destructive', title: 'Mirror Incomplete', description: 'Part of the cloud state could not be decoded. Retry once credentials are consistent.' })
                     } else {
                         if (recordOurs) syncRuntime.hydration = { seq: mirrorToken, id: auth.id, status: 'ok', kind: 'mirror' }
-                        set({ isInitialSyncCompleted: true, lastSyncedCloudEtag: responseEtag ?? null })
+                        set({
+                            isInitialSyncCompleted: true,
+                            lastSyncedCloudEtag: responseEtag ?? null,
+                            lastAppliedAccountCount: useAccountStore.getState().accounts.length,
+                            lastAppliedAddonCount: Object.keys(useAddonStore.getState().library).length,
+                        })
                         get().addLogEntry({
                             type: 'force-mirror',
                             status: 'success',
@@ -2035,6 +2106,8 @@ export const useSyncStore = create<SyncState>()(
                     isInitialSyncCompleted: false,
                     lastSyncedCloudEtag: null,
                     lastSyncedNotesCount: null,
+                    lastAppliedAccountCount: null,
+                    lastAppliedAddonCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
                 })
@@ -2059,6 +2132,8 @@ export const useSyncStore = create<SyncState>()(
                 syncSaltB64: state.syncSaltB64,
                 lastSyncedCloudEtag: state.lastSyncedCloudEtag,
                 lastSyncedNotesCount: state.lastSyncedNotesCount,
+                lastAppliedAccountCount: state.lastAppliedAccountCount,
+                lastAppliedAddonCount: state.lastAppliedAddonCount,
                 serverStremioCredentialedAccounts: state.serverStremioCredentialedAccounts,
             }),
             merge: (persistedState, currentState) => ({

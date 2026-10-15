@@ -32,6 +32,7 @@ import {
 import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
 import type { Account, AccountProfile } from '@/types/account'
 import { type Connection, isSyncEligibleConnection } from '@/types/connection'
+import type { SyncOwnership } from '../sync-store-helpers'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
@@ -57,22 +58,29 @@ async function reconcileInstallBase(account: Account): Promise<AddonDescriptor[]
 
 const pluginUrlKey = (url?: string): string => (url ? url.trim().replace(/\/+$/, '').toLowerCase() : '')
 
-async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId: string, activeProfileId?: string) {
+async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId: string, activeProfileId?: string, ownership?: SyncOwnership) {
     const creds = (conn.credentials || {}) as Record<string, string>
     const { nuvioDriverFor } = await import('@/lib/drivers/factory')
+    ownership?.assert()
     const driver = nuvioDriverFor(conn)
     const { fetchConnectionToken } = await import('@/api/connection')
+    ownership?.assert()
     const token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+    ownership?.assert()
     const { setCachedNuvioToken } = await import('@/lib/nuvio-token-cache')
+    ownership?.assert()
     setCachedNuvioToken(conn.id, token)
     const { resolveNuvioPushProfile } = await import('@/lib/nuvio-profile-resolve')
+    ownership?.assert()
     const profileId = resolveNuvioPushProfile(conn, activeProfileId, token.profileId ?? creds.profileIndex ?? creds.profileId)
     await driver.writeAddons(token.accessToken, addons, profileId)
+    ownership?.assert()
 
     const canonicalPlugins = conn.pluginList || []
     if (canonicalPlugins.length > 0) {
         try {
             const platformPlugins = await driver.readPlugins(token.accessToken, profileId)
+            ownership?.assert()
             const canonicalUrls = new Set(canonicalPlugins.map(p => pluginUrlKey(p.url)))
             const platformUrls = new Set((platformPlugins || []).map((p: { url?: string }) => pluginUrlKey(p.url)))
             const needsPush = platformUrls.size !== canonicalUrls.size
@@ -85,11 +93,14 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
     }
 }
 
-async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string) {
+async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string, ownership?: SyncOwnership) {
     const { fetchConnectionToken } = await import('@/api/connection')
+    ownership?.assert()
     const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
+    ownership?.assert()
 
     const { realStreamDriverFor } = await import('@/lib/drivers/factory')
+    ownership?.assert()
     // userId is a stable PocketBase identity set at auth time; it never changes between refreshes.
     const userId = conn.credentials?.userId || ''
     if (!userId) throw Object.assign(new Error('RealStream user ID missing; re-authenticate this connection'), { isAuthError: true })
@@ -98,13 +109,16 @@ async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accou
 }
 
 // Hydra (CORS-fragile against arbitrary servers) + any client-side failure fall back to the server.
-async function serverReconcile(accountId: string, account: Account, connections: Connection[], options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
+async function serverReconcile(accountId: string, account: Account, connections: Connection[], options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean; ownership?: SyncOwnership } = {}) {
     try {
         const { triggerReconciliation } = await import('@/api/connection')
+        options.ownership?.assert()
         const addons = options.addons ?? account.addons
         const result = await triggerReconciliation(accountId, account.primaryConnectionId, connections, addons, { allowCollectionShrink: options.allowCollectionShrink })
+        options.ownership?.assert()
         if (result.connectionStates && Object.keys(result.connectionStates).length > 0) {
             const { useConnectionStore } = await import('@/store/connectionStore')
+            options.ownership?.assert()
             useConnectionStore.setState(s => ({
                 connectionStates: {
                     ...s.connectionStates,
@@ -113,6 +127,7 @@ async function serverReconcile(accountId: string, account: Account, connections:
             }))
         }
     } catch (e) {
+        if (options.ownership && !options.ownership.current()) return
         toast({
             title: 'Connection sync failed',
             description: e instanceof Error ? e.message : 'One or more connections could not be updated.',
@@ -121,8 +136,10 @@ async function serverReconcile(accountId: string, account: Account, connections:
     }
 }
 
-export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
+export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean; ownership?: SyncOwnership } = {}) {
+    const ownership = options.ownership
     const store = await getStore()
+    if (ownership && !ownership.current()) return
     const account = getAccountById(store.getState().accounts, accountId)
     const eligible = (account?.connections || []).filter(c => c.enabled && isSyncEligibleConnection(c))
     if (!account || eligible.length === 0) return
@@ -136,8 +153,10 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 
     const { useConnectionStore } = await import('@/store/connectionStore')
+    if (ownership && !ownership.current()) return
     const now = Date.now()
     const setStatus = (connId: string, status: Connection['status'], lastError: string | null = null) => {
+        if (ownership && !ownership.current()) return
         useConnectionStore.setState(s => ({
             connectionStates: {
                 ...s.connectionStates,
@@ -162,7 +181,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
                         : acc
                 )
             }))
-            persistAccounts(store.getState().accounts)
+            persistAccounts(store.getState().accounts, ownership)
         }
     }
 
@@ -170,15 +189,17 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     let authFailures = 0
 
     for (const conn of eligible) {
+        if (ownership && !ownership.current()) return
         if (conn.platform !== 'nuvio' && conn.platform !== 'realstream') {
             serverConnections.push(conn)
             continue
         }
         try {
-            if (conn.platform === 'nuvio') await pushNuvio(conn, enabledAddons, accountId, account.activeProfileId)
-            else await pushRealStream(conn, enabledAddons, accountId)
+            if (conn.platform === 'nuvio') await pushNuvio(conn, enabledAddons, accountId, account.activeProfileId, ownership)
+            else await pushRealStream(conn, enabledAddons, accountId, ownership)
             setStatus(conn.id, 'active')
         } catch (err) {
+            if (ownership && !ownership.current()) return
             const msg = err instanceof Error ? err.message : 'Connection sync failed'
             trace('push', 'connection-error', { accountId, platform: conn.platform, connId: conn.id, auth: isAuthError(err), error: msg })
             if (isAuthError(err)) {
@@ -191,6 +212,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
         }
     }
 
+    if (ownership && !ownership.current()) return
     if (authFailures > 0) {
         toast({
             title: 'Connection re-authentication needed',
@@ -200,7 +222,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 
     if (serverConnections.length > 0) {
-        await serverReconcile(accountId, account, serverConnections, { addons: sourceAddons, allowCollectionShrink: options.allowCollectionShrink })
+        await serverReconcile(accountId, account, serverConnections, { addons: sourceAddons, allowCollectionShrink: options.allowCollectionShrink, ownership })
     }
 }
 
