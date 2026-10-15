@@ -12,6 +12,9 @@ const StaggerContext = createContext<{ delay: number, nextIndex: () => number }>
   nextIndex: () => 0,
 })
 
+let appBootSettled = false
+setTimeout(() => { appBootSettled = true }, 1500)
+
 function StaggerContainer({
   children,
   className,
@@ -38,8 +41,8 @@ function StaggerItem({
   className?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-  const [settled, setSettled] = useState(false)
+  const [visible, setVisible] = useState(() => !appBootSettled)
+  const [settled, setSettled] = useState(() => !appBootSettled)
   const { delay, nextIndex } = useContext(StaggerContext)
   const indexRef = useRef<number | null>(null)
   if (indexRef.current === null) {
@@ -51,6 +54,8 @@ function StaggerItem({
   useEffect(() => {
     const el = ref.current
     if (!el) return
+
+    if (!appBootSettled) return
 
     if (typeof IntersectionObserver === 'undefined') {
       setVisible(true)

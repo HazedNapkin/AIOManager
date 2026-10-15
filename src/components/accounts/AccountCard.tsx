@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { prefetchAccountDetail } from '@/lib/account-prefetch'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
@@ -288,6 +289,8 @@ export const AccountCard = memo(function AccountCard({
       {...longPressProps}
       role="button"
       tabIndex={0}
+      onMouseEnter={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
+      onFocus={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
       className={cn(
         'group relative flex h-full cursor-pointer flex-col rounded-[1.35rem] border border-border/45 bg-card/80 shadow-sm transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         isSelectionMode && 'hover:border-primary/45',

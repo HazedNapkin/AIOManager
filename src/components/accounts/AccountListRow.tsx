@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { prefetchAccountDetail } from '@/lib/account-prefetch'
 import { Account } from '@/types/account'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AccountAvatar } from './AccountAvatar'
@@ -113,6 +114,8 @@ export const AccountListRow = memo(function AccountListRow({
             tabIndex={0}
             aria-pressed={isSelectionMode ? isSelected : undefined}
             onClick={handleCardClick}
+            onMouseEnter={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
+            onFocus={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardClick() } }}
             className={cn(
                 'group relative flex cursor-pointer items-center gap-2 rounded-[1.35rem] border border-border/45 bg-card/80 px-3 py-3 shadow-sm transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:gap-3 sm:px-4',
