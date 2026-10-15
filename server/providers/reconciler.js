@@ -2,9 +2,28 @@ import db from '../db.js'
 import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { trace } from '../utils/trace.js'
+import { REFRESH_BUFFER_MS } from './token-refresh.js'
 
 const BACKOFF_THRESHOLD = 3
 const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
+
+// Connections change rarely but are resolved per rule and per audit; a short-lived cache
+// keeps one scan cycle on a single read. Any credential write clears it outright.
+const connectionCache = new Map()
+const storedConnections = new WeakMap()
+const CONNECTION_CACHE_TTL_MS = 30 * 1000
+let connectionCacheGeneration = 0
+
+export function invalidateConnectionCache(syncUser = null) {
+    connectionCacheGeneration++
+    if (!syncUser) {
+        connectionCache.clear()
+        return
+    }
+    for (const [key, entry] of connectionCache) {
+        if (entry.syncUser === syncUser) connectionCache.delete(key)
+    }
+}
 
 function getBackoffSkip(consecutiveFailures) {
     if (consecutiveFailures < BACKOFF_THRESHOLD) return 0
@@ -15,13 +34,20 @@ function getBackoffSkip(consecutiveFailures) {
     return BACKOFF_SLOTS[slotIndex]
 }
 
+const urlMemo = new Map()
 function normalizeUrl(url) {
     if (!url) return ''
-    let normalized = url.trim()
+    const key = String(url)
+    const cached = urlMemo.get(key)
+    if (cached !== undefined) return cached
+    let normalized = key.trim()
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
-    return normalized.toLowerCase()
+    normalized = normalized.toLowerCase()
+    if (urlMemo.size >= 5000) urlMemo.clear()
+    urlMemo.set(key, normalized)
+    return normalized
 }
 
 // syncUser scopes the lookup to the owning user. The HTTP endpoint (providers.js) MUST pass the
@@ -34,6 +60,16 @@ function preferBaseUrled(connections, platform) {
 }
 
 async function resolveConnections(accountId, syncUser = null) {
+    // Unscoped legacy callers remain uncached. Never mix their view with an owner.
+    const cacheKey = JSON.stringify([accountId, syncUser])
+    const hit = connectionCache.get(cacheKey)
+    if (syncUser && hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) {
+        const connections = structuredClone(hit.connections)
+        for (const connection of connections) storedConnections.set(connection, connectionCacheGeneration)
+        return connections
+    }
+    const generation = connectionCacheGeneration
+
     const rows = await db.query(
         syncUser
             ? 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC'
@@ -130,6 +166,13 @@ async function resolveConnections(accountId, syncUser = null) {
         }
     }
 
+    for (const connection of connections) connection.syncUser = syncUser
+    // A write during the query must not repopulate the cache with an older view.
+    if (syncUser && generation === connectionCacheGeneration) {
+        if (connectionCache.size >= 500) connectionCache.delete(connectionCache.keys().next().value)
+        connectionCache.set(cacheKey, { at: Date.now(), syncUser, connections: structuredClone(connections) })
+    }
+    for (const connection of connections) storedConnections.set(connection, generation)
     return connections
 }
 
@@ -158,21 +201,24 @@ async function loadDriver(platform, credentials, connection) {
         }
 
         if (connection?.id) {
-            try {
-                const { refreshNuvioToken } = await import('./token-refresh.js')
-                const fresh = await refreshNuvioToken(connection.id, connection.accountId)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        refreshToken: fresh.refreshToken,
-                        expiresAt: fresh.expiresAt,
-                        profileId: fresh.profileId ?? connection.credentials?.profileId,
+            const expiresAt = connection.credentials?.expiresAt
+            if (storedConnections.get(connection) !== connectionCacheGeneration || !expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshNuvioToken } = await import('./token-refresh.js')
+                    const fresh = await refreshNuvioToken(connection.id, connection.accountId, undefined, connection.syncUser)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            refreshToken: fresh.refreshToken,
+                            expiresAt: fresh.expiresAt,
+                            profileId: fresh.profileId ?? connection.credentials?.profileId,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired) {
+                        throw err
+                    }
                 }
             }
         }
@@ -186,20 +232,23 @@ async function loadDriver(platform, credentials, connection) {
         })
 
         if (connection?.id) {
-            try {
-                const { refreshRealStreamToken } = await import('./token-refresh.js')
-                const fresh = await refreshRealStreamToken(connection.id)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        userId: fresh.userId ?? connection.credentials?.userId,
-                        expiresAt: fresh.expiresAt,
+            const expiresAt = connection.credentials?.expiresAt
+            if (storedConnections.get(connection) !== connectionCacheGeneration || !expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshRealStreamToken } = await import('./token-refresh.js')
+                    const fresh = await refreshRealStreamToken(connection.id, connection.syncUser)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            userId: fresh.userId ?? connection.credentials?.userId,
+                            expiresAt: fresh.expiresAt,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired) {
+                        throw err
+                    }
                 }
             }
         }

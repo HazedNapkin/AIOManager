@@ -178,6 +178,11 @@ export function registerSyncRoutes(fastify) {
                 }
             }
             const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
+            // Canonical addons are pushed for the server hub fold. Pull clients rebuild
+            // this optional metadata from their account blobs; retain all legacy shapes.
+            if (syncData && typeof syncData === 'object' && !Array.isArray(syncData)) {
+                delete syncData.canonicalAddons
+            }
             trace('syncRoute', 'pull.success', { accountId: id, bytes: payloadBytes, timing: Date.now() - start })
             if (row.content_hash) reply.header('ETag', row.content_hash)
             return syncData && typeof syncData === 'object' ? syncData : {}
@@ -547,6 +552,8 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM kv_store_history WHERE key = $1', [id])
         })
         invalidateCachedAuth('sync:' + id)
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache(id)
         trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })
 
         return { success: true }

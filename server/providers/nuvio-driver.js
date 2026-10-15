@@ -74,21 +74,35 @@ export function createNuvioDriver(options = {}) {
         return res.json()
     }
 
+    // Profile resolution costs an RPC for string profile ids; a driver instance lives for one
+    // reconcile pass, so the profile list is fetched once and every resolution reuses it.
+    let profilesRpcCache = null
+    async function pullProfilesCached(accessToken) {
+        if (!profilesRpcCache || profilesRpcCache.accessToken !== accessToken) {
+            const promise = rpc('sync_pull_profiles', {}, accessToken)
+                .then(profiles => ({ profiles: Array.isArray(profiles) ? profiles : [], failed: false }))
+                .catch(() => {
+                    // Preserve a later strict write's chance to resolve its profile
+                    // after a transient read failure instead of retaining fallback.
+                    if (profilesRpcCache?.promise === promise) profilesRpcCache = null
+                    return { profiles: [], failed: true }
+                })
+            profilesRpcCache = { accessToken, promise }
+        }
+        return profilesRpcCache.promise
+    }
+
     async function resolveProfileIndex(accessToken, profileId, opts = {}) {
         if (Number.isFinite(profileId) && profileId > 0) return profileId
 
         const stringId = String(profileId || '').trim()
         if (/^\d+$/.test(stringId)) return parseInt(stringId, 10)
 
-        let profiles = []
-        let profilesRpcFailed = false
-        try {
-            profiles = await rpc('sync_pull_profiles', {}, accessToken)
-        } catch {
-            profilesRpcFailed = true
-        }
+        const cached = await pullProfilesCached(accessToken)
+        const profiles = cached.profiles
+        const profilesRpcFailed = cached.failed
 
-        if (Array.isArray(profiles) && stringId) {
+        if (profiles.length > 0 && stringId) {
             const match = profiles.find(p => p.id === stringId)
             if (match) {
                 const idx = match.profile_index ?? match.profileIndex
@@ -105,7 +119,6 @@ export function createNuvioDriver(options = {}) {
         }
 
         if (!Array.isArray(profiles) || profiles.length === 0) return 1
-
         const primary = profiles.find(p =>
             (p.profile_index ?? p.profileIndex) === 1
         )
@@ -294,6 +307,7 @@ export function createNuvioDriver(options = {}) {
         },
 
         async pushProfiles(accessToken, profiles) {
+            profilesRpcCache = null
             return rpc('sync_push_profiles', {
                 p_profiles: profiles.map((p, i) => ({
                     profile_index: i + 1,
@@ -304,7 +318,7 @@ export function createNuvioDriver(options = {}) {
                     avatar_id: p.avatarId || null
                 })),
                 p_client_max_profiles: 5
-            }, accessToken)
+            }, accessToken).finally(() => { profilesRpcCache = null })
         },
 
         // Undocumented account-wide export RPC; takes no params, response rows pass through untouched.

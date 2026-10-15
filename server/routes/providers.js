@@ -117,7 +117,9 @@ export function registerProviderRoutes(fastify, reconciler) {
         }
 
         try {
-            const clientConnections = Array.isArray(connections) ? connections.filter(c => c && c.id) : null
+            const clientConnections = Array.isArray(connections)
+                ? connections.filter(c => c && c.id).map(c => ({ ...c, syncUser: authUser }))
+                : null
             const resolvedConnections = (clientConnections && clientConnections.length > 0)
                 ? clientConnections
                 : await reconciler.resolveConnections(accountId, authUser)
@@ -282,6 +284,8 @@ export function registerProviderRoutes(fastify, reconciler) {
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
             `, [id, authUser, accountId, encrypted, connectionId, type, Date.now()])
         }
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache(authUser)
 
         return { ok: true }
     })
@@ -297,6 +301,8 @@ export function registerProviderRoutes(fastify, reconciler) {
             'DELETE FROM server_credentials WHERE connection_id = $1 AND sync_user = $2',
             [connectionId, authUser]
         )
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache(authUser)
         return { ok: true }
     })
 
@@ -325,7 +331,7 @@ export function registerProviderRoutes(fastify, reconciler) {
                 if (!owned) { reply.code(404); return { error: 'Connection not found' } }
 
                 const { refreshNuvioToken } = await import('../providers/token-refresh.js')
-                const bundle = await refreshNuvioToken(connectionId, accountId, { baseUrl: typeof baseUrl === 'string' && baseUrl ? baseUrl : undefined })
+                const bundle = await refreshNuvioToken(connectionId, accountId, { baseUrl: typeof baseUrl === 'string' && baseUrl ? baseUrl : undefined }, authUser)
                 if (!bundle?.accessToken) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
                 return { accessToken: bundle.accessToken, expiresAt: bundle.expiresAt, profileId: bundle.profileId ?? null }
             } catch (err) {
@@ -345,7 +351,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             if (!owned) { reply.code(404); return { error: 'Connection not found' } }
 
             const { refreshRealStreamToken } = await import('../providers/token-refresh.js')
-            const bundle = await refreshRealStreamToken(connectionId)
+            const bundle = await refreshRealStreamToken(connectionId, authUser)
             if (!bundle?.accessToken) { reply.code(401); return { error: 'RealStream session expired, re-authenticate' } }
             return { accessToken: bundle.accessToken, expiresAt: bundle.expiresAt, profileId: null }
         } catch (err) {
@@ -387,6 +393,8 @@ export function registerProviderRoutes(fastify, reconciler) {
             reply.code(409)
             return { error: 'Conflict', message: 'Profile was updated by another operation. Please retry.' }
         }
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache(authUser)
         return { ok: true }
     })
 
@@ -409,7 +417,7 @@ export function registerProviderRoutes(fastify, reconciler) {
 
         try {
             const { refreshNuvioToken } = await import('../providers/token-refresh.js')
-            const bundle = await refreshNuvioToken(connectionId, accountId)
+            const bundle = await refreshNuvioToken(connectionId, accountId, undefined, authUser)
             if (!bundle?.accessToken) { reply.code(401); return { error: 'Nuvio session expired, re-authenticate' } }
 
             // Security: exports read a stored credential, so the driver comes from the stored bundle only — client baseUrl/publishableKey would let the caller steer the exfil target.
