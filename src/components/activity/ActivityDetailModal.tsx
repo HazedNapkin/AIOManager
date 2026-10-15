@@ -514,12 +514,14 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     // Refs mirror router/stack state so each sync effect below only reacts to
     // the dependency that actually changed (navStack vs searchParams).
     const searchParamsRef = useRef(searchParams)
+    const setSearchParamsRef = useRef(setSearchParams)
     const navStackRef = useRef(navStack)
     const lastSyncedParamsRef = useRef<URLSearchParams | null>(null)
     const prevStackLenRef = useRef(0)
     const prevOpenRef = useRef(false)
 
     useEffect(() => { searchParamsRef.current = searchParams }, [searchParams])
+    useEffect(() => { setSearchParamsRef.current = setSearchParams }, [setSearchParams])
     useEffect(() => { navStackRef.current = navStack }, [navStack])
 
     const applyPersonResult = useCallback((personName: string, res: PersonFilmographyResult) => {
@@ -613,23 +615,28 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     useEffect(() => {
         const wasOpen = prevOpenRef.current
         prevOpenRef.current = open
-        const grew = navStack.length > prevStackLenRef.current
-        prevStackLenRef.current = navStack.length
         if (!open) {
             prevStackLenRef.current = 0
             if (wasOpen && parseDetailParams(searchParamsRef.current)) {
                 lastSyncedParamsRef.current = null
-                setSearchParams(stripDetailParams(searchParamsRef.current), { replace: true })
+                setSearchParamsRef.current(stripDetailParams(searchParamsRef.current), { replace: true })
             }
             return
         }
+        // Opening rebuilds the stack in the preceding effect. Wait for that
+        // commit instead of writing the previous modal's stack into this URL.
+        if (!wasOpen) return
+        const grew = navStack.length > prevStackLenRef.current
+        prevStackLenRef.current = navStack.length
         const desired = paramsForStack(navStack)
         if (!desired) return
         lastSyncedParamsRef.current = desired
         if (!paramsEqual(searchParamsRef.current, desired)) {
-            setSearchParams(desired, { replace: !grew })
+            setSearchParamsRef.current(desired, { replace: !grew })
         }
-    }, [open, navStack, setSearchParams])
+        // Router callbacks change when Back/Forward changes the search string.
+        // Only modal state may write it back; the URL reader handles navigation.
+    }, [open, navStack])
 
     // URL → navStack: reconcile external param changes (browser back/forward)
     // back into the stack. Our own writes are recognised via
@@ -676,7 +683,10 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 seasonNumber: target.season,
                 episodeNumber: target.episode,
                 episodeName: `Episode ${target.episode}`,
-                seriesTmdbId: null,
+                // Forward can restore an episode while the same series stays
+                // open. Its ID won't change again to trigger deep-link hydration.
+                // Reuse it only for this base series, never a different URL item.
+                seriesTmdbId: baseEntry?.item.itemId === target.detail ? seriesTmdbId : null,
                 seriesPoster: top.item.poster,
             })
             top = stack[stack.length - 1]
@@ -697,7 +707,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 .then(res => applyPersonResult(personName, res))
                 .catch(() => markPersonLoadFailed(personName))
         }
-    }, [searchParams, open, applyPersonResult, markPersonLoadFailed])
+    }, [searchParams, open, seriesTmdbId, applyPersonResult, markPersonLoadFailed])
 
     // Deep-linked episodes are rebuilt without a TMDB id (the URL only carries
     // item ids); patch the entry once series meta resolves so EpisodeDetailPage
