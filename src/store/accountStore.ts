@@ -34,9 +34,7 @@ export const safeUUID = () => {
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null
 
-// The debounced write fires long after its caller: an ownership context makes a
-// transaction's re-persist stand down instead of writing its snapshot into the
-// namespace that replaced it.
+// Recheck ownership when the deferred write actually runs.
 export const persistAccounts = (accounts: Account[], ownership?: { current: () => boolean }) => {
     if (_persistTimer) clearTimeout(_persistTimer)
     _persistTimer = setTimeout(async () => {

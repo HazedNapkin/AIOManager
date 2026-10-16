@@ -1,36 +1,20 @@
 import { clearSessionSyncToken } from '@/lib/session-sync-token'
 import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
 
-// Shared mutable sync runtime state. Lives here so the store and any extracted
-// sync modules mutate one instance instead of reaching across modules.
-// Cloud-side watch-event tombstones as of the last pull. The push serialisation merges local
-// stale local map can never erase fresher cloud deletes.
+// Shared runtime for sync operations and their async continuations.
 export const syncRuntime = {
     appReady: false,
     lastPushedHash: null as string | null,
     corruptRestoreInFlight: false,
-    // Bumped at the start of every login pull and every mirror. Async
-    // continuations (deferred hydration, completion flips) capture their token
-    // and stand down when a newer pull, logout or workspace switch has
-    // superseded them. Monotonic: it never moves backwards.
+    // Monotonic generation for pulls, mirrors, and session invalidation.
     pullSeq: 0,
-    // Explicit adoption slot: a no-op conditional (304) refresh that invalidated
-    // a still-applying pull of the same account may re-arm that pull here
-    // instead of superseding it. Ownership checks accept the adopted sequence so
-    // the pending work can finish, while pullSeq itself never rewinds (no other
-    // stale actor can revive). Cleared on every real supersession.
+    // A same-account 304 can adopt pending pull work without rewinding pullSeq.
     adoptedSeq: null as number | null,
-    // Outcome of the newest pull's deferred hydration: 'pending' while slices
-    // apply, 'ok' once every slice and blob landed, 'failed' otherwise. The 304
-    // shortcut consults it: "unchanged" can only certify state that was fully
-    // applied, never a pull still running or one that broke midway. The kind
-    // separates pull records (adoptable by a 304) from mirror records (never).
+    // A 304 may certify only completed hydration; mirror work is never adoptable.
     hydration: null as { seq: number; id: string; status: 'pending' | 'ok' | 'failed'; kind: 'pull' | 'mirror' } | null,
     lastPulledDeletedWatchEvents: null as Record<string, number> | null,
     lastPulledNotesTrash: null as import('./notesStore').Note[] | null,
-    // Last cloud-known notes (with content). A page that has not imported notes yet
-    // (boot into the anon namespace, then an identity swap) must never push an empty
-    // store over this copy: same rationale as the empty-accounts push guard.
+    // Preserve cloud notes until the local notes store has hydrated.
     lastPulledNotes: null as import('./notesStore').Note[] | null,
     lastPulledVaultTombstones: null as import('./vaultStore').VaultTombstone[] | null,
     // Preserved on push when this device has no avatar; mirrors the pull's upgrade-only identity rule.
@@ -42,9 +26,6 @@ export const syncRuntime = {
     syncBC: null as BroadcastChannel | null,
 }
 
-// Thrown by an ownership context's assert(): the pull or import that captured the
-// context was superseded by a logout, reset, or a newer session before it finished.
-// Detected by name so callers can single it out without importing the class.
 export class SyncOwnershipLostError extends Error {
     constructor(
         public readonly expectedWorkspace: string,
@@ -64,15 +45,8 @@ export interface SyncOwnership {
     assert: () => void
 }
 
-// Ownership context for one sync pull (or one standalone import): captures the
-// active workspace AND the pull sequence at capture time, before the first await.
-// Both must still match for the work to write or publish, so a same-id
-// logout/relogin (identical workspace string, new sequence) invalidates the old
-// work exactly like a real workspace switch does. A sequence recorded in the
-// explicit adoption slot stays valid too: that is how a 304 re-arms a pending
-// pull without rewinding the global counter. capture/assert are cheap
-// synchronous reads; call assert again after every await that precedes a storage
-// dispatch or a state publication.
+// Capture workspace and generation before awaiting. Recheck before storage dispatches
+// or state publication; only an explicitly adopted sequence remains valid after a newer pull.
 export function captureSyncOwnership(seq: number = syncRuntime.pullSeq): SyncOwnership {
     const workspace = getActiveWorkspaceId()
     const current = () =>

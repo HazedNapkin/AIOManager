@@ -8,8 +8,7 @@ export function prefetchAccountDetail(accountId: string) {
     if (auth.isLocked || !auth.encryptionKey) return
     if (!useAccountStore.getState().accounts.some(account => account.id === accountId)) return
     if (detailPagePromise) return
-    // Hover only warms route code. A real account sync can publish loading and
-    // error state, discover connections, and write back to streaming platforms.
+    // Prefetch route code only; hovering must not sync account state.
     detailPagePromise = import('@/pages/AccountDetailPage').catch(() => {
         detailPagePromise = null
     })

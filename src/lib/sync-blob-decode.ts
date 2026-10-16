@@ -1,12 +1,5 @@
-// Shared decoder for the out-of-band sync blobs (avatar, watch history). The
-// inner state and its blobs are encrypted with the SAME key on push, so the
-// caller resolves the winning branch ONCE (device unlock key, session
-// credential, or password+salt) and passes exactly that context here; blobs
-// must never re-resolve keys from mutable store state, where a stale stored
-// salt or credential wins over the one that actually decoded the response.
-// Blobs are deflated before encryption; the uncompressed sniff keeps legacy
-// blobs readable. Returns null when the blob cannot be decoded so the caller
-// keeps local state instead of throwing the whole pull away.
+// Decode blobs with the key context that decrypted their enclosing sync payload.
+// Legacy uncompressed blobs remain readable; decoding failures return null.
 
 export interface SyncBlobKeys {
     deviceSyncKey?: CryptoKey | null
@@ -34,20 +27,11 @@ export async function decodeSyncBlob(blob: string, keys: SyncBlobKeys): Promise<
     }
 }
 
-// Shape contracts for decoded blob payloads. A blob that decrypts to the wrong
-// TYPE is as unreadable as one that fails to decrypt: applying it would certify
-// a pull or mirror that silently dropped the slice it carried. Valid legacy
-// absence is decided by the callers (no blob at all = nothing to validate).
-
-// The avatar blob carries exactly one JSON string; the empty string is a valid
-// (empty) avatar.
 export function isValidAvatarPayload(parsed: unknown): parsed is string {
     return typeof parsed === 'string'
 }
 
-// The watch blob carries the structured watch payload. watchEvents must be an
-// array; the other maps must be plain objects when present (older pushes may
-// omit them). Anything else (null, array, mistyped fields) is invalid.
+// Legacy watch payloads may omit maps, but must contain a watchEvents array.
 export function isValidWatchPayload(parsed: unknown): parsed is Record<string, unknown> {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false
     const watch = parsed as Record<string, unknown>

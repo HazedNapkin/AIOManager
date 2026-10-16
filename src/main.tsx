@@ -68,8 +68,7 @@ try {
 if (!bootBlocked) {
   const migration = migrateLocalforageKeys().then(async () => {
     if (bootBlocked) return
-    // Rename legacy keys before routing stores to workspace persistence. Both
-    // steps share the boot deadline so a stalled IndexedDB call shows recovery.
+    // Migrate legacy keys before installing workspace routing, within the boot deadline.
     const { initWorkspacePersistence } = await import('@/lib/workspace-persistence')
     if (bootBlocked) return
     await initWorkspacePersistence()

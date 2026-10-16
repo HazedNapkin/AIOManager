@@ -1,12 +1,4 @@
-// Cinemeta meta cache, deliberately free of `@/` path-alias imports so it stays
-// resolvable under the node:test runner (see utils.ts for the convention).
-//
-// The fetch is shared by every caller that needs name/poster/genres for an item —
-// including the library-refresh transforms, which resolve one fetch PER EPISODE ROW.
-// Two properties keep a 20-episode watch-history refresh from becoming 20 upstream
-// fetches: the 24h result cache, and in-flight dedupe added here — before it, N
-// concurrent transforms for the same show (an episode list) each missed the cache
-// (it only fills after completion) and fired N identical full-detail downloads.
+// Share metadata results and in-flight requests across episode rows.
 
 export interface CinemetaCastMember {
     name?: string
@@ -215,9 +207,7 @@ export async function fetchCinemetaDetail(imdbId: string, type?: string): Promis
         return cached.meta
     }
     const mediaType = type === 'movie' ? 'movie' : 'series'
-    // In-flight dedupe: concurrent callers for the same id+type share one fetch.
-    // The cache alone cannot do this — it only fills after the fetch completes,
-    // so a burst of episode rows for one show all missed it.
+
     const flightKey = `${mediaType}:${imdbId}`
     let flight = cinemetaInFlight.get(flightKey)
     if (!flight) {

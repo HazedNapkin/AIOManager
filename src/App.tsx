@@ -15,7 +15,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { useNavigate, Routes, Route } from 'react-router-dom'
 import { useEffect, useState, lazy, Suspense } from 'react'
 
-
 import { AppLoader, LoadingScreen } from '@/components/common/LoadingScreen'
 
 const ReplaySharePage = lazy(() => import('@/pages/ReplaySharePage').then(m => ({ default: m.ReplaySharePage })))
@@ -27,9 +26,6 @@ const AddonInstaller = lazy(() => import('@/components/addons/AddonInstaller').t
 const KeybindingsHelp = lazy(() => import('@/components/KeybindingsHelp').then(m => ({ default: m.KeybindingsHelp })))
 const WhatsNewModal = lazy(() => import('@/components/WhatsNewModal').then(m => ({ default: m.WhatsNewModal })))
 
-// LoginPage is route-sized: lazy like every other page. The login
-// screen is the first thing unauthenticated visitors see, so it keeps the AppLoader
-// fallback instead of shipping inside the entry chunk forever.
 const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })))
 
 function App() {
@@ -376,8 +372,5 @@ function App() {
     </TooltipProvider>
   )
 }
-
-
-
 
 export default App

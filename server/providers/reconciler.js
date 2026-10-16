@@ -7,8 +7,7 @@ import { REFRESH_BUFFER_MS } from './token-refresh.js'
 const BACKOFF_THRESHOLD = 3
 const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
 
-// Connections change rarely but are resolved per rule and per audit; a short-lived cache
-// keeps one scan cycle on a single read. Any credential write clears it outright.
+// Cache owner-scoped connections briefly; credential writes invalidate the cache.
 const connectionCache = new Map()
 const storedConnections = new WeakMap()
 const CONNECTION_CACHE_TTL_MS = 30 * 1000
@@ -60,7 +59,7 @@ function preferBaseUrled(connections, platform) {
 }
 
 async function resolveConnections(accountId, syncUser = null) {
-    // Unscoped legacy callers remain uncached. Never mix their view with an owner.
+    // Legacy unscoped lookups bypass the cache.
     const cacheKey = JSON.stringify([accountId, syncUser])
     const hit = connectionCache.get(cacheKey)
     if (syncUser && hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) {

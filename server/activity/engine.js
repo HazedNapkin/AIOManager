@@ -59,8 +59,7 @@ let credentialCursor = 0
 let nonStremioSkipWarned = false
 const accountStateHashes = new Map()
 
-// Per-account fetch-failure circuit breaker (see breaker.js). Module-scoped like the
-// hash cache: failure memory should outlive individual cycles but not process restarts.
+// Keep per-account fetch backoff across cycles until success or process restart.
 const fetchBreaker = createFailureBreaker({
     threshold: ACTIVITY_BREAKER_THRESHOLD,
     baseMs: ACTIVITY_BREAKER_BASE_MS,
@@ -495,18 +494,14 @@ async function deleteSnapshots(keys, tx) {
 async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null) {
     const scanStart = Date.now()
     trace('activity', 'scanAccount.start', { accountId })
-    // A cycle-budget cut is NOT a platform failure: classifying it as one would
-    // trip the breaker on healthy accounts whenever a busy cycle ends late.
-    // Budget cuts halt the cycle (complete:false) without touching the breaker.
+    // Deadline exhaustion halts the cycle without penalizing the account.
     if (limits.deadline && Date.now() >= limits.deadline) {
         trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: 'deadline-cut', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: false, failed: false }
     }
     const library = await fetchLibrary(authKey, limits.deadline, log)
     if (!library || !Array.isArray(library)) {
-        // A fetch that came back empty AFTER the cycle deadline passed is a budget
-        // cut, not a platform verdict: do not trip the breaker on healthy accounts
-        // at the tail of a busy cycle. complete:false halts the cycle either way.
+        // An empty response after the deadline is a budget cut, not a fetch failure.
         const deadlineCut = Boolean(limits.deadline) && Date.now() >= limits.deadline
         trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: deadlineCut ? 'deadline-cut' : 'no-library', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: !deadlineCut, failed: !deadlineCut }
@@ -661,10 +656,7 @@ async function runActivityCycle(fastify) {
             }
         }
 
-        // Circuit-breaker filter: accounts whose library fetch keeps failing (dead
-        // platform, revoked auth key) sit out a backoff window instead of eating a
-        // full fetch timeout in line, every cycle, until the hash cache or a human
-        // resolves it. A single success clears the record.
+        // Skip accounts with repeated fetch failures until their backoff expires.
         const eligibleCreds = []
         for (const cred of cycleCredentials) {
             const breakerKey = JSON.stringify([cred.sync_user, cred.account_id])
@@ -698,8 +690,7 @@ async function runActivityCycle(fastify) {
                     if (result.skippedByHash) summary.accountsSkippedByHash++
                     return result
                 } catch (err) {
-                    // Scan errors (DB etc.) are not platform-fetch failures: log and
-                    // move on without touching the breaker, exactly like the serial loop.
+                    // Only platform fetch failures affect the breaker.
                     fastify.log.warn({ category: 'Activity' }, `Scan failed for account ${cred.account_id}: ${err.message}`)
                     return null
                 }
@@ -789,7 +780,7 @@ export function createActivityEngine(fastify) {
                 breaker: {
                     threshold: ACTIVITY_BREAKER_THRESHOLD,
                     baseMs: ACTIVITY_BREAKER_BASE_MS,
-                    maxMs: ACTIVITY_BREAKER_MAX_MS,
+                    maxMs: Math.max(ACTIVITY_BREAKER_MAX_MS, ACTIVITY_BREAKER_BASE_MS),
                 },
                 retention: 'permanent',
             }

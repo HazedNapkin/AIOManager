@@ -524,12 +524,7 @@ export class StremioClient {
     }
   }
 
-  // Batched DatastoreMeta pre-check for the library refresh: one round trip covers every
-  // account whose mtime snapshot can prove the library unchanged, instead of one request
-  // per account. Entries are
-  // index-ordered; a slot is null when that account's upstream fetch failed (dead platform,
-  // auth error) and the caller must fall back to that account's full path.
-  // Chunks at 25 to bound both the request body and the server's fan-out wave.
+  // Results preserve request order; null slots require a full per-account fetch.
   async getLibraryMetaBatch(entries: Array<{ authKey: string; accountContext?: string }>): Promise<Array<Array<[string, number]> | null>> {
     const out: Array<Array<[string, number]> | null> = []
     const CHUNK = 25

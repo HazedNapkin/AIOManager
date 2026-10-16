@@ -3,7 +3,7 @@ import localforage from 'localforage'
 import { triggerSync } from '@/lib/sync-trigger'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
-import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
+import { captureSyncOwnership, syncRuntime, type SyncOwnership } from './sync-store-helpers'
 
 const OLD_STORAGE_KEY = 'aiom-notes'
 export const NOTES_INDEX_KEY = 'aiom-notes-index'
@@ -100,10 +100,7 @@ function noteTime(note: Pick<Note, 'updatedAt'> | Pick<NoteMeta, 'updatedAt'> | 
     return Number.isFinite(ts) ? ts : 0
 }
 
-// The optional ownership fence is for imports that span awaits (sync hydration):
-// ownership is captured before the first await and re-verified before every
-// storage dispatch and before every state publication, so work that outlives its
-// session aborts or stays unpublished instead of leaking into the next namespace.
+// Async imports carry an ownership fence through persistence.
 async function persistIndex(metas: NoteMeta[], ownership?: SyncOwnership) {
     ownership?.assert()
     await localforage.setItem(NOTES_INDEX_KEY, metas)
@@ -222,11 +219,7 @@ export async function isLocalNotesStoreEmpty(): Promise<boolean> {
     }
 }
 
-// Cache entries are scoped to the session epoch that created them. A reset or
-// identity switch bumps the epoch, so async work that outlives its session (a
-// held import resuming after a logout, a late read) can neither serve nor
-// repopulate the next session's cache, even for a same-id relogin where the
-// workspace string is identical.
+// Cache entries belong to a session epoch; stale reads cannot refill a reset cache.
 const noteCache = new Map<string, { note: Note; ts: number; epoch: number }>()
 let cacheEpoch = 0
 
@@ -357,10 +350,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             return cached
         }
         try {
-            // The storage read and decrypt span awaits: capture the epoch first,
-            // so a read that resolves after a reset or identity switch stands
-            // down instead of overwriting the replacement session's live entry
-            // (cache or active note) with the previous session's plaintext.
+            // Capture the session epoch before reading; recheck it before caching decrypted content.
             const readEpoch = cacheEpoch
             const note = await readNoteFromStorage(id)
             if (note) {
@@ -516,16 +506,25 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     },
 
     emptyTrash: async () => {
+        // Remove purged IDs from the fallback snapshot while this session still owns it.
+        const ownership = captureSyncOwnership()
+        const purgedIds = new Set(get().trash.map(n => n.id))
         set({ trash: [] })
-        await persistTrash([])
+        await persistTrash([], ownership)
+        ownership.assert()
+        if (purgedIds.size > 0) {
+            if (syncRuntime.lastPulledNotes) {
+                syncRuntime.lastPulledNotes = syncRuntime.lastPulledNotes.filter(n => !purgedIds.has(n.id))
+            }
+            if (syncRuntime.lastPulledNotesTrash) {
+                syncRuntime.lastPulledNotesTrash = syncRuntime.lastPulledNotesTrash.filter(n => !purgedIds.has(n.id))
+            }
+        }
         triggerSync()
     },
 
     importNotes: async (incoming, ownership) => {
-        // Ownership must be captured before the first await (including the
-        // pending-draft flush): a capture taken after a held write would describe
-        // the workspace that replaced this one. See persistNote above for the
-        // dispatch-level fences; each publication below re-verifies after its awaits.
+        // Capture ownership before the first await, including cached-content reads.
         const own = ownership ?? captureSyncOwnership()
         // The epoch this import mints cache entries under: a resumed import must
         // never repopulate the cache of the session that replaced it.
@@ -625,8 +624,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
 
         const notes = Array.from(metaMap.values())
         const trash = Array.from(trashMap.values())
-        // Persist before publishing: a write held across a workspace switch must
-        // abort here instead of publishing the previous session's trash state.
+        // Persist under the ownership fence before publishing state.
         own.assert()
         await persistIndex(notes, own)
         await persistTrash(trash, own)

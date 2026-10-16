@@ -1144,8 +1144,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 try {
                     const parsed = new URL(scavengedWebhook.url)
                     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid scheme')
-                    // Persist before publishing: a write held across a workspace switch
-                    // must abort here instead of publishing the previous session's webhook.
+                    // Persist under the ownership fence before publishing state.
                     own.assert()
                     await localforage.setItem(STORAGE_KEY + ':webhook', scavengedWebhook)
                     own.assert()
@@ -1249,8 +1248,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             }
         })
         if (updatedCount > 0 || addedCount > 0) {
-            // Persist before publishing: a write held across a workspace switch must
-            // abort here instead of publishing the previous session's rules.
+            // Persist under the ownership fence before publishing state.
             own.assert()
             await localforage.setItem(STORAGE_KEY, currentRules)
             own.assert()
@@ -1312,8 +1310,7 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 if (import.meta.env.DEV) console.error('[Failover] Re-encryption failed during importWebhook:', e)
             }
 
-            // Persist before publishing: a write held across a workspace switch must
-            // abort here instead of publishing the previous session's webhook.
+            // Persist under the ownership fence before publishing state.
             own.assert()
             await localforage.setItem(STORAGE_KEY + ':webhook', configToStore)
             own.assert()

@@ -1,13 +1,5 @@
-// Budgeted parallel scan runner for the activity engine.
-//
-// Two invariants survive the move to parallelism, both covered by tests:
-//  1. Cycle-level write caps hold under concurrency. In-flight scans RESERVE
-//     budget at dispatch and release the unused part on completion, so N greedy
-//     scans finishing together cannot collectively overshoot the caps the way
-//     naive "pass the remaining budget to whoever starts next" would.
-//  2. Serial-loop halt semantics: a scan that ran out of its own budget
-//     (complete === false) stops the dispatch of NEW scans for this cycle,
-//     exactly like the serial `break` did; in-flight scans finish.
+// Reserve each scan's budget before dispatch; release unused reservations on completion.
+// An incomplete scan stops new dispatches while in-flight scans finish.
 
 export async function runBudgetedScan({
     items,
@@ -41,10 +33,7 @@ export async function runBudgetedScan({
         budgetWaiters.clear()
     }
 
-    // Fair-share claim: each in-flight scan reserves at most ceil(cap / concurrency),
-    // and reservations collectively cannot exceed the cap. Claiming the whole
-    // remaining budget (the serial loop's rule) would let the FIRST concurrent
-    // scan starve the rest; claiming without reservation would let them overshoot.
+    // Split reservations across workers without exceeding either cycle cap.
     const fairShare = (cap) => cap === Infinity ? Infinity : Math.max(1, Math.ceil(cap / concurrency))
     const eventsShare = fairShare(maxEvents)
     const snapshotsShare = fairShare(maxSnapshots)
@@ -109,7 +98,6 @@ export async function runBudgetedScan({
                 result = null
             }
 
-            // Release the unused reservation before accounting the used part.
             releaseEvents(claimedEvents)
             releaseSnapshots(claimedSnapshots)
             inFlight--
@@ -127,8 +115,7 @@ export async function runBudgetedScan({
             summary.snapshotDeletes += result.snapshotDeletes ?? 0
 
             if (result.complete === false) {
-                // Budget-limited mid-scan: preserve the serial loop's `break` -
-                // no NEW scans this cycle; remaining accounts wait for the next one.
+                // An incomplete scan halts new dispatches for this cycle.
                 summary.budgetExhausted = true
                 halted = true
             }
@@ -138,7 +125,7 @@ export async function runBudgetedScan({
 
     await Promise.all(workers)
     if (nextIndex < items.length && !summary.budgetExhausted) {
-        // Defensive: workers exited early without a recorded cause.
+
         summary.budgetExhausted = true
     }
     return summary

@@ -75,11 +75,7 @@ function mergeConnections(
     return merged
 }
 
-// Shapes one addon entry for export. Sync exports strip the embedded manifest:
-// entries carry manifestId, and the same envelope's manifests map is the
-// deduplicated source the import rehydrates from (importAccounts falls back to
-// it when the entry has no manifest). Manual backups keep the manifest embedded
-// so they stay self-contained.
+// Sync exports deduplicate manifests in the envelope; manual backups embed them.
 export function shapeExportAddon(
     addon: AddonDescriptor,
     manifestMap: Record<string, AddonDescriptor['manifest']>,
@@ -246,18 +242,8 @@ export async function exportAccountsForSync(): Promise<Record<string, unknown>> 
     }
 }
 
-// Accepts a JSON string (file backups, legacy callers) or an already-parsed envelope
-// (the sync pull) so the pull does not stringify+parse the whole payload just to
-// cross the function boundary. The object is handed to the store importers, which may
-// attach or unwrap manifests on nested input items in place (pre-existing importer
-// behavior); the sync pull never reads the envelope again after this call.
-//
-// The whole import is one transaction and owns a workspace from entry: the
-// ownership context (the caller's, or one captured here before the first await)
-// is carried into every sub-import, every publication, the rollback and the
-// detached disk re-persist. When ownership is lost mid-import the transaction
-// abandons its rollback and error publication instead of restoring a dead
-// session's snapshot over the session that replaced it.
+// Accept file JSON or a parsed sync envelope. Ownership fences cover imports, rollback,
+// and deferred persistence so superseded work cannot change the replacement session.
 export async function importAccounts(json: string | Record<string, unknown>, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null, ownership?: import('../sync-store-helpers').SyncOwnership) {
     const own = ownership ?? captureSyncOwnership()
     const store = await getStore()
@@ -310,13 +296,7 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             notesTrash: willImportNotes ? structuredClone(useNotesStore.getState().trash) : null,
             settings: readSyncedSettings(),
         }
-        // Memory-first (infallible), then best-effort disk re-persist: the sub-imports below
-        // persist each slice to localforage as they run, so a late throw + reload would
-        // otherwise resurrect the partial import. A failed persist self-heals on that
-        // store's next action since memory already holds the restored state. The writer
-        // re-verifies ownership between its own awaits: only a rollback that still owns
-        // the session may dispatch, so an ordinary failure that races a switch cannot
-        // restore its snapshot into the replacing namespace.
+        // Restore memory first, then re-persist under the same ownership fence.
         restorePreImport = () => {
             if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, changelog: preImport.changelog ?? undefined })
             useAddonStore.setState({ library: preImport.addonLibrary, accountStates: preImport.addonAccountStates })
@@ -349,12 +329,7 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                             const { encrypt } = await import('@/lib/crypto')
                             const key = useAuthStore.getState().encryptionKey
                             if (!key) return
-                            // Both ciphertexts are captured from the restored (owning)
-                            // session's state up front: the payloads belong to this
-                            // rollback until it stands down. Every awaited dispatch
-                            // re-verifies before the next one, so a write held across a
-                            // session switch aborts the chain instead of dispatching the
-                            // remaining payloads into the replacing namespace.
+                            // Capture rollback ciphertexts before awaiting writes; fence every subsequent dispatch.
                             const vaultCiphertext = await encrypt(JSON.stringify(useVaultStore.getState().keys), key)
                             const webhookCiphertext = await encrypt(JSON.stringify(useFailoverStore.getState().webhook), key)
                             own.assert()
@@ -791,10 +766,7 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             store.getState().syncAllAccounts().catch(e => { if (import.meta.env.DEV) console.error(e) })
         }
     } catch (error) {
-        // Ownership lost mid-import: the session that replaced this one owns the
-        // stores now, so restoring the dead session's snapshot over it (in memory,
-        // on disk, or as an error banner) would destroy the replacing session's
-        // state. Only an ordinary same-session failure rolls back.
+        // A superseded import must not roll back or publish errors into the replacement session.
         if (!own.current()) throw error
         try { restorePreImport?.() } catch (rollbackErr) {
             if (import.meta.env.DEV) console.error('[Import] Rollback to pre-import state failed:', rollbackErr)

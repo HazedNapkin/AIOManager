@@ -74,16 +74,14 @@ export function createNuvioDriver(options = {}) {
         return res.json()
     }
 
-    // Profile resolution costs an RPC for string profile ids; a driver instance lives for one
-    // reconcile pass, so the profile list is fetched once and every resolution reuses it.
+    // Share profile lookups within this driver instance; token changes start a new lookup.
     let profilesRpcCache = null
     async function pullProfilesCached(accessToken) {
         if (!profilesRpcCache || profilesRpcCache.accessToken !== accessToken) {
             const promise = rpc('sync_pull_profiles', {}, accessToken)
                 .then(profiles => ({ profiles: Array.isArray(profiles) ? profiles : [], failed: false }))
                 .catch(() => {
-                    // Preserve a later strict write's chance to resolve its profile
-                    // after a transient read failure instead of retaining fallback.
+                    // Retry profile resolution after a transient read failure.
                     if (profilesRpcCache?.promise === promise) profilesRpcCache = null
                     return { profiles: [], failed: true }
                 })

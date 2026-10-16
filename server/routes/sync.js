@@ -178,8 +178,7 @@ export function registerSyncRoutes(fastify) {
                 }
             }
             const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
-            // Canonical addons are pushed for the server hub fold. Pull clients rebuild
-            // this optional metadata from their account blobs; retain all legacy shapes.
+            // Omit push-only canonical metadata while preserving legacy payload shapes.
             if (syncData && typeof syncData === 'object' && !Array.isArray(syncData)) {
                 delete syncData.canonicalAddons
             }
@@ -193,9 +192,6 @@ export function registerSyncRoutes(fastify) {
             return { error: 'Server error, please try again later.' }
         }
     })
-
-
-
 
     fastify.post('/api/sync/:id', {
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } },

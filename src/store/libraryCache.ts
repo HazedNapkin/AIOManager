@@ -75,7 +75,6 @@ interface LibraryCacheState {
 
 import { isActuallyWatched, transformLibraryItemToActivityItem, transformNuvioWatchedItemToActivityItem, transformNuvioProgressToActivityItem } from '@/lib/activity-utils'
 
-
 export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
     items: [],
     lastFetched: 0,
@@ -340,10 +339,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 ])
                 await useWatchEventStore.getState().load()
 
-                // Batched mtime pre-check: every account that can prove-unchanged via its
-                // cached id->mtime snapshot gets its DatastoreMeta rows in bounded batches.
-                // A failed slot (dead platform) returns null and the account falls through
-                // to the full path, so per-account behavior is unchanged on failure.
+                // Batch cached library metadata checks; failed slots fall back to full account reads.
                 const metaRowsByAccount = new Map<string, Array<[string, number]> | null>()
                 let batchMetaFailed = false
                 const authKeyByAccount = new Map<string, string>()
@@ -375,8 +371,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                         precheckEntries.forEach((entry, i) => metaRowsByAccount.set(entry.accountId, batchResults[i] ?? null))
                         trace('libraryCache', 'meta-batch.hit', { accounts: precheckEntries.length, timing: Date.now() - batchStart })
                     } catch (err) {
-                        // Total batch failure: fall back to per-account meta fetches inside
-                        // the tasks, exactly the pre-batch behavior.
+                        // If batching fails, use the existing per-account metadata path.
                         batchMetaFailed = true
                         trace('libraryCache', 'meta-batch.error', { accounts: precheckEntries.length, error: (err as Error)?.message, timing: Date.now() - batchStart })
                     }
@@ -408,8 +403,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                             metaRows = null
                                         }
                                     } else {
-                                        // Batch slot semantics: present-and-rows -> compare; null ->
-                                        // that account's upstream fetch failed, fall to the full path.
+
                                         const slot = metaRowsByAccount.get(account.id)
                                         metaRows = slot ?? null
                                     }

@@ -80,14 +80,10 @@ export const isSafeUrl = (url) => {
 // the common case and cheap to trust briefly; failures resolve again sooner.
 const DNS_CACHE_TTL_POSITIVE_MS = 30 * 1000
 const DNS_CACHE_TTL_FAILURE_MS = 30 * 1000
-// Later callers may join a pending lookup for at most this long; past that they start a
-// fresh lookup instead of inheriting an operation that may never settle. This bounds
-// recovery for later callers; it is not a DNS deadline and does not affect callers
-// already awaiting the original operation.
+// Replace pending DNS lookups after 30 seconds; existing callers keep their original promise.
 const PENDING_ADMISSION_TTL_MS = 30 * 1000
 const dnsCache = new Map()
-// Concurrent calls for one hostname share a single in-flight lookup instead of each
-// starting its own; the entry is removed on settlement so expired results re-resolve.
+
 const inFlightLookups = new Map()
 
 export const resolveAndValidateHost = async (hostname) => {
@@ -101,9 +97,7 @@ export const resolveAndValidateHost = async (hostname) => {
     const pending = inFlightLookups.get(host)
     if (pending && Date.now() - pending.admittedAt < PENDING_ADMISSION_TTL_MS) return pending.promise
 
-    // Published before the lookup starts so even a synchronous lookup throw cleans up by
-    // identity. A replaced entry settles late and must not overwrite its successor's
-    // cached verdict, and its cleanup must not delete the successor's entry.
+    // A replaced lookup must not overwrite its successor's cache or pending entry.
     const entry = { promise: null, admittedAt: Date.now(), superseded: false }
     if (pending) pending.superseded = true
     inFlightLookups.set(host, entry)
@@ -126,8 +120,7 @@ export const resolveAndValidateHost = async (hostname) => {
             }
             return settle(!records.some(r => isPrivateIp(r.address)), DNS_CACHE_TTL_POSITIVE_MS)
         } catch {
-            // Fail open to the literal check per the contract above; only hostnames that
-            // resolve to private ranges are rejected. Do not "harden" this to fail-closed.
+            // Preserve the existing fail-open DNS policy after literal URL validation.
             return settle(true, DNS_CACHE_TTL_FAILURE_MS)
         } finally {
             if (inFlightLookups.get(host) === entry) inFlightLookups.delete(host)

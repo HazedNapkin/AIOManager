@@ -6,8 +6,7 @@ import { sanitizePosterUrl } from '@/lib/utils'
 import { parseCinemetaGenres, fetchCinemetaDetail } from './cinemeta-cache.ts'
 
 export { sanitizePosterUrl }
-// Re-exported for existing consumers (ActivityDetailModal, useWatchHistory, ActivityPage);
-// the implementation and its in-flight dedupe live in cinemeta-cache.ts.
+
 export {
     fetchCinemetaDetail,
     getCachedCinemetaName,
@@ -217,7 +216,6 @@ interface NuvioProgressItem {
     duration?: number
     last_watched?: number
 }
-
 
 async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string; genres: string[] }> {
     const meta = await fetchCinemetaDetail(imdbId, type)

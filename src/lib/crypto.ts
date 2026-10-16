@@ -217,9 +217,7 @@ export async function hashPassword(password: string, salt: Uint8Array): Promise<
   return btoa(String.fromCharCode(...hashArray))
 }
 
-// The stored password hash IS the derived key material: hashPassword and deriveKey
-// run the identical PBKDF2 (same password, salt, iterations, length), so doing both
-// doubled the cost of every unlock and setup. One pass, two consumers.
+// Password verification and AES key derivation share the same PBKDF2 result.
 export async function deriveKeyAndHash(password: string, salt: Uint8Array): Promise<{ key: CryptoKey; hash: string }> {
   const bits = await runPbkdf2(String(password), salt, PBKDF2_ITERATIONS, 256)
   const hash = btoa(String.fromCharCode(...new Uint8Array(bits)))
@@ -227,8 +225,7 @@ export async function deriveKeyAndHash(password: string, salt: Uint8Array): Prom
   return { key, hash }
 }
 
-// Verify against the locally stored hash and produce the AES key in the same pass.
-// Returns null when the password does not match - never throws for a wrong password.
+// Return the derived key only when the local password hash matches.
 export async function deriveVerifiedKey(password: string, salt: Uint8Array, storedHash: string): Promise<CryptoKey | null> {
   const { key, hash } = await deriveKeyAndHash(password, salt)
   return hash === storedHash ? key : null

@@ -1,8 +1,4 @@
-// Decision for the pull's If-None-Match shortcut. The 304 path returns without
-// applying anything, so it is only safe when the local state can actually be
-// the state the server calls unchanged: a workspace whose index was wiped
-// (sign-out wipe, storage eviction) while the cloud still holds the notes it
-// pulled would otherwise freeze at an empty view until the content changed.
+// Only send an ETag when local slices still represent the previously applied cloud state.
 
 export interface PullEtagInputs {
     storedEtag: string | null
@@ -17,8 +13,7 @@ export interface PullEtagInputs {
 
 export function shouldSendPullEtag(inputs: PullEtagInputs): boolean {
     if (!inputs.storedEtag || !inputs.sessionUnlocked) return false
-    // Older snapshots have no slice counts: apply one full response before
-    // trusting a conditional pull against potentially evicted local storage.
+    // Snapshots without slice counts require one full pull.
     if (inputs.lastAppliedAccountCount == null || inputs.lastAppliedAddonCount == null) return false
     if (inputs.localNotesEmpty && (inputs.lastSyncedNotesCount ?? 0) > 0) return false
     if (inputs.localAccountCount === 0 && (inputs.lastAppliedAccountCount ?? 0) > 0) return false

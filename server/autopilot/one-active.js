@@ -1,7 +1,5 @@
 // Shared one-active flag derivation, extracted from engine.js for testability.
 
-// Pure string->string; every enforcement pass re-normalizes the same transport URLs
-// across fold, guard and manifest-id matching, so memoize.
 const _normMemo = new Map()
 function normalizeAddonUrl(url) {
     if (!url) return ''
@@ -45,8 +43,6 @@ export function applyOneActiveFlags(list, chainUrls, activeUrl) {
     const normalizedChain = (Array.isArray(chainUrls) ? chainUrls : []).map(u => normalizeAddonUrl(u))
     const normalizedTarget = normalizeAddonUrl(activeUrl)
 
-    // O(1) membership/index lookups: the naive includes/indexOf scans made the
-    // pass O(addons x chain) per call, per chain, per connection, every cycle.
     const chainSet = new Set(normalizedChain)
     const chainIndex = new Map(normalizedChain.map((u, i) => [u, i]))
 

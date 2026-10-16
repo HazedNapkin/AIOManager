@@ -268,8 +268,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         localforage.getItem<Record<string, string>>('aioman:latest-versions'),
       ])
 
-      // Sync hydration spans awaits: a workspace switch mid-read must not publish
-      // this namespace's library into the one that replaced it.
+      // Recheck ownership before publishing hydrated state.
       own.assert()
       set({
         library,
@@ -291,9 +290,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         if (import.meta.env.DEV) console.log(`[AddonStore] Self-repair: ${broken.length} addons with missing/broken manifests`)
         let repaired = 0
         for (let i = 0; i < broken.length; i += 3) {
-          // The repair runs detached: a session switch while its fetches are in
-          // flight ends it quietly, before any library write, cooldown-cache
-          // update or final save can land in the replacing session.
+          // Fence detached repairs before publishing, updating cooldowns, or saving.
           if (!own.current()) return
           await Promise.allSettled(broken.slice(i, i + 3).map(async (addon) => {
             const lastFailure = selfRepairBackoff.get(addon.installUrl)
@@ -470,7 +467,6 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         addonName = identified.name
         if (!manifest) manifest = identified
       }
-
 
       const normUrl = normalizeAddonUrl(installUrl)
       const existingAddon = Object.values(get().library).find(
@@ -944,8 +940,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
   },
 
   importAccountStates: async (states: Record<string, AccountAddonState>, ownership?: SyncOwnership) => {
-    // Called from hydration imports: fence the publication and the dispatch so a
-    // resumed import cannot hand its account states to the next namespace.
+    // Fence state publication and persistence dispatches.
     ownership?.assert()
     const currentStates = { ...get().accountStates, ...states }
     set({ accountStates: currentStates })
@@ -1177,8 +1172,7 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         }
       }
 
-      // Sync hydration imports span awaits upstream: a workspace switch before this
-      // publication must abort instead of landing the previous session's library.
+      // Fence hydration before publishing into shared state.
       own.assert()
       set({ library: currentLibrary })
 

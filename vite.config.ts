@@ -69,14 +69,7 @@ export default defineConfig(({ mode }) => {
             react(),
             tailwindcss(),
             {
-                // BOOT-1: the app-entry chunk (and its static import closure + CSS) is only
-                // requested after the IDB-migration promise chain in main.tsx resolves, i.e.
-                // ~2 sequential request stages into boot. Emit <link rel="modulepreload">
-                // tags so those bytes fetch + compile in parallel with the entry chunk from
-                // HTML parse time. modulepreload deliberately does NOT evaluate the module,
-                // so main.tsx execution order (migration -> workspace-persistence ->
-                // import('./app-entry')) is unchanged: the dynamic import later reuses the
-                // already-fetched module. Build-only; no-op in dev.
+                // Preload app code without evaluating it before storage migration finishes.
                 name: 'boot-modulepreload',
                 apply: 'build',
                 generateBundle: {
@@ -103,12 +96,7 @@ export default defineConfig(({ mode }) => {
                             (f) => `<link rel="modulepreload" crossorigin href="/${f}">`
                         )
                         tags.push(`<link rel="modulepreload" crossorigin href="/${appEntry.fileName}">`)
-                        // CSS is applied by Vite's preload helper only once the dynamic import
-                        // runs; preloading the bytes here means the helper's stylesheet link
-                        // applies instantly instead of trailing the 648KB JS fetch.
-                        // crossorigin is REQUIRED: @fastify/cors adds `Vary: Origin`, so the
-                        // no-cors preload and the helper's crossorigin stylesheet would land
-                        // on different HTTP-cache keys and fetch the CSS twice.
+                        // Match Vite's crossorigin mode so preloaded CSS reuses the same cache entry.
                         for (const css of appEntry.viteMetadata?.importedCss ?? []) {
                             const tag = `<link rel="preload" href="/${css}" as="style" crossorigin>`
                             if (!tags.includes(tag)) tags.push(tag)

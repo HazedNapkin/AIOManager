@@ -96,7 +96,6 @@ async function getPmdbRatingFromImdb(
     }
 }
 
-
 function getYear(meta: CinemetaMeta | null, item: DetailItem | null): string {
     if (meta?.released) return meta.released.slice(0, 4)
     if (meta?.year) return meta.year
@@ -623,8 +622,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             }
             return
         }
-        // Opening rebuilds the stack in the preceding effect. Wait for that
-        // commit instead of writing the previous modal's stack into this URL.
+        // Wait for the opening effect to rebuild the stack before updating the URL.
         if (!wasOpen) return
         const grew = navStack.length > prevStackLenRef.current
         prevStackLenRef.current = navStack.length
@@ -634,8 +632,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         if (!paramsEqual(searchParamsRef.current, desired)) {
             setSearchParamsRef.current(desired, { replace: !grew })
         }
-        // Router callbacks change when Back/Forward changes the search string.
-        // Only modal state may write it back; the URL reader handles navigation.
+        // Router callback changes must not write stale modal state over Back/Forward navigation.
     }, [open, navStack])
 
     // URL → navStack: reconcile external param changes (browser back/forward)
@@ -683,9 +680,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 seasonNumber: target.season,
                 episodeNumber: target.episode,
                 episodeName: `Episode ${target.episode}`,
-                // Forward can restore an episode while the same series stays
-                // open. Its ID won't change again to trigger deep-link hydration.
-                // Reuse it only for this base series, never a different URL item.
+                // Reuse metadata only when Forward restores an episode of the same base series.
                 seriesTmdbId: baseEntry?.item.itemId === target.detail ? seriesTmdbId : null,
                 seriesPoster: top.item.poster,
             })
