@@ -49,20 +49,20 @@ function normalizeUrl(url) {
     return normalized
 }
 
-// syncUser scopes the lookup to the owning user. The HTTP endpoint (providers.js) MUST pass the
-// authenticated user so a caller can't resolve another user's stored credentials by accountId
-// (cross-tenant IDOR). Server-trusted callers (the autopilot worker, which derives account_id from
-// owner-scoped rules) may omit it.
 // preferBaseUrled returns the index of the connection already chosen for a platform.
 function preferBaseUrled(connections, platform) {
     return connections.findIndex(c => c.platform === platform)
 }
 
 async function resolveConnections(accountId, syncUser = null) {
-    // Legacy unscoped lookups bypass the cache.
+    // Legacy rules need an owner before they may read provider credentials.
+    if (!syncUser) {
+        trace('reconciler', 'resolveConnections.skip', { accountId, reason: 'no-owner' })
+        return []
+    }
     const cacheKey = JSON.stringify([accountId, syncUser])
     const hit = connectionCache.get(cacheKey)
-    if (syncUser && hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) {
         const connections = structuredClone(hit.connections)
         for (const connection of connections) storedConnections.set(connection, connectionCacheGeneration)
         return connections
@@ -70,10 +70,8 @@ async function resolveConnections(accountId, syncUser = null) {
     const generation = connectionCacheGeneration
 
     const rows = await db.query(
-        syncUser
-            ? 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC'
-            : 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 ORDER BY updated_at DESC',
-        syncUser ? [accountId, syncUser] : [accountId]
+        'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC',
+        [accountId, syncUser]
     )
     if (!rows || rows.length === 0) return []
 
@@ -167,7 +165,7 @@ async function resolveConnections(accountId, syncUser = null) {
 
     for (const connection of connections) connection.syncUser = syncUser
     // A write during the query must not repopulate the cache with an older view.
-    if (syncUser && generation === connectionCacheGeneration) {
+    if (generation === connectionCacheGeneration) {
         if (connectionCache.size >= 500) connectionCache.delete(connectionCache.keys().next().value)
         connectionCache.set(cacheKey, { at: Date.now(), syncUser, connections: structuredClone(connections) })
     }
@@ -215,7 +213,7 @@ async function loadDriver(platform, credentials, connection) {
                         }
                     }
                 } catch (err) {
-                    if (err.isAuthError || err._authExpired) {
+                    if (err.isAuthError || err._authExpired || err._credentialSuperseded) {
                         throw err
                     }
                 }
@@ -235,7 +233,7 @@ async function loadDriver(platform, credentials, connection) {
             if (storedConnections.get(connection) !== connectionCacheGeneration || !expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
                 try {
                     const { refreshRealStreamToken } = await import('./token-refresh.js')
-                    const fresh = await refreshRealStreamToken(connection.id, connection.syncUser)
+                    const fresh = await refreshRealStreamToken(connection.id, connection.accountId, connection.syncUser)
                     if (fresh) {
                         connection.credentials = {
                             ...connection.credentials,
@@ -245,7 +243,7 @@ async function loadDriver(platform, credentials, connection) {
                         }
                     }
                 } catch (err) {
-                    if (err.isAuthError || err._authExpired) {
+                    if (err.isAuthError || err._authExpired || err._credentialSuperseded) {
                         throw err
                     }
                 }

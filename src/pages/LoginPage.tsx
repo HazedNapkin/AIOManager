@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSyncStore } from '@/store/syncStore'
+import { captureSyncOwnership, syncRuntime, type SyncOwnership } from '@/store/sync-store-helpers'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,6 +36,11 @@ interface LoginPageProps {
     initialMode?: 'login' | 'register'
 }
 
+// A failed login can restore its prior workspace while retaining the same generation.
+const isSupersededAuthFailure = (e: unknown, attempt: number, latest: number, ownership?: SyncOwnership) =>
+    attempt !== latest || (e as Error)?.name === 'SyncOwnershipLostError' ||
+    (ownership?.current() === false && ownership.seq !== syncRuntime.pullSeq && ownership.seq !== syncRuntime.adoptedSeq)
+
 export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     useDocumentTitle('Login')
     const auth = useSyncStore(s => s.auth)
@@ -47,6 +53,9 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const confetti = useConfetti()
     const [searchParams] = useSearchParams()
     const navigate = useNavigate()
+
+    // Only the latest UI attempt may publish its outcome.
+    const authAttemptSeq = useRef(0)
 
     const [mode, setMode] = useState<'login' | 'register'>(initialMode)
     const [showPassword, setShowPassword] = useState(false)
@@ -117,9 +126,13 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     }, [])
 
     const handleContinueWithDevice = async () => {
+        const attempt = ++authAttemptSeq.current
+        setLoading(false)
+        setIsUnlocking(false)
         setDeviceBusy(true)
         try {
             const result = await unlockWithDevice()
+            if (attempt !== authAttemptSeq.current) return
             if (result.ok) {
                 toast({ title: "Welcome back", description: "Signed in with your saved sign-in." })
             } else if (result.reason === 'prf-cancelled' || result.reason === 'unavailable') {
@@ -128,9 +141,10 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 toast({ title: "Sign in to continue", description: result.message })
             }
         } catch {
+            if (attempt !== authAttemptSeq.current) return
             toast({ variant: "destructive", title: "Sign-in failed", description: "Something went wrong. Use the sign-in form below." })
         } finally {
-            setDeviceBusy(false)
+            if (attempt === authAttemptSeq.current) setDeviceBusy(false)
         }
     }
 
@@ -196,11 +210,16 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         // Explicit password auth outranks the remembered layer: a stale device session
         // must never rewrite or gate these requests.
         deactivateDeviceAuth()
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setLoading(false)
+        setDeviceBusy(false)
         setIsUnlocking(true)
         setLoginError(null)
 
         try {
             const success = await unlock(loginPass)
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
             if (!success) {
                 setUnlockFailures(n => n + 1)
                 setLoginError('Invalid password')
@@ -209,22 +228,29 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 if (auth.id) {
                     useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass, isAuthenticated: true } }))
                     // Local unlock restores IndexedDB only - deferred pull so the identity and avatar land like a normal login.
-                    setTimeout(() => useSyncStore.getState().refreshFromCloud(), 1500)
+                    setTimeout(() => {
+                        if (attempt === authAttemptSeq.current && ownership.current()) useSyncStore.getState().refreshFromCloud()
+                    }, 1500)
                 }
                 void maybeRememberDevice()
                 toast({ title: "Welcome back", description: "Signed in successfully." })
             }
         } catch (e) {
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
             const msg = (e as Error).message
 
             if (msg.includes('not initialized')) {
                 if (import.meta.env.DEV) console.log('[Auth] Local DB empty. Attempting Cloud Restore...')
                 try {
-                    await login(auth.id, loginPass, true)
+                    const pending = login(auth.id, loginPass, true)
+                    ownership = captureSyncOwnership()
+                    await pending
+                    if (attempt !== authAttemptSeq.current || !ownership.current()) return
                     void maybeRememberDevice()
                     toast({ title: "Restored", description: "Session restored from cloud." })
                 } catch (restoreErr) {
                     if (import.meta.env.DEV) console.error('[Auth] Cloud restore failed:', restoreErr)
+                    if (isSupersededAuthFailure(restoreErr, attempt, authAttemptSeq.current, ownership)) return
                     setLoginError("This browser session could not be restored. Log in from your original browser to sync first.")
                 }
             } else {
@@ -232,7 +258,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 if (import.meta.env.DEV) console.error("Unlock error:", e)
             }
         } finally {
-            setIsUnlocking(false)
+            if (attempt === authAttemptSeq.current) setIsUnlocking(false)
         }
     }
 
@@ -245,16 +271,25 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         // Explicit password auth outranks the remembered layer: a stale device session
         // must never rewrite or gate these requests.
         deactivateDeviceAuth()
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setIsUnlocking(false)
+        setDeviceBusy(false)
         setLoading(true)
         setLoginError(null)
         try {
-            await login(loginId, loginPass)
+            const pending = login(loginId, loginPass)
+            ownership = captureSyncOwnership()
+            await pending
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
+            if (!useSyncStore.getState().auth.isAuthenticated) return
             void maybeRememberDevice()
         } catch (e) {
-            setLoginError((e as Error).message)
             if (import.meta.env.DEV) console.error("Login error:", e)
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
+            setLoginError((e as Error).message)
         } finally {
-            setLoading(false)
+            if (attempt === authAttemptSeq.current) setLoading(false)
         }
     }
 
@@ -265,24 +300,33 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             return
         }
 
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setIsUnlocking(false)
+        setDeviceBusy(false)
         setLoading(true)
         setLoginError(null)
         const localAuthBackup = clearLocalAuthSecrets()
         try {
-            await login(effectiveId, loginPass, false, true)
+            const pending = login(effectiveId, loginPass, false, true)
+            ownership = captureSyncOwnership()
+            await pending
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
+            if (!useSyncStore.getState().auth.isAuthenticated) return
             void maybeRememberDevice()
             toast({ title: "Signed in", description: "This browser session was reset and your cloud data was restored." })
         } catch (e) {
+            console.error("Cloud recovery login error:", e)
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
             restoreLocalAuthSecrets(localAuthBackup)
             const msg = (e as Error).message
-            console.error("Cloud recovery login error:", e)
             if (msg.includes("Encryption metadata") || msg.includes("Encryption Mismatch")) {
                 setLoginError("Could not decrypt your cloud data with this password. Make sure you are using the correct UUID and password from when you registered.")
             } else {
                 setLoginError(msg)
             }
         } finally {
-            setLoading(false)
+            if (attempt === authAttemptSeq.current) setLoading(false)
         }
     }
 

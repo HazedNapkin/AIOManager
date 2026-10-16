@@ -358,9 +358,11 @@ export const useSyncStore = create<SyncState>()(
                         if (getSessionSyncCredential(id)?.token === syncToken) return
                         try {
                             const { exportSyncKeyRaw } = await import('@/lib/crypto')
+                            ownership.assert()
                             const saltB64 = get().syncSaltB64
                             const keySalt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : undefined
                             const syncKeyRaw = await exportSyncKeyRaw(password, keySalt)
+                            ownership.assert()
                             saveSessionSyncToken(id, syncToken, btoa(String.fromCharCode(...syncKeyRaw)))
                         } catch { /* best-effort: this session still has the password in memory */ }
                     }
@@ -392,6 +394,19 @@ export const useSyncStore = create<SyncState>()(
                     // restored after the inner state applies (function-scope on purpose).
                     let avatarBlobWire: string | undefined
                     let watchBlobWire: string | undefined
+                    // Seed and backfill only after this pull certifies its session.
+                    let pendingFollowUpPush = false
+                    const fireFollowUpPush = () => {
+                        setTimeout(() => {
+                            if (ownership.current() && get().auth.id === id && get().auth.isAuthenticated && get().isInitialSyncCompleted) {
+                                get().syncToRemote(true).catch(() => {})
+                            }
+                        }, 1500)
+                    }
+                    const requestFollowUpPush = () => {
+                        if (get().isInitialSyncCompleted) fireFollowUpPush()
+                        else pendingFollowUpPush = true
+                    }
 
                     const res = await resilientFetch(`${apiPath}/sync/${id}`, {
                         headers: pullHeaders
@@ -718,7 +733,7 @@ export const useSyncStore = create<SyncState>()(
                         if (!hasRemoteData && hasLocalData) {
                             decision = 'Seed Cloud (local data exists, cloud is empty)'
                             await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
-                            setTimeout(() => get().syncToRemote(true), 1500)
+                            requestFollowUpPush()
                         } else if (hasRemoteData) {
                             if (isRemoteNewer) {
                                 decision = 'Adopt Remote (cloud is newer, replace local)'
@@ -758,6 +773,11 @@ export const useSyncStore = create<SyncState>()(
                             lastAppliedAccountCount: useAccountStore.getState().accounts.length,
                             lastAppliedAddonCount: Object.keys(useAddonStore.getState().library).length,
                         })
+                        // A deferred follow-up push fires only now that the session is certified.
+                        if (pendingFollowUpPush) {
+                            pendingFollowUpPush = false
+                            fireFollowUpPush()
+                        }
                     }
 
                     const applySecondarySlices = async () => {
@@ -800,11 +820,11 @@ export const useSyncStore = create<SyncState>()(
                         if ((!remoteAddons || remoteAddons.length === 0) && localAddons > 0) {
                             if (import.meta.env.DEV) console.warn(`[Sync] Remote has 0 addons (Safety net triggered). Switching to MERGE + PUSH.`)
                             await useAddonStore.getState().importLibrary(syncData, true, false, true, ownership)
-                            setTimeout(() => get().syncToRemote(true), 1500)
+                            requestFollowUpPush()
                         } else if (isLocalNewer) {
                             if (import.meta.env.DEV) console.log("[Sync] Local addons are fresher. Merging & Pushing.")
                             await useAddonStore.getState().importLibrary(syncData, true, false, true, ownership)
-                            setTimeout(() => get().syncToRemote(true), 2000)
+                            requestFollowUpPush()
                         } else if (isEqual) {
                             if (import.meta.env.DEV) console.log("[Sync] Addons synchronized. Passive import.")
                             await useAddonStore.getState().importLibrary(syncData, true, true, true, ownership)
@@ -982,7 +1002,7 @@ export const useSyncStore = create<SyncState>()(
                     // minted one for an empty account). A device-local fallback for a record that has
                     // data is left for a normal sync to push, so a foreign salt can't corrupt the record.
                     if (saltPolicy.backfill) {
-                        setTimeout(() => get().syncToRemote(true), 1500)
+                        requestFollowUpPush()
                     }
 
                     get().addLogEntry({
@@ -1067,8 +1087,9 @@ export const useSyncStore = create<SyncState>()(
                     }
                     throw e
                 } finally {
-                    // Only the owning pull may release its in-progress flag.
-                    if (ownership.current()) set({ isSyncing: false })
+                    // A failed login may restore its prior workspace before releasing the flag.
+                    const rolledBack = syncRuntime.pullSeq === pullToken && getActiveWorkspaceId() === priorWorkspace
+                    if (ownership.current() || rolledBack) set({ isSyncing: false })
                 }
             },
 
@@ -1313,14 +1334,7 @@ export const useSyncStore = create<SyncState>()(
                     const identityAvatarFallback = identityFallback.id === auth.id ? identityFallback.avatar : null
 
                     const watchExport = useWatchEventStore.getState().export()
-                    // Defer watch history restoration by carrying it in a separate encrypted blob.
-                    const watchPayload = {
-                        watchEvents: watchExport.events,
-                        watchSnapshot: watchExport.snapshot,
-                        watchEventRollups: watchExport.rollups,
-                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
-                    }
-                    const watchPayloadJson = JSON.stringify(watchPayload)
+                    const avatarValue = auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null
                     // Cloud-guard fallback: an empty local store with a known non-empty cloud
                     // set pushes the cloud set, so a wiped device can't erase the cloud notes.
                     const notesToPush = filterNotesByTrash(
@@ -1341,14 +1355,15 @@ export const useSyncStore = create<SyncState>()(
                         vaultTombstones: mergedVaultTombstones,
                         notes: notesToPush,
                         notesTrash: mergedNotesTrash,
-                        watchEvents: [],
-                        watchSnapshot: {},
-                        watchEventRollups: undefined,
-                        deletedWatchEvents: {},
+                        // Keep writes readable by clients predating deferred blob support.
+                        watchEvents: watchExport.events,
+                        watchSnapshot: watchExport.snapshot,
+                        watchEventRollups: watchExport.rollups,
+                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
                         salt: saltBase64,
                         name: auth.name,
 
-                        avatar: null,
+                        avatar: avatarValue,
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
@@ -1356,8 +1371,6 @@ export const useSyncStore = create<SyncState>()(
                         profiles: useProfileStore.getState().profiles,
                         settings: readSyncedSettings(),
                     }
-
-                    const avatarValue = auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')
                     ownership.assert()
@@ -1375,8 +1388,7 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     forceCanonicalRepublish = consumeForceFlag()
-                    // Include deferred blobs in change detection.
-                    const stateHash = await computeHash(stringifiedState + '|' + (avatarValue ?? '') + '|' + watchPayloadJson)
+                    const stateHash = await computeHash(stringifiedState)
                     ownership.assert()
                     if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
@@ -1404,10 +1416,8 @@ export const useSyncStore = create<SyncState>()(
                         } catch {}
                     }
                     let encryptedState: string
-                    let encryptWithSameKey: ((plaintext: string) => Promise<string>) | null = null
                     if (auth.password) {
                         encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
-                        encryptWithSameKey = (plaintext) => encryptSyncPayload(plaintext, auth.password, syncSalt)
                     } else if (sessionCred) {
                         // Refreshed password-session: encrypt with the session-stored sync key
                         // (exported at login under the same syncSalt) — identical key material
@@ -1415,23 +1425,11 @@ export const useSyncStore = create<SyncState>()(
                         const { importSyncKey, encryptSyncPayloadWithKey } = await import('@/lib/crypto')
                         const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
                         encryptedState = await encryptSyncPayloadWithKey(compressedPayload, sessionSyncKey)
-                        encryptWithSameKey = (plaintext) => encryptSyncPayloadWithKey(plaintext, sessionSyncKey)
                     } else {
                         const deviceSyncKey = await getActiveDeviceSyncKey()
                         if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                         encryptedState = await import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(compressedPayload, deviceSyncKey))
-                        encryptWithSameKey = (plaintext) => import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(plaintext, deviceSyncKey))
                     }
-
-                    // Abort the save if either deferred blob cannot be encoded with the inner-state key.
-                    let avatarBlob: string | undefined
-                    if (avatarValue) {
-                        const deflated = await compressSyncPayload(JSON.stringify(avatarValue))
-                        avatarBlob = await encryptWithSameKey!(deflated)
-                    }
-
-                    const deflatedWatch = await compressSyncPayload(watchPayloadJson)
-                    const watchBlob = await encryptWithSameKey!(deflatedWatch)
 
                     // Canonical addon lists for accounts the server can't read itself. A
                     // server-side Stremio credential (serverStremioCredentialedAccounts, learned
@@ -1463,8 +1461,6 @@ export const useSyncStore = create<SyncState>()(
                             data: encryptedState,
                             isEncrypted: true,
                             compressed: isCompressed,
-                            ...(avatarBlob ? { avatarBlob } : {}),
-                            ...(watchBlob ? { watchBlob } : {}),
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
                             force: forcePush,
