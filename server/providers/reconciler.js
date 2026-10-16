@@ -256,14 +256,16 @@ async function loadDriver(platform, credentials, connection) {
         let authValue = connection.credentials?.authValue
         let config = connection.driverConfig
         if (authValue === undefined || !config?.baseUrl) {
+            if (!connection.syncUser || !connection.accountId) return null
             const cred = await db.get(
-                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' LIMIT 1",
-                [connection.id]
+                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' AND sync_user = $2 AND account_id = $3 LIMIT 1",
+                [connection.id, connection.syncUser, connection.accountId]
             )
             if (cred?.auth_key) {
                 const decrypted = decrypt(cred.auth_key, FALLBACK_KEYS)
                 let bundle
                 try { bundle = JSON.parse(decrypted) } catch { bundle = { authValue: decrypted } }
+                if (!bundle || typeof bundle !== 'object') return null
                 if (authValue === undefined) authValue = bundle.authValue
                 if (!config?.baseUrl) config = { baseUrl: bundle.baseUrl, authType: bundle.authType, authHeader: bundle.authHeader }
             }

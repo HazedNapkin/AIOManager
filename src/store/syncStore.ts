@@ -51,6 +51,7 @@ import {
     syncRuntime,
     resolveCloudIdentity,
     captureSyncOwnership,
+    type SyncOwnership,
 } from './sync-store-helpers'
 export { markAccountsHydrated, readIdentityProfile, getSyncApiPath } from './sync-store-helpers'
 import {
@@ -326,16 +327,24 @@ export const useSyncStore = create<SyncState>()(
                 }
             },
 
-            login: async (id: string, password: string, isSilent: boolean = false, bypassGuard: boolean = false, deviceUnlock?: { syncKey: CryptoKey }) => {
-                if (get().isSyncing && !bypassGuard) return
+            login: async function login(
+                id: string,
+                password: string,
+                isSilent: boolean = false,
+                bypassGuard: boolean = false,
+                deviceUnlock?: { syncKey: CryptoKey },
+                recovery?: { ownership: SyncOwnership; priorWorkspace: string },
+            ) {
+                if (recovery) recovery.ownership.assert()
+                else if (get().isSyncing && !bypassGuard) return
                 // Select the target persistence namespace before importing any state.
-                const priorWorkspace = getActiveWorkspaceId()
+                const priorWorkspace = recovery?.priorWorkspace ?? getActiveWorkspaceId()
                 setActiveWorkspace(id)
                 // A newer pull or session transition invalidates this continuation.
-                const pullToken = ++syncRuntime.pullSeq
-                syncRuntime.adoptedSeq = null
+                const pullToken = recovery?.ownership.seq ?? ++syncRuntime.pullSeq
+                if (!recovery) syncRuntime.adoptedSeq = null
 
-                const ownership = captureSyncOwnership(pullToken)
+                const ownership = recovery?.ownership ?? captureSyncOwnership(pullToken)
                 set({ isSyncing: true })
                 const { serverUrl } = get()
                 const apiPath = getSyncApiPath(serverUrl)
@@ -1057,18 +1066,19 @@ export const useSyncStore = create<SyncState>()(
                                 headers: { 'x-sync-password': await deriveSyncToken(password) },
                                 timeout: 15000,
                             })
+                            ownership.assert()
                             if (restoreRes.ok) {
                                 trace('sync', 'pull.corrupt-restored', { accountId: id })
-                                // Restore the prior namespace before retrying login.
-                                if (getActiveWorkspaceId() === id) setActiveWorkspace(priorWorkspace)
+                                // Recovery continues this login attempt under the same ownership.
                                 syncRuntime.corruptRestoreInFlight = true
                                 try {
-                                    return await get().login(id, password, isSilent, bypassGuard, deviceUnlock)
+                                    return await login(id, password, isSilent, bypassGuard, deviceUnlock, { ownership, priorWorkspace })
                                 } finally {
                                     syncRuntime.corruptRestoreInFlight = false
                                 }
                             }
                         } catch (restoreErr) {
+                            if (!ownership.current()) throw restoreErr
                             if (import.meta.env.DEV) console.warn('[Sync] Cloud restore attempt failed:', restoreErr)
                         }
                     }
