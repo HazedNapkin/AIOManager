@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
@@ -51,12 +52,12 @@ export function SavedAddonGrid({
   onReorderSection,
   highlight,
 }: SavedAddonGridProps) {
-  const renderAddon = (addon: SavedAddon, profileName?: string, showHighlight = false) => {
-    const onLongPress = (id: string) => {
-      onEnterSelectionMode()
-      onToggleSelect(id)
-    }
+  const onLongPress = useCallback((id: string) => {
+    onEnterSelectionMode()
+    onToggleSelect(id)
+  }, [onEnterSelectionMode, onToggleSelect])
 
+  const renderAddon = (addon: SavedAddon, profileName?: string, showHighlight = false) => {
     if (viewMode === 'list') {
       return (
         <StaggerItem key={addon.id}>

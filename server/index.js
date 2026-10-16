@@ -144,8 +144,14 @@ if (fs.existsSync(distPath)) {
     await fastify.register(fastifyStatic, {
         root: distPath,
         prefix: '/',
+        cacheControl: false,
         setHeaders: (res, path) => {
             if (path.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache')
+            // Only content-hashed generated files under /assets are immutable.
+            // Vite emits assets/[name]-[hash].js/css; a future unhashed asset
+            // under /assets must revalidate instead of sticking for a year.
+            else if (/[\\/]assets[\\/][^\\/]*-[A-Za-z0-9_-]{8,}\.[^\\/]+$/.test(path)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+            else res.setHeader('Cache-Control', 'public, max-age=0')
         }
     })
 

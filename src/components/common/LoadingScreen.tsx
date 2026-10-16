@@ -71,9 +71,10 @@ export function AppLoader({
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center">
             <img
-              src="/logo.png"
+              src="/apple-touch-icon.png"
               alt="AIOManager"
-              loading="lazy"
+              loading="eager"
+              fetchPriority="high"
               className={cn('h-11 w-11 object-contain', isLight && 'invert')}
             />
           </div>

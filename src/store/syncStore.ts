@@ -1327,8 +1327,6 @@ export const useSyncStore = create<SyncState>()(
                     return false
                 }
 
-                set({ isSyncing: true })
-
                 // Server Protection: Strict Debounce check for auto-syncs
                 // Instead of dropping, we defer the sync so the *last* change always pushes
                 if (isAuto) {
@@ -1337,9 +1335,10 @@ export const useSyncStore = create<SyncState>()(
                         syncRuntime.syncDebounceTimer = null
                         get().syncToRemote(false, true)
                     }, 1500)
-                    set({ isSyncing: false })
                     return false
                 }
+
+                set({ isSyncing: true })
 
                 set({ lastActionTimestamp: Date.now() })
 

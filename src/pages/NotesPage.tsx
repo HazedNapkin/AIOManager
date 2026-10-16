@@ -1169,7 +1169,10 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
         </div>
     )
 
-    const renderedMarkdown = useMemo(() => content.trim() ? renderMarkdown(content, handleToggleTask) : null, [content, handleToggleTask])
+    const renderedMarkdown = useMemo(
+        () => (viewMode === 'preview' || viewMode === 'split') && content.trim() ? renderMarkdown(content, handleToggleTask) : null,
+        [viewMode, content, handleToggleTask]
+    )
 
     const previewPane = (
         <div ref={previewRef} className="flex-1 min-h-0 overflow-auto px-4 sm:px-6 py-5 prose-sm space-y-0.5 break-words"
