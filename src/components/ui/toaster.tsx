@@ -27,9 +27,9 @@ export function Toaster() {
                 toast.className
               )}
             >
-              <div className="flex items-start gap-3 px-4 py-3.5">
+              <div className="flex items-center gap-3 px-4 py-3.5">
                 <div className={cn(
-                  "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
                   isDestructive
                     ? "border-destructive/20 bg-destructive/10 text-destructive"
                     : isWarning
@@ -45,13 +45,13 @@ export function Toaster() {
                     </p>
                   )}
                   <p className={cn(
-                    "text-sm font-semibold leading-snug",
+                    "line-clamp-2 text-sm font-semibold leading-snug [overflow-wrap:anywhere]",
                     isDestructive && "text-destructive"
                   )}>
                     {toast.title}
                   </p>
                   {toast.description && (
-                    <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
+                    <p className="mt-0.5 line-clamp-3 text-sm leading-snug text-muted-foreground [overflow-wrap:anywhere]">
                       {toast.description}
                     </p>
                   )}

@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { maskNameLevel, maskUrlLevel, maskProfileLevel, maskEmailLevel } from '@/lib/utils'
 import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
@@ -156,27 +157,16 @@ export function SettingsPage() {
     const setPrivacyOption = useUIStore(s => s.setPrivacyOption)
     const { clear: clearLibraryCache, invalidate } = useLibraryCache()
 
-    const [activeTab, setActiveTab] = useState(() => {
-        const hash = window.location.hash.replace('#', '')
-        if (['general', 'appearance', 'data', 'advanced'].includes(hash)) {
-            return hash
-        }
-        return 'general'
-    })
+    const location = useLocation()
+    const navigate = useNavigate()
+    const tab = location.hash.slice(1)
+    const activeTab = ['general', 'appearance', 'data', 'advanced'].includes(tab) ? tab : 'general'
 
     const handleTabChange = (val: string) => {
-        setActiveTab(val)
-        window.history.replaceState(null, '', `#${val}`)
+        const currentTab = window.location.hash.slice(1) || 'general'
+        if (val === currentTab || !['general', 'appearance', 'data', 'advanced'].includes(val)) return
+        navigate({ pathname: location.pathname, search: location.search, hash: `#${val}` }, { preventScrollReset: true })
     }
-
-    useEffect(() => {
-        const settingsPath = window.location.pathname
-        return () => {
-            if (window.location.pathname === settingsPath) {
-                window.history.replaceState(null, '', window.location.pathname)
-            }
-        }
-    }, [])
 
     const [confirmDialog, setConfirmDialog] = useState<{
         open: boolean

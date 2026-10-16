@@ -50,6 +50,7 @@ import { useSavedAddonLibraryData } from './hooks/useSavedAddonLibraryData'
 import { useSavedAddonSyncActions } from './hooks/useSavedAddonSyncActions'
 import { useSavedAddonSelectionActions } from './hooks/useSavedAddonSelectionActions'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 export function SavedAddonLibrary() {
   useScrollRestoration('saved-addons')
@@ -126,14 +127,10 @@ export function SavedAddonLibrary() {
   const [showInjectDialog, setShowInjectDialog] = useState(false)
   const [injectAddons, setInjectAddons] = useState<SavedAddon[]>([])
   const [showMobileFilters, setShowMobileFilters] = useState(false)
-  const [libraryTab, setLibraryTab] = useState<'library' | 'discover' | 'sync'>(() => {
-    const hash = window.location.hash.replace('#', '')
-    const legacy = new URLSearchParams(window.location.search).get('tab')
-    const tab = hash || legacy
-    if (tab === 'sync') return 'sync'
-    if (tab === 'discover') return 'discover'
-    return 'library'
-  })
+  const location = useLocation()
+  const navigate = useNavigate()
+  const tab = location.hash.slice(1) || new URLSearchParams(location.search).get('tab')
+  const libraryTab = tab === 'sync' ? 'sync' : tab === 'discover' ? 'discover' : 'library'
 
   // Latch: once Discover is opened, keep it mounted (hidden when inactive) so
   // switching back is instant, with no remount, refetch, or animation replay.
@@ -142,7 +139,10 @@ export function SavedAddonLibrary() {
   // without remounting the panel, so no refetch.
   const [discoverReplayKey, setDiscoverReplayKey] = useState(0)
   useEffect(() => {
-    if (libraryTab === 'discover') setDiscoverVisited(true)
+    if (libraryTab === 'discover') {
+      setDiscoverVisited(true)
+      setDiscoverReplayKey((k) => k + 1)
+    }
   }, [libraryTab])
 
   const toggleProfile = (id: string) => {
@@ -480,13 +480,11 @@ export function SavedAddonLibrary() {
 
   const handleLibraryTabChange = (value: string) => {
     const nextTab = value === 'sync' ? 'sync' : value === 'discover' ? 'discover' : 'library'
-    if (nextTab === 'discover') setDiscoverReplayKey((k) => k + 1)
-    setLibraryTab(nextTab)
-
-    const url = new URL(window.location.href)
-    url.search = ''
-    url.hash = nextTab === 'library' ? '' : nextTab
-    window.history.replaceState(null, '', `${url.pathname}${url.hash}`)
+    const currentTab = window.location.hash.slice(1) || new URLSearchParams(window.location.search).get('tab') || 'library'
+    if (nextTab === currentTab) return
+    const params = new URLSearchParams(location.search)
+    params.delete('tab')
+    navigate({ pathname: location.pathname, search: params.toString(), hash: nextTab === 'library' ? '' : `#${nextTab}` }, { preventScrollReset: true })
   }
 
   const handleDeleteProfile = async () => {
@@ -679,7 +677,7 @@ export function SavedAddonLibrary() {
             enablingSyncIds={enablingSyncIds}
             disablingSyncIds={disablingSyncIds}
             profiles={profiles}
-            onBackToLibrary={() => setLibraryTab('library')}
+            onBackToLibrary={() => handleLibraryTabChange('library')}
             onPushAllUpdates={handlePushAllSyncUpdates}
             onPushAddonUpdate={handlePushSyncAddonUpdate}
             onDisableSync={handleDisableSync}

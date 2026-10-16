@@ -159,11 +159,18 @@ export function AddonList({ accountId }: AddonListProps) {
   }
 
   const handleTabChange = (val: string) => {
-    setSearchParams({ tab: val }, { replace: true })
+    // Focus and pointer events can arrive before the router renders the new tab.
+    const currentTab = new URLSearchParams(window.location.search).get('tab') || 'addons'
+    if (val === currentTab || !validTabs.includes(val as AccountTab)) return
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      next.set('tab', val)
+      return next
+    }, { preventScrollReset: true })
   }
 
   const handleFailoverViewChange = (view: FailoverView) => {
-    setSearchParams({ tab: failoverTabByView[view] }, { replace: true })
+    handleTabChange(failoverTabByView[view])
   }
 
   const [selectedAddonUrls, setSelectedAddonUrls] = useState<Set<string>>(new Set())
