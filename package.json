@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "client": "vite",
     "server": "node --watch --env-file=.env server/index.js",
-    "build": "tsc && cross-env NODE_ENV=production vite build && node scripts/strip-route-preloads.mjs",
+    "build": "tsc && cross-env NODE_ENV=production vite build",
     "test:client": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
     "test:server:smoke": "npm --prefix server run test:smoke",
     "generate:api": "npm --prefix server run generate-openapi && openapi-typescript server/openapi.json -o src/api/schema.d.ts",

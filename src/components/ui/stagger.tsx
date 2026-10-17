@@ -12,12 +12,6 @@ const StaggerContext = createContext<{ delay: number, nextIndex: () => number }>
   nextIndex: () => 0,
 })
 
-// The boot window: during initial app paint, stagger entrances render cards
-// invisible for frames the user counts as load time. First paint shows
-// everything immediately; staggers after the window keep their animation.
-let appBootSettled = false
-setTimeout(() => { appBootSettled = true }, 1500)
-
 function StaggerContainer({
   children,
   className,
@@ -57,12 +51,6 @@ function StaggerItem({
   useEffect(() => {
     const el = ref.current
     if (!el) return
-
-    if (appBootSettled === false) {
-      // Boot window: paint content instantly instead of animating it in.
-      setVisible(true)
-      return
-    }
 
     if (typeof IntersectionObserver === 'undefined') {
       setVisible(true)

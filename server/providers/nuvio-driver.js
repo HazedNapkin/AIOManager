@@ -74,32 +74,21 @@ export function createNuvioDriver(options = {}) {
         return res.json()
     }
 
-    // Profile resolution costs an RPC for string profile ids; a driver instance lives for one
-    // reconcile pass, so the profile list is fetched once and every resolution reuses it.
-    let profilesRpcCache = null
-    async function pullProfilesCached(accessToken) {
-        if (!profilesRpcCache) {
-            try {
-                const profiles = await rpc('sync_pull_profiles', {}, accessToken)
-                profilesRpcCache = { profiles: Array.isArray(profiles) ? profiles : [], failed: false }
-            } catch {
-                profilesRpcCache = { profiles: [], failed: true }
-            }
-        }
-        return profilesRpcCache
-    }
-
     async function resolveProfileIndex(accessToken, profileId, opts = {}) {
         if (Number.isFinite(profileId) && profileId > 0) return profileId
 
         const stringId = String(profileId || '').trim()
         if (/^\d+$/.test(stringId)) return parseInt(stringId, 10)
 
-        const cached = await pullProfilesCached(accessToken)
-        const profiles = cached.profiles
-        const profilesRpcFailed = cached.failed
+        let profiles = []
+        let profilesRpcFailed = false
+        try {
+            profiles = await rpc('sync_pull_profiles', {}, accessToken)
+        } catch {
+            profilesRpcFailed = true
+        }
 
-        if (profiles.length > 0 && stringId) {
+        if (Array.isArray(profiles) && stringId) {
             const match = profiles.find(p => p.id === stringId)
             if (match) {
                 const idx = match.profile_index ?? match.profileIndex
@@ -116,6 +105,7 @@ export function createNuvioDriver(options = {}) {
         }
 
         if (!Array.isArray(profiles) || profiles.length === 0) return 1
+
         const primary = profiles.find(p =>
             (p.profile_index ?? p.profileIndex) === 1
         )

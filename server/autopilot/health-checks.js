@@ -13,21 +13,6 @@ const CUSTOM_CHECK_CACHE_TTL = 30000
 const customCheckCache = new Map()
 const customCheckInFlight = new Map()
 
-// Health probes SSRF-resolve each addon host before probing; a dead or unresolvable
-// host stalls its check for the full DNS timeout. Resolving a scan wave's unique hosts
-// concurrently up front turns serial stalls into one parallel batch.
-export async function prewarmHostResolution(urls, { concurrency = 16 } = {}) {
-    const hosts = new Set()
-    for (const url of urls) {
-        try { hosts.add(new URL(url).origin) } catch { }
-    }
-    if (hosts.size === 0) return
-    const list = [...hosts]
-    await mapConcurrent(list, concurrency, async (host) => {
-        try { await isSafeUrlResolved(host + '/') } catch { }
-    })
-}
-
 async function mapConcurrent(items, limit, worker) {
     const results = new Array(items.length)
     let nextIndex = 0

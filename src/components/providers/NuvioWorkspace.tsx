@@ -451,11 +451,10 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
     const currentId = connection.credentials?.profileId || ''
     const matches = (p: NuvioProfile) => p.id === currentId || String(p.index) === String(currentId)
 
-    const healBaseUrl = connection.credentials?.baseUrl
     useEffect(() => {
         let cancelled = false
         setLoading(true)
-        fetchConnectionToken(accountId, { id: connection.id, credentials: healBaseUrl ? { baseUrl: healBaseUrl } : undefined }, 'nuvio')
+        fetchConnectionToken(accountId, connection.id, 'nuvio')
             .then(token => nuvioSessionDriver.pullProfiles(token.accessToken))
             .then(rows => {
                 if (!cancelled) setProfiles(rows.map(r => ({
@@ -469,7 +468,7 @@ function NuvioProfilePicker({ accountId, connection }: { accountId: string; conn
             })
             .finally(() => { if (!cancelled) setLoading(false) })
         return () => { cancelled = true }
-    }, [accountId, connection.id, healBaseUrl, nuvioSessionDriver])
+    }, [accountId, connection.id, nuvioSessionDriver])
 
     const doSwitch = useCallback(async (p: NuvioProfile) => {
         const profileKey = p.index > 0 ? String(p.index) : p.id

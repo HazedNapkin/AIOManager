@@ -1,4 +1,4 @@
-import { trace } from './trace.ts'
+import { trace } from '@/lib/trace'
 
 const PBKDF2_ITERATIONS = 600000
 const SALT_LENGTH = 16
@@ -215,23 +215,6 @@ export async function hashPassword(password: string, salt: Uint8Array): Promise<
 
   const hashArray = new Uint8Array(hashBits)
   return btoa(String.fromCharCode(...hashArray))
-}
-
-// The stored password hash IS the derived key material: hashPassword and deriveKey
-// run the identical PBKDF2 (same password, salt, iterations, length), so doing both
-// doubled the cost of every unlock and setup. One pass, two consumers.
-export async function deriveKeyAndHash(password: string, salt: Uint8Array): Promise<{ key: CryptoKey; hash: string }> {
-  const bits = await runPbkdf2(String(password), salt, PBKDF2_ITERATIONS, 256)
-  const hash = btoa(String.fromCharCode(...new Uint8Array(bits)))
-  const key = await crypto.subtle.importKey('raw', bits, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'])
-  return { key, hash }
-}
-
-// Verify against the locally stored hash and produce the AES key in the same pass.
-// Returns null when the password does not match - never throws for a wrong password.
-export async function deriveVerifiedKey(password: string, salt: Uint8Array, storedHash: string): Promise<CryptoKey | null> {
-  const { key, hash } = await deriveKeyAndHash(password, salt)
-  return hash === storedHash ? key : null
 }
 
 export function generateSalt(): Uint8Array {

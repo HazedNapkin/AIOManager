@@ -57,13 +57,13 @@ export async function discoverFromConnections(account: Account, accountId: strin
                 const { getCachedNuvioToken, setCachedNuvioToken } = await import('@/lib/nuvio-token-cache')
                 let token = getCachedNuvioToken(conn.id)
                 if (!token) {
-                    token = await fetchConnectionToken(accountId, conn, 'nuvio')
+                    token = await fetchConnectionToken(accountId, conn.id, 'nuvio', conn.credentials?.baseUrl)
                     setCachedNuvioToken(conn.id, token)
                 }
                 const profileId = conn.credentials?.profileIndex || conn.credentials?.profileId
                 rawAddons = await nuvioDriverFor(conn).readAddons(token.accessToken, profileId) as Record<string, unknown>[]
             } else {
-                const token = await fetchConnectionToken(accountId, conn, 'realstream')
+                const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
                 const userId = conn.credentials?.userId || ''
                 if (!userId) return { connId: conn.id, entries: connDiscovered, failed: true }
                 rawAddons = await realStreamDriverFor(conn).readAddons(token.accessToken, userId) as Record<string, unknown>[]

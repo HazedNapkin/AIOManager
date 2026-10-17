@@ -171,12 +171,6 @@ async function repairAndFlag(
                 if (!manifestRaw && !forceRefresh && shouldSkipManifestFetch(addon.transportUrl)) {
                     manifestRaw = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl)) || addon.manifest
                 }
-                // Force refresh still honors a short failure window: a dead host was
-                // likely tried moments ago in this same batch - re-hitting it costs the
-                // full fetch timeout (dead hosts stall the whole update for minutes).
-                if (!manifestRaw && forceRefresh && shouldSkipManifestFetch(addon.transportUrl, 60_000)) {
-                    manifestRaw = localManifestByUrl.get(normalizeAddonUrl(addon.transportUrl)) || addon.manifest
-                }
 
                 if (!manifestRaw) {
                     try {

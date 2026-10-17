@@ -33,8 +33,6 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
                     [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId]
                 )
             }
-            const { invalidateConnectionCache } = await import('../providers/reconciler.js')
-            invalidateConnectionCache(owner)
         } catch (credErr) {
             fastify.log.warn({ category: 'Autopilot' }, `Failed to upsert credential for ${maskContext(accountId)}: ${credErr.message}`)
         }

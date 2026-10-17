@@ -159,7 +159,7 @@ const FIELDS = {
     SSRF_ALLOW_PRIVATE: bool(false,
         'Allow the metadata proxy to fetch addon manifests from private/internal IP ranges (Docker networks, DNS rewrites, reverse proxies). Only enable on trusted self-hosted instances behind a firewall.'),
     TRUST_PROXY: bool(false,
-        'Trust X-Forwarded-For headers from the reverse proxy (Traefik/nginx/NPM). Required behind a proxy for per-client rate limiting to see real client IPs; without it all proxied clients share one rate-limit bucket. WARNING: your proxy must OVERWRITE X-Forwarded-For with the real client IP ($remote_addr), not append to it. With append-style proxies this setting lets clients pick their own IP by sending a forged X-Forwarded-For header, which defeats rate limiting and forges logs.'),
+        'Trust X-Forwarded-For headers from the reverse proxy (Traefik/nginx/NPM). Required behind a proxy for per-client rate limiting to see real client IPs; without it all proxied clients share one rate-limit bucket.'),
     CUSTOM_HTML: optionalString(
         'Raw HTML injected at the top of the login/configuration page (hosted-instance banners, announcements).'),
     REGISTRATIONS_CLOSED: bool(false,
@@ -190,12 +190,6 @@ const FIELDS = {
         'Total byte budget for the in-memory poster cache (bounded by bytes, not entry count). Default: 128 MB. 0 disables the cache.'),
     IMAGE_CACHE_MAX_ITEM_BYTES: int(524288, { min: 0, clampBelowMin: true },
         'Reject single cache entries larger than this many bytes. Default: 512 KB. 0 disables the limit.'),
-    DATASTORE_META_BATCH_MAX: int(50, { min: 1, clampBelowMin: true },
-        'Maximum accounts per DatastoreMetaBatch request (the batched library mtime pre-check). Bounded so one request cannot fan out unbounded upstream fetches.'),
-    DATASTORE_META_BATCH_CONCURRENCY: int(8, { min: 1, clampBelowMin: true },
-        'Upstream fan-out concurrency inside one DatastoreMetaBatch request.'),
-    DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS: int(8000, { min: 1000, clampBelowMin: true },
-        'Per-entry upstream timeout for DatastoreMetaBatch; a dead platform fails its slot fast instead of stalling the batch. Failed entries return null and the client falls back to that account\'s full path.'),
 
     // --- Activity engine (opt-in) ---
     ACTIVITY_ENGINE_ENABLED: bool(false,
@@ -222,14 +216,6 @@ const FIELDS = {
         'TTL in ms for the per-account state-hash cache.'),
     ACTIVITY_HASH_CACHE_MAX: int(5000, { min: 100, clampBelowMin: true },
         'Maximum number of accounts tracked in the state-hash cache.'),
-    ACTIVITY_SCAN_CONCURRENCY: int(4, { min: 1, clampBelowMin: true },
-        'Accounts scanned in parallel per activity cycle. The serial loop cost 200ms x accounts per cycle (30s+ at 150 accounts); one dead platform ate its full 10s fetch timeout alone.'),
-    ACTIVITY_BREAKER_THRESHOLD: int(2, { min: 1, clampBelowMin: true },
-        'Consecutive fetch failures before an account enters breaker backoff. 1 trips on the first failure.'),
-    ACTIVITY_BREAKER_BASE_MS: int(300000, { min: 0, clampBelowMin: true },
-        'First breaker backoff window in ms for an account whose library fetch keeps failing. 0 disables the breaker.'),
-    ACTIVITY_BREAKER_MAX_MS: int(3600000, { min: 0, clampBelowMin: true },
-        'Ceiling in ms for the exponential breaker backoff (doubles per additional consecutive failure).'),
 
     // --- Autopilot engine ---
     AUTOPILOT_SCAN_CHUNK_SIZE: int(500, { min: 100, clampBelowMin: true },
@@ -260,8 +246,8 @@ export const ENV_GROUPS = [
     { title: 'DATABASE', note: 'Pool settings are ignored when DB_TYPE=sqlite.', vars: ['DB_TYPE', 'DATABASE_URL', 'DB_SSL_REJECT_UNAUTHORIZED', 'DB_POOL_SIZE', 'DB_CONNECTION_TIMEOUT', 'DB_MAX_RETRIES', 'READ_ONLY_REPLICA'] },
     { title: 'SECURITY', vars: ['ENCRYPTION_KEY', 'CORS_ORIGINS', 'SSRF_ALLOW_PRIVATE', 'TRUST_PROXY', 'CUSTOM_HTML', 'REGISTRATIONS_CLOSED', 'UNIFIED_ENFORCEMENT'] },
     { title: 'LOGGING', vars: ['LOG_LEVEL', 'LOG_PRETTY_PRINT'] },
-    { title: 'PROXY & IMAGE CACHING', vars: ['PROXY_CONCURRENCY_LIMIT', 'AIOSTREAMS_USER_API_THROTTLE_MS', 'IMAGE_PROXY_TIMEOUT_MS', 'IMAGE_PROXY_QUEUE_LIMIT', 'IMAGE_PROXY_THROTTLE_MS', 'IMAGE_CACHE_TTL_MS', 'IMAGE_CACHE_MAX_BYTES', 'IMAGE_CACHE_MAX_ITEM_BYTES', 'DATASTORE_META_BATCH_MAX', 'DATASTORE_META_BATCH_CONCURRENCY', 'DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS'] },
-    { title: 'ACTIVITY ENGINE (OPT-IN)', note: 'Safe defaults shown — only relevant when you explicitly opt into server-side activity capture via ACTIVITY_ENGINE_ENABLED. Events are kept permanently so Activity can behave like Replay.', vars: ['ACTIVITY_ENGINE_ENABLED', 'ACTIVITY_SCAN_INTERVAL_MS', 'ACTIVITY_SCAN_JITTER_MS', 'ACTIVITY_INITIAL_DELAY_MS', 'ACTIVITY_CYCLE_BUDGET_MS', 'ACTIVITY_MAX_ACCOUNTS_PER_CYCLE', 'ACTIVITY_MAX_EVENTS_PER_CYCLE', 'ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE', 'ACTIVITY_BATCH_SIZE', 'ACTIVITY_FETCH_TIMEOUT_MS', 'ACTIVITY_HASH_CACHE_TTL_MS', 'ACTIVITY_HASH_CACHE_MAX', 'ACTIVITY_SCAN_CONCURRENCY', 'ACTIVITY_BREAKER_THRESHOLD', 'ACTIVITY_BREAKER_BASE_MS', 'ACTIVITY_BREAKER_MAX_MS'] },
+    { title: 'PROXY & IMAGE CACHING', vars: ['PROXY_CONCURRENCY_LIMIT', 'AIOSTREAMS_USER_API_THROTTLE_MS', 'IMAGE_PROXY_TIMEOUT_MS', 'IMAGE_PROXY_QUEUE_LIMIT', 'IMAGE_PROXY_THROTTLE_MS', 'IMAGE_CACHE_TTL_MS', 'IMAGE_CACHE_MAX_BYTES', 'IMAGE_CACHE_MAX_ITEM_BYTES'] },
+    { title: 'ACTIVITY ENGINE (OPT-IN)', note: 'Safe defaults shown — only relevant when you explicitly opt into server-side activity capture via ACTIVITY_ENGINE_ENABLED. Events are kept permanently so Activity can behave like Replay.', vars: ['ACTIVITY_ENGINE_ENABLED', 'ACTIVITY_SCAN_INTERVAL_MS', 'ACTIVITY_SCAN_JITTER_MS', 'ACTIVITY_INITIAL_DELAY_MS', 'ACTIVITY_CYCLE_BUDGET_MS', 'ACTIVITY_MAX_ACCOUNTS_PER_CYCLE', 'ACTIVITY_MAX_EVENTS_PER_CYCLE', 'ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE', 'ACTIVITY_BATCH_SIZE', 'ACTIVITY_FETCH_TIMEOUT_MS', 'ACTIVITY_HASH_CACHE_TTL_MS', 'ACTIVITY_HASH_CACHE_MAX'] },
     { title: 'AUTOPILOT ENGINE', vars: ['AUTOPILOT_SCAN_CHUNK_SIZE', 'AUTOPILOT_MAX_RULES_PER_CYCLE', 'AUTOPILOT_CYCLE_BUDGET_MS', 'AUTOPILOT_HEALTH_CACHE_TTL_MS', 'AUTOPILOT_RULE_RECHECK_MS', 'AUTOPILOT_RULE_CACHE_MAX_BYTES', 'AUTOPILOT_RULE_CACHE_TTL_MS'] },
     { title: 'INTERNAL / DEBUG', note: 'Do not set these manually.', vars: ['SQLITE_DB_PATH', 'AIOMAN_TRACE'] },
 ]

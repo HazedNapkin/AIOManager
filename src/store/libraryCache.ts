@@ -340,50 +340,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                 ])
                 await useWatchEventStore.getState().load()
 
-                // Batched mtime pre-check: every account that can prove-unchanged via its
-                // cached id->mtime snapshot gets its DatastoreMeta rows in ONE round trip
-                // (previously: one request per account per refresh; the trace mining showed
-                // the meta phase alone eating 1-4s at 13 accounts and it scales linearly).
-                // A failed slot (dead platform) returns null and the account falls through
-                // to the full path, so per-account behavior is unchanged on failure.
-                const metaRowsByAccount = new Map<string, Array<[string, number]> | null>()
-                let batchMetaFailed = false
-                const authKeyByAccount = new Map<string, string>()
-                await mapConcurrent(accounts, 5, async (account) => {
-                    const stremioAuthKey = getStremioAuthKey(account)
-                    if (!stremioAuthKey) return
-                    try {
-                        authKeyByAccount.set(account.id, await getCachedAuthKey(stremioAuthKey, encryptionKey))
-                    } catch { 
-                        // Unreadable key: the per-account path records the failure as before.
-                    }
-                })
-                const precheckEntries: Array<{ accountId: string; authKey: string; accountContext: string }> = []
-                for (const account of accounts) {
-                    const cachedMetaMap = get().metaMtimesByAccount[account.id]
-                    const cachedAccountItems = staleByAccount.get(account.id)
-                    const hasEventSnapshot = Boolean(useWatchEventStore.getState().snapshot[account.id])
-                    const authKey = authKeyByAccount.get(account.id)
-                    if (cachedMetaMap && cachedAccountItems && cachedAccountItems.length > 0 && hasEventSnapshot && authKey) {
-                        precheckEntries.push({ accountId: account.id, authKey, accountContext: account.id })
-                    }
-                }
-                if (precheckEntries.length > 0) {
-                    const batchStart = Date.now()
-                    try {
-                        const batchResults = await stremioClient.getLibraryMetaBatch(
-                            precheckEntries.map(e => ({ authKey: e.authKey, accountContext: e.accountContext }))
-                        )
-                        precheckEntries.forEach((entry, i) => metaRowsByAccount.set(entry.accountId, batchResults[i] ?? null))
-                        trace('libraryCache', 'meta-batch.hit', { accounts: precheckEntries.length, timing: Date.now() - batchStart })
-                    } catch (err) {
-                        // Total batch failure: fall back to per-account meta fetches inside
-                        // the tasks, exactly the pre-batch behavior.
-                        batchMetaFailed = true
-                        trace('libraryCache', 'meta-batch.error', { accounts: precheckEntries.length, error: (err as Error)?.message, timing: Date.now() - batchStart })
-                    }
-                }
-
                 for (let i = 0; i < accounts.length; i++) {
                     const account = accounts[i]
                     const p = (async () => {
@@ -392,7 +348,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                         try {
                             const stremioAuthKey = getStremioAuthKey(account)
                             if (stremioAuthKey) {
-                                const authKey = authKeyByAccount.get(account.id) ?? await getCachedAuthKey(stremioAuthKey, encryptionKey)
+                                const authKey = await getCachedAuthKey(stremioAuthKey, encryptionKey)
 
                                 // datastoreMeta pre-check: provably unchanged id->mtime snapshot skips the
                                 // fetch and diff. Backfill still fires (retry contract), and a missing event
@@ -403,17 +359,10 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 const hasEventSnapshot = Boolean(useWatchEventStore.getState().snapshot[account.id])
                                 if (cachedMetaMap && cachedAccountItems && cachedAccountItems.length > 0 && hasEventSnapshot) {
                                     let metaRows: Array<[string, number]> | null = null
-                                    if (batchMetaFailed) {
-                                        try {
-                                            metaRows = await stremioClient.getLibraryMeta(authKey, account.id)
-                                        } catch {
-                                            metaRows = null
-                                        }
-                                    } else {
-                                        // Batch slot semantics: present-and-rows -> compare; null ->
-                                        // that account's upstream fetch failed, fall to the full path.
-                                        const slot = metaRowsByAccount.get(account.id)
-                                        metaRows = slot ?? null
+                                    try {
+                                        metaRows = await stremioClient.getLibraryMeta(authKey, account.id)
+                                    } catch {
+                                        metaRows = null
                                     }
                                     if (metaRows && metaRows.length > 0 && metaIsUnchanged(cachedMetaMap, metaRows)) {
                                         const stale = staleByAccount.get(account.id) || []
@@ -529,7 +478,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 try {
                                     let token = getCachedNuvioToken(conn.id)
                                     if (!token) {
-                                        token = await fetchConnectionToken(account.id, conn, 'nuvio')
+                                        token = await fetchConnectionToken(account.id, conn.id, 'nuvio', conn.credentials?.baseUrl)
                                         setCachedNuvioToken(conn.id, token)
                                     }
                                     const driver = nuvioDriverFor(conn)
@@ -540,7 +489,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     ])
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] Nuvio fetched ${watched.length} watched + ${progress.length} progress for ${account.name || account.id}`)
                                     trace('libraryCache', 'nuvio.fetch', { accountId: account.id, watched: watched.length, progress: progress.length })
-                                    const transformStart = Date.now()
                                     const nuvioTitles = new Map<string, string>()
                                     for (const w of watched) {
                                         if (w?.content_id && w?.title) nuvioTitles.set(String(w.content_id), String(w.title))
@@ -584,7 +532,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         existingKeys.add(wk1)
                                         accountItems.push(activity)
                                     }
-                                    trace('libraryCache', 'nuvio.transforms', { accountId: account.id, timing: Date.now() - transformStart })
                                     const nuvioActivities = [
                                         ...progressActivities.filter((a): a is ActivityItem => a !== null),
                                         ...watchedActivities.filter((a): a is ActivityItem => a !== null && !seenIds.has(a.uniqueItemId)),
@@ -625,7 +572,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                 try {
                                     const userId = conn.credentials?.userId || ''
                                     if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
-                                    const token = await fetchConnectionToken(account.id, conn, 'realstream')
+                                    const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
                                     const driver = realStreamDriverFor(conn)
                                     const progress = await driver.readWatchProgress(token.accessToken, userId).catch(async (e) => {
                                         if (!isAuthError(e)) throw e
@@ -634,7 +581,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                     })
                                     if (import.meta.env.DEV) console.info(`[LibraryCache] RealStream fetched ${progress.length} progress for ${account.name || account.id}`)
                                     trace('libraryCache', 'realstream.fetch', { accountId: account.id, progress: progress.length })
-                                    const rsTransformStart = Date.now()
                                     const progressActivities = await Promise.all(
                                         progress.map(async (row) => {
                                             try {
@@ -664,7 +610,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                         accountItems.push(activity)
                                     }
                                     const realstreamActivities = progressActivities.filter((a): a is ActivityItem => a !== null)
-                                    trace('libraryCache', 'realstream.transforms', { accountId: account.id, timing: Date.now() - rsTransformStart })
                                     if (realstreamActivities.length > 0) {
                                         useWatchEventStore.getState().mergeExternalWatchEvents(account.id, 'realstream', realstreamActivities.map(a => ({
                                             itemId: a.itemId,

@@ -6,8 +6,6 @@ import { STREMIO_API } from '../config.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { resilientFetch } from '../utils/api-resilience.js'
 import { trace } from '../utils/trace.js'
-import { createFailureBreaker } from './breaker.js'
-import { runBudgetedScan } from './cycle-runner.js'
 
 function envBool(name, fallback = false) {
     const value = process.env[name]
@@ -33,10 +31,6 @@ const ACTIVITY_BATCH_SIZE = envInt('ACTIVITY_BATCH_SIZE', 40, 1)
 const ACTIVITY_FETCH_TIMEOUT_MS = envInt('ACTIVITY_FETCH_TIMEOUT_MS', 10000, 1000)
 const ACTIVITY_HASH_CACHE_TTL_MS = envInt('ACTIVITY_HASH_CACHE_TTL_MS', 24 * 60 * 60 * 1000, 60 * 1000)
 const ACTIVITY_HASH_CACHE_MAX = envInt('ACTIVITY_HASH_CACHE_MAX', 5000, 100)
-const ACTIVITY_SCAN_CONCURRENCY = envInt('ACTIVITY_SCAN_CONCURRENCY', 4, 1)
-const ACTIVITY_BREAKER_THRESHOLD = envInt('ACTIVITY_BREAKER_THRESHOLD', 2, 1)
-const ACTIVITY_BREAKER_BASE_MS = envInt('ACTIVITY_BREAKER_BASE_MS', 5 * 60 * 1000, 0)
-const ACTIVITY_BREAKER_MAX_MS = envInt('ACTIVITY_BREAKER_MAX_MS', 60 * 60 * 1000, 0)
 
 const EVENT_COLUMNS = [
     'id', 'sync_user', 'account_id', 'account_name', 'item_id', 'unique_item_id', 'item_name', 'item_type',
@@ -58,14 +52,6 @@ let isScanning = false
 let credentialCursor = 0
 let nonStremioSkipWarned = false
 const accountStateHashes = new Map()
-
-// Per-account fetch-failure circuit breaker (see breaker.js). Module-scoped like the
-// hash cache: failure memory should outlive individual cycles but not process restarts.
-const fetchBreaker = createFailureBreaker({
-    threshold: ACTIVITY_BREAKER_THRESHOLD,
-    baseMs: ACTIVITY_BREAKER_BASE_MS,
-    maxMs: Math.max(ACTIVITY_BREAKER_MAX_MS, ACTIVITY_BREAKER_BASE_MS),
-})
 
 function deterministicEventId(syncUser, accountId, itemId, eventType, eventTs, season, episode) {
     const bucket = Math.floor(Number(eventTs || Date.now()) / 60000)
@@ -492,26 +478,13 @@ async function deleteSnapshots(keys, tx) {
     return deleted
 }
 
-// Exported as the unit-test seam for scan classification (the cycle tests drive it
-// through the engine; this lets failure/deadline classification be pinned directly).
-export async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null) {
+async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null) {
     const scanStart = Date.now()
     trace('activity', 'scanAccount.start', { accountId })
-    // A cycle-budget cut is NOT a platform failure: classifying it as one would
-    // trip the breaker on healthy accounts whenever a busy cycle ends late.
-    // Budget cuts halt the cycle (complete:false) without touching the breaker.
-    if (limits.deadline && Date.now() >= limits.deadline) {
-        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: 'deadline-cut', timing: Date.now() - scanStart })
-        return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: false, failed: false }
-    }
     const library = await fetchLibrary(authKey, limits.deadline, log)
     if (!library || !Array.isArray(library)) {
-        // A fetch that came back empty AFTER the cycle deadline passed is a budget
-        // cut, not a platform verdict: do not trip the breaker on healthy accounts
-        // at the tail of a busy cycle. complete:false halts the cycle either way.
-        const deadlineCut = Boolean(limits.deadline) && Date.now() >= limits.deadline
-        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: deadlineCut ? 'deadline-cut' : 'no-library', timing: Date.now() - scanStart })
-        return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: !deadlineCut, failed: !deadlineCut }
+        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: 'no-library', timing: Date.now() - scanStart })
+        return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: true }
     }
 
     const hashKey = `${syncUser}:${accountId}`
@@ -642,7 +615,6 @@ async function runActivityCycle(fastify) {
         skipped: false,
         accountsScanned: 0,
         accountsSkippedByHash: 0,
-        accountsSkippedByBreaker: 0,
         eventsWritten: 0,
         snapshotWrites: 0,
         snapshotDeletes: 0,
@@ -663,62 +635,52 @@ async function runActivityCycle(fastify) {
             }
         }
 
-        // Circuit-breaker filter: accounts whose library fetch keeps failing (dead
-        // platform, revoked auth key) sit out a backoff window instead of eating a
-        // full fetch timeout in line, every cycle, until the hash cache or a human
-        // resolves it. A single success clears the record.
-        const eligibleCreds = []
         for (const cred of cycleCredentials) {
-            const breakerKey = `${cred.sync_user}:${cred.account_id}`
-            const breakerState = fetchBreaker.shouldSkip(breakerKey)
-            if (breakerState?.skip) {
-                summary.accountsSkippedByBreaker++
-                trace('activity', 'cycle.breaker-skip', { accountId: cred.account_id, failures: breakerState.failures })
-                continue
+            if (Date.now() > deadline) {
+                summary.budgetExhausted = true
+                break
             }
-            eligibleCreds.push(cred)
-        }
+            if (summary.eventsWritten >= ACTIVITY_MAX_EVENTS_PER_CYCLE) {
+                summary.budgetExhausted = true
+                break
+            }
+            if (summary.snapshotWrites >= ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE) {
+                summary.budgetExhausted = true
+                break
+            }
 
-        const scanSummary = await runBudgetedScan({
-            items: eligibleCreds,
-            concurrency: ACTIVITY_SCAN_CONCURRENCY,
-            deadline,
-            maxEvents: ACTIVITY_MAX_EVENTS_PER_CYCLE,
-            maxSnapshots: ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE,
-            scanItem: async (cred, limits) => {
-                const authKey = decrypt(cred.auth_key, FALLBACK_KEYS)
-                if (!authKey) return null
-                try {
-                    const result = await scanAccount(cred.sync_user, cred.account_id, cred.account_name, authKey, {
-                        deadline: limits.deadline,
-                        maxEvents: limits.maxEvents,
-                        maxSnapshots: limits.maxSnapshots,
-                    }, fastify.log)
-                    const breakerKey = `${cred.sync_user}:${cred.account_id}`
-                    if (result.failed) fetchBreaker.recordFailure(breakerKey)
-                    else fetchBreaker.recordSuccess(breakerKey)
-                    if (result.skippedByHash) summary.accountsSkippedByHash++
-                    return result
-                } catch (err) {
-                    // Scan errors (DB etc.) are not platform-fetch failures: log and
-                    // move on without touching the breaker, exactly like the serial loop.
-                    fastify.log.warn({ category: 'Activity' }, `Scan failed for account ${cred.account_id}: ${err.message}`)
-                    return null
+            const authKey = decrypt(cred.auth_key, FALLBACK_KEYS)
+            if (!authKey) continue
+
+            try {
+                const result = await scanAccount(cred.sync_user, cred.account_id, cred.account_name, authKey, {
+                    deadline,
+                    maxEvents: Math.max(0, ACTIVITY_MAX_EVENTS_PER_CYCLE - summary.eventsWritten),
+                    maxSnapshots: Math.max(0, ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE - summary.snapshotWrites),
+                }, fastify.log)
+                summary.accountsScanned++
+                if (result.skippedByHash) summary.accountsSkippedByHash++
+                summary.eventsWritten += result.eventsWritten
+                summary.snapshotWrites += result.snapshotWrites
+                summary.snapshotDeletes += result.snapshotDeletes
+                if (Date.now() > deadline) {
+                    summary.budgetExhausted = true
+                    break
                 }
-            },
-        })
-
-        summary.accountsScanned = scanSummary.scanned
-        summary.eventsWritten = scanSummary.eventsWritten
-        summary.snapshotWrites = scanSummary.snapshotWrites
-        summary.snapshotDeletes = scanSummary.snapshotDeletes
-        summary.budgetExhausted = scanSummary.budgetExhausted
+                if (!result.complete) {
+                    summary.budgetExhausted = true
+                    break
+                }
+            } catch (err) {
+                fastify.log.warn({ category: 'Activity' }, `Scan failed for account ${cred.account_id}: ${err.message}`)
+            }
+        }
 
         fastify.log.info(
             { category: 'Activity' },
-            `Activity scan complete: ${summary.accountsScanned} accounts scanned (${summary.accountsSkippedByHash} hash-skipped, ${summary.accountsSkippedByBreaker} breaker-skipped), ${summary.eventsWritten} events, ${summary.snapshotWrites} snapshot writes, ${summary.snapshotDeletes} snapshot deletes in ${Date.now() - startTime}ms${summary.budgetExhausted ? ' (budget exhausted)' : ''}`
+            `Activity scan complete: ${summary.accountsScanned} accounts scanned (${summary.accountsSkippedByHash} hash-skipped), ${summary.eventsWritten} events, ${summary.snapshotWrites} snapshot writes, ${summary.snapshotDeletes} snapshot deletes in ${Date.now() - startTime}ms${summary.budgetExhausted ? ' (budget exhausted)' : ''}`
         )
-        trace('activity', 'runActivityCycle.complete', { accountsScanned: summary.accountsScanned, accountsSkippedByHash: summary.accountsSkippedByHash, accountsSkippedByBreaker: summary.accountsSkippedByBreaker, eventsWritten: summary.eventsWritten, snapshotWrites: summary.snapshotWrites, snapshotDeletes: summary.snapshotDeletes, budgetExhausted: summary.budgetExhausted, timing: Date.now() - cycleStart })
+        trace('activity', 'runActivityCycle.complete', { accountsScanned: summary.accountsScanned, accountsSkippedByHash: summary.accountsSkippedByHash, eventsWritten: summary.eventsWritten, snapshotWrites: summary.snapshotWrites, snapshotDeletes: summary.snapshotDeletes, budgetExhausted: summary.budgetExhausted, timing: Date.now() - cycleStart })
 
         return summary
     } catch (err) {
@@ -787,12 +749,6 @@ export function createActivityEngine(fastify) {
                 maxSnapshotWritesPerCycle: ACTIVITY_MAX_SNAPSHOT_WRITES_PER_CYCLE,
                 fetchTimeoutMs: ACTIVITY_FETCH_TIMEOUT_MS,
                 batchSize: ACTIVITY_BATCH_SIZE,
-                scanConcurrency: ACTIVITY_SCAN_CONCURRENCY,
-                breaker: {
-                    threshold: ACTIVITY_BREAKER_THRESHOLD,
-                    baseMs: ACTIVITY_BREAKER_BASE_MS,
-                    maxMs: ACTIVITY_BREAKER_MAX_MS,
-                },
                 retention: 'permanent',
             }
         }

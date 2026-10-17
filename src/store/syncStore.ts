@@ -114,13 +114,6 @@ interface SyncState {
     reset: () => void
 }
 
-// Login phase log: buffered on window so phase timings survive performance
-// buffer clears, and never throw - instrumentation must not break the pull.
-function logPhase(name: string) {
-    const w = window as unknown as { __loginPhases?: Array<{ name: string; at: number }> }
-    ;(w.__loginPhases ??= []).push({ name, at: performance.now() })
-}
-
 export const useSyncStore = create<SyncState>()(
     persist(
         (set, get) => ({
@@ -346,10 +339,6 @@ export const useSyncStore = create<SyncState>()(
                     const storedEtag = get().lastSyncedCloudEtag
                     const sessionUnlocked = !!useAuthStore.getState().encryptionKey
                     if (storedEtag && sessionUnlocked) pullHeaders['If-None-Match'] = storedEtag
-                    // Avatar out-of-band blob: captured from the response at parse time,
-                    // restored after the inner state applies (function-scope on purpose).
-                    let avatarBlobWire: string | undefined
-                    let watchBlobWire: string | undefined
 
                     const res = await resilientFetch(`${apiPath}/sync/${id}`, {
                         headers: pullHeaders
@@ -418,8 +407,6 @@ export const useSyncStore = create<SyncState>()(
                     let data: unknown
                     try {
                         const raw = JSON.parse(text) as Record<string, unknown>
-                        avatarBlobWire = typeof raw.avatarBlob === 'string' ? raw.avatarBlob : undefined
-                        watchBlobWire = typeof raw.watchBlob === 'string' ? raw.watchBlob : undefined
                         if (raw.isEncrypted && raw.data) {
                             const { decryptSyncPayload } = await import('@/lib/crypto')
                             let decryptedStr: string
@@ -429,7 +416,6 @@ export const useSyncStore = create<SyncState>()(
                                 if (!get().syncSaltB64) set({ syncSaltB64: raw.syncSalt })
                             }
                             try {
-performance.mark('phase:pull-fetched'); logPhase('pull-fetched')
                                 decryptedStr = deviceUnlock
                                     ? await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceUnlock.syncKey))
                                     : await decryptSyncPayload(raw.data as string, password, remoteSyncSalt)
@@ -437,11 +423,9 @@ performance.mark('phase:pull-fetched'); logPhase('pull-fetched')
                                 throw new Error("Decryption failed. Wrong password or corrupted cloud data.")
                             }
 
-performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
-
                             let payloadStr: string
                             try {
-                                payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
+                                payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
                             } catch (decompressErr) {
                                 if (import.meta.env.DEV) console.error('[Sync] Payload decompression failed — cloud copy is corrupt:', decompressErr)
                                 const err = new Error('Cloud data is corrupted (stored payload cannot be decompressed). Sign in on a device that still has your data loaded and sync from there to repair the cloud copy.')
@@ -451,20 +435,6 @@ performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
 
                             try {
                                 data = JSON.parse(payloadStr)
-                                performance.mark('phase:parse-done')
-                                // Composition probe: per-slice byte weight of the real envelope.
-                                // Read-only - informs the payload diet / sectioning waves.
-                                try {
-                                    const src = data as Record<string, unknown>
-                                    const slices: Record<string, number> = {}
-                                    for (const key of ['accounts', 'addons', 'watchEvents', 'watchSnapshot', 'notes', 'vault', 'failover', 'profiles', 'settings', 'changelog', 'customThemes', 'accountStates', 'apiKeys']) {
-                                        const v = src[key]
-                                        if (v !== undefined && v !== null) slices[key] = JSON.stringify(v).length
-                                    }
-                                    (window as unknown as { __envelopeSlices?: Record<string, number> }).__envelopeSlices = slices
-                                    ;(window as unknown as { __envelopeTotal?: number }).__envelopeTotal = payloadStr.length
-                                    try { sessionStorage.setItem('__envelopeProbe', JSON.stringify({ total: payloadStr.length, slices })) } catch { /* probe persistence best-effort */ }
-                                } catch { /* probe never blocks the pull */ } logPhase('parse-done')
 
                                 // Post-Parse Check: If it PARSED into a literal string "[object Object]", then it's bad.
                                 // But if it's a valid object that happens to CONTAIN that string somewhere, we keep it.
@@ -543,22 +513,11 @@ performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
                     // even if the cloud salt differs from the local salt.
                     let preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
 
-                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
-                    let localSaltBase64: string | undefined
-                    {
-                        const { loadSalt } = await import('@/lib/crypto')
-                        const localSalt = loadSalt()
-                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
-                    }
-                    // When the salts match, the key unlockFromSync derives decrypts local authKeys
-                    // too - deriving a second one here doubled every full login for nothing.
-                    const saltsAligned = !!cloudSalt && !!localSaltBase64 && cloudSalt === localSaltBase64
-
                     // If no in-memory key (fresh page load / re-login after corruption),
                     // try to derive one from the local salt + password so we can still
                     // decrypt existing local account authKeys during reconciliation.
                     // Remembered sessions already carry the key; nothing to derive.
-                    if (!preUnlockEncryptionKey && !deviceUnlock && !saltsAligned) {
+                    if (!preUnlockEncryptionKey && !deviceUnlock) {
                         const { loadSalt, deriveKey } = await import('@/lib/crypto')
                         const localSalt = loadSalt()
                         if (localSalt) {
@@ -571,6 +530,13 @@ performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
                         }
                     }
 
+                    const cloudSalt = (data as Record<string, unknown>)?.salt as string | undefined
+                    let localSaltBase64: string | undefined
+                    {
+                        const { loadSalt } = await import('@/lib/crypto')
+                        const localSalt = loadSalt()
+                        if (localSalt) localSaltBase64 = btoa(String.fromCharCode(...localSalt))
+                    }
                     const norm = data as Record<string, unknown>
                     const hasEncryptedData =
                         (Array.isArray(norm.accounts) && norm.accounts.length > 0) ||
@@ -612,12 +578,6 @@ performance.mark('phase:decrypt-done'); logPhase('decrypt-done')
                         if (import.meta.env.DEV) console.warn('[Sync] Skipping data import - encryption key not available.')
                         return
                     }
-performance.mark('phase:kdf-done'); logPhase('kdf-done')
-                    // Salts aligned: the key unlockFromSync just derived decrypts local authKeys
-                    // too, so the expensive local-salt derivation is skipped entirely.
-                    if (!preUnlockEncryptionKey && saltsAligned) {
-                        preUnlockEncryptionKey = useAuthStore.getState().encryptionKey
-                    }
                     const syncData = data as Record<string, unknown>
                     // Prime before any import runs: a mid-import failure must not leave the post-login push free to erase the cloud avatar.
                     syncRuntime.lastPulledCloudAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : null
@@ -655,36 +615,11 @@ performance.mark('phase:kdf-done'); logPhase('kdf-done')
                                 await useAccountStore.getState().importAccounts(JSON.stringify(syncData), true, 'merge', preUnlockEncryptionKey)
                             }
                         }
-performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                     }
 
-                    // Hydration split: only the accounts slice gates first paint. Every other
-                    // slice applies in the background; the push gate (isInitialSyncCompleted)
-                    // stays closed until they all land, so no write can outrun its revalidation.
-                    const applySecondarySlices = async () => {
-                    // Watch history out-of-band restore: decrypt the deferred blob when present
-                    // (new pushes), else read the inner state (legacy pushes). The merged view
-                    // feeds every slice below unchanged.
-                    let secondary = syncData
-                    if (watchBlobWire) {
-                        try {
-                            const { decryptSyncPayload, decryptSyncPayloadWithKey } = await import('@/lib/crypto')
-                                    const { decompressSyncPayload } = await import('@/lib/sync-payload-codec')
-                            const saltB64w = get().syncSaltB64
-                            const saltW = typeof saltB64w === 'string' ? Uint8Array.from(atob(saltB64w), c => c.charCodeAt(0)) : undefined
-                            const watchJson = deviceUnlock && deviceUnlock.syncKey
-                                ? await decryptSyncPayloadWithKey(watchBlobWire, deviceUnlock.syncKey)
-                                : await decryptSyncPayload(watchBlobWire, password, saltW)
-                            let watchStr = watchJson
-                            try { watchStr = await decompressSyncPayload(watchJson) } catch { /* legacy uncompressed blob */ }
-                            secondary = { ...syncData, ...(JSON.parse(watchStr) as Record<string, unknown>) }
-                        } catch (e) {
-                            if (import.meta.env.DEV) console.warn('[Sync] Watch blob restore failed; falling back to inner state.', e)
-                        }
-                    }
-                    if (secondary.addons) {
+                    if (syncData.addons) {
                         const localAddons = Object.keys(useAddonStore.getState().library).length
-                        const remoteAddons = Array.isArray(secondary.addons) ? secondary.addons : ((secondary.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
+                        const remoteAddons = Array.isArray(syncData.addons) ? syncData.addons : ((syncData.addons as Record<string, unknown>)?.savedAddons || []) as unknown[]
 
                         if ((!remoteAddons || remoteAddons.length === 0) && localAddons > 0) {
                             if (import.meta.env.DEV) console.warn(`[Sync] Remote has 0 addons (Safety net triggered). Switching to MERGE + PUSH.`)
@@ -702,14 +637,14 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         }
                         await useAddonStore.getState().initialize()
                     }
-                    if (secondary.profiles && Array.isArray(secondary.profiles)) {
-                        await useProfileStore.getState().importProfiles(secondary.profiles)
+                    if (syncData.profiles && Array.isArray(syncData.profiles)) {
+                        await useProfileStore.getState().importProfiles(syncData.profiles)
                     }
-                    if (secondary.failover) {
-                        const fo = secondary.failover as Record<string, unknown>
-                        if (Array.isArray(secondary.failover)) {
-                            await useFailoverStore.getState().importRules(secondary.failover, 'merge', true)
-                        } else if (typeof secondary.failover === 'object') {
+                    if (syncData.failover) {
+                        const fo = syncData.failover as Record<string, unknown>
+                        if (Array.isArray(syncData.failover)) {
+                            await useFailoverStore.getState().importRules(syncData.failover, 'merge', true)
+                        } else if (typeof syncData.failover === 'object') {
                             if (fo.rules) await useFailoverStore.getState().importRules(fo.rules, 'merge', true)
                             if (fo.webhook) {
                                 await useFailoverStore.getState().importWebhook(fo.webhook as import('./failoverStore').WebhookConfig, true)
@@ -717,94 +652,64 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         }
                     }
 
-                    if (secondary.notes && Array.isArray(secondary.notes)) {
+                    if (syncData.notes && Array.isArray(syncData.notes)) {
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importNotes(secondary.notes)
-                        if (Array.isArray(secondary.notesTrash)) {
-                            syncRuntime.lastPulledNotesTrash = secondary.notesTrash
-                            await useNotesStore.getState().importTrash(secondary.notesTrash)
+                        await useNotesStore.getState().importNotes(syncData.notes)
+                        if (Array.isArray(syncData.notesTrash)) {
+                            syncRuntime.lastPulledNotesTrash = syncData.notesTrash
+                            await useNotesStore.getState().importTrash(syncData.notesTrash)
                         }
-                    } else if (Array.isArray(secondary.notesTrash)) {
-                        syncRuntime.lastPulledNotesTrash = secondary.notesTrash
+                    } else if (Array.isArray(syncData.notesTrash)) {
+                        syncRuntime.lastPulledNotesTrash = syncData.notesTrash
                         const { useNotesStore } = await import('@/store/notesStore')
-                        await useNotesStore.getState().importTrash(secondary.notesTrash)
+                        await useNotesStore.getState().importTrash(syncData.notesTrash)
                     }
-                    if (Array.isArray(secondary.vault) || Array.isArray(secondary.vaultTombstones)) {
+                    if (Array.isArray(syncData.vault) || Array.isArray(syncData.vaultTombstones)) {
                         const { useVaultStore } = await import('./vaultStore')
                         await useVaultStore.getState().initialize()
-                        syncRuntime.lastPulledVaultTombstones = (secondary.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
-                        await useVaultStore.getState().importVault((secondary.vault || []) as import('@/types/vault').VaultKey[], (secondary.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
+                        syncRuntime.lastPulledVaultTombstones = (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[]
+                        await useVaultStore.getState().importVault((syncData.vault || []) as import('@/types/vault').VaultKey[], (syncData.vaultTombstones || []) as import('./vaultStore').VaultTombstone[])
                     }
 
-                    if (secondary.settings) {
-                        applySyncedSettings(secondary.settings as Record<string, unknown>, !isLocalNewer)
+                    if (syncData.settings) {
+                        applySyncedSettings(syncData.settings as Record<string, unknown>, !isLocalNewer)
                     }
 
                     {
                         const { useWatchEventStore } = await import('@/store/watchEventStore')
                         const local = useWatchEventStore.getState()
-                        const remoteEvents: Record<string, unknown>[] = Array.isArray(secondary.watchEvents) ? secondary.watchEvents as Record<string, unknown>[] : []
-                        const remoteDeleted = (secondary.deletedWatchEvents && typeof secondary.deletedWatchEvents === 'object') ? secondary.deletedWatchEvents as Record<string, number> : {}
+                        const remoteEvents: Record<string, unknown>[] = Array.isArray(syncData.watchEvents) ? syncData.watchEvents as Record<string, unknown>[] : []
+                        const remoteDeleted = (syncData.deletedWatchEvents && typeof syncData.deletedWatchEvents === 'object') ? syncData.deletedWatchEvents as Record<string, number> : {}
                         syncRuntime.lastPulledDeletedWatchEvents = remoteDeleted
                         const mergedDeleted = mergeDeletedEventMaps(local.deletedEventKeys, remoteDeleted)
                         const merged = new Map<string, Record<string, unknown>>()
                         ;[...remoteEvents, ...local.events as unknown as Record<string, unknown>[]].forEach(e => merged.set(e.id as string, e))
                         const mergedEvents = Array.from(merged.values())
                             .sort((a, b) => (b.event_ts as number) - (a.event_ts as number))
-                        const mergedSnapshot = { ...(secondary.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
-                        const remoteRollups = (secondary.watchEventRollups && typeof secondary.watchEventRollups === 'object')
-                            ? secondary.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
+                        const mergedSnapshot = { ...(syncData.watchSnapshot || {} as Record<string, unknown>), ...local.snapshot }
+                        const remoteRollups = (syncData.watchEventRollups && typeof syncData.watchEventRollups === 'object')
+                            ? syncData.watchEventRollups as import('@/lib/watch-event-rollups').EventRollups
                             : undefined
                         useWatchEventStore.getState().initialize(mergedEvents as unknown as import('@/types/activity').WatchEvent[], mergedSnapshot as Record<string, Record<string, import('@/types/activity').SnapshotItem>>, mergedDeleted, remoteRollups)
                     }
 
-                    if (Array.isArray(secondary.customThemes) && secondary.customThemes.length > 0) {
-                        applySyncedSettings({ customThemes: secondary.customThemes }, true)
+                    if (Array.isArray(syncData.customThemes) && syncData.customThemes.length > 0) {
+                        applySyncedSettings({ customThemes: syncData.customThemes }, true)
                     }
 
-                    if (Array.isArray(secondary.discoverFavorites)) {
-                        try { localStorage.setItem('aio-discover-favorites', JSON.stringify(secondary.discoverFavorites)) } catch {}
+                    if (Array.isArray(syncData.discoverFavorites)) {
+                        try { localStorage.setItem('aio-discover-favorites', JSON.stringify(syncData.discoverFavorites)) } catch {}
                     }
 
-                    if (secondary.discoverPrefs && typeof secondary.discoverPrefs === 'object') {
-                        try { localStorage.setItem('aio-discover-prefs', JSON.stringify(secondary.discoverPrefs)) } catch {}
+                    if (syncData.discoverPrefs && typeof syncData.discoverPrefs === 'object') {
+                        try { localStorage.setItem('aio-discover-prefs', JSON.stringify(syncData.discoverPrefs)) } catch {}
                     }
-
-                    } // end applySecondarySlices
-                    const secondary = applySecondarySlices().catch(err => {
-                        console.warn('[Sync] deferred hydration failed:', err)
-                        get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${(err as Error).message}`, isAuto: isSilent })
-                    })
 
                     // Identity is upgrade-only on pull: an empty name/avatar in the cloud
                     // (a stale push from another device) can never erase what this device has.
                     const identity = resolveCloudIdentity(syncData, id, get().auth)
                     const restoredName = identity.name
-                    // Avatar out-of-band restore: the blob is the cloud's authoritative avatar.
-                    // Absent blob (legacy push) keeps the upgrade-only local behavior.
-                    let restoredAvatar = identity.avatar
-                    {
-                        const avatarBlob = avatarBlobWire
-                        if (typeof avatarBlob === 'string' && avatarBlob) {
-                            try {
-                                const saltB64 = get().syncSaltB64
-                                const avatarSalt = typeof saltB64 === 'string'
-                                    ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0))
-                                    : undefined
-                                const { decryptSyncPayload, decryptSyncPayloadWithKey } = await import('@/lib/crypto')
-                                    const { decompressSyncPayload } = await import('@/lib/sync-payload-codec')
-                                const avatarJson = deviceUnlock && deviceUnlock.syncKey
-                                    ? await decryptSyncPayloadWithKey(avatarBlob, deviceUnlock.syncKey)
-                                    : await decryptSyncPayload(avatarBlob, password, avatarSalt)
-                                let avatarStr = avatarJson
-                                try { avatarStr = await decompressSyncPayload(avatarJson) } catch { /* legacy uncompressed blob */ }
-                                const parsed = JSON.parse(avatarStr)
-                                if (typeof parsed === 'string') restoredAvatar = parsed
-                            } catch (e) {
-                                if (import.meta.env.DEV) console.warn('[Sync] Avatar blob restore failed; keeping local avatar.', e)
-                            }
-                        }
-                    }
+                    const restoredAvatar = identity.avatar
                     writeIdentityProfile(id, restoredName, restoredAvatar)
                     set({
                         auth: {
@@ -817,15 +722,10 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         lastSyncedAt: new Date().toISOString(),
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
-                        // Closed until every deferred slice lands - the completion flip lives
-                        // in the secondary continuation below. The push gate reads this flag.
-                        isInitialSyncCompleted: false,
+                        isInitialSyncCompleted: true,
                         lastSyncedCloudEtag: responseEtag ?? null,
                         needsReauth: false
                     })
-                    // The flag flips ONLY after the deferred slices settle: the push gate
-                    // refuses every write until then (revalidate-before-write).
-                    void secondary.then(() => { set({ isInitialSyncCompleted: true }) })
                     // After the set: syncSaltB64 may have just been adopted from the cloud,
                     // and the sync key must be exported under that same salt.
                     await persistSessionCredential()
@@ -989,8 +889,8 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                 // so pushes resume instead of silently skipping ("no in-session credentials").
                 const sessionCred = auth.isAuthenticated ? getSessionSyncCredential(auth.id) : null
                 const hasSessionCredentials = !!auth.password || !!sessionCred || (await isDeviceSessionActive())
-                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials || !isInitialSyncCompleted) {
-                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : !isInitialSyncCompleted ? 'initial pull still applying' : 'account state not hydrated'
+                if (!auth.isAuthenticated || isSyncing || isLocked || !useAccountStore.getState().hydrated || !hasSessionCredentials) {
+                    const reason = !auth.isAuthenticated ? 'not signed in' : isSyncing ? 'a sync is in progress' : isLocked ? 'vault is locked' : !hasSessionCredentials ? 'no in-session credentials' : 'account state not hydrated'
                     // Credentialless-but-otherwise-operational is the corpse state of the refresh
                     // bug: skipping silently kept it invisible. Raise the re-auth state so the
                     // dashboard banners the stopped sync (live bug #51, part 2).
@@ -1121,17 +1021,6 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                     const identityAvatarFallback = identityFallback.id === auth.id ? identityFallback.avatar : null
 
                     const watchExport = useWatchEventStore.getState().export()
-                    // Watch history out-of-band: 986KB on real accounts rode the inner state,
-                    // paying decrypt+parse+merge on every login. It ships as its own encrypted
-                    // blob and rehydrates in the deferred phase; the inner state keeps the keys
-                    // fleet-empty so legacy readers see an explicitly empty history.
-                    const watchPayload = {
-                        watchEvents: watchExport.events,
-                        watchSnapshot: watchExport.snapshot,
-                        watchEventRollups: watchExport.rollups,
-                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
-                    }
-                    const watchPayloadJson = JSON.stringify(watchPayload)
                     const state = {
                         ...exportedAccounts,
                         addons: safeParse(rawAddons),
@@ -1146,15 +1035,13 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         vaultTombstones: mergedVaultTombstones,
                         notes: filterNotesByTrash(localNotes, mergedNotesTrash),
                         notesTrash: mergedNotesTrash,
-                        watchEvents: [],
-                        watchSnapshot: {},
-                        watchEventRollups: undefined,
-                        deletedWatchEvents: {},
+                        watchEvents: watchExport.events,
+                        watchSnapshot: watchExport.snapshot,
+                        watchEventRollups: watchExport.rollups,
+                        deletedWatchEvents: mergeDeletedEventMaps(watchExport.deletedEvents, syncRuntime.lastPulledDeletedWatchEvents ?? {}),
                         salt: saltBase64,
                         name: auth.name,
-                        // Avatar moved out-of-band (avatarBlob): a 100-300KB base64 image
-                        // rode every push+pull. Captured below, encrypted with the same key.
-                        avatar: null,
+                        avatar: auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null,
                         lastSeenVersion: get().lastSeenVersion,
                         customThemes: (() => { try { return JSON.parse(localStorage.getItem('aio-custom-themes') || '[]') } catch { return [] } })(),
                         discoverFavorites: (() => { try { return JSON.parse(localStorage.getItem('aio-discover-favorites') || '[]') } catch { return [] } })(),
@@ -1162,8 +1049,6 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         profiles: useProfileStore.getState().profiles,
                         settings: readSyncedSettings(),
                     }
-
-                    const avatarValue = auth.avatar ?? identityAvatarFallback ?? syncRuntime.lastPulledCloudAvatar ?? null
 
                     const { encryptSyncPayload } = await import('@/lib/crypto')
                     const stringifiedState = JSON.stringify(state)
@@ -1180,9 +1065,7 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                     }
 
                     forceCanonicalRepublish = consumeForceFlag()
-                    // Avatar + watch history participate in the change hash: edits to either
-                    // still push even though neither rides the inner state anymore.
-                    const stateHash = await computeHash(stringifiedState + '|' + (avatarValue ?? '') + '|' + watchPayloadJson)
+                    const stateHash = await computeHash(stringifiedState)
                     if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
@@ -1204,15 +1087,13 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                     let isCompressed = false
                     if (shouldCompress) {
                         try {
-                            compressedPayload = await compressSyncPayload(stampedState)
+                            compressedPayload = compressSyncPayload(stampedState)
                             isCompressed = true
                         } catch {}
                     }
                     let encryptedState: string
-                    let encryptWithSameKey: ((plaintext: string) => Promise<string>) | null = null
                     if (auth.password) {
                         encryptedState = await encryptSyncPayload(compressedPayload, auth.password, syncSalt)
-                        encryptWithSameKey = (plaintext) => encryptSyncPayload(plaintext, auth.password, syncSalt)
                     } else if (sessionCred) {
                         // Refreshed password-session: encrypt with the session-stored sync key
                         // (exported at login under the same syncSalt) — identical key material
@@ -1220,32 +1101,11 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                         const { importSyncKey, encryptSyncPayloadWithKey } = await import('@/lib/crypto')
                         const sessionSyncKey = await importSyncKey(Uint8Array.from(atob(sessionCred.syncKey), c => c.charCodeAt(0)))
                         encryptedState = await encryptSyncPayloadWithKey(compressedPayload, sessionSyncKey)
-                        encryptWithSameKey = (plaintext) => encryptSyncPayloadWithKey(plaintext, sessionSyncKey)
                     } else {
                         const deviceSyncKey = await getActiveDeviceSyncKey()
                         if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                         encryptedState = await import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(compressedPayload, deviceSyncKey))
-                        encryptWithSameKey = (plaintext) => import('@/lib/crypto').then(m => m.encryptSyncPayloadWithKey(plaintext, deviceSyncKey))
                     }
-
-                    // Avatar out-of-band: its own encrypted blob on the body, so the 100-300KB
-                    // base64 image stops riding the inner state on every push and pull.
-                    // Blobs are deflated before encryption: uncompressed, the watch history
-                    // blob made the stored envelope BIGGER than the legacy format.
-                    let avatarBlob: string | undefined
-                    if (avatarValue) {
-                        try {
-                            const deflated = await compressSyncPayload(JSON.stringify(avatarValue))
-                            avatarBlob = await encryptWithSameKey!(deflated)
-                        } catch { /* push without it rather than fail the sync */ }
-                    }
-
-                    // Watch history out-of-band: same pattern, bigger slice (~1MB plaintext).
-                    let watchBlob: string | undefined
-                    try {
-                        const deflatedWatch = await compressSyncPayload(watchPayloadJson)
-                        watchBlob = await encryptWithSameKey!(deflatedWatch)
-                    } catch { /* push without it rather than fail the sync */ }
 
                     // Canonical addon lists for accounts the server can't read itself. A
                     // server-side Stremio credential (serverStremioCredentialedAccounts, learned
@@ -1274,8 +1134,6 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                             data: encryptedState,
                             isEncrypted: true,
                             compressed: isCompressed,
-                            ...(avatarBlob ? { avatarBlob } : {}),
-                            ...(watchBlob ? { watchBlob } : {}),
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
                             force: forcePush,
@@ -1458,7 +1316,7 @@ performance.mark('phase:accounts-applied'); logPhase('accounts-applied')
                             if (!deviceSyncKey) throw new Error('Remembered session lost its sync key. Sign in again.')
                             decryptedStr = await import('@/lib/crypto').then(m => m.decryptSyncPayloadWithKey(raw.data as string, deviceSyncKey))
                         }
-                        const payloadStr = raw.compressed ? await decompressSyncPayload(decryptedStr) : decryptedStr
+                        const payloadStr = raw.compressed ? decompressSyncPayload(decryptedStr) : decryptedStr
                         data = JSON.parse(payloadStr) as Record<string, unknown>
                     } else {
                         data = raw

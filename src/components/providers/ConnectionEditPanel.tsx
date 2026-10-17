@@ -557,7 +557,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         setTesting(true)
         setTestResult(null)
         try {
-            const token = await withTimeout(fetchConnectionToken(accountId, connection, 'nuvio'))
+            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'nuvio'))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
         } catch (err) {
@@ -730,7 +730,7 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
         setTesting(true)
         setTestResult(null)
         try {
-            const token = await withTimeout(fetchConnectionToken(accountId, connection, 'realstream'))
+            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'realstream'))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
         } catch (err) {

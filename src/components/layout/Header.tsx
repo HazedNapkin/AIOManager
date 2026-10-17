@@ -1,5 +1,4 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { journeyStart } from '@/lib/journey-spans'
 import { useMemo, useState, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -82,7 +81,6 @@ export function MobileBottomNav() {
           <Link
             key={item.to}
             to={item.to}
-            onClick={() => { if (item.to === '/saved-addons') journeyStart('open-library') }}
             className={`relative flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
           >
             <AnimatePresence>
@@ -136,7 +134,7 @@ export function MobileBottomNav() {
                             <Link
                                 key={item.to}
                                 to={item.to}
-                                onClick={() => { setMoreOpen(false); if (item.to === '/saved-addons') journeyStart('open-library') }}
+                                onClick={() => setMoreOpen(false)}
                                 className={`flex flex-col items-center justify-center py-5 px-3 rounded-2xl transition-colors gap-2.5 ${isActive ? 'bg-primary/12 text-primary' : 'text-foreground/70 hover:bg-muted/50 hover:text-foreground'}`}
                             >
                                 {item.to === '/replay' ? (
@@ -531,7 +529,7 @@ export function Header() {
                   <Link
                     key={item.to}
                     to={item.to}
-                    onClick={() => { setVaultOpen(false); if (item.to === '/saved-addons') journeyStart('open-library') }}
+                    onClick={() => setVaultOpen(false)}
                     className={cn(
                       'relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-[13px] font-medium transition-[transform,opacity,box-shadow]',
                       isActive

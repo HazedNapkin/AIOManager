@@ -132,7 +132,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 try {
                     let token = getCachedNuvioToken(conn.id)
                     if (!token) {
-                        token = await fetchConnectionToken(accountId, conn, 'nuvio')
+                        token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
                         setCachedNuvioToken(conn.id, token)
                     }
                     const rows = await nuvioDriverFor(conn).getMemberAccess(token.accessToken)

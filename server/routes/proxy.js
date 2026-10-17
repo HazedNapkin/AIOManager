@@ -1,6 +1,6 @@
 import { addonManifestUrl } from '../utils/addon-endpoint-url.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { AIOSTREAMS_USER_API_THROTTLE_MS, DATASTORE_META_BATCH_CONCURRENCY, DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS, DATASTORE_META_BATCH_MAX, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
+import { AIOSTREAMS_USER_API_THROTTLE_MS, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
 import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
@@ -741,77 +741,6 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         fastify.log.error({ category: 'Server' }, `Stremio Proxy Final Failure (${type}): ${lastError?.message ?? 'Unknown'}`)
         reply.status(500);
         return { error: 'Stremio API Proxy Failed', details: 'Internal error' }
-    })
-
-    // Dedicated batched mtime pre-check route. The client library refresh asks for
-    // id->mtime rows for every account in one round trip instead of one request per
-    // account (13 today, 150 at fleet scale). Per-entry failures are isolated: a dead
-    // platform returns null at its index and the caller falls back to that account's
-    // full path, so one bad account cannot poison the batch.
-    //
-    // Its own rate-limit bucket, NOT stremio-proxy's 600/min: one batch fans out up to
-    // DATASTORE_META_BATCH_MAX upstream fetches, so a 600/min bucket would allow
-    // 30k upstream calls/min from a single authenticated user (Stremio IP-ban territory
-    // for everyone on this server). 12/min x 50 = 600/min worst case: exact parity
-    // with the single-request path's 600/min. A 5-minute client refresh cadence needs
-    // 1-6 of these; 12/min is 10-60x headroom.
-    fastify.post('/api/stremio-meta-batch', {
-        bodyLimit: 256 * 1024,
-        config: { rateLimit: { max: 12, timeWindow: '1 minute' } },
-        schema: {
-            body: {
-                type: 'object',
-                required: ['requests'],
-                properties: { requests: { type: 'array' } },
-                additionalProperties: true
-            }
-        }
-    }, async (request, reply) => {
-        const authResult = await requireProxyAuth(request, reply)
-        if (authResult) return authResult
-
-        const accountContext = request.headers['x-account-context'] || 'Unknown'
-        const masked = maskContext(accountContext)
-        const requests = Array.isArray(request.body.requests) ? request.body.requests : []
-        if (requests.length === 0) {
-            reply.status(400)
-            return { error: 'stremio-meta-batch requires a non-empty requests array' }
-        }
-        if (requests.length > DATASTORE_META_BATCH_MAX) {
-            reply.status(400)
-            return { error: `stremio-meta-batch accepts at most ${DATASTORE_META_BATCH_MAX} requests` }
-        }
-
-        fastify.log.info({ category: 'Sync' }, `[${masked}] Batch Checking Library Changes (${requests.length} accounts)...`)
-        const results = new Array(requests.length).fill(null)
-        let nextIndex = 0
-        const workers = Array.from({ length: Math.min(DATASTORE_META_BATCH_CONCURRENCY, requests.length) }, async () => {
-            while (nextIndex < requests.length) {
-                const i = nextIndex++
-                const entry = requests[i]
-                const authKey = entry && typeof entry === 'object' ? entry.authKey : entry
-                if (typeof authKey !== 'string' || !authKey) continue
-                const controller = new AbortController()
-                const timeout = setTimeout(() => controller.abort(), DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS)
-                try {
-                    const res = await fetch('https://api.strem.io/api/datastoreMeta', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ type: 'DatastoreMeta', authKey, collection: 'libraryItem' }),
-                        signal: controller.signal
-                    })
-                    if (!res.ok) continue
-                    const data = await res.json()
-                    if (Array.isArray(data?.result)) results[i] = data.result
-                } catch {
-                    // Per-entry failure: leave null; the caller re-runs this account's full path.
-                } finally {
-                    clearTimeout(timeout)
-                }
-            }
-        })
-        await Promise.all(workers)
-        return { result: results }
     })
 
     fastify.post('/api/aiostreams-proxy/user', {
