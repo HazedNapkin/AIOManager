@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { JellyfinClient, type JellyfinSession } from '@/lib/jellyfin/session'
+import { JellyfinClient, jellyfinSignInErrorMessage, type JellyfinSession } from '@/lib/jellyfin/session'
 
 interface Props {
     open: boolean
@@ -94,7 +94,7 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
                 controller.signal.throwIfAborted()
                 setPassword(''); setAccessToken(''); setSession(result)
             }
-        } catch (err) { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not connect') }
+        } catch (err) { if (!controller.signal.aborted) setError(jellyfinSignInErrorMessage(err, { method, userId })) }
         finally { request.current = null; running.current = false; if (!controller.signal.aborted) setBusy(false) }
     }
 

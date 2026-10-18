@@ -401,7 +401,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 if (err instanceof JellyfinError && (err.status === 400 || err.status === 404)) {
                     throw new JellyfinError(
                         'auth',
-                        'Access token does not identify a user; pass an explicit userId (use listUsers to choose one)',
+                        'Enter the Remote user ID for this API key, then verify sign-in again.',
                         { status: err.status, cause: err }
                     )
                 }

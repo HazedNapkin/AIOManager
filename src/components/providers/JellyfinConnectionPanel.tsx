@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Loader2, Power, RefreshCw, Trash2, Zap } from 'lucide-react'
+import { ArrowLeft, Power, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAuthStore } from '@/store/authStore'
 import { decrypt } from '@/lib/crypto'
-import { JellyfinClient, validateJellyfinReconnect } from '@/lib/jellyfin/session'
+import { JellyfinClient, jellyfinSignInErrorMessage, validateJellyfinReconnect } from '@/lib/jellyfin/session'
 import { JellyfinError } from '@/lib/jellyfin/client'
 import { openJellyfinSecret } from '@/lib/jellyfin/connection-data'
 import { displayStatus, timeAgo, tokenExpiry } from '@/lib/connection-format'
 import { cn } from '@/lib/utils'
+import { toast } from '@/hooks/use-toast'
 import type { Connection } from '@/types/connection'
-import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
+import { PlatformLogo, ConnectionStatusPill, ConnectionTestButton, ConnectionTestResult, connectionLabel, type ConnectionTestOutcome } from './ConnectionPrimitives'
 
 function HeaderStat({ label, value, isError, title }: { label: string; value: string; isError?: boolean; title?: string }) {
     return (
@@ -37,6 +38,7 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
 }) {
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState('')
+    const [testResult, setTestResult] = useState<ConnectionTestOutcome | null>(null)
     const [confirmRemove, setConfirmRemove] = useState(false)
     const request = useRef<AbortController | null>(null)
     const encryptionKey = useAuthStore(state => state.encryptionKey)
@@ -51,6 +53,7 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
         request.current = controller
         setBusy(true)
         setError('')
+        setTestResult(null)
         try {
             if (!encryptionKey) throw new Error('Unlock your vault first')
             const secret = await openJellyfinSecret(connection, value => decrypt(value, encryptionKey))
@@ -61,10 +64,14 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
                 mediaServer: { ...result.identity, serverId: result.identity.serverId || connection.mediaServer?.serverId, authMethod: connection.mediaServer?.authMethod || 'token' },
                 status: 'active', lastError: undefined, lastErrorAt: undefined, consecutiveFailures: 0,
             })
+            setTestResult({ ok: true, message: 'Connection healthy' })
+            toast({ title: 'Connection healthy' })
         } catch (err) {
             if (!controller.signal.aborted) {
-                const message = err instanceof Error ? err.message : 'Connection check failed'
+                const message = jellyfinSignInErrorMessage(err, { method: 'token', userId: connection.mediaServer?.userId })
                 setError(message)
+                setTestResult({ ok: false, message })
+                toast({ title: 'Connection test failed', description: message, variant: 'destructive' })
                 await useConnectionStore.getState().updateConnection(accountId, connection.id, {
                     status: err instanceof JellyfinError && err.kind === 'auth' ? 'expired' : 'error',
                     lastError: message, lastErrorAt: Date.now(),
@@ -79,6 +86,7 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
     const mutate = async (action: () => Promise<void>) => {
         setBusy(true)
         setError('')
+        setTestResult(null)
         try { await action() }
         catch { setError('Could not save this change. Try again.') }
         finally { setBusy(false) }
@@ -87,6 +95,7 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
     const identity = connection.mediaServer
     const name = connectionLabel(connection)
     const display = displayStatus(connection.status, tokenExpiry(connection))
+    const connectionError = error || connection.lastError
     // The product name already leads the header; only surface the server's own name when it says something new.
     const serverName = identity?.serverName?.trim()
     const distinctServerName = serverName && serverName !== name && serverName !== identity?.productName ? serverName : ''
@@ -122,16 +131,11 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                             <p className="text-sm font-semibold">Connection health</p>
-                            <p className="text-xs text-muted-foreground">Signs in again with the saved token and verifies it still reaches this same server and remote user.</p>
+                            <p className="text-xs text-muted-foreground">Verify this server is reachable and your saved sign-in still works.</p>
                         </div>
-                        <Button variant="subtle" size="sm" className="h-8 shrink-0 gap-1.5 text-xs" disabled={busy || !connection.enabled || !encryptionKey || !connection.credentials?.jellyfin} onClick={() => void check()}>
-                            {busy && request.current ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                            {busy && request.current ? 'Checking…' : 'Check connection'}
-                        </Button>
+                        <ConnectionTestButton testing={busy && !!request.current} disabled={busy || !connection.enabled || !encryptionKey || !connection.credentials?.jellyfin} onClick={() => void check()} />
                     </div>
-                    {(error || connection.lastError) && (
-                        <div data-theme-tone="status" role="alert" data-theme-part="panel" className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error || connection.lastError}</div>
-                    )}
+                    <ConnectionTestResult result={testResult ?? (!busy && connectionError ? { ok: false, message: connectionError } : null)} />
                 </div>
 
                 <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">

@@ -1,5 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { ActivityFeed } from '@/components/activity/ActivityFeed'
+import { MediaDeleteScope } from '@/components/activity/MediaDeleteScope'
 import { ActivityDetailModal } from '@/components/activity/ActivityDetailModal'
 import { ForYouPage } from '@/components/for-you/ForYouPage'
 import { AccountDetailPage } from '@/components/for-you/AccountDetailPage'
@@ -1254,7 +1255,7 @@ export function ActivityPage() {
                                 <p>
                                     This will permanently remove {selectedItems.size} item(s) from your {platformsPhrase(selectedSources)} watch history. This cannot be undone.
                                 </p>
-                                {selectedSources.has('jellyfin') && <p>Watched state and resume progress will also be cleared on the connected media server.</p>}
+                                {selectedSources.has('jellyfin') && <MediaDeleteScope items={history.filter(item => selectedItems.has(item.id))} accountById={accountById} />}
                                 {selectedHasWholeShowSeries && (
                                     <p className="text-sm text-destructive">
                                         Deleting a series removes its entire watch history for the show.
@@ -1292,7 +1293,7 @@ export function ActivityPage() {
                         <p>
                             This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from your {platformsPhrase(pendingSources)} watch history.
                         </p>
-                        {pendingSources.has('jellyfin') && <p>Watched state and resume progress will also be cleared on the connected media server.</p>}
+                        {pendingSources.has('jellyfin') && <MediaDeleteScope items={history.filter(item => pendingDeleteIds?.includes(item.id))} accountById={accountById} />}
                         {pendingHasWholeShowSeries && (
                             <p className="text-sm text-destructive">
                                 Deleting a series removes its entire watch history for the show.

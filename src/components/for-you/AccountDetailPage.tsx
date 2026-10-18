@@ -366,7 +366,7 @@ export function AccountDetailPage({ accountId, onBack }: AccountDetailPageProps)
                         </Tooltip>
                     )}
                     {hasEnoughHistory && !hasPmdbKey && (
-                        <Tooltip content="Add a PMDB API key in Settings > Integrations to enable publishing">
+                        <Tooltip content="Add a PMDB API key in Settings > Metadata Integrations to enable publishing">
                             <Button
                                 variant="outline"
                                 size="sm"

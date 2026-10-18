@@ -6,7 +6,7 @@ import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/common/EmptyState'
-import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown, ChevronRight } from 'lucide-react'
+import { Trash2, ArrowLeft, Loader2, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown, ChevronRight } from 'lucide-react'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
@@ -26,7 +26,7 @@ import type { NuvioMemberStatus } from '@/lib/nuvio-tier'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { Connection, ConnectionStatus } from '@/types/connection'
-import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
+import { PlatformLogo, ConnectionStatusPill, ConnectionTestButton, ConnectionTestResult, connectionLabel } from './ConnectionPrimitives'
 import { StremioSocialAuth } from '@/components/accounts/StremioSocialAuth'
 import { displayStatus, tokenExpiry, timeAgo } from '@/lib/connection-format'
 import { getPlatformEntry } from '@/lib/platform-registry'
@@ -47,25 +47,6 @@ function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
             setTimeout(() => reject(new Error('Connection test timed out')), ms)
         )
     ])
-}
-
-function TestResultBanner({ result }: { result: { ok: boolean; message: string } | null }) {
-    if (!result) return null
-    return (
-        <div data-theme-tone="status"
-            role={result.ok ? 'status' : 'alert'}
-            data-theme-part="panel"
-            className={cn(
-                'flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
-                result.ok
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                    : 'border-destructive/30 bg-destructive/10 text-destructive'
-            )}
-        >
-            {result.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-            <span className="min-w-0 break-words">{result.message}</span>
-        </div>
-    )
 }
 
 interface ReauthMethod {
@@ -586,18 +567,9 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
                 description="Re-authenticate to refresh your session tokens."
                 layoutId="nuvio-reauth-method"
                 headerAction={
-                    <Button
-                        variant="subtle"
-                        size="sm"
-                        className="h-8 shrink-0 gap-1.5 text-xs"
-                        onClick={handleTest}
-                        disabled={testing}
-                    >
-                        {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                        {testing ? 'Testing...' : 'Test Connection'}
-                    </Button>
+                    <ConnectionTestButton testing={testing} onClick={handleTest} />
                 }
-                footer={<TestResultBanner result={testResult} />}
+                footer={<ConnectionTestResult result={testResult} />}
                 methods={[
                     {
                         id: 'password',
@@ -760,18 +732,9 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
             title="RealStream credentials"
             description="Re-authenticate to refresh your session tokens."
             headerAction={
-                <Button
-                    variant="subtle"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5 text-xs"
-                    onClick={handleTest}
-                    disabled={testing}
-                >
-                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {testing ? 'Testing...' : 'Test Connection'}
-                </Button>
+                <ConnectionTestButton testing={testing} onClick={handleTest} />
             }
-            footer={<TestResultBanner result={testResult} />}
+            footer={<ConnectionTestResult result={testResult} />}
             methods={[
                 {
                     id: 'password',
@@ -899,18 +862,9 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
             title="Hydra API key"
             description="Update the API key used to push to this outbound server."
             headerAction={
-                <Button
-                    variant="subtle"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5 text-xs"
-                    onClick={handleTest}
-                    disabled={testing}
-                >
-                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {testing ? 'Testing...' : 'Test Connection'}
-                </Button>
+                <ConnectionTestButton testing={testing} onClick={handleTest} />
             }
-            footer={<TestResultBanner result={testResult} />}
+            footer={<ConnectionTestResult result={testResult} />}
             methods={[
                 {
                     id: 'apikey',
@@ -1537,18 +1491,9 @@ export function ConnectionEditPanel({
                                                 <p className="text-sm font-semibold">Connection health</p>
                                                 <p className="text-xs text-muted-foreground">Verify the Stremio auth key is valid and reachable.</p>
                                             </div>
-                                            <Button
-                                                variant="subtle"
-                                                size="sm"
-                                                className="h-8 shrink-0 gap-1.5 text-xs"
-                                                onClick={handleTestConnection}
-                                                disabled={testing || !account}
-                                            >
-                                                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                                                {testing ? 'Testing...' : 'Test Connection'}
-                                            </Button>
+                                            <ConnectionTestButton testing={testing} onClick={handleTestConnection} disabled={!account} />
                                         </div>
-                                        <TestResultBanner result={testResult} />
+                                        <ConnectionTestResult result={testResult} />
                                     </div>
                                     <StremioCredentialsSection accountId={accountId} connection={connection} />
                                     <StremioDangerZoneSection accountId={accountId} connection={connection} />

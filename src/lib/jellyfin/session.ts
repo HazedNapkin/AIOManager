@@ -18,6 +18,27 @@ export interface JellyfinSession {
     identity: MediaServerIdentity
 }
 
+export function jellyfinSignInErrorMessage(error: unknown, login: Pick<JellyfinLogin, 'method' | 'userId'>): string {
+    if (!(error instanceof JellyfinError)) return error instanceof Error ? error.message : 'Could not verify the media-server sign-in'
+    if (error.kind === 'network' || error.kind === 'timeout') {
+        return 'Could not reach the media server. Check the full server address, HTTPS and browser access (CORS), then retry.'
+    }
+    if (error.kind === 'auth') {
+        if (login.method === 'token' && !login.userId?.trim() && (error.status === 400 || error.status === 404)) {
+            return 'Enter the Remote user ID for this API key, then verify sign-in again.'
+        }
+        if (error.status === 403) return 'The server denied access. Check the remote user permissions and sign-in credentials.'
+        return login.method === 'password'
+            ? 'Sign-in was rejected. Check the server username, password and any required user PIN.'
+            : 'Sign-in was rejected. Check the token or API key and the Remote user ID, then reconnect.'
+    }
+    if (error.kind === 'server') return `The media server could not complete sign-in${error.status ? ` (HTTP ${error.status})` : ''}. Try again later.`
+    if (error.kind === 'unsupported' || error.kind === 'invalid-response') {
+        return 'The server could not verify this sign-in. Check the full address and that it supports the Jellyfin API.'
+    }
+    return error.message
+}
+
 // The setup flow and media reads share one transport and one verified remote user.
 export class JellyfinClient {
     readonly baseUrl: string
