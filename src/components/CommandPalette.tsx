@@ -20,6 +20,14 @@ import {
     Key,
     Bookmark,
     ListChecks,
+    Compass,
+    Link2,
+    Palette,
+    Database,
+    Wrench,
+    Plug,
+    Radar,
+    Film,
 } from 'lucide-react'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useFailoverStore } from '@/store/failoverStore'
@@ -27,18 +35,96 @@ import { useUIStore } from '@/store/uiStore'
 import { useNotesStore } from '@/store/notesStore'
 import { useVaultStore } from '@/store/vaultStore'
 import { useAddonStore } from '@/store/addonStore'
+import { maskEmailLevel, maskNameLevel } from '@/lib/utils'
+import { isAIOStreamsAddon, parseAIOStreamsUrl } from '@/lib/aiostreams-utils'
+import { isAIOMetadataAddon, parseAIOMetadataUrl } from '@/lib/aiometadata-utils'
+import { filterCommandsByQuery, groupCommandsByCategory } from '@/lib/command-search'
+import type { Account } from '@/types/account'
+
+type CommandCategory =
+    | 'Navigation'
+    | 'Settings'
+    | 'Accounts'
+    | 'Addons'
+    | 'Notes'
+    | 'Vault'
+    | 'Saved Addons'
+    | 'Quick Actions'
+    | 'Bulk Operations'
+
+// Authoritative visual order of the result groups. The keyboard selection
+// index is derived from the flattened grouped order, never from the raw item
+// list, so the highlighted row always matches what the user sees.
+const CATEGORY_ORDER: CommandCategory[] = [
+    'Navigation',
+    'Settings',
+    'Accounts',
+    'Addons',
+    'Notes',
+    'Vault',
+    'Saved Addons',
+    'Quick Actions',
+    'Bulk Operations',
+]
 
 interface CommandItem {
     id: string
+    /** Masked display label. Raw searchable text lives in searchText. */
     label: string
     sublabel?: string
     icon: React.ReactNode
     action: () => void
-    category: 'Navigation' | 'Accounts' | 'Notes' | 'Vault' | 'Saved Addons' | 'Quick Actions' | 'Bulk Operations'
+    category: CommandCategory
     emoji?: string
     avatarUrl?: string
     searchText?: string
+    aliases?: string[]
 }
+
+// Settings tab destinations. The tab ids and hash routing mirror how
+// SettingsPage reads location.hash ('general' | 'appearance' | 'data' |
+// 'advanced') and the labels mirror SettingsNavigation's SETTING_TAB_LABELS.
+const SETTINGS_TAB_ITEMS: Array<{
+    id: string
+    hash: string
+    label: string
+    sublabel: string
+    icon: React.ReactNode
+    aliases: string[]
+}> = [
+    {
+        id: 'settings-general',
+        hash: 'general',
+        label: 'Settings - General',
+        sublabel: 'Sync identity, privacy mode, install, about',
+        icon: <Settings className="h-4 w-4" />,
+        aliases: ['general', 'privacy', 'identity', 'preferences'],
+    },
+    {
+        id: 'settings-appearance',
+        hash: 'appearance',
+        label: 'Settings - Appearance',
+        sublabel: 'Light, dark, and OLED themes with accent colors',
+        icon: <Palette className="h-4 w-4" />,
+        aliases: ['appearance', 'theme', 'themes', 'dark mode', 'light mode', 'oled', 'accent'],
+    },
+    {
+        id: 'settings-data',
+        hash: 'data',
+        label: 'Settings - Data & Sync',
+        sublabel: 'Backup and restore, metadata integrations, API keys, active sync connections',
+        icon: <Database className="h-4 w-4" />,
+        aliases: ['data', 'backup', 'restore', 'export', 'import', 'api keys', 'metadata integrations'],
+    },
+    {
+        id: 'settings-advanced',
+        hash: 'advanced',
+        label: 'Settings - Advanced',
+        sublabel: 'Monitoring and alerts, repair and recovery, sync diagnostics, danger zone',
+        icon: <Wrench className="h-4 w-4" />,
+        aliases: ['advanced', 'webhook', 'webhooks', 'repair', 'diagnostics', 'alerts', 'danger zone', 'remembered devices', 'sessions'],
+    },
+]
 
 export function CommandPalette() {
     const [open, setOpen] = useState(false)
@@ -51,9 +137,15 @@ export function CommandPalette() {
     const accounts = useAccountStore((s) => s.accounts)
     const syncAllAccounts = useAccountStore((s) => s.syncAllAccounts)
     const checkRules = useFailoverStore((s) => s.checkRules)
+    const autopilotRules = useFailoverStore((s) => s.rules)
     const notes = useNotesStore((s) => s.notes)
     const vaultKeys = useVaultStore((s) => s.keys)
     const savedAddonLibrary = useAddonStore((s) => s.library)
+    const isPrivacyModeEnabled = useUIStore((s) => s.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore((s) => s.privacyLevelNames)
+    const privacyLevelEmail = useUIStore((s) => s.privacyLevelEmail)
+    const namePrivacy = isPrivacyModeEnabled ? privacyLevelNames : 0
+    const emailPrivacy = isPrivacyModeEnabled ? privacyLevelEmail : 0
 
     useEffect(() => {
         const keyHandler = (e: KeyboardEvent) => {
@@ -79,6 +171,22 @@ export function CommandPalette() {
         [navigate]
     )
 
+    // Display helpers. Labels render masked under privacy mode while the raw
+    // values stay searchable through searchText. Credential fields (connection
+    // credentials, vault key values) are never searched or displayed.
+    const accountLabel = useCallback(
+        (acc: Account) => {
+            const name = acc.name || acc.email || ''
+            return (name.includes('@') ? maskEmailLevel(name, emailPrivacy) : maskNameLevel(name, namePrivacy)) || 'Unnamed Account'
+        },
+        [namePrivacy, emailPrivacy]
+    )
+
+    const accountSearchText = useCallback((acc: Account) => {
+        const platforms = (acc.connections ?? []).flatMap((c) => [c.platform, c.displayName ?? ''])
+        return [acc.name, acc.email ?? '', ...platforms].filter(Boolean).join(' ')
+    }, [])
+
     const allItems = useMemo<CommandItem[]>(() => {
         const items: CommandItem[] = []
 
@@ -90,6 +198,16 @@ export function CommandPalette() {
                 icon: <LayoutDashboard className="h-4 w-4" />,
                 action: () => go('/'),
                 category: 'Navigation',
+                aliases: ['home', 'dashboard', 'accounts'],
+            },
+            {
+                id: 'nav-discover',
+                label: 'Discover Addons',
+                sublabel: 'Find and save new addons',
+                icon: <Compass className="h-4 w-4" />,
+                action: () => go('/saved-addons#discover'),
+                category: 'Navigation',
+                aliases: ['discover', 'discovery', 'find addons', 'browse addons', 'new addons', 'catalog'],
             },
             {
                 id: 'nav-library',
@@ -98,6 +216,16 @@ export function CommandPalette() {
                 icon: <Package className="h-4 w-4" />,
                 action: () => go('/saved-addons'),
                 category: 'Navigation',
+                aliases: ['library', 'saved addons', 'addon library'],
+            },
+            {
+                id: 'nav-addon-sync',
+                label: 'Saved Addons Sync',
+                sublabel: 'Review saved addons mirrored into account addons',
+                icon: <Link2 className="h-4 w-4" />,
+                action: () => go('/saved-addons#sync'),
+                category: 'Navigation',
+                aliases: ['sync', 'mirroring', 'mirror', 'active sync', 'deployment', 'addon sync'],
             },
             {
                 id: 'nav-activity',
@@ -106,6 +234,7 @@ export function CommandPalette() {
                 icon: <Activity className="h-4 w-4" />,
                 action: () => go('/activity'),
                 category: 'Navigation',
+                aliases: ['history', 'watch history', 'activity'],
             },
             {
                 id: 'nav-metrics',
@@ -114,38 +243,7 @@ export function CommandPalette() {
                 icon: <BarChart3 className="h-4 w-4" />,
                 action: () => go('/metrics'),
                 category: 'Navigation',
-            },
-            {
-                id: 'nav-settings',
-                label: 'Settings',
-                sublabel: 'Themes, sync, privacy, and preferences',
-                icon: <Settings className="h-4 w-4" />,
-                action: () => go('/settings'),
-                category: 'Navigation',
-            },
-            {
-                id: 'nav-vault',
-                label: 'Key Vault',
-                sublabel: 'Encrypted API key management',
-                icon: <KeyRound className="h-4 w-4" />,
-                action: () => go('/vault'),
-                category: 'Navigation',
-            },
-            {
-                id: 'nav-faq',
-                label: 'Docs',
-                sublabel: 'Help, guides, and troubleshooting',
-                icon: <HelpCircle className="h-4 w-4" />,
-                action: () => go('/kronorium'),
-                category: 'Navigation',
-            },
-            {
-                id: 'nav-notes',
-                label: 'Notes',
-                sublabel: 'Markdown notes and documentation',
-                icon: <StickyNote className="h-4 w-4" />,
-                action: () => go('/notes'),
-                category: 'Navigation',
+                aliases: ['metrics', 'stats', 'statistics', 'charts'],
             },
             {
                 id: 'nav-replay',
@@ -154,20 +252,176 @@ export function CommandPalette() {
                 icon: <Tv className="h-4 w-4" />,
                 action: () => go('/replay'),
                 category: 'Navigation',
+                aliases: ['replay', 'year in review', 'wrapped'],
+            },
+            {
+                id: 'nav-notes',
+                label: 'Notes',
+                sublabel: 'Markdown notes and documentation',
+                icon: <StickyNote className="h-4 w-4" />,
+                action: () => go('/notes'),
+                category: 'Navigation',
+                aliases: ['notes', 'markdown', 'documentation'],
+            },
+            {
+                id: 'nav-vault',
+                label: 'Key Vault',
+                sublabel: 'Encrypted API key management',
+                icon: <KeyRound className="h-4 w-4" />,
+                action: () => go('/vault'),
+                category: 'Navigation',
+                aliases: ['vault', 'api keys', 'keys', 'credentials'],
+            },
+            {
+                id: 'nav-theme-editor',
+                label: 'Theme Editor',
+                sublabel: 'Edit the custom theme color palette',
+                icon: <Palette className="h-4 w-4" />,
+                action: () => go('/settings/theme/editor'),
+                category: 'Navigation',
+                aliases: ['theme editor', 'custom theme', 'colors', 'design'],
+            },
+            {
+                id: 'nav-settings',
+                label: 'Settings',
+                sublabel: 'Themes, sync, privacy, and preferences',
+                icon: <Settings className="h-4 w-4" />,
+                action: () => go('/settings'),
+                category: 'Navigation',
+                aliases: ['settings', 'preferences', 'options'],
+            },
+            {
+                id: 'nav-faq',
+                label: 'Docs',
+                sublabel: 'Help, guides, and troubleshooting',
+                icon: <HelpCircle className="h-4 w-4" />,
+                action: () => go('/kronorium'),
+                category: 'Navigation',
+                aliases: ['docs', 'documentation', 'help', 'faq', 'guides', 'kronorium'],
             }
         )
+
+        for (const tab of SETTINGS_TAB_ITEMS) {
+            items.push({
+                id: tab.id,
+                label: tab.label,
+                sublabel: tab.sublabel,
+                icon: tab.icon,
+                action: () => go(`/settings#${tab.hash}`),
+                category: 'Settings',
+                aliases: tab.aliases,
+            })
+        }
 
         for (const acc of accounts) {
             items.push({
                 id: `acc-${acc.id}`,
-                label: acc.name || acc.email || 'Unnamed Account',
+                label: accountLabel(acc),
                 emoji: acc.emoji,
                 avatarUrl: acc.avatar,
-                sublabel: acc.email && acc.name ? acc.email : undefined,
+                sublabel: acc.email && acc.name ? maskEmailLevel(acc.email, emailPrivacy) : undefined,
                 icon: <User className="h-4 w-4" />,
                 action: () => go(`/account/${acc.id}`),
                 category: 'Accounts',
+                searchText: accountSearchText(acc),
             })
+
+            // Per-account Connections tab destination, searchable by account
+            // name and linked platform.
+            const connections = acc.connections ?? []
+            if (connections.length > 0) {
+                // Display platform names only; connection display names can
+                // carry personal text, so they stay searchable but unrendered.
+                const platformLabels = [
+                    ...new Set(connections.map((c) => c.platform)),
+                ]
+                items.push({
+                    id: `connections-${acc.id}`,
+                    label: `Connections - ${accountLabel(acc)}`,
+                    sublabel: platformLabels.join(', '),
+                    icon: <Plug className="h-4 w-4" />,
+                    action: () => go(`/account/${acc.id}?tab=connections`),
+                    category: 'Accounts',
+                    searchText: accountSearchText(acc),
+                    aliases: ['connections', 'platforms', 'linked platforms', 'integrations'],
+                })
+            }
+
+            // Per-account Autopilot tab destination, searchable by account
+            // name, platform, and rule names.
+            const rules = autopilotRules.filter((r) => r.accountId === acc.id)
+            if (rules.length > 0) {
+                const ruleNames = rules.map((r) => r.name).filter((n): n is string => Boolean(n))
+                const countLabel = `${rules.length} rule${rules.length !== 1 ? 's' : ''}`
+                items.push({
+                    id: `autopilot-${acc.id}`,
+                    label: `Autopilot - ${accountLabel(acc)}`,
+                    sublabel:
+                        ruleNames.length > 0
+                            ? `${countLabel}: ${ruleNames.slice(0, 2).join(', ')}`
+                            : countLabel,
+                    icon: <Radar className="h-4 w-4" />,
+                    action: () => go(`/account/${acc.id}?tab=failover`),
+                    category: 'Accounts',
+                    searchText: [accountSearchText(acc), ...ruleNames].filter(Boolean).join(' '),
+                    aliases: ['autopilot', 'failover', 'rules', 'monitoring', 'chains'],
+                })
+            }
+        }
+
+        // Per-account AIOStreams and AIOMetadata instance destinations. The
+        // routes and uuid parsing mirror AIOStreamsPage and AIOMetadataPage.
+        for (const acc of accounts) {
+            for (const addon of acc.addons ?? []) {
+                const addonName =
+                    addon.metadata?.customName || addon.manifest?.name || addon.transportName || ''
+                if (isAIOStreamsAddon(addon)) {
+                    const parsed = parseAIOStreamsUrl(addon.transportUrl)
+                    if (parsed) {
+                        items.push({
+                            id: `aiostreams-${acc.id}-${parsed.uuid}`,
+                            label: addonName || 'AIOStreams',
+                            sublabel: `AIOStreams - ${accountLabel(acc)}`,
+                            icon: <Tv className="h-4 w-4" />,
+                            action: () => go(`/account/${acc.id}/aiostreams/${parsed.uuid}`),
+                            category: 'Addons',
+                            searchText: [
+                                accountSearchText(acc),
+                                parsed.baseUrl,
+                                parsed.uuid,
+                                addonName,
+                                'aiostreams',
+                            ]
+                                .filter(Boolean)
+                                .join(' '),
+                            aliases: ['aiostreams', 'streams', 'debrid', 'config'],
+                        })
+                    }
+                }
+                if (isAIOMetadataAddon(addon)) {
+                    const parsed = parseAIOMetadataUrl(addon.transportUrl)
+                    if (parsed) {
+                        items.push({
+                            id: `aiometadata-${acc.id}-${parsed.uuid}`,
+                            label: addonName || 'AIOMetadata',
+                            sublabel: `AIOMetadata - ${accountLabel(acc)}`,
+                            icon: <Film className="h-4 w-4" />,
+                            action: () => go(`/account/${acc.id}/aiometadata/${parsed.uuid}`),
+                            category: 'Addons',
+                            searchText: [
+                                accountSearchText(acc),
+                                parsed.baseUrl,
+                                parsed.uuid,
+                                addonName,
+                                'aiometadata',
+                            ]
+                                .filter(Boolean)
+                                .join(' '),
+                            aliases: ['aiometadata', 'metadata', 'meta', 'catalogs', 'config'],
+                        })
+                    }
+                }
+            }
         }
 
         for (const n of notes) {
@@ -177,8 +431,9 @@ export function CommandPalette() {
                 label: n.title,
                 sublabel,
                 icon: <StickyNote className="h-4 w-4" />,
-                action: () => go('/notes'),
+                action: () => go(`/notes?note=${encodeURIComponent(n.id)}`),
                 category: 'Notes',
+                searchText: [n.title, ...n.tags, ...n.wikilinks].filter(Boolean).join(' '),
             })
         }
 
@@ -190,7 +445,8 @@ export function CommandPalette() {
                 icon: <Key className="h-4 w-4" />,
                 action: () => go('/vault'),
                 category: 'Vault',
-                searchText: [k.serverUrl, k.addonUuid].filter(Boolean).join(' '),
+                searchText: [k.serverUrl, k.addonUuid, k.customProviderName].filter(Boolean).join(' '),
+                aliases: ['api key', 'vault', 'credential'],
             })
         }
 
@@ -198,11 +454,15 @@ export function CommandPalette() {
         for (const a of savedAddonList) {
             const tagStr = (a.tags ?? []).join(' ')
             const manifestName = a.manifest?.name ?? ''
-            const installedAccounts = accounts
-                .filter(acc => acc.addons?.some(addon => addon.transportUrl === a.installUrl))
-                .map(acc => acc.name || acc.email || 'Unnamed')
-            const accountStr = installedAccounts.length > 0 ? installedAccounts.join(', ') : 'Not installed'
-            const firstAccountId = accounts.find(acc => acc.addons?.some(addon => addon.transportUrl === a.installUrl))?.id
+            const installedAccounts = accounts.filter(acc => acc.addons?.some(addon => addon.transportUrl === a.installUrl))
+            const installedLabels = installedAccounts.map(acc => accountLabel(acc))
+            const accountStr = installedLabels.length > 0 ? installedLabels.join(', ') : 'Not installed'
+            const firstAccountId = installedAccounts[0]?.id
+            // Raw account names and emails stay searchable while the
+            // displayed deployment list is masked under privacy mode.
+            const rawAccountStr = installedAccounts
+                .map(acc => [acc.name, acc.email ?? ''].filter(Boolean).join(' '))
+                .join(' ')
             items.push({
                 id: `addon-${a.id}`,
                 label: a.name || 'Unnamed Addon',
@@ -210,7 +470,7 @@ export function CommandPalette() {
                 icon: <Bookmark className="h-4 w-4" />,
                 action: () => go(firstAccountId ? `/account/${firstAccountId}` : '/saved-addons'),
                 category: 'Saved Addons',
-                searchText: `${manifestName} ${tagStr} ${accountStr}`,
+                searchText: `${a.name ?? ''} ${manifestName} ${tagStr} ${rawAccountStr}`,
             })
         }
 
@@ -226,6 +486,7 @@ export function CommandPalette() {
                     setOpen(false)
                 },
                 category: 'Quick Actions',
+                aliases: ['refresh', 'sync all', 'update all'],
             },
             {
                 id: 'action-changelog',
@@ -237,6 +498,7 @@ export function CommandPalette() {
                     setOpen(false)
                 },
                 category: 'Quick Actions',
+                aliases: ['changelog', 'whats new', 'release notes'],
             }
         )
 
@@ -251,36 +513,37 @@ export function CommandPalette() {
                     setOpen(false)
                 },
                 category: 'Bulk Operations',
+                aliases: ['bulk', 'batch'],
             })
         }
 
         return items
-    }, [accounts, notes, vaultKeys, savedAddonLibrary, go, syncAllAccounts, checkRules, navigate, bulkActions])
+    }, [accounts, notes, vaultKeys, savedAddonLibrary, autopilotRules, go, syncAllAccounts, checkRules, navigate, bulkActions, accountLabel, accountSearchText, emailPrivacy])
 
-    const filtered = useMemo(() => {
-        if (!query.trim()) return allItems
-        const q = query.toLowerCase()
-        return allItems.filter(
-            (item) =>
-                item.label.toLowerCase().includes(q) ||
-                item.sublabel?.toLowerCase().includes(q) ||
-                item.category.toLowerCase().includes(q) ||
-                item.searchText?.toLowerCase().includes(q)
-        )
-    }, [allItems, query])
+    const filtered = useMemo(() => filterCommandsByQuery(allItems, query), [allItems, query])
 
-    const grouped = useMemo(() => {
-        const groups: Record<string, CommandItem[]> = {}
-        for (const item of filtered) {
-            if (!groups[item.category]) groups[item.category] = []
-            groups[item.category].push(item)
-        }
-        return groups
-    }, [filtered])
+    const groups = useMemo(() => groupCommandsByCategory(filtered, CATEGORY_ORDER), [filtered])
+
+    // Flattened grouped order. This is the order the user sees and the order
+    // the keyboard navigates, so selection can never drift from the visual
+    // grouping.
+    const ordered = useMemo(() => groups.flatMap((g) => g.items), [groups])
+
+    const indexById = useMemo(() => {
+        const map = new Map<string, number>()
+        ordered.forEach((item, i) => map.set(item.id, i))
+        return map
+    }, [ordered])
 
     useEffect(() => {
         setSelectedIndex(0)
     }, [query])
+
+    // Keep the selection inside the result list as it shrinks or empties.
+    // Never allow a negative index with zero results.
+    useEffect(() => {
+        setSelectedIndex((prev) => (prev >= ordered.length ? 0 : prev))
+    }, [ordered.length])
 
     useEffect(() => {
         if (!open || bulkActions.length > 0) return
@@ -302,13 +565,18 @@ export function CommandPalette() {
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'ArrowDown') {
             e.preventDefault()
-            setSelectedIndex((prev) => Math.min(prev + 1, filtered.length - 1))
+            if (ordered.length === 0) return
+            setSelectedIndex((prev) => Math.min(prev + 1, ordered.length - 1))
         } else if (e.key === 'ArrowUp') {
             e.preventDefault()
+            if (ordered.length === 0) return
             setSelectedIndex((prev) => Math.max(prev - 1, 0))
-        } else if (e.key === 'Enter' && filtered[selectedIndex]) {
-            e.preventDefault()
-            filtered[selectedIndex].action()
+        } else if (e.key === 'Enter') {
+            const item = ordered[selectedIndex]
+            if (item) {
+                e.preventDefault()
+                item.action()
+            }
         } else if (e.key === 'Escape') {
             setOpen(false)
         }
@@ -335,7 +603,7 @@ export function CommandPalette() {
                         ref={inputRef}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search pages, accounts, actions..."
+                        placeholder="Search pages, accounts, addons, actions..."
                         className="h-6 w-full min-w-0 flex-1 border-0 bg-transparent p-0 text-base font-medium text-foreground outline-none placeholder:text-muted-foreground/55 focus:ring-0 sm:text-sm"
                     />
                     <button
@@ -355,13 +623,13 @@ export function CommandPalette() {
                             </div>
                         )}
 
-                        {Object.entries(grouped).map(([category, items]) => (
+                        {groups.map(({ category, items }) => (
                             <div key={category} className="space-y-1">
                                 <div className="px-6 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
                                     {category}
                                 </div>
                                 {items.map((item) => {
-                                    const flatIndex = filtered.indexOf(item)
+                                    const flatIndex = indexById.get(item.id) ?? -1
                                     const isSelected = flatIndex === selectedIndex
 
                                     return (

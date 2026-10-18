@@ -23,6 +23,7 @@ export function PrivacyLevelSlider({ value, onChange, className }: PrivacyLevelS
                 <button
                     key={level.value}
                     type="button"
+                    aria-pressed={value === level.value}
                     onClick={() => onChange(level.value)}
                     className={cn(
                         'relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors z-10',

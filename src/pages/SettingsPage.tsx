@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { maskNameLevel, maskUrlLevel, maskProfileLevel, maskEmailLevel } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
@@ -37,15 +37,11 @@ import {
     AlertTriangle,
     CheckCircle2,
     FileJson,
-    User,
-    Link,
-    Users,
     Activity,
-    Mail,
     Info,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
+import { PrivacyControls } from '@/components/settings/PrivacyControls'
 
 import { SyncDiagnostics } from '@/components/settings/SyncDiagnostics'
 
@@ -59,6 +55,8 @@ import { RepairTools } from '@/components/settings/RepairTools'
 import { IntegrationsSection } from '@/components/settings/IntegrationsSection'
 import { ApiKeysSection } from '@/components/settings/ApiKeysSection'
 import { RememberedDevicesSection } from '@/components/settings/RememberedDevicesSection'
+import { SettingsSearch, resolveSectionElement, type SettingSearchEntry } from '@/components/settings/SettingsNavigation'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
 
 type ImportPreview = {
     fileName: string
@@ -167,6 +165,56 @@ export function SettingsPage() {
         if (val === currentTab || !['general', 'appearance', 'data', 'advanced'].includes(val)) return
         navigate({ pathname: location.pathname, search: location.search, hash: `#${val}` }, { preventScrollReset: true })
     }
+
+    // "Find a setting" search destination. The search itself lives in
+    // SettingsNavigation; this only routes to the EXISTING tab + section so
+    // the URL-driven tab history keeps working exactly as before.
+    const [pendingDestination, setPendingDestination] = useState<{
+        anchor: string
+        heading?: string
+        tab: string
+    } | null>(null)
+    const [highlightedAnchor, setHighlightedAnchor] = useState<string | null>(null)
+
+    const handleSearchNavigate = (entry: SettingSearchEntry) => {
+        setPendingDestination({ anchor: entry.anchor ?? entry.id, heading: entry.heading, tab: entry.tab })
+        if (entry.tab !== activeTab) handleTabChange(entry.tab)
+    }
+
+    useEffect(() => {
+        if (!pendingDestination || pendingDestination.tab !== activeTab) return
+        let cancelled = false
+        const startedAt = performance.now()
+        const tryFocusDestination = () => {
+            if (cancelled) return
+            const target = resolveSectionElement(pendingDestination.anchor, pendingDestination.heading)
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                target.setAttribute('tabindex', '-1')
+                target.focus({ preventScroll: true })
+                setHighlightedAnchor(pendingDestination.anchor)
+                setPendingDestination(null)
+            } else if (performance.now() - startedAt < 1500) {
+                requestAnimationFrame(tryFocusDestination)
+            } else {
+                setPendingDestination(null)
+            }
+        }
+        requestAnimationFrame(tryFocusDestination)
+        return () => { cancelled = true }
+    }, [activeTab, pendingDestination])
+
+    useEffect(() => {
+        if (!highlightedAnchor) return
+        const timeout = setTimeout(() => setHighlightedAnchor(null), 2200)
+        return () => clearTimeout(timeout)
+    }, [highlightedAnchor])
+
+    const sectionAnchorClass = (anchor: string) =>
+        cn(
+            'scroll-mt-24 rounded-3xl transition-shadow duration-700',
+            highlightedAnchor === anchor && 'ring-2 ring-primary/40 ring-offset-4 ring-offset-background'
+        )
 
     const [confirmDialog, setConfirmDialog] = useState<{
         open: boolean
@@ -439,32 +487,40 @@ export function SettingsPage() {
     return (
         <div className="space-y-4 sm:space-y-8">
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-fit">
-                    <TabsTrigger value="general" className="h-9 px-3 text-xs sm:px-4">
-                        <Shield className="h-3.5 w-3.5" />
-                        General
-                    </TabsTrigger>
-                    <TabsTrigger value="appearance" className="h-9 px-3 text-xs sm:px-4">
-                        <Palette className="h-3.5 w-3.5" />
-                        Appearance
-                    </TabsTrigger>
-                    <TabsTrigger value="data" className="h-9 px-3 text-xs sm:px-4">
-                        <Settings2 className="h-3.5 w-3.5" />
-                        Data & Sync
-                    </TabsTrigger>
-                    <TabsTrigger value="advanced" className="h-9 px-3 text-xs sm:px-4">
-                        <Wrench className="h-3.5 w-3.5" />
-                        Advanced
-                    </TabsTrigger>
-                </TabsList>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-fit">
+                        <TabsTrigger value="general" className="h-9 px-3 text-xs sm:px-4">
+                            <Shield className="h-3.5 w-3.5" />
+                            General
+                        </TabsTrigger>
+                        <TabsTrigger value="appearance" className="h-9 px-3 text-xs sm:px-4">
+                            <Palette className="h-3.5 w-3.5" />
+                            Appearance
+                        </TabsTrigger>
+                        <TabsTrigger value="data" className="h-9 px-3 text-xs sm:px-4">
+                            <Settings2 className="h-3.5 w-3.5" />
+                            Data & Sync
+                        </TabsTrigger>
+                        <TabsTrigger value="advanced" className="h-9 px-3 text-xs sm:px-4">
+                            <Wrench className="h-3.5 w-3.5" />
+                            Advanced
+                        </TabsTrigger>
+                    </TabsList>
+                    <ToolbarShell className="w-full p-3 lg:w-96" contentClassName="w-full">
+                        <SettingsSearch className="w-full" onNavigate={handleSearchNavigate} />
+                    </ToolbarShell>
+                </div>
 
                 <div className="mt-4 sm:mt-8">
                     {/* General Tab */}
                     <TabsContent value="general" className="mt-0">
                         <div className="grid gap-4 sm:gap-6">
-                            <AccountSection />
+                            <div data-settings-anchor="sync-identity" className={sectionAnchorClass('sync-identity')}>
+                                <AccountSection />
+                            </div>
 
-                            <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
+                            <div data-settings-anchor="about" className={sectionAnchorClass('about')}>
+                                <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
                                 <div className="flex items-center gap-3">
                                     <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                         <SquircleOverlay />
@@ -494,10 +550,14 @@ export function SettingsPage() {
                                     </button>
                                 </div>
                             </div>
+                            </div>
 
-                            <InstallAppCard />
+                            <div data-settings-anchor="install-app" className={sectionAnchorClass('install-app')}>
+                                <InstallAppCard />
+                            </div>
 
-                            <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
+                            <div data-settings-anchor="privacy-mode" className={sectionAnchorClass('privacy-mode')}>
+                                <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex items-center gap-3">
                                         <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -525,75 +585,33 @@ export function SettingsPage() {
                                             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                                             className="overflow-hidden"
                                         >
-                                            <div className="flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4 mt-2">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-2">
-                                                        <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                                                        <p className="text-xs font-medium text-muted-foreground">Granular Privacy Controls</p>
-                                                    </div>
-                                                    <p className="text-[11px] text-muted-foreground/60">Live preview below each setting</p>
-                                                </div>
-                                                <div className="flex flex-col gap-4">
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><User className="h-3.5 w-3.5 text-muted-foreground" />Account Names</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelNames === 0 ? 'Visible' : privacyLevelNames === 1 ? 'Light' : privacyLevelNames === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelNames} onChange={(v) => setPrivacyOption('privacyLevelNames', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            Sonic's Account <span className="text-muted-foreground/50 mx-1">→</span> {maskNameLevel("Sonic's Account", privacyLevelNames)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="h-px bg-border/20" />
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Link className="h-3.5 w-3.5 text-muted-foreground" />Addon URLs</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelUrls === 0 ? 'Visible' : privacyLevelUrls === 1 ? 'Light' : privacyLevelUrls === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelUrls} onChange={(v) => setPrivacyOption('privacyLevelUrls', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            {privacyLevelUrls === 0 ? 'metadata.aiostreams.io/stremio/abc' : maskUrlLevel('https://metadata.aiostreams.io/stremio/abc/manifest.json', privacyLevelUrls)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="h-px bg-border/20" />
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5 text-muted-foreground" />Profile Names</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelProfiles === 0 ? 'Visible' : privacyLevelProfiles === 1 ? 'Light' : privacyLevelProfiles === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            Main Setup <span className="text-muted-foreground/50 mx-1">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Mail className="h-3.5 w-3.5 text-muted-foreground" />Email</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelEmail === 0 ? 'Visible' : privacyLevelEmail === 1 ? 'Light' : privacyLevelEmail === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelEmail} onChange={(v) => setPrivacyOption('privacyLevelEmail', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            sonic@example.com <span className="text-muted-foreground/50 mx-1">→</span> {maskEmailLevel('sonic@example.com', privacyLevelEmail)}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <PrivacyControls
+                                                namesLevel={privacyLevelNames}
+                                                urlsLevel={privacyLevelUrls}
+                                                profilesLevel={privacyLevelProfiles}
+                                                emailLevel={privacyLevelEmail}
+                                                onChange={setPrivacyOption}
+                                            />
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
+                            </div>
                             </div>
                         </div>
                     </TabsContent>
 
                     {/* Appearance Tab */}
                     <TabsContent value="appearance" className="mt-0">
-                        <ThemeSection theme={theme} setTheme={setTheme} />
+                        <div data-settings-anchor="themes" className={sectionAnchorClass('themes')}>
+                            <ThemeSection theme={theme} setTheme={setTheme} />
+                        </div>
                     </TabsContent>
 
                     {/* Data & Sync Tab */}
                     <TabsContent value="data" className="mt-0 space-y-4 sm:space-y-6">
                         {/* Backup & Restore */}
-                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
+                        <div data-settings-anchor="backup-restore" className={sectionAnchorClass('backup-restore')}>
+                            <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
                             <div className="flex flex-1 items-start gap-4">
                                 <div className="relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
@@ -616,6 +634,7 @@ export function SettingsPage() {
                                     {importing ? 'Importing...' : 'Import'}
                                 </Button>
                             </div>
+                            </div>
                         </div>
 
                         <input
@@ -627,16 +646,23 @@ export function SettingsPage() {
                         />
 
                         {/* Metadata Integrations */}
-                        <IntegrationsSection />
+                        <div data-settings-anchor="metadata-integrations" className={sectionAnchorClass('metadata-integrations')}>
+                            <IntegrationsSection />
+                        </div>
 
                         {/* Account API Keys */}
-                        <ApiKeysSection />
+                        <div data-settings-anchor="api-keys" className={sectionAnchorClass('api-keys')}>
+                            <ApiKeysSection />
+                        </div>
 
                         {/* Active Sync Summary */}
-                        <SyncSummarySection />
+                        <div data-settings-anchor="sync-connections" className={sectionAnchorClass('sync-connections')}>
+                            <SyncSummarySection />
+                        </div>
 
                         {/* Non-destructive Clear History Cache */}
-                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
+                        <div data-settings-anchor="history-cache" className={sectionAnchorClass('history-cache')}>
+                            <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
                             <div className="flex flex-1 items-start gap-3 sm:gap-4">
                                 <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
@@ -655,9 +681,11 @@ export function SettingsPage() {
                                     Clear Cache
                                 </Button>
                             </div>
+                            </div>
                         </div>
 
-                        <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                        <div data-settings-anchor="live-activity" className={sectionAnchorClass('live-activity')}>
+                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -684,14 +712,25 @@ export function SettingsPage() {
                                         }
                                     </p>
                                 )}
+                            </div>
                         </div>
                     </TabsContent>
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
-                        <NotificationsSection />
-                        <RepairTools />
-                        <RememberedDevicesSection />
-                        <SyncDiagnostics />
-                        <DangerZone />
+                        <div data-settings-anchor="monitoring-alerts" className={sectionAnchorClass('monitoring-alerts')}>
+                            <NotificationsSection />
+                        </div>
+                        <div data-settings-anchor="repair-recovery" className={sectionAnchorClass('repair-recovery')}>
+                            <RepairTools />
+                        </div>
+                        <div data-settings-anchor="remembered-devices" className={sectionAnchorClass('remembered-devices')}>
+                            <RememberedDevicesSection />
+                        </div>
+                        <div data-settings-anchor="sync-diagnostics" className={sectionAnchorClass('sync-diagnostics')}>
+                            <SyncDiagnostics />
+                        </div>
+                        <div data-settings-anchor="danger-zone" className={sectionAnchorClass('danger-zone')}>
+                            <DangerZone />
+                        </div>
                     </TabsContent>
                 </div>
             </Tabs>

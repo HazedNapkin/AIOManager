@@ -98,7 +98,7 @@ const ApiKeyRow = memo(function ApiKeyRow({ account, isSplitBrain }: ApiKeyRowPr
                     {isSplitBrain && (
                         <p className="flex items-start gap-1 text-[10px] font-medium text-destructive">
                             <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                            API key active but no server-side Stremio credential — external Hydra writes only reach the server store until an AIOManager client syncs.
+                            API key active but no server-side Stremio credential. External Hydra writes only reach the server store until an AIOManager client syncs.
                         </p>
                     )}
 
