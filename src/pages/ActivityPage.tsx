@@ -14,6 +14,8 @@ import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnect
 import { useDiscoveryPrefs, useDiscoveryStore, CONTINUE_WATCHING_CONTEXT } from '@/store/discoveryStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
+import { isReadOnlyMediaActivity } from '@/lib/jellyfin/activity'
+import { deleteJellyfinWatchItems } from '@/lib/jellyfin/delete-history'
 import { stremioClient } from '@/api/stremio-client'
 import { decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
@@ -68,7 +70,7 @@ function platformsPhrase(sources: Set<string>): string {
 }
 
 function includesWholeShowSeriesDelete(items: ActivityItem[]): boolean {
-    return items.some(item => item.source !== 'nuvio' && item.source !== 'realstream'
+    return items.some(item => !isReadOnlyMediaActivity(item) && item.source !== 'jellyfin' && item.source !== 'nuvio' && item.source !== 'realstream'
         && (item.type === 'series' || item.type === 'anime')
         && (item.season == null || item.episode == null))
 }
@@ -186,7 +188,7 @@ export function ActivityPage() {
     const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
     const { dismissedItems: dismissedContinueWatching } = useDiscoveryPrefs(CONTINUE_WATCHING_CONTEXT)
 
-    const { history: watchHistory, inProgress } = useWatchHistory()
+    const { history: watchHistory, inProgress, refreshMedia, mediaIssues } = useWatchHistory()
 
     const [activeView, setActiveView] = useState<'feed' | 'foryou'>('feed')
     const [forYouAccountId, setForYouAccountId] = useState<string | null>(null)
@@ -285,10 +287,11 @@ export function ActivityPage() {
     // Map useLibraryCache functions to original names for UI compatibility
     const fetchActivity = useCallback(async (silent = false) => {
         if (!silent) {
+            refreshMedia()
             invalidate()
             await ensureLoaded(accounts)
         }
-    }, [accounts, ensureLoaded, invalidate])
+    }, [accounts, ensureLoaded, invalidate, refreshMedia])
 
     const [searchInput, setSearchInput] = useState('')
     const [searchTerm, setSearchTerm] = useState('')
@@ -503,7 +506,8 @@ export function ActivityPage() {
 
 
     const handleToggleSelect = useCallback((itemId: string | string[]) => {
-        const ids = Array.isArray(itemId) ? itemId : [itemId]
+        const mutable = new Set(history.filter(item => !isReadOnlyMediaActivity(item)).map(item => item.id))
+        const ids = (Array.isArray(itemId) ? itemId : [itemId]).filter(id => mutable.has(id))
         setSelectedItems(prev => {
             const newSet = new Set(prev)
             const allSelected = ids.every(id => newSet.has(id))
@@ -514,10 +518,10 @@ export function ActivityPage() {
             }
             return newSet
         })
-    }, [])
+    }, [history])
 
     const handleSelectAll = useCallback(() => {
-        setSelectedItems(new Set(filteredHistory.map((item: ActivityItem) => item.id)))
+        setSelectedItems(new Set(filteredHistory.filter(item => !isReadOnlyMediaActivity(item)).map((item: ActivityItem) => item.id)))
     }, [filteredHistory])
 
     const handleDeselectAll = useCallback(() => {
@@ -532,18 +536,20 @@ export function ActivityPage() {
 
     const handleFeedDelete = useCallback((id: string | string[]) => {
         const ids = Array.isArray(id) ? id : [id]
-        setPendingDeleteIds(ids)
-    }, [])
+        const mutable = new Set(history.filter(item => !isReadOnlyMediaActivity(item)).map(item => item.id))
+        const allowed = ids.filter(itemId => mutable.has(itemId))
+        if (allowed.length) setPendingDeleteIds(allowed)
+    }, [history])
 
     const pendingSources = useMemo(() => {
         if (!pendingDeleteIds) return new Set<string>()
         const idSet = new Set(pendingDeleteIds)
-        return new Set(history.filter(h => idSet.has(h.id)).map(h => h.source || 'stremio'))
+        return new Set(history.filter(h => idSet.has(h.id)).flatMap(h => [h.source || 'stremio', ...(h.mediaTargets?.length ? ['jellyfin'] : [])]))
     }, [pendingDeleteIds, history])
 
     const selectedSources = useMemo(() => {
         if (selectedItems.size === 0) return new Set<string>()
-        return new Set(history.filter(h => selectedItems.has(h.id)).map(h => h.source || 'stremio'))
+        return new Set(history.filter(h => selectedItems.has(h.id)).flatMap(h => [h.source || 'stremio', ...(h.mediaTargets?.length ? ['jellyfin'] : [])]))
     }, [selectedItems, history])
 
     const selectedHasWholeShowSeries = useMemo(
@@ -587,20 +593,41 @@ export function ActivityPage() {
         if (items.length === 0) return { failed: false, keptIds: new Set<string>(), keptReasons: new Map<string, number>(), noVideos: [] }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
+            if (isReadOnlyMediaActivity(item)) continue
             (byAccount[item.accountId] ||= []).push(item)
         }
-        const keptIds = new Set<string>()
+        const keptIds = new Set<string>(items.filter(isReadOnlyMediaActivity).map(item => item.id))
         const keptReasons = new Map<string, number>()
+        if (keptIds.size) keptReasons.set('This source does not support deleting history.', keptIds.size)
         const noVideos: Array<{ accountId: string; itemId: string; id: string }> = []
         const countKeep = (reason: string, n: number = 1) => keptReasons.set(reason, (keptReasons.get(reason) || 0) + n)
         let failed = false
         await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
             const account = accountById.get(accountId)
-            if (!account || !hasPlatformConnection(account)) return
+            if (!account) {
+                for (const item of accItems) keptIds.add(item.id)
+                countKeep('account-error', accItems.length)
+                failed = true
+                return
+            }
 
-            const nuvioItems = accItems.filter(i => i.source === 'nuvio')
-            const realstreamItems = accItems.filter(i => i.source === 'realstream')
-            const stremioItems = accItems.filter(i => i.source !== 'nuvio' && i.source !== 'realstream')
+            const mediaItems = accItems.filter(item => item.source === 'jellyfin' || item.mediaTargets?.length)
+            if (mediaItems.length) {
+                const key = useAuthStore.getState().encryptionKey
+                const mediaKept = key
+                    ? await deleteJellyfinWatchItems(account, mediaItems, value => decrypt(value, key))
+                    : new Set(mediaItems.map(item => item.id))
+                if (mediaKept.size) {
+                    for (const id of mediaKept) keptIds.add(id)
+                    countKeep('media-error', mediaKept.size)
+                    failed = true
+                }
+            }
+            if (!hasPlatformConnection(account)) return
+
+            const nuvioItems = accItems.filter(i => !keptIds.has(i.id) && i.source === 'nuvio')
+            const realstreamItems = accItems.filter(i => !keptIds.has(i.id) && i.source === 'realstream')
+            const stremioItems = accItems.filter(i => !keptIds.has(i.id) && !isReadOnlyMediaActivity(i) && i.source !== 'jellyfin' && i.source !== 'nuvio' && i.source !== 'realstream')
 
             if (stremioItems.length > 0) {
                 const { encryptionKey } = useAuthStore.getState()
@@ -753,6 +780,7 @@ export function ActivityPage() {
         'account-error': 'account sync error',
         'item-error': 'Stremio API error',
         'platform-error': 'platform sync error',
+        'media-error': 'media-server watched state or progress could not be cleared; check the connection and retry',
     }
 
     const keptReasonSummary = (keptReasons: Map<string, number>): string => {
@@ -772,7 +800,8 @@ export function ActivityPage() {
         }
         removeItems(Array.from(liveIds))
         useWatchEventStore.getState().removeEvents(items)
-    }, [removeItems])
+        refreshMedia()
+    }, [removeItems, refreshMedia])
 
     const handleDeleteSelected = async () => {
         if (selectedItems.size === 0) return
@@ -793,7 +822,7 @@ export function ActivityPage() {
         }
 
         if (failed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be fully removed from their source platforms and remain in your history. Retry to finish clearing them.${keptReasonSummary(keptReasons)}` })
         } else {
             toast({
                 title: 'Items Deleted',
@@ -824,7 +853,7 @@ export function ActivityPage() {
             }
 
             if (failed) {
-                toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
+                toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be fully removed from their source platforms and remain in your history. Retry to finish clearing them.${keptReasonSummary(keptReasons)}` })
             } else {
                 toast({
                     title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
@@ -940,6 +969,7 @@ export function ActivityPage() {
                     />
                     {searchInput && (
                         <button
+                            data-theme-part="button"
                             onClick={() => handleSearchChange('')}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Clear search"
@@ -1024,11 +1054,13 @@ export function ActivityPage() {
                     </Button>
 
                     {/* Grid / List toggle */}
-                    <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+                    <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
                         <Tooltip content="Grid view" side="bottom">
                         <Button
                             variant="ghost"
                             size="sm"
+                            data-theme-part="tab"
+                            data-state={viewMode === 'grid' ? 'active' : 'inactive'}
                             onClick={() => handleViewModeChange('grid')}
                             className={cn(
                                 'h-8 w-8 rounded-lg p-0',
@@ -1045,6 +1077,8 @@ export function ActivityPage() {
                         <Button
                             variant="ghost"
                             size="sm"
+                            data-theme-part="tab"
+                            data-state={viewMode === 'list' ? 'active' : 'inactive'}
                             onClick={() => handleViewModeChange('list')}
                             className={cn(
                                 'h-8 w-8 rounded-lg p-0',
@@ -1076,6 +1110,16 @@ export function ActivityPage() {
             )}
 
             {/* Continue Watching Rail */}
+            {mediaIssues.some(issue => userFilter === 'all' || issue.accountId === userFilter) && (
+                <details data-theme-part="panel" className="rounded-xl border border-border/40 bg-card p-3 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer font-medium">Some media updates are unavailable or incomplete</summary>
+                    <ul className="mt-2 space-y-1.5">
+                        {mediaIssues.filter(issue => userFilter === 'all' || issue.accountId === userFilter).map(issue => (
+                            <li key={`${issue.accountId}:${issue.connectionId}:${issue.label}`}><span className="font-medium text-foreground">{issue.productName} · {issue.label}:</span> {issue.message}</li>
+                        ))}
+                    </ul>
+                </details>
+            )}
             {(() => {
               const filteredInProgress = (userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter))
                 .filter(item => !dismissedContinueWatching.includes(`${item.accountId}:${item.itemId}`))
@@ -1083,9 +1127,9 @@ export function ActivityPage() {
               return (
                 <ContentRail
                     title="Continue Watching"
-                    subtitle="Resume in-progress streams from the latest account sync."
+                    subtitle="Latest saved progress and reported playback from connected platforms."
                     count={filteredInProgress.length}
-                    countLabel="active"
+                    countLabel="in progress"
                 >
                             {filteredInProgress.slice(0, 24).map((item, i) => {
                                 const account = accountById.get(item.accountId)
@@ -1100,6 +1144,7 @@ export function ActivityPage() {
                                     >
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             aria-label={`Remove ${item.name} from Continue Watching`}
                                             className="absolute -top-1.5 -right-1.5 z-10 flex h-5.5 w-5.5 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground opacity-0 shadow-sm transition-all hover:bg-destructive hover:text-destructive-foreground focus-visible:opacity-100 group-hover:opacity-100"
                                             onClick={(e) => {
@@ -1119,7 +1164,7 @@ export function ActivityPage() {
                                                 loading="lazy"
                                             />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
-                                            {item.source && <PlatformSourceBadge source={item.source} className="top-1.5 right-1.5" />}
+                                            {item.source && <PlatformSourceBadge source={item.source} label={item.mediaObservation?.productName} mediaSources={item.mediaSources} className="top-1.5 right-1.5" />}
                                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
                                                 <div className="h-full bg-primary" style={{ width: `${item.progress}%` }} />
                                             </div>
@@ -1133,6 +1178,11 @@ export function ActivityPage() {
                                                     {Math.round(item.progress)}%
                                                 </span>
                                             </div>
+                                            {item.mediaObservation?.kind === 'live' && (
+                                                <span className="absolute bottom-2 left-1.5 rounded-full bg-black/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                                    {item.mediaObservation.isPaused ? 'Paused' : 'Playing'}
+                                                </span>
+                                            )}
                                             {account && (
                                                 <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-black/65 overflow-hidden">
                                                     {account.avatar ? (
@@ -1182,6 +1232,8 @@ export function ActivityPage() {
             ) : (
                 <ActivityFeed
                     history={filteredHistory}
+                    allHistory={history}
+                    currentActivity={inProgress}
                     viewMode={viewMode}
                     todayHours={sessionComparison.todayHrs}
                     todayTrend={sessionComparison.isUp ? 'up' : 'down'}
@@ -1202,6 +1254,7 @@ export function ActivityPage() {
                                 <p>
                                     This will permanently remove {selectedItems.size} item(s) from your {platformsPhrase(selectedSources)} watch history. This cannot be undone.
                                 </p>
+                                {selectedSources.has('jellyfin') && <p>Watched state and resume progress will also be cleared on the connected media server.</p>}
                                 {selectedHasWholeShowSeries && (
                                     <p className="text-sm text-destructive">
                                         Deleting a series removes its entire watch history for the show.
@@ -1239,6 +1292,7 @@ export function ActivityPage() {
                         <p>
                             This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from your {platformsPhrase(pendingSources)} watch history.
                         </p>
+                        {pendingSources.has('jellyfin') && <p>Watched state and resume progress will also be cleared on the connected media server.</p>}
                         {pendingHasWholeShowSeries && (
                             <p className="text-sm text-destructive">
                                 Deleting a series removes its entire watch history for the show.

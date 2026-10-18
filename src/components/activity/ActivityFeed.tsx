@@ -9,6 +9,7 @@ import { ActivityItemCard } from './ActivityItemCard'
 import { ActivityEmptyState } from '@/components/common/PageEmptyStates'
 import { NumberTicker } from '@/components/ui/number-ticker'
 import { StatusChip } from '@/components/ui/status-chip'
+import { activityNowStatuses } from '@/lib/jellyfin/activity'
 
 const INITIAL_VISIBLE_COUNT = 60
 const VISIBLE_COUNT_INCREMENT = 40
@@ -16,6 +17,8 @@ const EMPTY_SELECTED_ITEMS = new Set<string>()
 
 interface ActivityFeedProps {
     history: ActivityItem[]
+    allHistory?: ActivityItem[]
+    currentActivity?: ActivityItem[]
     viewMode?: 'grid' | 'list'
     todayHours?: number
     todayTrend?: 'up' | 'down'
@@ -28,6 +31,8 @@ interface ActivityFeedProps {
 
 export function ActivityFeed({
     history,
+    allHistory = history,
+    currentActivity,
     viewMode = 'grid',
     todayHours = 0,
     todayTrend = 'up',
@@ -41,6 +46,14 @@ export function ActivityFeed({
     const [activeTab, setActiveTab] = useState("all")
     const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
     const [showScrollTop, setShowScrollTop] = useState(false)
+    const [now, setNow] = useState(Date.now)
+    useEffect(() => {
+        const update = () => { if (!document.hidden) setNow(Date.now()) }
+        const timer = setInterval(update, 30_000)
+        document.addEventListener('visibilitychange', update)
+        return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update) }
+    }, [])
+    const nowStatuses = useMemo(() => activityNowStatuses(allHistory, now, currentActivity), [allHistory, now, currentActivity])
 
     useEffect(() => {
         setVisibleCount(INITIAL_VISIBLE_COUNT)
@@ -71,12 +84,11 @@ export function ActivityFeed({
         if (activeTab === 'movies') filtered = filtered.filter(h => h.type === 'movie')
         else if (activeTab === 'series') filtered = filtered.filter(h => h.type === 'series' || h.type === 'anime' || h.type === 'episode')
         else if (activeTab === 'now') {
-            const twentyMinsAgo = new Date().getTime() - (20 * 60 * 1000)
-            filtered = filtered.filter(h => new Date(h.timestamp).getTime() > twentyMinsAgo)
+            filtered = filtered.filter(h => nowStatuses.has(h.id))
         }
 
         return filtered
-    }, [history, activeTab])
+    }, [history, activeTab, nowStatuses])
 
     const groupedHistory = useMemo(() => {
         const dates: string[] = []
@@ -132,13 +144,12 @@ export function ActivityFeed({
         return Math.round(totalMs / 3600000)
     }, [filteredHistory])
     const tabCounts = useMemo(() => {
-        const twentyMinsAgo = new Date().getTime() - (20 * 60 * 1000)
         let now = 0
         let movies = 0
         let series = 0
 
         for (const item of history) {
-            if (new Date(item.timestamp).getTime() > twentyMinsAgo) now++
+            if (nowStatuses.has(item.id)) now++
             if (item.type === 'movie') movies++
             if (item.type === 'series' || item.type === 'anime' || item.type === 'episode') series++
         }
@@ -149,7 +160,7 @@ export function ActivityFeed({
             movies,
             series,
         }
-    }, [history])
+    }, [history, nowStatuses])
 
     const formatDateHeader = useCallback((dateStr: string) => {
         if (dateStr === 'Unknown Date') return dateStr
@@ -207,6 +218,7 @@ export function ActivityFeed({
                     <section
                         key={date}
                         id={dateId ? `activity-date-${dateId}` : undefined}
+                        data-theme-part="card"
                         className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm"
                     >
                         <div className="flex items-center justify-between gap-3">
@@ -224,6 +236,7 @@ export function ActivityFeed({
                                 <ActivityItemCard
                                     key={item.id}
                                     entry={item}
+                                    nowStatus={nowStatuses.get(item.id)}
                                     viewMode={viewMode}
                                     isSelected={safeSelectedItems.has(item.id)}
                                     isBulkMode={isBulkMode}
@@ -249,7 +262,7 @@ export function ActivityFeed({
     }
 
     const renderTabCount = (count: number) => (
-        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-lg border border-border/35 bg-background/70 px-1.5 text-xs font-semibold tabular-nums text-muted-foreground">
+        <span data-theme-part="badge" className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-lg border border-border/35 bg-background/70 px-1.5 text-xs font-semibold tabular-nums text-muted-foreground">
             {count}
         </span>
     )
@@ -265,7 +278,7 @@ export function ActivityFeed({
                         <TabsTrigger value="series">Series {renderTabCount(tabCounts.series)}</TabsTrigger>
                     </TabsList>
 
-                    <div className="flex max-w-full flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
+                    <div data-theme-part="badge" className="flex max-w-full flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
                         <span className="opacity-70">Showing</span>
                         <span className="font-semibold tabular-nums text-foreground">
                             {filteredHistory.length === 0

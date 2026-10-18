@@ -7,6 +7,11 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ProviderSetupDialog } from '@/components/providers/ProviderSetupDialog'
 import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/NuvioSetupDialog'
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
+import { JellyfinSetupDialog } from './JellyfinSetupDialog'
+import { JellyfinConnectionPanel } from './JellyfinConnectionPanel'
+import { validateJellyfinReconnect, type JellyfinSession } from '@/lib/jellyfin/session'
+import { openJellyfinSecret, sealJellyfinSecret } from '@/lib/jellyfin/connection-data'
+import { decrypt, encrypt } from '@/lib/crypto'
 import { ApiKeyManager } from '@/components/providers/ApiKeyManager'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useUIStore } from '@/store/uiStore'
@@ -18,7 +23,7 @@ import { parseNuvioMemberAccess, type NuvioMemberStatus } from '@/lib/nuvio-tier
 import { trace } from '@/lib/trace'
 import { toast } from '@/hooks/use-toast'
 import { useShallow } from 'zustand/react/shallow'
-import type { Connection } from '@/types/connection'
+import { isAddonConnection, type Connection } from '@/types/connection'
 import type { Account } from '@/types/account'
 import type { HydraDriverConfig } from '@/types/provider'
 import { RefreshCw, Plus, Zap, Link2, Key, ChevronRight } from 'lucide-react'
@@ -55,6 +60,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     const [hydraDialogOpen, setHydraDialogOpen] = useState(false)
     const [nuvioDialogOpen, setNuvioDialogOpen] = useState(false)
     const [realstreamDialogOpen, setRealstreamDialogOpen] = useState(false)
+    const [jellyfinDialogOpen, setJellyfinDialogOpen] = useState(false)
+    const [jellyfinReconnectId, setJellyfinReconnectId] = useState<string | null>(null)
     const [subscribers, setSubscribers] = useState<HydraSubscriber[]>([])
     const [editingId, setEditingId] = useState<string | null>(null)
     const [subTab, setSubTab] = useState('connections')
@@ -188,7 +195,12 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     }
 
     const handlePlatformClick = (platform: string) => {
-        if (platform === 'nuvio') {
+        if (platform === 'jellyfin') {
+            setAddDialogOpen(false)
+            setJellyfinReconnectId(null)
+            setJellyfinDialogOpen(true)
+            notifySubDialog(true)
+        } else if (platform === 'nuvio') {
             setAddDialogOpen(false)
             notifySubDialog(true)
             setNuvioDialogOpen(true)
@@ -199,6 +211,24 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
         } else {
             handleAddNative(platform)
         }
+    }
+
+    const handleJellyfinComplete = async (session: JellyfinSession) => {
+        const key = useAuthStore.getState().encryptionKey
+        if (!key) throw new Error('Unlock your vault before saving a connection')
+        const existing = jellyfinReconnectId ? resolvedConnections.find(c => c.id === jellyfinReconnectId) : undefined
+        if (jellyfinReconnectId && !existing) throw new Error('This connection was removed. Add a new connection instead.')
+        if (existing) {
+            const previous = existing.credentials?.jellyfin
+                ? await openJellyfinSecret(existing, value => decrypt(value, key)).catch(() => undefined) : undefined
+            validateJellyfinReconnect(existing, session, previous)
+        }
+        const credentials = await sealJellyfinSecret(session.secret, value => encrypt(value, key))
+        if (useAuthStore.getState().encryptionKey !== key) throw new Error('Your vault changed while saving. Unlock it and try again.')
+        const data = { credentials, mediaServer: { ...session.identity, serverId: session.identity.serverId || existing?.mediaServer?.serverId }, status: 'active' as const,
+            displayName: session.identity.productName, lastError: undefined, lastErrorAt: undefined }
+        if (existing) await useConnectionStore.getState().updateConnection(accountId, existing.id, data)
+        else await addConnection(accountId, { ...data, platform: 'jellyfin', connectionType: 'native', enabled: true, capabilities: [] })
     }
 
     const handleHydraComplete = (config: HydraDriverConfig, credential: string) => {
@@ -306,6 +336,11 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
 
     const renderSetupDialogs = () => (
         <>
+            {jellyfinDialogOpen && <JellyfinSetupDialog
+                open={jellyfinDialogOpen}
+                onOpenChange={open => { setJellyfinDialogOpen(open); notifySubDialog(open); if (!open) setJellyfinReconnectId(null) }}
+                onComplete={handleJellyfinComplete}
+            />}
             <ProviderSetupDialog
                 open={hydraDialogOpen}
                 onOpenChange={(open) => { setHydraDialogOpen(open); notifySubDialog(open) }}
@@ -348,7 +383,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                         size="sm"
                         className="gap-1.5 h-8 text-xs font-medium"
                         onClick={handleSync}
-                        disabled={!!isSyncing}
+                        disabled={!!isSyncing || !resolvedConnections.some(c => c.enabled && isAddonConnection(c))}
                     >
                         <RefreshCw className={cn('h-3.5 w-3.5', isSyncing && 'animate-spin')} />
                         {isSyncing ? 'Syncing...' : 'Sync'}
@@ -367,8 +402,8 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
             {!hasAny ? (
                 <EmptyState
                     icon={<Zap className="h-6 w-6" />}
-                    title="No platform connections"
-                    description="Add a connection to manage addons across platforms."
+                    title="No connections yet"
+                    description="Connect an addon platform or a media server."
                     action={
                         <Button size="sm" className="gap-1.5" onClick={() => { notifySubDialog(true); setAddDialogOpen(true) }}>
                             <Plus className="h-3.5 w-3.5" />
@@ -377,11 +412,11 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     }
                 />
             ) : (
-                <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Connections</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {resolvedConnections.map(conn => {
-                            const state = accountStates[conn.id]
+                            const state = conn.platform === 'jellyfin' ? undefined : accountStates[conn.id]
                             // The live state entry is authoritative while present: its
                             // lastError: null means the error is CLEARED (the stored
                             // connection copy must not resurrect it) and lastSync: 0
@@ -390,8 +425,9 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                             const liveStatus = state ? state.status : conn.status
                             const liveLastSync = state ? state.lastSync : conn.lastSync
                             const liveLastError = state ? state.lastError : (conn.lastError ?? null)
-                            const needsSignIn = conn.platform === 'stremio' && !conn.credentials?.authKey
-                            const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
+                            const needsSignIn = (conn.platform === 'stremio' && !conn.credentials?.authKey)
+                                || (conn.platform === 'jellyfin' && !conn.credentials?.jellyfin)
+                            const connEmail = conn.mediaServer?.userName || conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
                             const maskedConnEmail = connEmail ? maskEmailLevel(connEmail, emailPrivacyLevel) : undefined
                             const premium = conn.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined
                             const nuvioMember = conn.platform === 'nuvio' ? nuvioMemberByConnection.get(conn.id) : undefined
@@ -409,15 +445,15 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     onEdit={() => setEditingId(conn.id)}
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
                                     email={maskedConnEmail}
-                                    addonCount={accountAddonCount}
+                                    addonCount={conn.platform === 'jellyfin' ? undefined : accountAddonCount}
                                     badge={
                                         needsSignIn ? (
-                                            <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-warning">Needs sign-in</span>
+                                            <span data-theme-part="badge" className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-warning">Needs sign-in</span>
                                         ) : nuvioMember || premium !== undefined ? (
                                             <>
                                                 {premium?.active && <StremioSupportersBadge />}
                                                 {premium && !premium.active && (
-                                                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                                    <span data-theme-part="badge" className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                                                         Free
                                                     </span>
                                                 )}
@@ -441,6 +477,11 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
         <>
             {editing ? (
                 (() => {
+                    if (editing.platform === 'jellyfin') return <JellyfinConnectionPanel
+                        key={editing.id} accountId={accountId} connection={editing}
+                        onBack={() => setEditingId(null)}
+                        onReconnect={() => { setJellyfinReconnectId(editing.id); setJellyfinDialogOpen(true); notifySubDialog(true) }}
+                    />
                     // Same authority rule as the cards: the live state entry wins as a
                     // whole; the stored connection fields only serve when it is absent.
                     const editState = accountStates[editing.id]
@@ -474,21 +515,22 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 <DialogContent>
                     <DialogHeader>
                         <DialogTitle>Add Connection</DialogTitle>
-                        <DialogDescription>Connect a platform to manage its addons from AIOManager.</DialogDescription>
+                        <DialogDescription>Connect a platform or media server to AIOManager.</DialogDescription>
                     </DialogHeader>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                         {PLATFORM_REGISTRY
                             .filter(p => p.available)
                             .filter(p => p.connectionType !== 'hydra-outbound')
                             .map(p => {
-                                const isAlreadyConnected = p.connectionType === 'native' && resolvedConnections.some(c => c.platform === p.id)
+                                const isAlreadyConnected = p.id !== 'jellyfin' && p.connectionType === 'native' && resolvedConnections.some(c => c.platform === p.id)
                                 return { platform: p, isAlreadyConnected }
                             })
                             .map(({ platform: p, isAlreadyConnected }) => (
                                 <button
                                     key={p.id}
                                     disabled={isAlreadyConnected}
-                                    className={`group/card flex flex-col gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 ${isAlreadyConnected ? 'opacity-50 cursor-not-allowed' : 'hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/95 hover:shadow-md'}`}
+                                    data-theme-part="card"
+                                    className={`group/card flex flex-col gap-3 rounded-2xl border border-border/40 bg-card p-4 text-left shadow-sm transition-[background-color,border-color,box-shadow,transform] duration-200 ${p.id === 'jellyfin' ? 'sm:col-span-2' : ''} ${isAlreadyConnected ? 'opacity-50 cursor-not-allowed' : 'hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card/95 hover:shadow-md'}`}
                                     onClick={() => !isAlreadyConnected && handlePlatformClick(p.id)}
                                 >
                                     <div className="flex items-center gap-3">
@@ -499,7 +541,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                             <div className="flex items-center gap-2">
                                                 <p className="text-sm font-semibold">{p.name}</p>
                                                 {isAlreadyConnected && (
-                                                    <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">Connected</span>
+                                                    <span data-theme-part="badge" className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">Connected</span>
                                                 )}
                                             </div>
                                             <p className="text-xs text-muted-foreground line-clamp-2">{p.description}</p>
@@ -514,11 +556,12 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                 </button>
                             ))}
 
-                        <div className="rounded-2xl border border-border/30 bg-muted/20 p-4 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/30 bg-muted/20 p-4 text-xs text-muted-foreground">
                             <p className="font-medium text-foreground">Apps connect to you automatically</p>
                             <p className="mt-1 leading-relaxed">Backendless apps (e.g. Fusion) pull your addons using your AIOManager URL + account API key, so there's no setup here. They appear in your <span className="font-medium text-foreground">connections list</span> once they sync. Find your API key on the API Key tab.</p>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => setShowAdvanced(s => !s)}
                                 className="mt-3 inline-flex items-center gap-1 rounded-md font-medium text-foreground transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
@@ -527,6 +570,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                             </button>
                             {showAdvanced && (
                                 <button
+                                    data-theme-part="card"
                                     className="mt-2 flex w-full items-center gap-3 rounded-xl border border-border/40 bg-card p-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md"
                                     onClick={() => { setAddDialogOpen(false); notifySubDialog(true); setHydraDialogOpen(true) }}
                                 >

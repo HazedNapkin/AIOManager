@@ -2,8 +2,10 @@ import { create } from 'zustand'
 import { useAccountStore, persistAccounts, acquireSyncMutex } from './accountStore'
 import { getConnectionStates } from '@/api/connection'
 import type { Connection, ConnectionStatus } from '@/types/connection'
+import { isAddonConnection } from '@/types/connection'
 import type { Account } from '@/types/account'
 import { toast } from '@/hooks/use-toast'
+import { triggerSync } from '@/lib/sync-trigger'
 
 interface ConnectionStateEntry {
     consecutiveFailures: number
@@ -18,11 +20,11 @@ interface ConnectionStore {
     connectionStates: Record<string, Record<string, ConnectionStateEntry>>
     isSyncing: string | null
 
-    addConnection: (accountId: string, connection: Omit<Connection, 'id' | 'lastSync' | 'lastKnownAddonCount' | 'consecutiveFailures'>) => void
-    removeConnection: (accountId: string, connectionId: string) => void
-    updateConnection: (accountId: string, connectionId: string, updates: Partial<Connection>) => void
-    setPrimaryConnection: (accountId: string, connectionId: string) => void
-    toggleConnection: (accountId: string, connectionId: string) => void
+    addConnection: (accountId: string, connection: Omit<Connection, 'id' | 'lastSync' | 'lastKnownAddonCount' | 'consecutiveFailures'>) => Promise<void>
+    removeConnection: (accountId: string, connectionId: string) => Promise<void>
+    updateConnection: (accountId: string, connectionId: string, updates: Partial<Connection>) => Promise<void>
+    setPrimaryConnection: (accountId: string, connectionId: string) => Promise<void>
+    toggleConnection: (accountId: string, connectionId: string) => Promise<void>
     syncConnections: (accountId: string) => Promise<void>
     refreshConnectionStates: (accountId: string) => Promise<void>
 }
@@ -48,11 +50,25 @@ async function updateAccount(accountId: string, updater: (account: Account) => A
     }
 }
 
+// Fields that change the encrypted sync envelope. Background health writes
+// (status/lastSync/error counters) must not re-push it; structural changes must.
+const ENVELOPE_FIELDS = new Set([
+    'platform', 'connectionType', 'driverType', 'enabled', 'credentials', 'profileMapping',
+    'capabilities', 'pluginList', 'driverConfig', 'displayName', 'mediaServer',
+])
+
+const touchesEnvelope = (updates: Partial<Connection>) => Object.keys(updates).some(key => ENVELOPE_FIELDS.has(key))
+
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     connectionStates: {},
     isSyncing: null,
 
     addConnection: async (accountId, partial) => {
+        // Media credentials are sealed browser-only with no server-side copy, so the save
+        // only counts when the account actually exists. Never toast success into a void.
+        if (partial.platform === 'jellyfin' && !useAccountStore.getState().accounts.some(a => a.id === accountId)) {
+            throw new Error('This account no longer exists. Reload and add the media connection again.')
+        }
         const connection: Connection = {
             id: safeUUID(),
             platform: partial.platform,
@@ -67,9 +83,11 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             consecutiveFailures: 0,
             pluginList: partial.pluginList,
             driverConfig: partial.driverConfig,
+            displayName: partial.displayName,
+            mediaServer: partial.mediaServer,
         }
 
-        if (connection.connectionType === 'hydra-outbound' && connection.driverConfig?.baseUrl) {
+        if (connection.platform !== 'jellyfin' && connection.connectionType === 'hydra-outbound' && connection.driverConfig?.baseUrl) {
             const { storeConnectionCredential } = await import('@/api/hydra-providers')
             const bundle = {
                 authValue: connection.credentials?.apiKey || '',
@@ -116,7 +134,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         let duplicateFound = false
         let duplicateId = ''
         await updateAccount(accountId, account => {
-            const existing = (account.connections || []).find(c => c.platform === partial.platform)
+            const existing = partial.platform === 'jellyfin' ? undefined : (account.connections || []).find(c => c.platform === partial.platform)
             if (existing) {
                 duplicateFound = true
                 duplicateId = existing.id
@@ -125,7 +143,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             return {
                 ...account,
                 connections: [...(account.connections || []), connection],
-                primaryConnectionId: account.primaryConnectionId || connection.id,
+                primaryConnectionId: account.primaryConnectionId || (isAddonConnection(connection) ? connection.id : undefined),
             }
         })
         if (duplicateFound) {
@@ -136,9 +154,18 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             return
         }
 
+        if (connection.platform === 'jellyfin'
+            && !useAccountStore.getState().accounts.find(a => a.id === accountId)?.connections?.some(c => c.id === connection.id)) {
+            throw new Error('This account no longer exists. Reload and add the media connection again.')
+        }
+
         toast({ title: `${connection.platform} connection added` })
 
-        if (connection.enabled) {
+        // Structural connection changes belong in the encrypted sync envelope. Media
+        // connections never enter the addon reconciliation below (isAddonConnection).
+        triggerSync()
+
+        if (connection.enabled && isAddonConnection(connection)) {
             import('./accountStore').then(({ useAccountStore }) => {
                 useAccountStore.getState().syncAccount(accountId).catch(() => {})
             })
@@ -149,7 +176,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         const { accounts } = useAccountStore.getState()
         const account = accounts.find(a => a.id === accountId)
         const conn = account?.connections?.find(c => c.id === connectionId)
-        if (conn?.connectionType === 'hydra-outbound' || conn?.platform === 'nuvio' || conn?.platform === 'realstream') {
+        if (conn?.platform !== 'jellyfin' && (conn?.connectionType === 'hydra-outbound' || conn?.platform === 'nuvio' || conn?.platform === 'realstream')) {
             import('@/api/hydra-providers').then(({ deleteConnectionCredential }) => {
                 deleteConnectionCredential(accountId, connectionId).catch(() => {})
             })
@@ -160,7 +187,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         await updateAccount(accountId, account => {
             const connections = (account.connections || []).filter(c => c.id !== connectionId)
             const primaryConnectionId = account.primaryConnectionId === connectionId
-                ? connections[0]?.id
+                ? connections.find(isAddonConnection)?.id
                 : account.primaryConnectionId
             return {
                 ...account,
@@ -169,22 +196,34 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 ...(isStremioRemoval ? { authKey: '' } : {}),
             }
         })
+        if (conn) triggerSync()
     },
 
     updateConnection: async (accountId, connectionId, updates) => {
+        let matched = false
         await updateAccount(accountId, account => ({
             ...account,
-            connections: (account.connections || []).map(c =>
-                c.id === connectionId ? { ...c, ...updates } : c
-            ),
+            connections: (account.connections || []).map(c => {
+                if (c.id !== connectionId) return c
+                matched = true
+                return { ...c, ...updates }
+            }),
         }))
+        if (!matched && (updates.mediaServer || updates.credentials?.jellyfin)) {
+            throw new Error('This media connection no longer exists. Add a new connection instead.')
+        }
+        if (matched && touchesEnvelope(updates)) triggerSync()
     },
 
     setPrimaryConnection: async (accountId, connectionId) => {
-        await updateAccount(accountId, account => ({
-            ...account,
-            primaryConnectionId: connectionId,
-        }))
+        let changed = false
+        await updateAccount(accountId, account => {
+            const primaryConnectionId = account.connections?.some(c => c.id === connectionId && isAddonConnection(c))
+                ? connectionId : account.primaryConnectionId
+            changed = primaryConnectionId !== account.primaryConnectionId
+            return { ...account, primaryConnectionId }
+        })
+        if (changed) triggerSync()
     },
 
     toggleConnection: async (accountId, connectionId) => {
@@ -199,7 +238,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             }
         })
         const toggled = useAccountStore.getState().accounts.find(a => a.id === accountId)?.connections?.find(c => c.id === connectionId)
-        if (toggled?.connectionType === 'hydra-outbound' && toggled.driverConfig?.baseUrl) {
+        if (toggled?.platform !== 'jellyfin' && toggled?.connectionType === 'hydra-outbound' && toggled.driverConfig?.baseUrl) {
             const { storeConnectionCredential } = await import('@/api/hydra-providers')
             storeConnectionCredential(accountId, connectionId, {
                 authValue: toggled.credentials?.apiKey || '',
@@ -209,7 +248,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
                 enabled: toggled.enabled,
             }, 'hydra').catch(() => {})
         }
-        if (wasEnabled === false) {
+        // The enabled flag is part of the encrypted envelope for every platform.
+        if (toggled) triggerSync()
+        if (wasEnabled === false && toggled && isAddonConnection(toggled)) {
             try {
                 const acct = useAccountStore.getState().accounts.find(a => a.id === accountId)
                 if (acct) {

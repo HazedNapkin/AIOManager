@@ -48,6 +48,11 @@ export interface ActivityItem {
     genres?: string[]
     source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = unknown)
     backfill?: boolean // recovered from Stremio's watched-bitfield; no real per-episode time, so excluded from time-based Replay stats
+    readOnly?: boolean
+    mediaObservation?: { connectionId: string; productName: string; kind: 'resume' | 'played' | 'live'; checkedAt: number; reportedAt?: number; hasPlayedDate: boolean; positionMs: number; isPaused?: boolean }
+    mediaSources?: string[]
+    /** Exact user-scoped server items contributing to this observation. */
+    mediaTargets?: Array<{ connectionId: string; itemId: string }>
 }
 
 // A detected watch event from snapshot diffing.

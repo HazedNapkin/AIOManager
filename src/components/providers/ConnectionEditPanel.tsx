@@ -52,8 +52,9 @@ function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
 function TestResultBanner({ result }: { result: { ok: boolean; message: string } | null }) {
     if (!result) return null
     return (
-        <div
+        <div data-theme-tone="status"
             role={result.ok ? 'status' : 'alert'}
+            data-theme-part="panel"
             className={cn(
                 'flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
                 result.ok
@@ -84,7 +85,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
     const [activeId, setActiveId] = useState(methods[0].id)
     const active = methods.find(m => m.id === activeId) ?? methods[0]
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-sm font-semibold">{title}</p>
@@ -93,7 +94,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                 {headerAction}
             </div>
             {methods.length > 1 && (
-                <div className={cn(
+                <div data-theme-part="tabs-list" className={cn(
                     'grid gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40',
                     methods.length === 2 ? 'grid-cols-2' : 'grid-cols-3'
                 )}>
@@ -101,6 +102,8 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                         <button
                             key={method.id}
                             type="button"
+                            data-theme-part="tab"
+                            data-state={activeId === method.id ? 'active' : 'inactive'}
                             onClick={() => setActiveId(method.id)}
                             className={cn(
                                 'relative h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring z-10',
@@ -110,6 +113,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                             {activeId === method.id && (
                                 <motion.div
                                     layoutId={layoutId}
+                                    data-theme-part="tab-indicator"
                                     className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
                                     transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                                 />
@@ -263,6 +267,7 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
                                         />
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => setShowPassword(s => !s)}
                                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -378,7 +383,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
     }
 
     return (
-        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 shadow-sm space-y-3">
+        <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold text-destructive">Delete Stremio account</p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -401,6 +406,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
                     />
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setShowPassword(s => !s)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -409,7 +415,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
                     </button>
                 </div>
                 {error && (
-                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                 )}
             </div>
             <div className="flex items-center justify-end gap-1.5">
@@ -439,7 +445,7 @@ function RemoveConnectionSection({ accountId, connection, onBack }: { accountId:
     const [confirmRemove, setConfirmRemove] = useState(false)
 
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Remove connection</p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -627,6 +633,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
                                         />
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => setShowPassword(s => !s)}
                                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -800,6 +807,7 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
                                     />
                                     <button
                                         type="button"
+                                        data-theme-part="button"
                                         onClick={() => setShowPassword(s => !s)}
                                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                         aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -924,6 +932,7 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
                                     />
                                     <button
                                         type="button"
+                                        data-theme-part="button"
                                         onClick={() => setShowKey(s => !s)}
                                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                         aria-label={showKey ? 'Hide key' : 'Show key'}
@@ -1055,7 +1064,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
         claims.get(profileClaimKey({ platform: 'stremio', profileId }))
 
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Supporters profiles</p>
                 <p className="text-xs text-muted-foreground">Each Supporters profile can become its own fully managed account.</p>
@@ -1070,7 +1079,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                 </div>
             ) : error ? (
                 <>
-                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                     <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
                         <RefreshCw className="h-3.5 w-3.5" /> Retry
                     </Button>
@@ -1098,7 +1107,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                     </div>
 
                     {pasteFor && (
-                        <div className="rounded-2xl border border-border/40 bg-card p-3 space-y-2.5 shadow-sm">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-3 space-y-2.5 shadow-sm">
                             <p className="text-xs font-medium">Add <strong>{pasteFor.name}</strong> as its own account</p>
                             <div className="space-y-1">
                                 <Label htmlFor={`supporters-name-${pasteFor.id}`} className="text-[11px] text-muted-foreground">Account name</Label>
@@ -1134,9 +1143,10 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                 </>
             )}
 
-            <div className="rounded-xl border border-border/30 bg-muted/20">
+            <div data-theme-part="panel" className="rounded-xl border border-border/30 bg-muted/20">
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={() => setShowKeyHelp(s => !s)}
                     className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
                 >
@@ -1160,6 +1170,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                                 <span className="min-w-0 flex-1">
                                     Open the browser console (<kbd className="px-1 py-0.5 rounded bg-muted border border-border text-[10px]">F12</kbd>) and run:
                                     <pre
+                                        data-theme-part="field"
                                         className="mt-1 select-all cursor-pointer overflow-x-auto rounded-lg bg-muted/60 border border-border/40 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:bg-muted transition-colors"
                                         onClick={(e) => {
                                             const target = e.currentTarget
@@ -1223,6 +1234,7 @@ function ConnectionAddonsSection({ accountId, platform }: { accountId: string; p
                 return (
                     <div
                         key={`${addon.transportUrl}-${i}`}
+                        data-theme-part="panel"
                         className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
                     >
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 overflow-hidden">
@@ -1243,6 +1255,7 @@ function ConnectionAddonsSection({ accountId, platform }: { accountId: string; p
                             )}
                         </div>
                         <span
+                            data-theme-part="badge"
                             className={cn(
                                 'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
                                 enabled ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'
@@ -1259,7 +1272,7 @@ function ConnectionAddonsSection({ accountId, platform }: { accountId: string; p
 
 function StatCard({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 px-3.5 py-3 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 px-3.5 py-3 shadow-sm">
             <p className="text-lg font-semibold leading-tight">{value}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5">{label}</p>
         </div>
@@ -1303,7 +1316,8 @@ function sessionState(connection: Connection, display: string): string {
 }
 
 function StremioLibrarySection({ accountId }: { accountId: string }) {
-    const { history, loading } = useWatchHistory(accountId)
+    const { history: accountHistory, loading } = useWatchHistory(accountId)
+    const history = useMemo(() => accountHistory.filter(entry => !entry.source || entry.source === 'stremio'), [accountHistory])
 
     const stats = useMemo(() => {
         let movies = 0
@@ -1364,6 +1378,7 @@ function StremioLibrarySection({ accountId }: { accountId: string }) {
                     {stats.topShows.map(([name, count], i) => (
                         <div
                             key={name}
+                            data-theme-part="panel"
                             className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
                         >
                             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-[11px] font-bold text-muted-foreground">
@@ -1446,7 +1461,7 @@ export function ConnectionEditPanel({
                     Connections
                 </Button>
             </ToolbarShell>
-            <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                     <PlatformLogo platform={connection.platform} className="h-12 w-12 shrink-0" isHydra={isHydra} />
                     <div className="min-w-0 flex-1">
@@ -1473,6 +1488,7 @@ export function ConnectionEditPanel({
                 {showTabs && needsAttention && (
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setTab('connection')}
                         className="mt-2.5 inline-flex items-center gap-1 rounded-md text-xs font-medium text-primary transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
@@ -1515,7 +1531,7 @@ export function ConnectionEditPanel({
                         <div className="space-y-4">
                             {isStremio && (
                                 <>
-                                    <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="min-w-0">
                                                 <p className="text-sm font-semibold">Connection health</p>

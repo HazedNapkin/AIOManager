@@ -46,6 +46,10 @@ import { buildResetPasswordUrl } from '@/api/stremio-relay'
 import { StremioSocialAuth } from './StremioSocialAuth'
 import { NuvioSetupDialog, type NuvioBackend } from '@/components/providers/NuvioSetupDialog'
 import { RealStreamSetupDialog, type RealStreamTokens } from '@/components/providers/RealStreamSetupDialog'
+import { JellyfinSetupDialog } from '@/components/providers/JellyfinSetupDialog'
+import type { JellyfinSession } from '@/lib/jellyfin/session'
+import { sealJellyfinSecret } from '@/lib/jellyfin/connection-data'
+import { encrypt } from '@/lib/crypto'
 import { ProviderSetupDialog } from '@/components/providers/ProviderSetupDialog'
 import { useConnectionStore } from '@/store/connectionStore'
 import type { HydraDriverConfig } from '@/types/provider'
@@ -88,6 +92,7 @@ export function AccountForm() {
   const [nuvioDialogOpen, setNuvioDialogOpen] = useState(false)
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
   const [realstreamDialogOpen, setRealstreamDialogOpen] = useState(false)
+  const [jellyfinDialogOpen, setJellyfinDialogOpen] = useState(false)
   const [hydraDialogOpen, setHydraDialogOpen] = useState(false)
   const [mode, setMode] = useState<AccountAuthMode>('credentials')
   const [authIntent, setAuthIntent] = useState<'login' | 'signup'>('login')
@@ -369,6 +374,21 @@ export function AccountForm() {
       if (isFirstConnection && accountId) removeAccount(accountId).catch(() => {})
       setError(err instanceof Error ? err.message : 'Failed to add Nuvio connection')
     }
+  }
+
+  const handleJellyfinAccountComplete = async (session: JellyfinSession) => {
+    const key = useAuthStore.getState().encryptionKey
+    if (!key) throw new Error('Unlock your vault before saving a connection')
+    const credentials = await sealJellyfinSecret(session.secret, value => encrypt(value, key))
+    if (useAuthStore.getState().encryptionKey !== key) throw new Error('Your vault changed while saving. Unlock it and try again.')
+    const accountId = createdAccountId || await addLocalAccount(name.trim() || 'Media Account', accentColor === 'none' ? undefined : accentColor, emoji.trim() || undefined, avatar || undefined)
+    setCreatedAccountId(accountId)
+    await useConnectionStore.getState().addConnection(accountId, {
+      platform: 'jellyfin', connectionType: 'native', enabled: true, status: 'active',
+      credentials, capabilities: [], mediaServer: session.identity, displayName: session.identity.productName,
+    })
+    setConnectedPlatforms(prev => new Set(prev).add('jellyfin'))
+    setWizardStep('connect-more')
   }
 
   const handleRealStreamAccountComplete = async (tokens: RealStreamTokens, email: string, password: string) => {
@@ -693,6 +713,7 @@ export function AccountForm() {
           </div>
           <input
             type="url"
+            data-theme-part="input"
             value={avatar.startsWith('data:') ? '\u2713 Uploaded image' : avatar}
             onChange={(e) => setAvatar(e.target.value)}
             readOnly={avatar.startsWith('data:')}
@@ -723,7 +744,7 @@ export function AccountForm() {
       </div>
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
+        <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
@@ -754,6 +775,8 @@ export function AccountForm() {
               setNuvioDialogOpen(true)
             } else if (p.id === 'realstream') {
               setRealstreamDialogOpen(true)
+            } else if (p.id === 'jellyfin') {
+              setJellyfinDialogOpen(true)
             } else if (p.id === 'hydra-outbound') {
               setHydraDialogOpen(true)
             }
@@ -762,6 +785,7 @@ export function AccountForm() {
             <button
               key={p.id}
               type="button"
+              data-theme-part="button"
               onClick={handleClick}
               className={cn(
                 'group relative flex min-h-[148px] flex-col items-start gap-4 rounded-[1.35rem] border p-4 text-left transition-[background-color,border-color,box-shadow,transform]',
@@ -788,7 +812,7 @@ export function AccountForm() {
   const renderStremioAuth = () => (
     <div className="space-y-5">
       {isExpiredSession && (
-        <div className="rounded-2xl border border-warning/30 bg-warning/10 p-4">
+        <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-warning/30 bg-warning/10 p-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div className="space-y-1">
@@ -811,6 +835,8 @@ export function AccountForm() {
               <button
                 key={method.id}
                 type="button"
+                data-theme-part="tab"
+                data-state={isSelected ? 'active' : 'inactive'}
                 aria-pressed={isSelected}
                 onClick={() => {
                   setMode(method.id)
@@ -854,8 +880,8 @@ export function AccountForm() {
       {!isEditing && mode === 'credentials' && (
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted/40 p-1">
-            <button type="button" onClick={() => { setAuthIntent('login'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
-            <button type="button" onClick={() => { setAuthIntent('signup'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
+            <button type="button" data-theme-part="tab" data-state={authIntent === 'login' ? 'active' : 'inactive'} onClick={() => { setAuthIntent('login'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'login' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Sign In</button>
+            <button type="button" data-theme-part="tab" data-state={authIntent === 'signup' ? 'active' : 'inactive'} onClick={() => { setAuthIntent('signup'); setError('') }} className={cn('h-9 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', authIntent === 'signup' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}>Create Account</button>
           </div>
           <p className="text-xs text-muted-foreground px-1">
             {authIntent === 'login'
@@ -867,7 +893,7 @@ export function AccountForm() {
 
       {mode === 'oauth' ? (
         oauthAuthKey ? (
-          <div className="space-y-4 rounded-2xl border border-success/25 bg-success/10 p-4">
+          <div data-theme-tone="status" data-theme-part="panel" className="space-y-4 rounded-2xl border border-success/25 bg-success/10 p-4">
             <div className="flex items-start gap-3">
               <div className="rounded-full bg-success/15 p-2 text-success">
                 <ShieldCheck className="h-4 w-4" />
@@ -882,7 +908,7 @@ export function AccountForm() {
               </div>
             </div>
 
-            <div className="grid gap-3 rounded-xl border border-border/40 bg-background/50 p-3">
+            <div data-theme-part="panel" className="grid gap-3 rounded-xl border border-border/40 bg-background/50 p-3">
               <div className="space-y-2">
                 <Label htmlFor="oauth-email" className="text-xs font-medium text-muted-foreground uppercase">Stremio Email</Label>
                 <Input
@@ -946,7 +972,7 @@ export function AccountForm() {
           />
         )
       ) : mode === 'qr' ? (
-        <div className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/30">
+        <div data-theme-part="panel" className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/30">
           <div className="mb-4 p-3 rounded-full bg-primary/10">
             <QrCode className="h-6 w-6 text-primary" />
           </div>
@@ -1010,7 +1036,7 @@ export function AccountForm() {
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="p-3 bg-muted/50 rounded-xl border border-border/10 space-y-3 mt-1">
+                <div data-theme-part="panel" className="p-3 bg-muted/50 rounded-xl border border-border/10 space-y-3 mt-1">
                   <div className="space-y-2">
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       1. Log into <a href="https://web.stremio.com/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline italic">web.stremio.com</a>
@@ -1019,6 +1045,7 @@ export function AccountForm() {
                       2. Run in Console (<kbd className="px-1 py-0.5 rounded bg-muted border border-border text-xs">F12</kbd>):
                     </p>
                     <pre
+                      data-theme-part="field"
                       className="text-xs bg-muted p-2 rounded border border-border font-mono text-muted-foreground select-all cursor-pointer hover:bg-muted/80 transition-colors"
                       onClick={(e) => {
                         const target = e.currentTarget
@@ -1075,6 +1102,7 @@ export function AccountForm() {
             <div className="flex justify-end">
               <button
                 type="button"
+                data-theme-part="button"
                 onClick={() => window.open(buildResetPasswordUrl(email), '_blank', 'noopener,noreferrer')}
                 className="text-xs text-primary hover:underline"
               >
@@ -1132,7 +1160,7 @@ export function AccountForm() {
       )}
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
+        <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
@@ -1154,13 +1182,15 @@ export function AccountForm() {
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {PLATFORM_REGISTRY.filter(p => p.available && (connectedPlatforms.has(p.id) || p.id !== 'stremio')).map(p => {
-          const isConnected = connectedPlatforms.has(p.id)
+          const isConnected = p.id !== 'jellyfin' && connectedPlatforms.has(p.id)
           const handleConnect = () => {
             setError('')
             if (p.id === 'nuvio') {
               setNuvioDialogOpen(true)
             } else if (p.id === 'realstream') {
               setRealstreamDialogOpen(true)
+            } else if (p.id === 'jellyfin') {
+              setJellyfinDialogOpen(true)
             } else if (p.id === 'hydra-outbound') {
               setHydraDialogOpen(true)
             }
@@ -1168,6 +1198,7 @@ export function AccountForm() {
           return (
             <div
               key={p.id}
+              data-theme-part="card"
               className={cn(
                 'group relative flex min-h-[148px] flex-col items-start gap-4 rounded-[1.35rem] border p-4 text-left transition-[background-color,border-color,box-shadow,transform]',
                 isConnected
@@ -1186,7 +1217,7 @@ export function AccountForm() {
                 <span className="block text-xs leading-relaxed text-muted-foreground">{p.description}</span>
               </span>
               {isConnected ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+                <span data-theme-part="badge" className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
                   <Check className="h-3 w-3" />
                   Connected
                 </span>
@@ -1288,7 +1319,7 @@ export function AccountForm() {
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {(!liveAccount || liveAccount.status !== 'error') && (
-                          <span className="inline-flex h-6 items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 text-xs font-semibold text-success">
+                          <span data-theme-part="badge" className="inline-flex h-6 items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 text-xs font-semibold text-success">
                             <ShieldCheck className="h-3 w-3" />
                             Healthy
                           </span>
@@ -1397,6 +1428,7 @@ export function AccountForm() {
                 </div>
                 <input
                   type="url"
+                  data-theme-part="input"
                   value={avatar.startsWith('data:') ? '\u2713 Uploaded image' : avatar}
                   onChange={(e) => setAvatar(e.target.value)}
                   readOnly={avatar.startsWith('data:')}
@@ -1429,7 +1461,7 @@ export function AccountForm() {
             <div className="space-y-4">
               <Label className="text-xs font-medium text-muted-foreground uppercase">Theme Color</Label>
 
-              <div className="bg-muted/10 p-4 rounded-2xl border border-border/10 space-y-5">
+              <div data-theme-part="panel" className="bg-muted/10 p-4 rounded-2xl border border-border/10 space-y-5">
                 <div className="flex flex-wrap items-center gap-3">
                   <Tooltip content="No accent color" side="top">
                     <button
@@ -1541,7 +1573,7 @@ export function AccountForm() {
       </Tabs>
 
       {error && (
-        <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 mt-6 animate-in shake duration-500">
+        <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 mt-6 animate-in shake duration-500">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
@@ -1572,7 +1604,7 @@ export function AccountForm() {
 
   if (isEditing) {
     return (
-      <Dialog open={isOpen} onOpenChange={(open) => { if (open) return; if (connectionSubDialogRef.current) return; if (Date.now() - subDialogClosedAtRef.current < 250) return; handleClose() }}>
+      <Dialog open={isOpen} onOpenChange={(open) => { if (open) return; if (jellyfinDialogOpen || connectionSubDialogRef.current) return; if (Date.now() - subDialogClosedAtRef.current < 250) return; handleClose() }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Account</DialogTitle>
@@ -1622,7 +1654,7 @@ export function AccountForm() {
         </div>
 
         {error && (wizardStep === 'identity' || wizardStep === 'connect-more') && (
-          <div className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
+          <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/50 rounded-xl px-4 py-3 animate-in shake duration-500">
             <div className="flex items-start gap-3">
               <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="flex-1">
@@ -1728,6 +1760,12 @@ export function AccountForm() {
       onOpenChange={setNuvioDialogOpen}
       onComplete={handleNuvioAccountComplete}
     />
+
+    {jellyfinDialogOpen && <JellyfinSetupDialog
+      open={jellyfinDialogOpen}
+      onOpenChange={open => { setJellyfinDialogOpen(open); if (!open) subDialogClosedAtRef.current = Date.now() }}
+      onComplete={handleJellyfinAccountComplete}
+    />}
 
     <RealStreamSetupDialog
       open={realstreamDialogOpen}

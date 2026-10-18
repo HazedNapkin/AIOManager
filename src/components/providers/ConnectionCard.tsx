@@ -8,6 +8,7 @@ import { displayStatus, tokenExpiry } from '@/lib/connection-format'
 import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
 
 function getHintText(conn: Connection): string {
+    if (conn.platform === 'jellyfin') return 'Media server · Jellyfin API'
     if (conn.connectionType === 'hydra-outbound') return 'API configuration'
     if (conn.platform === 'nuvio') return 'Plugins, Profiles, Library & more'
     return 'Session management'
@@ -63,6 +64,7 @@ export const ConnectionCard = memo(function ConnectionCard({
         <div
             role="button"
             tabIndex={0}
+            data-theme-part="card"
             onClick={onEdit}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit() } }}
             className={cn(
@@ -94,7 +96,9 @@ export const ConnectionCard = memo(function ConnectionCard({
                     <p className="line-clamp-1 text-xs text-muted-foreground">
                         {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}
                         {addonCount !== undefined ? `${addonCount} account addon${addonCount === 1 ? '' : 's'} \u00b7 ` : ''}
-                        Synced {lastSync ? timeAgo(lastSync) : 'never'}
+                        {connection.platform === 'jellyfin'
+                            ? `Verified ${connection.mediaServer?.lastCheckedAt ? timeAgo(connection.mediaServer.lastCheckedAt) : 'never'}`
+                            : `Synced ${lastSync ? timeAgo(lastSync) : 'never'}`}
                     </p>
                     {lastError && (
                         <p className="line-clamp-1 text-xs text-destructive">{lastError}</p>

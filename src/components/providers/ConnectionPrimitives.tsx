@@ -65,7 +65,7 @@ export function ConnectionStatusPill({ status, className }: { status: DisplaySta
 export function PlatformLogo({ platform, className, isHydra }: { platform: string; className?: string; isHydra?: boolean }) {
     if (isHydra) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
+            <div data-theme-part="image-tile" className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={hydraLogo} alt="Hydra" loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
@@ -73,14 +73,13 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
     const entry = getPlatformEntry(platform)
     if (entry) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
+            <div data-theme-part="image-tile" className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={entry.logo} alt={entry.name} loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
     }
     return (
-        <div className={cn('relative flex items-center justify-center', className)}>
-            <div className="absolute inset-0 rounded-xl bg-muted" />
+        <div data-theme-part="image-tile" className={cn('relative flex items-center justify-center rounded-xl bg-muted', className)}>
             <span className="relative z-10 text-xs font-bold text-muted-foreground">
                 {platform[0]?.toUpperCase() || '?'}
             </span>
@@ -89,6 +88,7 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
 }
 
 export function connectionLabel(connection: Connection): string {
+    if (connection.platform === 'jellyfin') return connection.mediaServer?.productName || connection.displayName || 'Jellyfin-compatible server'
     const isHydra = connection.connectionType === 'hydra-outbound'
     const entry = getPlatformEntry(connection.platform)
     return isHydra

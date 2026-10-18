@@ -3,6 +3,22 @@
 // This says nothing about any individual addon being verified as installed: the details
 // surface describes sync targets and their last synced state, never confirmed presence.
 // Kept dependency-free (no runtime imports) so node --test can run it directly.
+// The account-scope section at the bottom additionally counts media platforms
+// (Jellyfin) for the overall account chip; it never feeds addon sync.
+
+// Display-safe subset of the media-server identity (src/types/connection.ts
+// MediaServerIdentity): only names and timestamps. Credentials, user IDs, auth methods,
+// and token-bearing addresses never enter this shape, so nothing downstream can render
+// them. Structurally compatible with the real identity; no runtime import so
+// node --test keeps working.
+export interface PlatformMediaServerIdentity {
+    product?: string
+    productName?: string
+    serverName?: string
+    version?: string
+    userName?: string
+    lastCheckedAt?: number | Date | string
+}
 
 export interface PlatformSourceConnection {
     platform: string
@@ -12,6 +28,7 @@ export interface PlatformSourceConnection {
     status?: PlatformSyncStatus
     lastSync?: number | Date | string
     lastError?: string
+    mediaServer?: PlatformMediaServerIdentity
 }
 
 export type PlatformSyncStatus = 'active' | 'expired' | 'error' | 'degraded' | 'pending'
@@ -39,6 +56,7 @@ export function addonPlatformSources(account: PlatformSourceAccount | null | und
     const sources: string[] = []
     let hasExplicitStremio = false
     for (const conn of account.connections || []) {
+        if (conn.platform === 'jellyfin') continue
         const platform = connectionPlatform(conn)
         if (platform === 'stremio') hasExplicitStremio = true
         if (!sources.includes(platform)) sources.push(platform)
@@ -113,6 +131,7 @@ export function accountSyncTargets(account: PlatformSourceAccount | null | undef
     let hasExplicitStremio = false
 
     for (const conn of account.connections || []) {
+        if (conn.platform === 'jellyfin') continue
         const platform = connectionPlatform(conn)
         if (platform === 'stremio') hasExplicitStremio = true
         if (conn.enabled === false) {
@@ -195,4 +214,149 @@ export function aggregatePlatformSources(accounts: Array<PlatformSourceAccount |
         })),
         paused: Array.from(pausedCandidates),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Account-scope derivation (overall platform count/chip for ONE account).
+//
+// Everything above stays addon-only on purpose: addon sync must never treat a media
+// platform as an addon target. The helpers below layer media platforms (Jellyfin-
+// compatible servers) on top for account surfaces only: Jellyfin IS a platform there,
+// counted once alongside Stremio/RealStream/Nuvio, and it provides playback/library
+// for the signed-in remote user rather than receiving addons.
+// ---------------------------------------------------------------------------
+
+// Media connections are Jellyfin-compatible servers. They never join addonPlatformSources
+// or accountSyncTargets; they surface through the helpers below instead.
+function isMediaConnection(conn: PlatformSourceConnection): boolean {
+    return conn.platform === 'jellyfin'
+}
+
+// Short chip display name. The registry's Jellyfin entry is a long setup-compatibility
+// label ("Jellyfin, AIOStreams, AIOMetadata & more") meant to explain what you can
+// connect, not to name a connected platform; connected surfaces want plain "Jellyfin".
+export function platformShortName(platform: string): string {
+    return platform === 'jellyfin' ? 'Jellyfin' : platform
+}
+
+// Media platforms connected to the account, deduped. Paused media connections still
+// count: pausing a connection never disconnects the platform.
+export function mediaPlatformSources(account: PlatformSourceAccount | null | undefined): string[] {
+    if (!account) return []
+    const platforms: string[] = []
+    for (const conn of account.connections || []) {
+        if (!isMediaConnection(conn)) continue
+        if (!platforms.includes(conn.platform)) platforms.push(conn.platform)
+    }
+    return platforms
+}
+
+// Overall account-scope platform list: every addon platform plus every media platform,
+// each counted once no matter how many connections exist (two Jellyfin servers are still
+// one Jellyfin platform in the count). Paused connections of either kind still count as
+// connected. Non-empty result = the account has connected platforms worth a chip.
+// Addon sync must keep using addonPlatformSources instead.
+export function accountPlatformSources(account: PlatformSourceAccount | null | undefined): string[] {
+    if (!account) return []
+    const platforms = addonPlatformSources(account)
+    for (const platform of mediaPlatformSources(account)) {
+        if (!platforms.includes(platform)) platforms.push(platform)
+    }
+    return platforms
+}
+
+export type PlatformMediaStatus = PlatformSyncStatus | 'paused'
+
+export interface PlatformMediaTarget {
+    platform: string
+    // Actual product the server reports about itself (Jellyfin, AIOStreams, AIOMetadata…).
+    product: string
+    serverName?: string
+    // Verified remote user's display name. User IDs are never carried here.
+    userName?: string
+    status: PlatformMediaStatus
+    // ms epoch of the last successful verification; null = never verified.
+    lastVerified: number | null
+    lastError?: string
+    // Set by aggregation only: how many connections contribute to this row.
+    connectionCount?: number
+}
+
+// One detail row per media connection, for the account chip's "Playback & library"
+// group. Reads only display-safe identity fields; falls back to the platform's short
+// name when a server did not report a product name.
+export function accountMediaTargets(account: PlatformSourceAccount | null | undefined): PlatformMediaTarget[] {
+    if (!account) return []
+    const media: PlatformMediaTarget[] = []
+    for (const conn of account.connections || []) {
+        if (!isMediaConnection(conn)) continue
+        const identity = conn.mediaServer
+        media.push({
+            platform: conn.platform,
+            product: identity?.productName || platformShortName(conn.platform),
+            serverName: identity?.serverName || undefined,
+            userName: identity?.userName || undefined,
+            status: conn.enabled === false ? 'paused' : conn.status || 'pending',
+            lastVerified: toMs(identity?.lastCheckedAt) ?? toMs(conn.lastSync),
+            lastError: conn.lastError,
+        })
+    }
+    return media
+}
+
+// Honesty-first ordering for media rows: a failing or stale connection outranks a
+// healthy-looking one; a deliberately paused one is a fact, not a failure.
+const MEDIA_STATUS_RANK: Record<PlatformMediaStatus, number> = {
+    expired: 0,
+    error: 1,
+    degraded: 2,
+    pending: 3,
+    paused: 4,
+    active: 5,
+}
+
+// Merge two media rows for the same platform/product/user/server: keep the freshest
+// verification, surface the worst status with its own lastError, and count connections.
+function mergeMediaTargets(a: PlatformMediaTarget, b: PlatformMediaTarget): PlatformMediaTarget {
+    const fresher = (b.lastVerified ?? -1) > (a.lastVerified ?? -1) ? b : a
+    // Pausing one connection does not pause a still-enabled sibling.
+    const worst = a.status === 'paused' ? b.status : b.status === 'paused' ? a.status
+        : MEDIA_STATUS_RANK[a.status] <= MEDIA_STATUS_RANK[b.status] ? a.status : b.status
+    const errorCarrier =
+        MEDIA_STATUS_RANK[a.status] < MEDIA_STATUS_RANK[b.status] ? a
+        : MEDIA_STATUS_RANK[b.status] < MEDIA_STATUS_RANK[a.status] ? b
+        : a.lastError ? a
+        : b
+    return {
+        ...fresher,
+        status: worst,
+        lastError: errorCarrier.lastError,
+        connectionCount: (a.connectionCount ?? 1) + (b.connectionCount ?? 1),
+    }
+}
+
+export interface PlatformAccountSummary extends PlatformSourceSummary {
+    // Media connection rows for the "Playback & library" group (account scope only).
+    media: PlatformMediaTarget[]
+}
+
+// Account-scope summary for the platform chip: the overall platform set (addon +
+// media, each platform once) plus the untouched addon-only sync-target detail and the
+// media rows. aggregatePlatformSources semantics are reused verbatim, never changed.
+export function aggregateAccountPlatforms(accounts: Array<PlatformSourceAccount | null | undefined>): PlatformAccountSummary {
+    const summary = aggregatePlatformSources(accounts)
+    const platforms = [...summary.platforms]
+    const byMedia = new Map<string, PlatformMediaTarget>()
+    for (const account of accounts) {
+        if (!account) continue
+        for (const platform of mediaPlatformSources(account)) {
+            if (!platforms.includes(platform)) platforms.push(platform)
+        }
+        for (const target of accountMediaTargets(account)) {
+            const key = `${target.platform}\u0000${target.product}\u0000${target.serverName ?? ''}\u0000${target.userName ?? ''}`
+            const existing = byMedia.get(key)
+            byMedia.set(key, existing ? mergeMediaTargets(existing, target) : { ...target, connectionCount: 1 })
+        }
+    }
+    return { ...summary, platforms, media: Array.from(byMedia.values()) }
 }

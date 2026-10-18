@@ -13,7 +13,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { Poster } from '@/components/common/Poster'
 import { PlatformSourceBadge } from '@/components/activity/PlatformSourceBadge'
-import { SquircleOverlay } from '@/components/ui/squircle-overlay'
+import { isReadOnlyMediaActivity, type ActivityNowStatus } from '@/lib/jellyfin/activity'
 
 const AVATAR_COLORS = [
   'bg-blue-500/20 text-blue-400',
@@ -28,6 +28,7 @@ const AVATAR_COLORS = [
 
 interface ActivityItemCardProps {
     entry: ActivityItem
+    nowStatus?: ActivityNowStatus
     viewMode: 'grid' | 'list'
     isSelected: boolean
     isBulkMode: boolean
@@ -38,6 +39,7 @@ interface ActivityItemCardProps {
 
 export const ActivityItemCard = memo(({
     entry,
+    nowStatus,
     viewMode,
     isSelected,
     isBulkMode,
@@ -72,7 +74,9 @@ export const ActivityItemCard = memo(({
         return isNaN(d.getTime()) || d.getTime() < Date.UTC(1995, 0, 1) ? null : d
     }, [item.timestamp])
 
-    const isLive = useMemo(() => !!itemDate && Date.now() - itemDate.getTime() < 1200000, [itemDate])
+    const readOnly = isReadOnlyMediaActivity(item)
+    const isLive = !!nowStatus
+    const nowDescription = nowStatus === 'playing' ? 'Playing now' : 'Latest unfinished activity updated within the last 5 minutes'
 
     const remainingMinutes = useMemo(() => item.duration && item.watched
         ? Math.max(0, Math.round((item.duration - item.watched) / 60000))
@@ -83,7 +87,7 @@ export const ActivityItemCard = memo(({
     }
 
     const handleClick = () => {
-        if (isBulkMode || isSelected) {
+        if ((isBulkMode || isSelected) && !readOnly) {
             onToggleSelect?.(item.id)
             return
         }
@@ -96,7 +100,7 @@ export const ActivityItemCard = memo(({
 
     const handleDelete = (e: React.MouseEvent) => {
         e.stopPropagation()
-        onDelete?.(item.id, true)
+        if (!readOnly) onDelete?.(item.id, true)
     }
 
 
@@ -132,7 +136,7 @@ export const ActivityItemCard = memo(({
                         loading="lazy"
                     />
 
-                    {item.source && <PlatformSourceBadge source={item.source} />}
+                    {item.source && <PlatformSourceBadge source={item.source} label={item.mediaObservation?.productName} mediaSources={item.mediaSources} />}
 
 
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -156,7 +160,7 @@ export const ActivityItemCard = memo(({
 
                     {isLive && (
                         <div className="absolute top-2 right-2 z-20">
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white shadow-xl">
+                            <span title={nowDescription} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white shadow-xl">
                                 <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
                             </span>
                         </div>
@@ -200,8 +204,18 @@ export const ActivityItemCard = memo(({
                             </span>
                         )}
 
-                        <div className="relative w-4 h-4 shrink-0 flex items-center justify-center overflow-hidden">
-                            <SquircleOverlay />
+                        <div
+                            data-theme-part="account-avatar"
+                            className="relative w-4 h-4 shrink-0 flex items-center justify-center overflow-hidden rounded-md"
+                        >
+                            {/* Same muted backdrop the global SquircleOverlay paints, kept local so skins
+                                can suppress the fixed squircle clip with --theme-avatar-filter and apply
+                                the theme radius instead (mirrors accounts/AccountAvatar). */}
+                            <div
+                                data-theme-part="account-avatar-surface"
+                                className="absolute inset-0 rounded-[inherit] bg-muted"
+                                style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
+                            />
                             {showAvatar ? (
                                 <img
                                     src={account.avatar}
@@ -209,8 +223,9 @@ export const ActivityItemCard = memo(({
                                     loading="lazy"
                                     decoding="async"
                                     onError={() => setAvatarFailed(true)}
-                                    className="absolute inset-0 h-full w-full object-cover z-10"
-                                    style={{ filter: 'url(#squircle)' }}
+                                    data-theme-part="account-avatar-image"
+                                    className="absolute inset-0 h-full w-full rounded-[inherit] object-cover z-10"
+                                    style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
                                 />
                             ) : (
                                 <span className="relative z-10 text-xs font-bold text-muted-foreground">
@@ -234,6 +249,7 @@ export const ActivityItemCard = memo(({
         <div
             role="button"
             tabIndex={0}
+            data-theme-part="card"
             className={cn(
                 'group flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-2xl border bg-card/70 p-3 shadow-sm transition-[transform,opacity,box-shadow] duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background md:gap-4 md:p-4',
                 isSelected
@@ -261,7 +277,7 @@ export const ActivityItemCard = memo(({
                     className="w-full h-full object-cover"
                     loading="lazy"
                 />
-                {item.source && <PlatformSourceBadge source={item.source} />}
+                {item.source && <PlatformSourceBadge source={item.source} label={item.mediaObservation?.productName} mediaSources={item.mediaSources} />}
                 {isLive && (
                     <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                         <div className={`w-2 h-2 rounded-full bg-success animate-pulse ${isLight ? 'shadow-lg shadow-success/50' : 'shadow-sm shadow-success/20'}`} />
@@ -280,8 +296,8 @@ export const ActivityItemCard = memo(({
                 <div className="flex items-start justify-between gap-2">
                     <h4 className="truncate text-base font-bold leading-tight tracking-tight md:text-lg">{item.name}</h4>
                     {isLive && (
-                        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 text-xs font-semibold uppercase text-success">
-                            <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
+                        <span title={nowDescription} className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 text-xs font-semibold uppercase text-success">
+                            <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
                         </span>
                     )}
                 </div>
@@ -289,7 +305,7 @@ export const ActivityItemCard = memo(({
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
 
-                    <span className="inline-flex items-center rounded-full border border-border/40 bg-muted/45 px-2 py-0.5 text-xs font-semibold uppercase text-muted-foreground">
+                    <span data-theme-part="badge" className="inline-flex items-center rounded-full border border-border/40 bg-muted/45 px-2 py-0.5 text-xs font-semibold uppercase text-muted-foreground">
                         {item.type}
                     </span>
 
@@ -304,8 +320,18 @@ export const ActivityItemCard = memo(({
 
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1.5">
-                        <div className="relative w-5 h-5 shrink-0 flex items-center justify-center overflow-hidden">
-                            <SquircleOverlay />
+                        <div
+                            data-theme-part="account-avatar"
+                            className="relative w-5 h-5 shrink-0 flex items-center justify-center overflow-hidden rounded-md"
+                        >
+                            {/* Same muted backdrop the global SquircleOverlay paints, kept local so skins
+                                can suppress the fixed squircle clip with --theme-avatar-filter and apply
+                                the theme radius instead (mirrors accounts/AccountAvatar). */}
+                            <div
+                                data-theme-part="account-avatar-surface"
+                                className="absolute inset-0 rounded-[inherit] bg-muted"
+                                style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
+                            />
                             {showAvatar ? (
                                 <img
                                     src={account.avatar}
@@ -313,8 +339,9 @@ export const ActivityItemCard = memo(({
                                     loading="lazy"
                                     decoding="async"
                                     onError={() => setAvatarFailed(true)}
-                                    className="absolute inset-0 h-full w-full object-cover z-10"
-                                    style={{ filter: 'url(#squircle)' }}
+                                    data-theme-part="account-avatar-image"
+                                    className="absolute inset-0 h-full w-full rounded-[inherit] object-cover z-10"
+                                    style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
                                 />
                             ) : (
                                 <span className="relative z-10 text-xs font-bold text-muted-foreground">
@@ -325,7 +352,7 @@ export const ActivityItemCard = memo(({
                         <span className="text-xs font-semibold text-muted-foreground">{userName}</span>
                     </div>
                     <span className="text-xs text-muted-foreground/60 font-mono">
-                        {isLive ? 'Watching now' : itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
+                        {nowStatus === 'playing' ? 'Watching now' : nowStatus === 'recent' ? 'Recently updated' : itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
                     </span>
                 </div>
 
@@ -348,7 +375,7 @@ export const ActivityItemCard = memo(({
 
             </div>
 
-            <Button
+            {!readOnly && <Button
                 variant="ghost"
                 size="icon"
                 className="inline-flex h-8 w-8 shrink-0 text-muted-foreground transition-opacity hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100"
@@ -356,7 +383,7 @@ export const ActivityItemCard = memo(({
                 aria-label="Delete activity item"
             >
                 <Trash2 className="h-4 w-4" />
-            </Button>
+            </Button>}
         </div>
     )
 })

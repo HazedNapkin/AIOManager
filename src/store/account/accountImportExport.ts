@@ -6,6 +6,8 @@ import { AddonDescriptor, AddonManifest } from '@/types/addon'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { Account } from '@/types/account'
 import type { Connection } from '@/types/connection'
+import { exportJellyfinCredentials, importJellyfinCredentials, openJellyfinSecret, sealJellyfinSecret, recoverJellyfinConnection } from '@/lib/jellyfin/connection-data'
+import { mergeConnections, resolvePrimaryConnectionId } from '@/lib/connection-merge'
 import { useProfileStore } from '@/store/profileStore'
 import localforage from 'localforage'
 import { triggerSync } from '@/lib/sync-trigger'
@@ -40,41 +42,6 @@ async function getStore(): Promise<StoreRef> {
     return useAccountStore
 }
 
-// Sync incoming connections carry metadata only (credentials live server-side), so local
-// credentials must be preserved. Backup imports carry credentials, which take precedence.
-function mergeConnections(
-    local: Connection[] | undefined,
-    incoming: Partial<Connection>[] | undefined,
-    mode: 'merge' | 'mirror',
-): Connection[] | undefined {
-    if (!incoming) return local
-    const localById = new Map((local || []).map(c => [c.id, c]))
-    const merged: Connection[] = incoming
-        .filter(inc => inc.id && inc.platform)
-        .map(inc => {
-            const existing = localById.get(inc.id as string)
-            return {
-                status: 'active',
-                lastSync: 0,
-                lastKnownAddonCount: 0,
-                consecutiveFailures: 0,
-                ...(existing || {}),
-                ...inc,
-                credentials: { ...(existing?.credentials || {}), ...(inc.credentials || {}) },
-            } as Connection
-        })
-    if (mode === 'merge') {
-        const incomingIds = new Set(merged.map(c => c.id))
-        const mergedPlatforms = new Set(merged.map(c => c.platform))
-        for (const c of local || []) {
-            if (incomingIds.has(c.id)) continue
-            if (mergedPlatforms.has(c.platform)) continue
-            merged.push(c)
-        }
-    }
-    return merged
-}
-
 // Sync exports deduplicate manifests in the envelope; manual backups embed them.
 export function shapeExportAddon(
     addon: AddonDescriptor,
@@ -106,6 +73,41 @@ export function shapeExportAddon(
     }
 }
 
+// One damaged media credential must not fail the whole export or sync push: isolate the
+// failure per connection, keep the metadata, and mark the record pending so an import
+// requests a fresh sign-in for that connection only.
+async function exportConnectionForBackup(c: Connection, includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
+    const record: Record<string, unknown> = {
+        id: c.id,
+        platform: c.platform,
+        connectionType: c.connectionType,
+        driverType: c.driverType,
+        enabled: c.enabled,
+        profileMapping: c.profileMapping,
+        capabilities: c.capabilities,
+        pluginList: c.pluginList,
+        driverConfig: c.driverConfig,
+        displayName: c.displayName,
+        mediaServer: c.mediaServer,
+    }
+    if (c.platform !== 'jellyfin') {
+        return { ...record, credentials: includeCredentialsValue ? c.credentials : {} }
+    }
+    if (!includeCredentialsValue && !forSync) {
+        return { ...record, credentials: {}, status: 'pending' }
+    }
+    try {
+        const credentials = await exportJellyfinCredentials(c, value => decrypt(value, getEncryptionKey()!))
+        return credentials.jellyfinExport
+            ? { ...record, credentials }
+            : { ...record, credentials: {}, status: 'pending' }
+    } catch {
+        // Never log the failure detail: it could carry the private server address or token.
+        if (import.meta.env.DEV) console.warn('[Export] A media connection requires sign-in on import; its credentials could not be exported')
+        return { ...record, credentials: {}, status: 'pending' }
+    }
+}
+
 async function buildExportData(includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
     const store = await getStore()
     const manifestMap: Record<string, AddonDescriptor['manifest']> = {}
@@ -132,19 +134,7 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
             activeProfileId: acc.activeProfileId,
             deletedAddons: acc.deletedAddons,
             addons: processAddons(acc.addons),
-            connections: (acc.connections || []).map(c => ({
-                id: c.id,
-                platform: c.platform,
-                connectionType: c.connectionType,
-                driverType: c.driverType,
-                enabled: c.enabled,
-                credentials: includeCredentialsValue ? c.credentials : {},
-                profileMapping: c.profileMapping,
-                capabilities: c.capabilities,
-                pluginList: c.pluginList,
-                driverConfig: c.driverConfig,
-                displayName: c.displayName,
-            })),
+            connections: await Promise.all((acc.connections || []).map(c => exportConnectionForBackup(c, includeCredentialsValue, forSync))),
             primaryConnectionId: acc.primaryConnectionId,
             apiKey: includeCredentialsValue ? acc.apiKey : undefined,
             createdAt: acc.createdAt,
@@ -498,7 +488,18 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
 
         const getReadEncryptionKey = () => localDecryptionKey ?? getEncryptionKey()
         const getWriteEncryptionKey = () => getEncryptionKey()
-        const currentAccounts = [...store.getState().accounts]
+        // A cloud restore can replace the local vault key. Rewrap browser-only media
+        // credentials before metadata-only connection merges preserve the local record.
+        const currentAccounts = await Promise.all(store.getState().accounts.map(async account => {
+            if (!localDecryptionKey) return account
+            return { ...account, connections: await Promise.all((account.connections || []).map(async connection => {
+                if (connection.platform !== 'jellyfin' || !connection.credentials?.jellyfin) return connection
+                return recoverJellyfinConnection(connection, async c => {
+                    const secret = await openJellyfinSecret(c, value => decrypt(value, localDecryptionKey))
+                    return { ...c, credentials: await sealJellyfinSecret(secret, value => encrypt(value, getWriteEncryptionKey())) }
+                })
+            })) }
+        }))
 
         const localDecrypted = await Promise.all(
             currentAccounts.map(async (acc) => {
@@ -546,6 +547,16 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
         const processedLocalIds = new Set<string>()
 
         for (const ra of normalizedAccounts) {
+            if (ra.connections) {
+                // The opener validates legacy same-key ciphertext; anything that cannot be
+                // decrypted, parsed and matched to the record's user becomes pending.
+                ra.connections = await Promise.all(ra.connections.map(c => recoverJellyfinConnection(c,
+                    value => importJellyfinCredentials(
+                        value,
+                        text => encrypt(text, getWriteEncryptionKey()),
+                        text => decrypt(text, getReadEncryptionKey()),
+                    ))))
+            }
             let matchedAccount = currentAccounts.find((a) => a.id === ra.id)
 
             if (!matchedAccount && ra.rawKey) {
@@ -635,8 +646,14 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                             : mergeAddons(matchedAccount.addons, filterResurrected(ra.addons, matchedAccount.addons, tombstones), { instanceMatch: 'adopt-remote-url' })
                         return { addons: mergedAddons, deletedAddons: reconcileTombstones(tombstones, mergedAddons) }
                     })(),
-                    connections: mergeConnections(matchedAccount.connections, ra.connections, mode) ?? matchedAccount.connections,
-                    primaryConnectionId: ra.primaryConnectionId ?? matchedAccount.primaryConnectionId,
+                    ...(() => {
+                        // Re-point primaries that referred to media or removed connections.
+                        const mergedConnections = mergeConnections(matchedAccount.connections, ra.connections, mode) ?? matchedAccount.connections
+                        return {
+                            connections: mergedConnections,
+                            primaryConnectionId: resolvePrimaryConnectionId(mergedConnections, ra.primaryConnectionId ?? matchedAccount.primaryConnectionId),
+                        }
+                    })(),
                     lastSync: ra.lastSync || new Date(),
                     status: 'active' as const,
                 }
@@ -648,13 +665,15 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                     if (isResurrectionAdopted(adoptedKey)) delete importedTombstones[adoptedKey]
                 }
                 const importedAddons = filterResurrected(ra.addons, [], importedTombstones)
+                const importedConnections = mergeConnections(undefined, ra.connections, mode)
                 const importedAccount = {
                     ...ra,
                     addons: importedAddons,
                     deletedAddons: reconcileTombstones(importedTombstones, importedAddons),
                     authKey: ra.rawKey ? await encrypt(ra.rawKey, getWriteEncryptionKey()) : '',
                     password: ra.password ? await encrypt(ra.password, getWriteEncryptionKey()) : undefined,
-                    connections: mergeConnections(undefined, ra.connections, mode),
+                    connections: importedConnections,
+                    primaryConnectionId: resolvePrimaryConnectionId(importedConnections, ra.primaryConnectionId),
                     apiKey: ra.apiKey ?? safeUUID(),
                 } as Account
                 reconciledAccounts.push(importedAccount)

@@ -1,11 +1,15 @@
 import { Button } from '@/components/ui/button'
 import { prefetchAccountDetail } from '@/lib/account-prefetch'
 import { Tooltip } from '@/components/ui/tooltip'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AccountAvatar } from './AccountAvatar'
-import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
+import { AccountMediaPlayback } from './AccountMedia'
+import { useJellyfinActivity } from '@/hooks/useJellyfinActivity'
+import { accountMediaPlayback, mergeMediaItems } from '@/lib/jellyfin/activity'
+import { PlatformSourceChip, platformName } from '@/components/addons/PlatformSourceChip'
+import { accountPlatformSources } from '@/components/addons/platform-source'
 import { CopyButton } from '@/components/ui/copy-button'
 import {
   DropdownMenu,
@@ -18,7 +22,7 @@ import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
-import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ChevronRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Puzzle, Play } from 'lucide-react'
+import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ArrowUpRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Play } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
 import { STICKY_NOTE_MAX_LENGTH } from '@/lib/constants'
@@ -30,13 +34,13 @@ import { useRelativeTime } from '@/hooks/use-relative-time'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 
-function HideableImage({ src, alt, className, fallback, style }: { src?: string; alt?: string; className?: string; fallback?: string; style?: React.CSSProperties }) {
+function HideableImage({ src, alt, className, fallback, style, dataThemePart }: { src?: string; alt?: string; className?: string; fallback?: string; style?: React.CSSProperties; dataThemePart?: string }) {
   const [failed, setFailed] = useState(false)
   useEffect(() => { setFailed(false) }, [src])
   if (!src || failed) {
     if (fallback) {
       return (
-        <div className={cn(className, 'flex items-center justify-center text-[8px] font-bold text-muted-foreground')} style={style}>
+        <div data-theme-part={dataThemePart} className={cn(className, 'flex items-center justify-center text-[8px] font-bold text-muted-foreground')} style={style}>
           {fallback}
         </div>
       )
@@ -50,6 +54,7 @@ function HideableImage({ src, alt, className, fallback, style }: { src?: string;
       loading="lazy"
       decoding="async"
       onError={() => setFailed(true)}
+      data-theme-part={dataThemePart}
       className={className}
       style={style}
     />
@@ -80,6 +85,13 @@ export const AccountCard = memo(function AccountCard({
   const navigate = useNavigate()
   const preventNavRef = useRef(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    setIsMenuOpen(open)
+    if (!open) {
+      preventNavRef.current = true
+      setTimeout(() => { preventNavRef.current = false }, 400)
+    }
+  }, [])
   const [noteOpen, setNoteOpen] = useState(false)
   const [noteValue, setNoteValue] = useState(account.note || '')
   const [noteHistory, setNoteHistory] = useState<string[]>([account.note || ''])
@@ -221,10 +233,12 @@ export const AccountCard = memo(function AccountCard({
     return () => clearTimeout(timer)
   }, [])
 
-  const accountItems = useLibraryCache(
+  const cachedAccountItems = useLibraryCache(
     useShallow((state) => state.items.filter(i => i.accountId === account.id))
   )
   const libraryLoading = useLibraryCache((state) => state.loading)
+  const media = useJellyfinActivity(account.id)
+  const accountItems = useMemo(() => mergeMediaItems(cachedAccountItems, media.history), [cachedAccountItems, media.history])
 
   const prevLastWatchedRef = useRef<ActivityItem | null>(null)
 
@@ -244,6 +258,7 @@ export const AccountCard = memo(function AccountCard({
     prevLastWatchedRef.current = latest
     return latest
   }, [accountItems, libraryLoading])
+  const mediaPlayback = accountMediaPlayback(media.playback, lastWatched)
 
   const handleEdit = () => {
     openAddAccountDialog(account)
@@ -267,6 +282,8 @@ export const AccountCard = memo(function AccountCard({
   })()
   const previewAddons = addonPreviewCount === 0 ? enabledAddons : enabledAddons.slice(0, addonPreviewCount)
   const remainingCount = addonPreviewCount === 0 ? 0 : Math.max(0, enabledAddons.length - addonPreviewCount)
+  const hasPlatformSources = accountPlatformSources(account).length > 0
+  const expiredConnection = account.connections?.find(connection => connection.enabled !== false && connection.status === 'expired')
 
   const { isLongPressTriggered, ...longPressProps } = useLongPress(() => {
     if (!isSelectionMode && onLongPress) {
@@ -283,16 +300,20 @@ export const AccountCard = memo(function AccountCard({
     }
   }
   const noteToolbarButtonClass = 'h-8 w-8 rounded-xl text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+  const statChipClass = 'inline-flex h-4 items-center gap-1 leading-none'
+  const statCountClass = 'text-[11px] font-medium leading-none tabular-nums'
 
   return (
     <Card
+      data-account-card={account.id}
+      data-selected={Boolean(isSelected)}
       {...longPressProps}
       role="button"
       tabIndex={0}
       onMouseEnter={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
       onFocus={() => { if (!isSelectionMode) prefetchAccountDetail(account.id) }}
       className={cn(
-        'group relative flex h-full cursor-pointer flex-col rounded-[1.35rem] border border-border/45 bg-card/80 shadow-sm transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group relative flex h-full min-w-0 cursor-pointer flex-col rounded-2xl border border-border/40 bg-card shadow-sm transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         isSelectionMode && 'hover:border-primary/45',
         isSelected && 'border-primary/35 bg-primary/10 ring-2 ring-primary/20',
         isMenuOpen && 'z-40'
@@ -301,20 +322,27 @@ export const AccountCard = memo(function AccountCard({
         if (e.detail === 0) return
         handleCardActivate()
       }}
-      onKeyDown={(e) => { if (noteOpen) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardActivate() } }}
+      onKeyDown={(e) => {
+        if (noteOpen) return
+        // Nested focusables (menu trigger, note toggle, dismiss chip) handle their own
+        // Enter/Space; only keys pressed on the card itself activate navigation.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardActivate() }
+      }}
     >
       {isSelected && (
         <div
-          className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full border-2 border-background shadow-lg flex items-center justify-center transition-[transform,opacity,box-shadow] animate-in zoom-in-50 duration-200"
-          style={{ background: 'hsl(var(--primary))' }}
+          data-theme-part="checkbox"
+          data-state="checked"
+          className="absolute -top-2 -right-2 z-30 w-6 h-6 rounded-full border-2 border-background bg-primary shadow-lg flex items-center justify-center transition-[transform,opacity,box-shadow] animate-in zoom-in-50 duration-200"
         >
-          <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+          <svg className="w-3.5 h-3.5 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </div>
       )}
       <div className={`flex flex-col flex-1 min-h-0 ${isSelectionMode ? 'pointer-events-none' : ''}`}>
-        <CardHeader className="relative px-4 pb-3 pt-4">
+        <CardHeader className="relative space-y-0 px-5 pb-2 pt-5 md:px-6 md:pt-6">
 
           {restProps.dragHandleProps && (
             <div
@@ -336,9 +364,10 @@ export const AccountCard = memo(function AccountCard({
             <div className={`flex items-center gap-3 flex-1 min-w-0 ${restProps.dragHandleProps ? 'pl-8' : ''}`}>
 
               <div className="relative shrink-0">
-                <AccountAvatar account={account} size="lg" />
+                <AccountAvatar account={account} size="lg" className="h-11 w-11" />
                 {accentColor && (
                   <span
+                    data-theme-part="account-accent"
                     className="pointer-events-none absolute inset-0 rounded-xl"
                     style={{ boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accentColor} 65%, transparent)` }}
                     aria-hidden="true"
@@ -347,7 +376,7 @@ export const AccountCard = memo(function AccountCard({
               </div>
 
               <div className="flex-1 min-w-0">
-                <CardTitle className="flex items-center gap-2 text-base font-semibold truncate tracking-tight">
+                <CardTitle className="flex items-center gap-2 truncate text-base font-semibold leading-tight tracking-tight">
                   <span className="truncate flex-1">{displayName}</span>
                 </CardTitle>
 
@@ -356,32 +385,66 @@ export const AccountCard = memo(function AccountCard({
                     {maskEmailLevel(accountEmail, privacyLevel)}
                   </p>
                 )}
-                {!account.hidePlatformLogos && (hasPlatformConnection(account) || (account.connections || []).filter(c => c.platform !== 'stremio').length > 0) && (
-                  <div className="flex items-center gap-1 mt-1">
-                    {getStremioAuthKey(account) && (
-                      <Tooltip content="Stremio" side="bottom">
-                        <PlatformLogo platform="stremio" className="h-5 w-5" />
-                      </Tooltip>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs leading-tight text-muted-foreground">
+                  <span className="inline-flex items-center gap-2">
+                    {!account.hidePlatformLogos && hasPlatformSources && (
+                      <span className="inline-flex items-center border-r border-border/50 pr-2">
+                        <PlatformSourceChip account={account} />
+                      </span>
                     )}
-                    {(account.connections || []).filter(c => c.platform !== 'stremio').map(conn => (
-                      <Tooltip key={conn.id} content={`${conn.platform}${conn.enabled === false ? ' (Disabled)' : ''}`} side="bottom">
-                        <PlatformLogo platform={conn.platform} className={cn("h-5 w-5", conn.enabled === false && "opacity-40 grayscale")} isHydra={conn.connectionType === 'hydra-outbound'} />
-                      </Tooltip>
-                    ))}
-                  </div>
-                )}
+                    {!hasPlatformSources && (
+                      <span className="border-r border-border/50 pr-2 text-[11px]">Local</span>
+                    )}
+                    <span className="whitespace-nowrap">{account.addons.length} addon{account.addons.length !== 1 ? 's' : ''}</span>
+                  </span>
+                  {updateCount > 0 && (
+                    <Tooltip content={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} side="top">
+                      <span aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} data-theme-part="badge" className={cn(statChipClass, 'text-primary')}>
+                        <ArrowUpCircle className="h-3 w-3" />
+                        <span className={statCountClass}>{updateCount}</span>
+                      </span>
+                    </Tooltip>
+                  )}
+                  {recentChanges > 0 && updateCount === 0 && (
+                    <Tooltip content={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today · Click to dismiss`} side="top">
+                      <button
+                        data-theme-part="badge"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          useAccountStore.getState().clearChangelog(account.id)
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation() }}
+                        aria-label={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today`}
+                        className={cn(statChipClass, 'cursor-pointer rounded-sm text-primary transition-colors hover:bg-muted/50')}
+                      >
+                        <Activity className="h-3 w-3" />
+                        <span className={statCountClass}>{recentChanges}</span>
+                      </button>
+                    </Tooltip>
+                  )}
+                  {activeRules.length > 0 && (
+                    <Tooltip content={failedOverRules.length > 0
+                      ? `${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`
+                      : `${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} side="top">
+                      <span
+                        aria-label={failedOverRules.length > 0
+                          ? `${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`
+                          : `${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`}
+                        data-theme-part="badge"
+                        className={cn(statChipClass, failedOverRules.length > 0 ? 'text-warning' : 'text-success')}
+                      >
+                        {failedOverRules.length > 0 ? <ArrowRightLeft className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                        <span className={statCountClass}>{failedOverRules.length || activeRules.length}</span>
+                      </span>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
 
               {!isSelectionMode && (
-                <DropdownMenu onOpenChange={(open) => {
-                  setIsMenuOpen(open)
-                  if (!open) {
-                    preventNavRef.current = true
-                    setTimeout(() => { preventNavRef.current = false }, 400)
-                  }
-                }}>
+                <DropdownMenu onOpenChange={handleMenuOpenChange}>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-8 w-8 rounded-full p-0 text-muted-foreground hover:bg-muted/45 hover:text-foreground" onClick={(e) => e.stopPropagation()}>
+                    <Button variant="ghost" className="-mr-1 h-8 w-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-muted/45 hover:text-foreground" onClick={(e) => e.stopPropagation()}>
                       <span className="sr-only">Open menu</span>
                       <MoreVertical className="h-4 w-4" />
                     </Button>
@@ -465,106 +528,32 @@ export const AccountCard = memo(function AccountCard({
           </div>
         </CardHeader>
 
-        <CardContent className="flex-grow px-4 pb-3">
-          <div className="space-y-3">
-
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <Tooltip content={`${account.addons.length} addon${account.addons.length !== 1 ? 's' : ''}`} side="top">
-                <span aria-label={`${account.addons.length} addon${account.addons.length !== 1 ? 's' : ''}`} className="inline-flex items-center gap-1 rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-muted-foreground">
-                  <Puzzle className="h-2.5 w-2.5" />
-                  <span className="font-semibold text-foreground">{account.addons.length}</span>
-                </span>
-              </Tooltip>
-              {account.status !== 'active' && (
-                <Tooltip content={account.status === 'expired' ? 'Session expired' : 'Needs sync'} side="top">
-                  <span aria-label={account.status === 'expired' ? 'Session expired' : 'Needs sync'} className={cn(
-                    'inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30',
-                    account.status === 'expired'
-                      ? 'text-warning'
-                      : 'text-destructive'
-                  )}>
-                    {account.status === 'expired'
-                      ? <AlertCircle className="h-2.5 w-2.5" />
-                      : <RefreshCw className="h-2.5 w-2.5" />}
-                  </span>
-                </Tooltip>
-              )}
-
-              {updateCount > 0 && (
-                <Tooltip content={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} side="top">
-                  <span aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-primary">
-                    <ArrowUpCircle className="h-2.5 w-2.5" />
-                    <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{updateCount}</span>
-                  </span>
-                </Tooltip>
-              )}
-
-              {recentChanges > 0 && updateCount === 0 && (
-                <Tooltip content={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today · Click to dismiss`} side="top">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      useAccountStore.getState().clearChangelog(account.id)
-                    }}
-                    aria-label={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today`}
-                    className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-primary cursor-pointer hover:bg-muted/50 transition-colors"
-                  >
-                    <Activity className="h-2.5 w-2.5" />
-                    <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{recentChanges}</span>
-                  </button>
-                </Tooltip>
-              )}
-
-              {activeRules.length > 0 && (
-                failedOverRules.length > 0 ? (
-                  <Tooltip content={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} side="top">
-                    <span aria-label={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-warning">
-                      <ArrowRightLeft className="h-2.5 w-2.5" />
-                      <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-warning text-warning-foreground text-[9px] font-bold leading-none">{failedOverRules.length}</span>
-                    </span>
-                  </Tooltip>
-                ) : (
-                  <Tooltip content={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} side="top">
-                    <span aria-label={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} className="relative inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-success">
-                      <CheckCircle2 className="h-2.5 w-2.5" />
-                      <span className="absolute -top-1 -right-1 h-2.5 min-w-2.5 px-0.5 flex items-center justify-center rounded-full bg-success text-success-foreground text-[9px] font-bold leading-none">{activeRules.length}</span>
-                    </span>
-                  </Tooltip>
-                )
-              )}
-            </div>
-
+        <CardContent className="min-w-0 flex-grow px-5 pb-10 pt-2 md:px-6">
+          <div className="space-y-3.5">
             {!account.hideAddonPreview && enabledAddons.length > 0 && (
-              <div className="flex items-center gap-1">
+              <div className="flex min-h-6 flex-wrap items-center gap-1.5">
                 {previewAddons.map((addon, i) => (
                   <HideableImage
                     key={`${addon.transportUrl}-${i}`}
                     src={addon.manifest.logo}
                     alt={addon.manifest.name}
                     fallback={addon.manifest.name?.[0]?.toUpperCase()}
-                    className="h-5 w-5 rounded-md bg-muted/30 object-contain p-0.5 ring-1 ring-border/20 shrink-0"
+                    dataThemePart="image-tile"
+                    className="h-[22px] w-[22px] shrink-0 rounded-md bg-muted/30 object-contain p-0.5 ring-1 ring-border/20 md:h-6 md:w-6"
                   />
                 ))}
                 {remainingCount > 0 && (
-                  <span className="text-[10px] font-medium text-muted-foreground ml-0.5">+{remainingCount}</span>
+                  <span className="ml-0.5 text-[11px] text-muted-foreground">+{remainingCount}</span>
                 )}
               </div>
             )}
 
 
-            {!account.hideLastWatched && lastWatched && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="inline-flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 bg-muted/30 text-muted-foreground/60 shrink-0">
-                    <Play className="h-2.5 w-2.5" />
-                  </span>
-                  <span className="truncate font-medium text-foreground/80">{lastWatched.name}</span>
-                  <span className="shrink-0 text-muted-foreground/60">&middot; {getTimeAgo(new Date(lastWatched.timestamp))}</span>
-                </div>
-              </div>
+            {account.addons.length === 0 && (
+              <p className="py-1 text-xs text-muted-foreground">No addons yet</p>
             )}
             {account.status === 'error' && isStabilized && (
-              <div className="bg-destructive/10 border border-destructive/50 rounded-md p-3 mt-3">
+              <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/50 rounded-md p-3 mt-3">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
@@ -593,27 +582,22 @@ export const AccountCard = memo(function AccountCard({
               </div>
             )}
             {account.status === 'expired' && isStabilized && (
-              <div className="bg-warning/10 border border-warning/50 rounded-xl p-3 mt-3">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-warning flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-warning">Session Expired</p>
-                    <p className="text-xs text-warning/80 mt-0.5">
-                      A session token was rejected. Re-authenticate this account to refresh it.
-                    </p>
-                  </div>
-                </div>
+              <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 rounded-lg border border-warning/25 bg-warning/10 px-2 py-1.5 text-warning">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <p className="min-w-0 flex-1 text-[11px]">
+                  {expiredConnection ? `${platformName(expiredConnection.platform)} session expired` : 'Session expired'}
+                </p>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  onClick={async (e) => {
-                      e.stopPropagation()
-                      handleEdit()
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleEdit()
                   }}
-                  className="w-full mt-2 border-warning/30 text-warning hover:bg-warning/20 gap-2"
+                  aria-label="Fix session"
+                  className="h-6 shrink-0 gap-1 px-1 text-[10px] text-warning hover:bg-warning/10 hover:text-warning"
                 >
-                  <Pencil className="h-3 w-3" />
-                  Fix Session
+                  Fix <ArrowUpRight className="h-3 w-3" />
                 </Button>
               </div>
             )}
@@ -621,14 +605,27 @@ export const AccountCard = memo(function AccountCard({
         </CardContent>
 
 
-        <div className="mt-auto flex items-center gap-1.5 px-4 pb-4 pt-1 text-xs text-muted-foreground/60">
-          {(Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000 && (
-            <Tooltip content="Sync recommended (Last sync > 24h ago)" side="top">
-              <AlertTriangle className="w-3 h-3 text-warning shrink-0" />
-            </Tooltip>
+        <CardFooter className="mt-auto flex flex-wrap items-center gap-2 px-5 pb-5 pt-2 md:px-6 md:pb-6">
+          {!account.hideLastWatched && (mediaPlayback || lastWatched) && (
+            <div className="min-w-0 flex-[1_1_8.5rem]">
+              {mediaPlayback ? <AccountMediaPlayback playback={mediaPlayback} /> : lastWatched && (
+                <div className="flex min-h-5 min-w-0 items-center gap-1.5 text-xs">
+                  <Play className="h-3.5 w-3.5 shrink-0 text-muted-foreground/65" aria-hidden="true" />
+                  <span className="truncate font-medium text-foreground/80" title={lastWatched.name}>{lastWatched.name}</span>
+                  <time className="ml-0.5 shrink-0 text-[11px] text-muted-foreground">{getTimeAgo(new Date(lastWatched.timestamp))}</time>
+                </div>
+              )}
+            </div>
           )}
-          <span>Synced {timeStr}</span>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground/65 md:text-[11px]">
+              {(Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000 && (
+                <Tooltip content="Sync recommended (Last sync > 24h ago)" side="top">
+                  <AlertTriangle className="h-3 w-3 shrink-0 text-warning" aria-label="Sync recommended" />
+                </Tooltip>
+              )}
+              <span>Synced {timeStr}</span>
+            </div>
             <Tooltip content={account.note ? `Note: ${account.note.slice(0, 60)}${account.note.length > 60 ? '…' : ''}` : 'Add note'} side="top">
               <Button
                 variant="ghost"
@@ -637,17 +634,11 @@ export const AccountCard = memo(function AccountCard({
                 className={`h-6 w-6 flex items-center justify-center rounded-md p-0.5 ring-1 ring-border/20 transition-colors ${account.note ? 'text-primary bg-primary/10' : 'text-muted-foreground/60 bg-muted/30 hover:text-muted-foreground hover:bg-muted/50'}`}
                 aria-label="Toggle note"
               >
-                <StickyNote className="h-2.5 w-2.5" />
+                <StickyNote className="h-3 w-3" />
               </Button>
             </Tooltip>
-            {!isSelectionMode && (
-              <span className="hidden items-center gap-1 rounded-full px-2 py-1 font-medium text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 sm:inline-flex">
-                Open
-                <ChevronRight className="h-3 w-3" />
-              </span>
-            )}
           </div>
-        </div>
+        </CardFooter>
       </div>
 
       <Dialog open={noteOpen} onOpenChange={handleNoteClose}>
@@ -662,6 +653,7 @@ export const AccountCard = memo(function AccountCard({
                 <AccountAvatar account={account} size="md" showStatus={false} />
                 {accentColor && (
                   <span
+                    data-theme-part="account-accent"
                     className="pointer-events-none absolute inset-0 rounded-xl"
                     style={{ boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accentColor} 65%, transparent)` }}
                     aria-hidden="true"
@@ -679,7 +671,7 @@ export const AccountCard = memo(function AccountCard({
 
           {noteIsEditing ? (
             <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-              <div className="flex items-center gap-1 rounded-2xl border border-border/35 bg-muted/50 p-1">
+              <div data-theme-part="toolbar" className="flex items-center gap-1 rounded-2xl border border-border/35 bg-muted/50 p-1">
                 <Tooltip content="Undo" side="top"><Button variant="ghost" size="icon" className={noteToolbarButtonClass} onClick={noteUndo} disabled={noteHistoryIdx === 0} aria-label="Undo"><Undo2 className="h-3.5 w-3.5" /></Button></Tooltip>
                 <Tooltip content="Redo" side="top"><Button variant="ghost" size="icon" className={noteToolbarButtonClass} onClick={noteRedo} disabled={noteHistoryIdx >= noteHistory.length - 1} aria-label="Redo"><Redo2 className="h-3.5 w-3.5" /></Button></Tooltip>
                 <div className="mx-1 h-5 w-px bg-border/60" />
@@ -699,7 +691,7 @@ export const AccountCard = memo(function AccountCard({
                 )}
               </div>
 
-              <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/35 bg-background">
+              <div data-theme-part="panel" className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/35 bg-background">
                 <Textarea
                   ref={noteTextareaRef}
                   data-autofocus="true"
@@ -772,7 +764,7 @@ export const AccountCard = memo(function AccountCard({
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-              <div className="min-h-[160px] overflow-auto rounded-2xl border border-border/35 bg-background p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
+              <div data-theme-part="panel" className="min-h-[160px] overflow-auto rounded-2xl border border-border/35 bg-background p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
                 {noteValue || <span className="text-muted-foreground/60 italic">No note yet.</span>}
               </div>
               <div className="flex items-center justify-between">

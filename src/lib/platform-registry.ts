@@ -3,6 +3,8 @@ import stremioLogo from '@/assets/platforms/stremio.png'
 import nuvioLogo from '@/assets/platforms/nuvio.png'
 import realstreamLogo from '@/assets/platforms/realstream.png'
 import hydraLogo from '@/assets/platforms/hydra.png'
+// Official icon: https://github.com/jellyfin/jellyfin-ux/blob/master/branding/SVG/icon-transparent.svg
+import jellyfinLogo from '@/assets/platforms/jellyfin.svg'
 
 // Capabilities a platform CAN expose, declared statically. This is the catalog-level answer to
 // "what does this platform support" (used to surface platform-exclusive sections), distinct from
@@ -30,6 +32,17 @@ export interface PlatformRegistryEntry {
 }
 
 export const PLATFORM_REGISTRY: PlatformRegistryEntry[] = [
+    {
+        id: 'jellyfin',
+        name: 'Jellyfin, AIOStreams, AIOMetadata & more',
+        logo: jellyfinLogo,
+        connectionType: 'native',
+        requiresAuth: true,
+        hasNativeDriver: false,
+        description: 'Connect a server that supports the Jellyfin API. Available features depend on the server.',
+        available: true,
+        features: [],
+    },
     {
         id: 'stremio',
         name: 'Stremio',

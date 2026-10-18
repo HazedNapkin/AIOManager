@@ -118,7 +118,7 @@ export function registerProviderRoutes(fastify, reconciler) {
 
         try {
             const clientConnections = Array.isArray(connections)
-                ? connections.filter(c => c && c.id).map(c => ({ ...c, accountId, syncUser: authUser }))
+                ? connections.filter(c => c && c.id && c.platform !== 'jellyfin').map(c => ({ ...c, accountId, syncUser: authUser }))
                 : null
             const resolvedConnections = (clientConnections && clientConnections.length > 0)
                 ? clientConnections
@@ -252,6 +252,10 @@ export function registerProviderRoutes(fastify, reconciler) {
         const { accountId, credential, credentialType } = request.body || {}
         if (!accountId || !credential) { reply.code(400); return { error: 'Missing accountId or credential' } }
 
+        if (credentialType != null && !['nuvio', 'realstream', 'hydra'].includes(credentialType)) {
+            reply.code(400); return { error: 'Unsupported credential type' }
+        }
+
         let credObj = null
         if (typeof credential === 'object') credObj = credential
         else if (typeof credential === 'string') { try { credObj = JSON.parse(credential) } catch { } }
@@ -259,7 +263,7 @@ export function registerProviderRoutes(fastify, reconciler) {
             reply.code(400); return { error: 'Invalid or unsafe baseUrl' }
         }
 
-        const type = ['nuvio', 'realstream', 'hydra'].includes(credentialType) ? credentialType : 'hydra'
+        const type = credentialType || 'hydra'
         let credentialValue = typeof credential === 'object' ? JSON.stringify(credential) : credential
         if (type === 'nuvio') {
             credentialValue = await preserveExistingNuvioBaseUrl(connectionId, credentialValue, accountId, authUser)

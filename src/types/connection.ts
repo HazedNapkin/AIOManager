@@ -3,6 +3,19 @@ import type { HydraDriverConfig } from './provider'
 export type ConnectionType = 'native' | 'hydra-inbound' | 'hydra-outbound'
 export type ConnectionStatus = 'active' | 'expired' | 'error' | 'degraded' | 'pending'
 
+export interface MediaServerIdentity {
+    product: 'jellyfin' | 'aiostreams' | 'aiometadata' | 'compatible'
+    productName: string
+    serverId?: string
+    serverName?: string
+    version?: string
+    packageName?: string
+    userId: string
+    userName: string
+    authMethod: 'password' | 'token'
+    lastCheckedAt: number
+}
+
 export interface Connection {
     id: string
     platform: string
@@ -21,6 +34,7 @@ export interface Connection {
     pluginList?: NuvioPluginDescriptor[]
     driverConfig?: HydraDriverConfig
     displayName?: string
+    mediaServer?: MediaServerIdentity
 }
 
 export interface NuvioPluginDescriptor {
@@ -40,6 +54,17 @@ export interface PlatformDriver {
     healthCheck?(addonUrl?: string): Promise<{ healthy: boolean; latencyMs: number }>
 }
 
+// Media connections have their own API contract; they are never addon sources or targets.
+// Retain legacy addon platforms whose stored records predate runtime capabilities.
+export function isAddonConnection(c: Pick<Connection, 'platform' | 'connectionType' | 'capabilities'>): boolean {
+    if (c.platform === 'jellyfin') return false
+    return c.connectionType === 'hydra-outbound'
+        || c.platform === 'stremio'
+        || c.platform === 'nuvio'
+        || c.platform === 'realstream'
+        || c.capabilities?.includes('addons') === true
+}
+
 export function isSyncEligibleConnection(c: Connection): boolean {
-    return c.connectionType === 'hydra-outbound' || c.platform !== 'stremio'
+    return isAddonConnection(c) && (c.connectionType === 'hydra-outbound' || c.platform !== 'stremio')
 }

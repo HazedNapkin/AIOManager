@@ -350,6 +350,10 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         source: entry.source,
         backfill: entry.backfill,
         genres: entry.genres,
+        readOnly: entry.readOnly,
+        mediaObservation: entry.mediaObservation,
+        mediaSources: entry.mediaSources,
+        mediaTargets: entry.mediaTargets,
     }
 }
 

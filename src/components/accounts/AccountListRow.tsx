@@ -4,6 +4,9 @@ import { prefetchAccountDetail } from '@/lib/account-prefetch'
 import { Account } from '@/types/account'
 import { Tooltip } from '@/components/ui/tooltip'
 import { AccountAvatar } from './AccountAvatar'
+import { AccountMediaPlayback } from './AccountMedia'
+import { useJellyfinActivity } from '@/hooks/useJellyfinActivity'
+import { accountMediaPlayback, mergeMediaItems } from '@/lib/jellyfin/activity'
 import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -85,13 +88,16 @@ export const AccountListRow = memo(function AccountListRow({
         [account.addons]
     )
 
-    const accountItems = useLibraryCache(
+    const media = useJellyfinActivity(account.id)
+    const cachedAccountItems = useLibraryCache(
         useShallow((state) => state.items.filter(i => i.accountId === account.id))
     )
+    const accountItems = useMemo(() => mergeMediaItems(cachedAccountItems, media.history), [cachedAccountItems, media.history])
     const lastWatched = useMemo(() => {
         if (accountItems.length === 0) return null
         return [...accountItems].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
     }, [accountItems])
+    const mediaPlayback = accountMediaPlayback(media.playback, lastWatched)
 
     const timeStr = getTimeAgo(new Date(account.lastSync))
     const isStale = (Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000
@@ -110,6 +116,9 @@ export const AccountListRow = memo(function AccountListRow({
     return (
         <>
         <div
+            data-account-row={account.id}
+            data-theme-part="panel"
+            data-selected={Boolean(isSelected)}
             role="button"
             tabIndex={0}
             aria-pressed={isSelectionMode ? isSelected : undefined}
@@ -156,14 +165,14 @@ export const AccountListRow = memo(function AccountListRow({
                     <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
                     {account.status === 'error' && (
                         <Tooltip content="Try syncing again. If it keeps failing, open account settings and update credentials." side="top">
-                            <span aria-label="Sync failed" className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive shrink-0">
+                            <span data-theme-part="badge" aria-label="Sync failed" className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive shrink-0">
                                 <AlertTriangle className="h-3 w-3" />
                             </span>
                         </Tooltip>
                     )}
                     {account.status === 'expired' && (
                         <Tooltip content="A session token was rejected. Re-authenticate this account to refresh it." side="top">
-                            <span aria-label="Session expired" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
+                            <span data-theme-part="badge" aria-label="Session expired" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
                                 <AlertCircle className="h-3 w-3" />
                             </span>
                         </Tooltip>
@@ -182,7 +191,8 @@ export const AccountListRow = memo(function AccountListRow({
                             ))}
                         </div>
                     )}
-                    {!account.hideLastWatched && lastWatched && (
+                    {!account.hideLastWatched && mediaPlayback && <AccountMediaPlayback playback={mediaPlayback} compact />}
+                    {!account.hideLastWatched && !mediaPlayback && lastWatched && (
                         <>
                             <span className="hidden sm:inline shrink-0">·</span>
                             <span className="hidden truncate text-muted-foreground sm:inline">
@@ -216,7 +226,7 @@ export const AccountListRow = memo(function AccountListRow({
                 </Tooltip>
                 {updateCount > 0 && (
                     <Tooltip content={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} side="top">
-                        <span aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                        <span data-theme-part="badge" aria-label={`${updateCount} update${updateCount !== 1 ? 's' : ''} available`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
                             <ArrowUpCircle className="h-3 w-3" />
                             <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[9px] font-bold leading-none">{updateCount}</span>
                         </span>
@@ -226,6 +236,7 @@ export const AccountListRow = memo(function AccountListRow({
                 {recentChanges > 0 && updateCount === 0 && (
                     <Tooltip content={`${recentChanges} change${recentChanges !== 1 ? 's' : ''} today · Click to dismiss`} side="top">
                         <button
+                            data-theme-part="button"
                             onClick={(e) => {
                                 e.stopPropagation()
                                 useAccountStore.getState().clearChangelog(account.id)
@@ -242,14 +253,14 @@ export const AccountListRow = memo(function AccountListRow({
                 {activeRules.length > 0 && (
                     failedOverRules.length > 0 ? (
                         <Tooltip content={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} side="top">
-                            <span aria-label={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                            <span data-theme-part="badge" aria-label={`${failedOverRules.length} rule${failedOverRules.length !== 1 ? 's' : ''} failed over`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
                                 <ArrowRightLeft className="h-3 w-3" />
                                 <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-warning text-warning-foreground text-[9px] font-bold leading-none">{failedOverRules.length}</span>
                             </span>
                         </Tooltip>
                     ) : (
                         <Tooltip content={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} side="top">
-                            <span aria-label={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                            <span data-theme-part="badge" aria-label={`${activeRules.length} Autopilot rule${activeRules.length !== 1 ? 's' : ''} healthy`} className="relative inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
                                 <CheckCircle2 className="h-3 w-3" />
                                 <span className="absolute -top-1 -right-1 h-3 min-w-3 px-0.5 flex items-center justify-center rounded-full bg-success text-success-foreground text-[9px] font-bold leading-none">{activeRules.length}</span>
                             </span>

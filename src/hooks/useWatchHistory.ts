@@ -3,7 +3,9 @@ import { useWatchEventStore } from '@/store/watchEventStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
 import { ActivityItem } from '@/types/activity'
-import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail } from '@/lib/activity-utils'
+import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail, historyEntryToActivityItem } from '@/lib/activity-utils'
+import { useJellyfinActivity, type MediaReadIssue } from '@/hooks/useJellyfinActivity'
+import { mergeMediaHistory, mergeMediaItems } from '@/lib/jellyfin/activity'
 import { reconcileRailProgress } from '@/lib/rail-progress'
 import { trace } from '@/lib/trace'
 
@@ -58,6 +60,10 @@ export interface HistoryEntry {
     isInProgress: boolean
     isFromEventLog: boolean
     source?: string
+    readOnly?: ActivityItem['readOnly']
+    mediaObservation?: ActivityItem['mediaObservation']
+    mediaSources?: string[]
+    mediaTargets?: ActivityItem['mediaTargets']
     backfill?: boolean     // recovered from the watched-bitfield (synthetic timestamp)
     genres?: string[]
 
@@ -68,6 +74,8 @@ export interface HistoryEntry {
 }
 
 export interface WatchHistoryResult {
+    refreshMedia: () => void
+    mediaIssues: MediaReadIssue[]
     history: HistoryEntry[]
     // Items currently in progress (timeOffset > 0, progress < 90) from live state
     inProgress: ActivityItem[]
@@ -76,6 +84,7 @@ export interface WatchHistoryResult {
 }
 
 export function useWatchHistory(accountId?: string): WatchHistoryResult {
+    const media = useJellyfinActivity(accountId)
     const rawEvents = useWatchEventStore(s => s.events)
     const rawLiveItems = useLibraryCache(s => s.items)
     const events = useDeferredValue(rawEvents)
@@ -309,9 +318,11 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         for (const entry of allEntries) {
             const normalizedName = normalizeName(entry.name || '')
             const isSeries = entry.type === 'series' || entry.type === 'anime' || entry.type === 'episode'
+            // Correlate platform duplicates within a watch day, preserving earlier watches.
+            const watchDay = entry.timestamp.toDateString()
             const episodeKey = isSeries && entry.episode != null
-                ? `${entry.accountId}:${normalizedName}:${entry.season || 1}:${entry.episode}`
-                : `${entry.accountId}:${normalizedName}`
+                ? `${entry.accountId}:${watchDay}:${normalizedName}:${entry.season ?? 1}:${entry.episode}`
+                : `${entry.accountId}:${watchDay}:${normalizedName}`
 
             const existing = finalDedup.get(episodeKey)
             if (!existing) {
@@ -424,5 +435,21 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         return () => { cancelled = true }
     }, [events, genreMap])
 
-    return { history, inProgress, hasEventLog, loading }
+    const combined = useMemo(() => {
+        const byId = new Map(history.map(entry => [entry.id, entry]))
+        const notDeleted = (item: ActivityItem) => {
+            const deletedAt = deletedEventKeys[`${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
+            return deletedAt === undefined || item.timestamp.getTime() > deletedAt
+        }
+        const merged = mergeMediaHistory(history.map(historyEntryToActivityItem), media.history.filter(notDeleted))
+        const entries: HistoryEntry[] = merged.map(item => {
+            const existing = byId.get(item.id)
+            return existing ? { ...existing, mediaSources: item.mediaSources, mediaTargets: item.mediaTargets } : {
+                ...item, video_id: item.uniqueItemId, isFromEventLog: false,
+            }
+        })
+        entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        return { history: entries, inProgress: mergeMediaItems(inProgress, media.inProgress.filter(notDeleted)) }
+    }, [history, inProgress, media.history, media.inProgress, deletedEventKeys])
+    return { ...combined, hasEventLog, loading: loading || media.initialLoading, refreshMedia: media.refresh, mediaIssues: media.readIssues }
 }
