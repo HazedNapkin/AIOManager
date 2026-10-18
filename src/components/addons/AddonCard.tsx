@@ -46,6 +46,7 @@ import {
 import React, { useMemo, useState, useEffect, useCallback } from 'react'
 import { AddonMetadataDialog } from './AddonMetadataDialog'
 import { CinemetaConfigurationDialog } from './CinemetaConfigurationDialog'
+import { PlatformSourceChip } from './PlatformSourceChip'
 
 import { CatalogEditorDialog } from './CatalogEditorDialog'
 import { SourceUrlBox } from './SourceUrlBox'
@@ -608,6 +609,10 @@ export const AddonCard = React.memo(function AddonCard({
   const addonDisplayName = addon.metadata?.customName ||
     (addon.manifest.name && addon.manifest.name !== 'Unknown Addon' ? addon.manifest.name : getHostnameIdentifier(addon.transportUrl))
 
+  // Platforms this account's collection lives on (enabled connections only). Hidden when
+  // the account opts out of platform logos.
+  const showPlatformSource = !!currentAccount && !currentAccount.hidePlatformLogos
+
   return (
     <>
       {compact ? (
@@ -712,6 +717,7 @@ export const AddonCard = React.memo(function AddonCard({
                         </span>
                       </Tooltip>
                     )}
+                    {showPlatformSource && <PlatformSourceChip account={currentAccount} className="ml-1" />}
                   </div>
 
                   <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -1032,6 +1038,7 @@ export const AddonCard = React.memo(function AddonCard({
                       </span>
                     </Tooltip>
                   )}
+                  {showPlatformSource && <PlatformSourceChip account={currentAccount} className="ml-1" />}
                 </CardDescription>
               </div>
             </div>

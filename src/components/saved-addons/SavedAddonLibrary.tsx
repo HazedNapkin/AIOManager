@@ -585,15 +585,17 @@ export function SavedAddonLibrary() {
         <FloatingActionBar
           open={selectedIds.size > 0}
           selectedCount={selectedIds.size}
-                totalCount={filteredAddons.length}
+                totalCount={selectedIds.size > filteredAddons.length ? undefined : filteredAddons.length}
           onClearSelection={clearSelection}
           actions={[
             {
-              label: selectedIds.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect All' : 'Select All',
+              label: filteredAddons.length > 0 && filteredAddons.every(a => selectedIds.has(a.id)) ? 'Deselect Visible' : 'Select Visible',
               onClick: handleSelectAll,
               variant: 'outline',
               icon: <Check className="h-4 w-4" />,
-              tooltip: selectedIds.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect all addons' : 'Select all addons',
+              tooltip: filteredAddons.length > 0 && filteredAddons.every(a => selectedIds.has(a.id))
+                ? 'Deselect the addons matching the current filters; other selections are kept'
+                : 'Select the addons matching the current filters; existing selections are kept',
             },
             {
               label: 'Deploy',

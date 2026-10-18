@@ -23,6 +23,7 @@ import { SavedAddonDetails } from './SavedAddonDetails'
 import { getTagColor } from '@/lib/tag-utils'
 import { Button } from '@/components/ui/button'
 import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
+import { PlatformSourceChip } from '@/components/addons/PlatformSourceChip'
 import { SavedAddonIcon } from './SavedAddonIcon'
 import { useSavedAddonActions } from './hooks/useSavedAddonActions'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
@@ -232,6 +233,10 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         ) })()}
                         {deployedAccounts.length > 0 && (
                             <>
+                                <span className="hidden shrink-0 sm:inline">·</span>
+                                {/* Platforms the accounts that contain this addon sync it
+                                    to — derived only from matching configured URLs. */}
+                                <PlatformSourceChip accounts={deployedAccounts} scope="addon" className="hidden sm:inline-flex" />
                                 <span className="hidden shrink-0 sm:inline">·</span>
                                 <SavedAddonDeploymentBadge accounts={deployedAccounts} className="hidden sm:inline-flex" />
                             </>

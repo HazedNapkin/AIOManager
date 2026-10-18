@@ -23,6 +23,7 @@ import { getTagColor } from '@/lib/tag-utils'
 import { HighlightText } from '@/components/ui/highlight-text'
 import { Tooltip } from '@/components/ui/tooltip'
 import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
+import { PlatformSourceChip } from '@/components/addons/PlatformSourceChip'
 import { SavedAddonIcon } from './SavedAddonIcon'
 import { useSavedAddonActions } from './hooks/useSavedAddonActions'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
@@ -334,7 +335,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
               })}
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-3 mt-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-2">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 {profileName && (
                   <span className="text-xs text-foreground/60 whitespace-normal break-words line-clamp-2">
@@ -342,7 +343,10 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   </span>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                {/* Platforms the accounts that contain this addon sync it to — derived
+                    only from the deployment summary's matching configured URLs. */}
+                <PlatformSourceChip accounts={deployedAccounts} scope="addon" />
                 <SavedAddonDeploymentBadge accounts={deployedAccounts} />
                 {savedAddon.createdAt && (
                   <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">

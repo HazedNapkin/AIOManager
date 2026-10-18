@@ -91,9 +91,20 @@ export function useSavedAddonSelectionActions({
     })
   }, [])
 
+  // Toggles the visible (filtered) set only. Ids selected under a different filter stay
+  // selected, so narrowing a filter never silently drops hidden selections.
   const handleSelectAll = useCallback(() => {
-    const allIds = filteredAddons.map(a => a.id)
-    setSelectedIds(prev => prev.size === allIds.length ? new Set() : new Set(allIds))
+    const visibleIds = filteredAddons.map(a => a.id)
+    setSelectedIds(prev => {
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id))
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id)
+      } else {
+        for (const id of visibleIds) next.add(id)
+      }
+      return next
+    })
   }, [filteredAddons])
 
 

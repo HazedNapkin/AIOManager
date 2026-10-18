@@ -114,31 +114,14 @@ export function useSavedAddonLibraryData({
 
   const deploymentSummaryByAddonId = useMemo(() => {
     const accountById = new Map(accounts.map(account => [account.id, account]))
-    const libraryIds = new Set(savedAddons.map(addon => addon.id))
-
-    const addonIdsByUrl = new Map<string, string[]>()
-    for (const addon of savedAddons) {
-      const key = getSafeAddonUrlKey(addon.installUrl)
-      if (!key) continue
-      const existing = addonIdsByUrl.get(key)
-      if (existing) existing.push(addon.id)
-      else addonIdsByUrl.set(key, [addon.id])
-    }
 
     const urlToAccountIds = new Map<string, Set<string>>()
-    const directMatchToAccountIds = new Map<string, Set<string>>()
 
     for (const accountState of Object.values(accountStates)) {
       const accountId = accountState.accountId
       if (!accountById.has(accountId)) continue
 
       for (const installedAddon of accountState.installedAddons) {
-        if (installedAddon.savedAddonId && libraryIds.has(installedAddon.savedAddonId)) {
-          let set = directMatchToAccountIds.get(installedAddon.savedAddonId)
-          if (!set) { set = new Set(); directMatchToAccountIds.set(installedAddon.savedAddonId, set) }
-          set.add(accountId)
-        }
-
         const urlKey = getSafeAddonUrlKey(installedAddon.installUrl)
         if (!urlKey) continue
         let set = urlToAccountIds.get(urlKey)
@@ -147,12 +130,12 @@ export function useSavedAddonLibraryData({
       }
     }
 
+    // Match by normalized configured URL only. A recorded savedAddonId (or a shared
+    // manifest id) can outlive a URL change, and a different URL is a different addon
+    // instance — so neither may count as "installed on this account".
     const summaries: Record<string, SavedAddonDeploymentSummary> = {}
     for (const addon of savedAddons) {
       const accountIds = new Set<string>()
-
-      const directSet = directMatchToAccountIds.get(addon.id)
-      if (directSet) for (const id of directSet) accountIds.add(id)
 
       const key = getSafeAddonUrlKey(addon.installUrl)
       if (key) {
