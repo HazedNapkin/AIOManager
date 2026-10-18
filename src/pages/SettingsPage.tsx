@@ -511,7 +511,7 @@ export function SettingsPage() {
                     </ToolbarShell>
                 </div>
 
-                <div className="mt-4 sm:mt-8">
+                <div className="mt-4 sm:mt-6">
                     {/* General Tab */}
                     <TabsContent value="general" className="mt-0">
                         <div className="grid gap-4 sm:gap-6">
@@ -519,47 +519,10 @@ export function SettingsPage() {
                                 <AccountSection />
                             </div>
 
-                            <div data-settings-anchor="about" className={sectionAnchorClass('about')}>
-                                <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
-                                <div className="flex items-center gap-3">
-                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                        <SquircleOverlay />
-                                        <Info className="relative z-10 h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-base font-semibold">About</h3>
-                                        <p className="text-xs sm:text-sm text-muted-foreground">Version and build information for this installation</p>
-                                    </div>
-                                </div>
-                                <div className="mt-4 space-y-1 text-sm">
-                                    <div className="flex items-center justify-between border-b border-border/25 pb-2">
-                                        <span className="text-muted-foreground">Version</span>
-                                        <span className="font-medium">{__BUILD_VERSION__}</span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(__BUILD_COMMIT__)
-                                            toast({ title: 'Copied', description: `Build ${__BUILD_COMMIT__} copied to clipboard.` })
-                                        }}
-                                        className="flex w-full items-center justify-between pt-1 text-left"
-                                        title="Click to copy the build identifier"
-                                    >
-                                        <span className="text-muted-foreground">Build</span>
-                                        <span className="font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
-                                    </button>
-                                </div>
-                            </div>
-                            </div>
-
-                            <div data-settings-anchor="install-app" className={sectionAnchorClass('install-app')}>
-                                <InstallAppCard />
-                            </div>
-
                             <div data-settings-anchor="privacy-mode" className={sectionAnchorClass('privacy-mode')}>
-                                <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="flex items-center gap-3">
+                                <div data-theme-part="panel" className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex min-w-0 items-center gap-3">
                                         <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                             <SquircleOverlay />
                                             <EyeOff className="relative z-10 h-4 w-4 text-muted-foreground" />
@@ -573,7 +536,7 @@ export function SettingsPage() {
                                         id="privacy-mode"
                                         checked={isPrivacyModeEnabled}
                                         onCheckedChange={togglePrivacyMode}
-                                        className="self-start sm:self-auto"
+                                        className="shrink-0"
                                     />
                                 </div>
                                 <AnimatePresence initial={false}>
@@ -597,6 +560,49 @@ export function SettingsPage() {
                                 </AnimatePresence>
                             </div>
                             </div>
+
+                            <div data-settings-anchor="install-app" className={cn(sectionAnchorClass('install-app'), 'empty:hidden')}>
+                                <InstallAppCard />
+                            </div>
+
+                            <div data-settings-anchor="about" className={sectionAnchorClass('about')}>
+                                <div data-theme-part="panel" className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25 sm:h-10 sm:w-10">
+                                            <SquircleOverlay />
+                                            <Info className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-base font-semibold">About</h3>
+                                            <p className="text-xs text-muted-foreground">Version & build information</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-6 text-sm">
+                                        <div>
+                                            <p className="text-xs text-muted-foreground">Version</p>
+                                            <p className="mt-1 font-medium">{__BUILD_VERSION__}</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await navigator.clipboard.writeText(__BUILD_COMMIT__)
+                                                    toast({ title: 'Copied', description: 'Build identifier copied to clipboard.' })
+                                                } catch {
+                                                    toast({ variant: 'destructive', title: 'Could not copy build identifier' })
+                                                }
+                                            }}
+                                            className="rounded-md text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
+                                            data-theme-part="inline-action"
+                                            aria-label="Copy build identifier"
+                                            title="Click to copy the build identifier"
+                                        >
+                                            <span className="block text-xs text-muted-foreground">Build</span>
+                                            <span className="mt-1 block font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </TabsContent>
 
@@ -611,16 +617,16 @@ export function SettingsPage() {
                     <TabsContent value="data" className="mt-0 space-y-4 sm:space-y-6">
                         {/* Backup & Restore */}
                         <div data-settings-anchor="backup-restore" className={sectionAnchorClass('backup-restore')}>
-                            <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
+                            <div data-theme-part="panel" className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
                             <div className="flex flex-1 items-start gap-4">
                                 <div className="relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
                                     <Database className="relative z-10 h-4 w-4 text-muted-foreground" />
                                 </div>
                                 <div className="space-y-1">
-                                    <h3 className="text-base font-semibold">Cloud Backup & Restore</h3>
+                                    <h3 className="text-base font-semibold">Backup & Restore</h3>
                                     <p className="text-sm text-muted-foreground max-w-md">
-                                        Export your entire configuration (Accounts, Profiles, Addons, and Rules) to a portable JSON file.
+                                        Export your configuration to a JSON file, or restore a saved backup.
                                     </p>
                                 </div>
                             </div>
@@ -656,36 +662,12 @@ export function SettingsPage() {
                         </div>
 
                         {/* Active Sync Summary */}
-                        <div data-settings-anchor="sync-connections" className={sectionAnchorClass('sync-connections')}>
+                        <div data-settings-anchor="sync-connections" className={cn(sectionAnchorClass('sync-connections'), 'empty:hidden')}>
                             <SyncSummarySection />
                         </div>
 
-                        {/* Non-destructive Clear History Cache */}
-                        <div data-settings-anchor="history-cache" className={sectionAnchorClass('history-cache')}>
-                            <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
-                            <div className="flex flex-1 items-start gap-3 sm:gap-4">
-                                <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                    <SquircleOverlay />
-                                    <Trash2 className="relative z-10 h-4 w-4 text-muted-foreground" />
-                                </div>
-                                <div className="space-y-1">
-                                    <h3 className="text-sm sm:text-base font-semibold">Clear History Cache</h3>
-                                    <p className="max-w-2xl text-sm text-muted-foreground">
-                                        Wipes all locally cached activity view data. Useful if you want to force a clean re-pull from your accounts immediately.
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="flex shrink-0 gap-2">
-                                <Button variant="outline" onClick={handleClearActivity} className="gap-2">
-                                    <Trash2 className="h-4 w-4" />
-                                    Clear Cache
-                                </Button>
-                            </div>
-                            </div>
-                        </div>
-
                         <div data-settings-anchor="live-activity" className={sectionAnchorClass('live-activity')}>
-                            <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                            <div data-theme-part="panel" className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -694,7 +676,7 @@ export function SettingsPage() {
                                     </div>
                                     <div>
                                         <Label htmlFor="live-activity" className="text-sm sm:text-base font-medium cursor-pointer">Live Activity Refresh</Label>
-                                        <p className="text-xs sm:text-sm text-muted-foreground">While viewing the Activity page, auto-refresh progress every 60 seconds</p>
+                                        <p className="text-xs sm:text-sm text-muted-foreground">Refresh progress every minute while Activity is open</p>
                                     </div>
                                 </div>
                                 <Switch
@@ -714,19 +696,39 @@ export function SettingsPage() {
                                 )}
                             </div>
                         </div>
+
+                        {/* Cache maintenance follows the normal data controls. */}
+                        <div data-settings-anchor="history-cache" className={sectionAnchorClass('history-cache')}>
+                            <div data-theme-part="panel" className="flex flex-col justify-between gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 shadow-sm sm:gap-5 sm:p-5 md:flex-row md:items-center">
+                                <div className="flex flex-1 items-start gap-3 sm:gap-4">
+                                    <div className="relative mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25 sm:h-10 sm:w-10">
+                                        <SquircleOverlay />
+                                        <Trash2 className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-sm font-semibold sm:text-base">Clear History Cache</h3>
+                                        <p className="max-w-2xl text-sm text-muted-foreground">Clear local activity and watch events. Sync again to rebuild the cache from your accounts.</p>
+                                    </div>
+                                </div>
+                                <Button variant="outline" onClick={handleClearActivity} className="shrink-0 gap-2 self-start md:self-auto">
+                                    <Trash2 className="h-4 w-4" />
+                                    Clear Cache
+                                </Button>
+                            </div>
+                        </div>
                     </TabsContent>
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
                         <div data-settings-anchor="monitoring-alerts" className={sectionAnchorClass('monitoring-alerts')}>
                             <NotificationsSection />
-                        </div>
-                        <div data-settings-anchor="repair-recovery" className={sectionAnchorClass('repair-recovery')}>
-                            <RepairTools />
                         </div>
                         <div data-settings-anchor="remembered-devices" className={sectionAnchorClass('remembered-devices')}>
                             <RememberedDevicesSection />
                         </div>
                         <div data-settings-anchor="sync-diagnostics" className={sectionAnchorClass('sync-diagnostics')}>
                             <SyncDiagnostics />
+                        </div>
+                        <div data-settings-anchor="repair-recovery" className={sectionAnchorClass('repair-recovery')}>
+                            <RepairTools />
                         </div>
                         <div data-settings-anchor="danger-zone" className={sectionAnchorClass('danger-zone')}>
                             <DangerZone />
@@ -753,7 +755,7 @@ export function SettingsPage() {
                     </AlertDialogHeader>
                     {pendingImport && (
                         <div className="space-y-4 px-6 pb-5">
-                            <div className="rounded-2xl border border-border/40 bg-muted/20 p-3 text-sm">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-muted/20 p-3 text-sm">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                         <p className="truncate font-medium text-foreground">{pendingImport.preview.fileName}</p>
@@ -776,14 +778,14 @@ export function SettingsPage() {
                                     ['Vault Keys', pendingImport.preview.counts.vaultKeys],
                                     ['Settings', pendingImport.preview.counts.settings],
                                 ].map(([label, count]) => (
-                                    <div key={label} className="rounded-xl border border-border/35 bg-background/60 p-3">
+                                    <div key={label} data-theme-part="panel" className="rounded-xl border border-border/35 bg-background/60 p-3">
                                         <p className="text-base font-semibold text-foreground">{count}</p>
                                         <p className="text-muted-foreground">{label}</p>
                                     </div>
                                 ))}
                             </div>
 
-                            <div className="rounded-2xl border border-border/35 bg-background/50 p-3 text-xs text-muted-foreground">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/50 p-3 text-xs text-muted-foreground">
                                 <p>
                                     {pendingImport.preview.counts.matchingAccounts} account{pendingImport.preview.counts.matchingAccounts !== 1 ? 's' : ''} appear to match existing local accounts by ID or email.
                                 </p>
@@ -798,8 +800,8 @@ export function SettingsPage() {
                                 <div className="flex items-center justify-between">
                                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Select what to import</p>
                                     <div className="flex gap-2">
-                                        <button type="button" onClick={() => setImportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
-                                        <button type="button" onClick={() => setImportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                                        <button type="button" data-theme-part="button" onClick={() => setImportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                        <button type="button" data-theme-part="button" onClick={() => setImportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -809,6 +811,8 @@ export function SettingsPage() {
                                             <button
                                                 key={section.key}
                                                 type="button"
+                                                data-theme-part="button"
+                                                aria-pressed={isSelected}
                                                 onClick={() => toggleImportSection(section.key)}
                                                 className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
                                             >
@@ -826,7 +830,7 @@ export function SettingsPage() {
                             </div>
 
                             {pendingImport.preview.warnings.length > 0 && (
-                                <div className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
+                                <div data-theme-tone="status" data-theme-part="panel" className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
                                     <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-warning">
                                         <AlertTriangle className="h-3.5 w-3.5" />
                                         Import Notes
@@ -869,8 +873,8 @@ export function SettingsPage() {
                         <div className="flex items-center justify-between">
                             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sections</p>
                             <div className="flex gap-2">
-                                <button type="button" onClick={() => setExportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
-                                <button type="button" onClick={() => setExportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                                <button type="button" data-theme-part="button" onClick={() => setExportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                <button type="button" data-theme-part="button" onClick={() => setExportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
                             </div>
                         </div>
                         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -880,6 +884,8 @@ export function SettingsPage() {
                                     <button
                                         key={section.key}
                                         type="button"
+                                        data-theme-part="button"
+                                        aria-pressed={isSelected}
                                         onClick={() => toggleExportSection(section.key)}
                                         className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
                                     >
