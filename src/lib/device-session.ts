@@ -69,38 +69,51 @@ export type DeviceUnlockResult =
 
 const RENEWAL_WINDOW_MS = 30 * 86_400_000
 
-let activeDeviceAuth: DeviceAuthState | null = null
-let suppressAutoWipe = false
-let wipeRedirectInFlight = false
-let interceptorInstalled = false
-let renewalAttemptedThisSession = false
+interface DeviceSessionRuntime {
+    activeDeviceAuth: DeviceAuthState | null
+    suppressAutoWipe: boolean
+    wipeRedirectInFlight: boolean
+    interceptorInstalled: boolean
+    renewalAttemptedThisSession: boolean
+}
+
+// Keep the in-memory session and the existing fetch interceptor on the same object
+// across development hot updates. Nothing is persisted to disk or browser storage.
+const deviceSessionRuntime: DeviceSessionRuntime = import.meta.hot?.data.deviceSessionRuntime ?? {
+    activeDeviceAuth: null,
+    suppressAutoWipe: false,
+    wipeRedirectInFlight: false,
+    interceptorInstalled: false,
+    renewalAttemptedThisSession: false,
+}
+if (import.meta.hot) import.meta.hot.data.deviceSessionRuntime = deviceSessionRuntime
 
 export function isDeviceAuthActive(): boolean {
-    return !!activeDeviceAuth
+    return !!deviceSessionRuntime.activeDeviceAuth
 }
 
 export function getDeviceSyncKey(): CryptoKey | null {
-    return activeDeviceAuth?.syncKey ?? null
+    return deviceSessionRuntime.activeDeviceAuth?.syncKey ?? null
 }
 
 export function getActiveDeviceId(): string | null {
-    return activeDeviceAuth?.deviceId ?? null
+    return deviceSessionRuntime.activeDeviceAuth?.deviceId ?? null
 }
 
 export function activateDeviceAuth(state: DeviceAuthState): void {
-    activeDeviceAuth = state
+    deviceSessionRuntime.activeDeviceAuth = state
 }
 
 export function deactivateDeviceAuth(): void {
-    activeDeviceAuth = null
+    deviceSessionRuntime.activeDeviceAuth = null
 }
 
 export function installDeviceAuthInterceptor(): void {
-    if (interceptorInstalled || typeof window === 'undefined' || typeof window.fetch !== 'function') return
-    interceptorInstalled = true
+    if (deviceSessionRuntime.interceptorInstalled || typeof window === 'undefined' || typeof window.fetch !== 'function') return
+    deviceSessionRuntime.interceptorInstalled = true
     const originalFetch = window.fetch.bind(window)
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const session = activeDeviceAuth
+        const session = deviceSessionRuntime.activeDeviceAuth
         if (!session) return originalFetch(input, init)
         const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
         if (!headers.has('x-sync-user') && !headers.has('x-sync-password')) {
@@ -122,7 +135,7 @@ export function installDeviceAuthInterceptor(): void {
 }
 
 async function maybeWipeOnDeviceAuthFailure(res: Response): Promise<void> {
-    if (!activeDeviceAuth || suppressAutoWipe || wipeRedirectInFlight) return
+    if (!deviceSessionRuntime.activeDeviceAuth || deviceSessionRuntime.suppressAutoWipe || deviceSessionRuntime.wipeRedirectInFlight) return
     let reason = ''
     try {
         const body = await res.clone().json() as { reason?: unknown }
@@ -131,7 +144,7 @@ async function maybeWipeOnDeviceAuthFailure(res: Response): Promise<void> {
         return
     }
     if (!isTerminalAuthReason(reason)) return
-    wipeRedirectInFlight = true
+    deviceSessionRuntime.wipeRedirectInFlight = true
     try {
         await forgetRememberedDevice()
         const profile = readIdentityProfile()
@@ -144,7 +157,7 @@ async function maybeWipeOnDeviceAuthFailure(res: Response): Promise<void> {
 }
 
 export async function forgetRememberedDevice(): Promise<void> {
-    activeDeviceAuth = null
+    deviceSessionRuntime.activeDeviceAuth = null
     await wipeDeviceRecords()
     clearSessionKey()
     clearSyncKeyCache()
@@ -181,7 +194,7 @@ async function postEnroll(body: { deviceId: string; deviceToken: string; tier: s
         'x-sync-user': auth.id,
         'x-sync-password': await deriveSyncToken(auth.password),
     }
-    const session = activeDeviceAuth
+    const session = deviceSessionRuntime.activeDeviceAuth
     if (session) {
         headers = {
             'Content-Type': 'application/json',
@@ -249,15 +262,15 @@ export async function enrollRememberedDevice(options?: { label?: string }): Prom
     const previous = await getAnyRecord().catch(() => null)
     const deviceId = (previous && previous.accountUUID === auth.id ? previous.deviceId : undefined) ?? crypto.randomUUID()
 
-    const previousAuth = activeDeviceAuth
-    activeDeviceAuth = null
+    const previousAuth = deviceSessionRuntime.activeDeviceAuth
+    deviceSessionRuntime.activeDeviceAuth = null
     let expiresAt: string | null
     try {
         expiresAt = await postEnroll({ deviceId, deviceToken, tier: enrollment.tier, label: deviceLabel })
     } catch {
         return false
     } finally {
-        activeDeviceAuth = previousAuth
+        deviceSessionRuntime.activeDeviceAuth = previousAuth
     }
     if (!expiresAt) return false
 
@@ -277,7 +290,7 @@ export async function enrollRememberedDevice(options?: { label?: string }): Prom
         expiresAt,
         label: deviceLabel,
     })
-    renewalAttemptedThisSession = true
+    deviceSessionRuntime.renewalAttemptedThisSession = true
     try { await navigator.storage?.persist?.() } catch {}
     return true
 }
@@ -287,8 +300,8 @@ function recordTier(record: DeviceRecord): 'idb' | 'prf' {
 }
 
 async function renewRememberedRecord(record: DeviceRecord, secret: Uint8Array, bundle: DeviceSecretBundle): Promise<void> {
-    if (renewalAttemptedThisSession) return
-    renewalAttemptedThisSession = true
+    if (deviceSessionRuntime.renewalAttemptedThisSession) return
+    deviceSessionRuntime.renewalAttemptedThisSession = true
     try {
         const expiry = Date.parse(record.expiresAt)
         if (Number.isFinite(expiry) && expiry - Date.now() > RENEWAL_WINDOW_MS) return
@@ -363,7 +376,7 @@ export async function renameRememberedDevice(deviceId: string, label: string): P
 // remembered session is active, the password-derived token otherwise. Throws only when neither
 // credential exists.
 export async function getDeviceAwareAuthHeaders(): Promise<Record<string, string>> {
-    const session = activeDeviceAuth
+    const session = deviceSessionRuntime.activeDeviceAuth
     const { auth } = useSyncStore.getState()
     if (session) {
         return {
@@ -503,7 +516,7 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
         needsReauth: false,
     }))
 
-    suppressAutoWipe = true
+    deviceSessionRuntime.suppressAutoWipe = true
     try {
         await useSyncStore.getState().login(record.accountUUID, '', true, true, { syncKey })
     } catch (e) {
@@ -523,7 +536,7 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
         }
         return { ok: false, reason: 'unavailable', message: 'Could not reach the server. Check your connection and try again, or use a different sign-in.' }
     } finally {
-        suppressAutoWipe = false
+        deviceSessionRuntime.suppressAutoWipe = false
     }
 
     renewRememberedRecord(record, secret, bundle)
@@ -531,7 +544,7 @@ export async function unlockWithDevice(): Promise<DeviceUnlockResult> {
 }
 
 export async function reactivateDeviceSessionIfNeeded(): Promise<void> {
-    if (activeDeviceAuth) return
+    if (deviceSessionRuntime.activeDeviceAuth) return
     // Guard + unwrap logic lives in device-session-boot.ts (alias-free, store-injected) so
     // the boot race is unit-tested; this wrapper owns module state and the follow-up pull.
     let outcome: BootReactivationOutcome
