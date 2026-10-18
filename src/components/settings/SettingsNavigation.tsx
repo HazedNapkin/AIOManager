@@ -94,7 +94,7 @@ const SETTINGS_INDEX: SettingSearchEntry[] = [
     {
         id: 'backup-restore',
         tab: 'data',
-        title: 'Cloud Backup & Restore',
+        title: 'Backup & Restore',
         description: 'Export your entire configuration (accounts, profiles, addons, rules) to a portable JSON file, or import a backup.',
         keywords: ['backup', 'export', 'import', 'restore', 'json', 'download', 'upload', 'transfer', 'migrate', 'syncio'],
     },
@@ -326,6 +326,7 @@ export function SettingsSearch({ onNavigate, className }: SettingsSearchProps) {
             {query && (
                 <button
                     type="button"
+                    data-theme-part="button"
                     aria-label="Clear search"
                     onMouseDown={e => e.preventDefault()}
                     onClick={() => {
@@ -338,7 +339,7 @@ export function SettingsSearch({ onNavigate, className }: SettingsSearchProps) {
                 </button>
             )}
             {showResults && (
-                <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/50 bg-card shadow-lg">
+                <div data-theme-part="popover" className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl border border-border/50 bg-card shadow-lg">
                     {results.length === 0 ? (
                         <p className="px-4 py-3 text-xs text-muted-foreground">
                             No settings match <span className="font-medium text-foreground">"{query.trim()}"</span>
@@ -360,6 +361,7 @@ export function SettingsSearch({ onNavigate, className }: SettingsSearchProps) {
                                         role="option"
                                         aria-selected={isActive}
                                         data-option-index={index}
+                                        data-theme-part="menu-item"
                                         onMouseMove={() => setActiveIndex(index)}
                                         onMouseDown={e => e.preventDefault()}
                                         onClick={() => select(match)}
@@ -372,7 +374,7 @@ export function SettingsSearch({ onNavigate, className }: SettingsSearchProps) {
                                             <span className="min-w-0 truncate text-sm font-medium text-foreground">
                                                 <HighlightText text={match.entry.title} highlight={query} />
                                             </span>
-                                            <span className="shrink-0 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                            <span data-theme-part="badge" className="shrink-0 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                                                 {SETTING_TAB_LABELS[match.entry.tab]}
                                             </span>
                                         </div>
@@ -384,6 +386,7 @@ export function SettingsSearch({ onNavigate, className }: SettingsSearchProps) {
                                                 {match.matchedKeywords.slice(0, 3).map(keyword => (
                                                     <span
                                                         key={keyword}
+                                                        data-theme-part="badge"
                                                         className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
                                                     >
                                                         {keyword}

@@ -142,7 +142,7 @@ export function SavedAddonGrid({
         const isExpanded = !collapsedProfiles.has(profile.id)
 
         return (
-          <div key={profile.id} className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+          <div key={profile.id} data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <Button
                 variant="ghost"
@@ -184,7 +184,7 @@ export function SavedAddonGrid({
         const isExpanded = !collapsedProfiles.has('unassigned')
 
         return (
-          <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+          <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <Button
                 variant="ghost"

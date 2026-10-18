@@ -27,7 +27,7 @@ import type { ProfileQuickAddEntry as NuvioQuickAddEntry } from '@/store/account
 const errMsg = (e: unknown, fallback = 'Try again.') => (e instanceof Error ? e.message : fallback)
 
 const ReadOnlyBadge = () => (
-    <span className="inline-flex items-center rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <span data-theme-part="badge" className="inline-flex items-center rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         Read-only - manage in Nuvio
     </span>
 )
@@ -137,7 +137,7 @@ function TabLoading() {
 function TabError({ message, onRetry }: { message: string; onRetry: () => void }) {
     return (
         <div className="space-y-3">
-            <div className="rounded-2xl bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-xs text-destructive shadow-sm">{message}</div>
+            <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-xs text-destructive shadow-sm">{message}</div>
             <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={onRetry}>
                 <RefreshCw className="h-3.5 w-3.5" />
                 Retry
@@ -224,6 +224,7 @@ function CollectionsSection({ accountId, connection }: { accountId: string; conn
                         <div
                             key={c.id || i}
                             className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5 transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md"
+                            data-theme-part="panel"
                         >
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-medium">{c.title || 'Untitled collection'}</p>
@@ -362,7 +363,7 @@ function ProfilesSection({ accountId, connection, status, activeProfileId, profi
             ) : loading && profiles.length === 0 ? <TabLoading /> : (
                 <div className="space-y-1.5">
                     {stale && (
-                        <div className="mb-1.5 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/8 px-3 py-2 text-[11px] text-muted-foreground">
+                        <div data-theme-tone="status" data-theme-part="panel" className="mb-1.5 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/8 px-3 py-2 text-[11px] text-muted-foreground">
                             <RefreshCw className="h-3 w-3 shrink-0" />
                             <span className="flex-1">Showing last known profiles. Add actions are off until this list refreshes.</span>
                             <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-[11px]" onClick={() => reload()}>Retry</Button>
@@ -411,7 +412,7 @@ function ProfilesSection({ accountId, connection, status, activeProfileId, profi
                                 <>
                                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
                                     {state === 'active-here' && (
-                                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+                                        <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary">
                                             <Check className="h-3 w-3" />
                                             Active
                                         </span>
@@ -419,6 +420,7 @@ function ProfilesSection({ accountId, connection, status, activeProfileId, profi
                                     {state === 'claimed' && claim && (
                                         <button
                                             type="button"
+                                            data-theme-part="badge"
                                             onClick={() => openClaimedAccount(claim.accountId)}
                                             className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:text-foreground"
                                             title={`Open ${claim.accountName}`}
@@ -441,6 +443,7 @@ function ProfilesSection({ accountId, connection, status, activeProfileId, profi
                                         <button
                                             type="button"
                                             disabled={addDisabled}
+                                            data-theme-part="badge"
                                             onClick={() => setQuickAddEntries([{
                                                 profileIndex: p.profile_index,
                                                 name: p.name,
@@ -473,11 +476,11 @@ function ProfilesSection({ accountId, connection, status, activeProfileId, profi
                     )}
 
                     {confirm && (
-                        <div className="rounded-2xl border border-destructive/30 bg-destructive/8 p-4 space-y-3 shadow-sm">
+                        <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-destructive/30 bg-destructive/8 p-4 space-y-3 shadow-sm">
                             <p className="text-sm font-medium text-destructive">Delete <strong>{confirm.name}</strong>?</p>
                             <p className="text-xs text-muted-foreground">This removes the profile and all its data on Nuvio (addons, plugins, collections, library and watch history) and can't be undone.</p>
                             {isTargetProfile(confirm) && (
-                                <p className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning">
+                                <p data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning">
                                     {confirm.name} is this account's {target.isDefault ? 'default push profile (no explicit target is set, so Nuvio pushes land on the primary profile)' : 'active sync target'}. Switch the sync target to another profile above first, then delete.
                                 </p>
                             )}
@@ -600,7 +603,7 @@ function NuvioProfilePicker({ accountId, connection, activeProfileId, profiles, 
     if (error && profiles.length === 0) {
         return (
             <div className="space-y-2">
-                <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                 <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => void reload()}>
                     <RefreshCw className="h-3 w-3" />
                     Retry
@@ -616,14 +619,14 @@ function NuvioProfilePicker({ accountId, connection, activeProfileId, profiles, 
     return (
         <div className="space-y-1.5">
             {error && (
-                <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-[11px] text-muted-foreground flex items-center gap-2">
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-[11px] text-muted-foreground flex items-center gap-2">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     <span className="flex-1">Showing last known profiles. Switching is off until the list refreshes.</span>
                     <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-[11px]" onClick={() => void reload()}>Retry</Button>
                 </div>
             )}
             {target.danglingId && (
-                <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                     <span>
                         Sync target profile {target.danglingId} no longer exists on Nuvio. Pick a new target below; pushes to the missing profile are refused until you switch.
@@ -642,6 +645,7 @@ function NuvioProfilePicker({ accountId, connection, activeProfileId, profiles, 
                         key={p.id || p.profile_index}
                         type="button"
                         disabled={switchDisabled}
+                        data-theme-part="card"
                         onClick={() => { if (!active) setPending({ id: p.id, index: p.profile_index, name: p.name }) }}
                         className={cn(
                             'flex w-full items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-left text-sm transition-[background-color,border-color,box-shadow,transform] duration-200',
@@ -656,7 +660,7 @@ function NuvioProfilePicker({ accountId, connection, activeProfileId, profiles, 
                         </span>
                         <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
                         {active && (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary shrink-0">
+                            <span data-theme-part="badge" className="inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary shrink-0">
                                 <Check className="h-3 w-3" />
                                 {target.isDefault ? 'Active (default)' : 'Active'}
                             </span>
@@ -665,7 +669,7 @@ function NuvioProfilePicker({ accountId, connection, activeProfileId, profiles, 
                 )
             })}
             {pending && (
-                <div className="rounded-2xl border border-warning/30 bg-warning/8 p-4 space-y-3 shadow-sm">
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-warning/30 bg-warning/8 p-4 space-y-3 shadow-sm">
                     <p className="text-sm font-medium text-warning">Switch sync target to <strong>{pending.name}</strong>?</p>
                     <p className="text-xs text-muted-foreground">This replaces that profile's current addons on Nuvio and can't be undone.</p>
                     <div className="flex gap-2">
@@ -705,7 +709,7 @@ export function NuvioBackupButton({ accountId, connectionId }: { accountId: stri
 
 export function NuvioPluginsTab({ accountId, connection }: { accountId: string; connection: Connection }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <NuvioPluginsPanel accountId={accountId} connection={connection} />
         </div>
     )
@@ -729,7 +733,7 @@ export function NuvioProfilesTab({ accountId, connection, status }: {
 
     if (!canSwitchProfile) {
         return (
-            <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
                 <p className="text-sm font-semibold">Nuvio profiles</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {status === 'expired'
@@ -741,9 +745,9 @@ export function NuvioProfilesTab({ accountId, connection, status }: {
     }
 
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <div className="space-y-6">
-                <div className="space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5">
+                <div data-theme-part="panel" className="space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5">
                     <div className="flex items-center gap-2">
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-border/40 bg-muted/40 text-muted-foreground">
                             <Crosshair className="h-3.5 w-3.5" />
@@ -761,7 +765,7 @@ export function NuvioProfilesTab({ accountId, connection, status }: {
                         reload={reload}
                     />
                 </div>
-                <div className={cn('space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5', canSwitchProfile && 'pt-3.5')}>
+                <div data-theme-part="panel" className={cn('space-y-3 rounded-xl border border-border/30 bg-muted/15 p-3.5', canSwitchProfile && 'pt-3.5')}>
                     <ProfilesSection
                         accountId={accountId}
                         connection={connection}
@@ -780,7 +784,7 @@ export function NuvioProfilesTab({ accountId, connection, status }: {
 
 export function NuvioLibraryTab({ accountId, connection }: { accountId: string; connection: Connection }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <LibrarySection accountId={accountId} connection={connection} />
         </div>
     )
@@ -788,7 +792,7 @@ export function NuvioLibraryTab({ accountId, connection }: { accountId: string; 
 
 export function NuvioCollectionsTab({ accountId, connection }: { accountId: string; connection: Connection }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <CollectionsSection accountId={accountId} connection={connection} />
         </div>
     )
@@ -796,7 +800,7 @@ export function NuvioCollectionsTab({ accountId, connection }: { accountId: stri
 
 export function NuvioBackupTab({ accountId, connection }: { accountId: string; connection: Connection }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Account backup</p>
                 <p className="text-xs text-muted-foreground">Keep a safety copy of this Nuvio account.</p>

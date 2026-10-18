@@ -150,7 +150,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
     return (
         <div className="space-y-4 pt-2">
             {!stremioLink ? (
-                <div className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/30">
+                <div data-theme-part="panel" className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/30">
                     <div className="mb-4 p-3 rounded-full bg-primary/10">
                         <ExternalLink className="h-6 w-6 text-primary" />
                     </div>
@@ -158,7 +158,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                     <p className="text-xs text-muted-foreground text-center mb-6 max-w-[240px]">
                         Approve Stremio's official link flow. No password is shared with AIOManager.
                     </p>
-                    <div className="mb-4 rounded-md border border-warning/25 bg-warning/10 p-3 text-left text-xs text-warning">
+                    <div data-theme-tone="status" data-theme-part="panel" className="mb-4 rounded-md border border-warning/25 bg-warning/10 p-3 text-left text-xs text-warning">
                         <p className="font-medium">May expire after Stremio Web logout</p>
                         <p className="mt-1 text-warning/85">
                             Stremio can revoke OAuth link tokens when the approving web session signs out. After approval, add your password for long-lived sync.
@@ -183,13 +183,13 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
             ) : (
                 <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
                     {error && (
-                        <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20 flex items-start gap-2 text-xs text-destructive">
+                        <div data-theme-tone="status" data-theme-part="panel" className="p-3 rounded-md bg-destructive/10 border border-destructive/20 flex items-start gap-2 text-xs text-destructive">
                             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                             <p>{error}</p>
                         </div>
                     )}
 
-                    <div className="p-4 rounded-lg bg-primary/5 border border-primary/10 flex flex-col items-center gap-4">
+                    <div data-theme-part="panel" className="p-4 rounded-lg bg-primary/5 border border-primary/10 flex flex-col items-center gap-4">
                         <div className="text-center space-y-1">
                             <p className="text-sm font-medium">Authorization Code</p>
                             <div
@@ -253,6 +253,7 @@ export function StremioOAuth({ onAuthKey, onError, disabled }: StremioOAuthProps
                         </div>
                         <button
                             type="button"
+                            data-theme-part="button"
                             onClick={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()

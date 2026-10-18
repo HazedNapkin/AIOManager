@@ -4,6 +4,7 @@ import { CustomThemeEditor } from '@/components/settings/CustomThemeEditor'
 import type { CustomThemeData } from '@/contexts/ThemeContext'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { Button } from '@/components/ui/button'
+import { THEME_OPTIONS } from '@/data/themes'
 
 export function ThemeEditorPage() {
     useDocumentTitle('Theme Editor')
@@ -26,7 +27,7 @@ export function ThemeEditorPage() {
                         Theme editing requires a larger screen.
                     </p>
                     <p className="text-muted-foreground/60 text-xs max-w-xs">
-                        You can still pick from 50+ built-in themes on mobile.
+                        You can still pick from {THEME_OPTIONS.length} built-in themes on mobile.
                     </p>
                 </div>
                 <Button size="sm" onClick={() => navigate('/settings#appearance')} className="gap-1.5 h-8">

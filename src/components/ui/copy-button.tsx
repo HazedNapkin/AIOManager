@@ -40,7 +40,7 @@ const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
 
     return (
       <Tooltip content={copied ? 'Copied!' : 'Copy to clipboard'} side="top">
-        <button
+        <button data-theme-part="button"
           ref={ref}
           type="button"
           className={cn(

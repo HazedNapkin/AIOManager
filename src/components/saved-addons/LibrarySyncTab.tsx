@@ -121,7 +121,7 @@ export function LibrarySyncTab({
 
       {syncOverviewData.length > 0 && (
         <>
-          <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+          <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1.5">
                 <p className="text-sm font-semibold">Synced addons</p>
@@ -149,7 +149,7 @@ export function LibrarySyncTab({
                       </TabsTrigger>
                       <TabsTrigger value="outOfSync" animated={false} className="h-7 px-3 text-xs">
                         Needs Update
-                        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/15 px-1 text-xs font-bold leading-none text-warning">
+                        <span data-theme-part="badge" className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/15 px-1 text-xs font-bold leading-none text-warning">
                           {needsUpdateCount}
                         </span>
                       </TabsTrigger>
@@ -180,6 +180,7 @@ export function LibrarySyncTab({
                 const displayName = addon.metadata?.customName || addon.name
                 return (
                   <StaggerItem
+                    data-theme-part="panel"
                     key={addon.id}
                     className="rounded-xl border border-border/40 bg-card px-4 py-3 space-y-3 shadow-sm"
                   >
@@ -235,7 +236,7 @@ export function LibrarySyncTab({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-muted/30 px-2.5 py-2">
+                    <div data-theme-part="panel" className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-muted/30 px-2.5 py-2">
                       {deployedAccounts.map(account => (
                         <div key={account.id} className="flex min-w-0 items-center gap-1.5 text-xs">
                           <span className="w-4 text-center leading-none shrink-0">
@@ -259,7 +260,7 @@ export function LibrarySyncTab({
       )}
 
       {notSyncingDeployed.length > 0 && (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold">Not syncing</p>
@@ -274,7 +275,7 @@ export function LibrarySyncTab({
               const displayName = addon.metadata?.customName || addon.name
               const profile = profiles.find(p => p.id === addon.profileId)
               return (
-                <StaggerItem key={addon.id} className="rounded-xl border border-border/40 bg-card px-4 py-3 space-y-3">
+                <StaggerItem data-theme-part="panel" key={addon.id} className="rounded-xl border border-border/40 bg-card px-4 py-3 space-y-3">
                   <div className="flex items-start gap-3">
                     <SavedAddonIcon
                       name={displayName}
@@ -291,10 +292,10 @@ export function LibrarySyncTab({
                           </Tooltip>
                         )}
                         {addon.tags.slice(0, 2).map(tag => (
-                          <span key={tag} className="px-1.5 py-0 rounded-full text-xs font-medium bg-muted/60 text-muted-foreground border border-border/40 leading-5">{tag}</span>
+                          <span key={tag} data-theme-part="badge" className="px-1.5 py-0 rounded-full text-xs font-medium bg-muted/60 text-muted-foreground border border-border/40 leading-5">{tag}</span>
                         ))}
                         {addon.tags.length > 2 && (
-                          <span className="px-1.5 py-0 rounded-full text-xs font-medium bg-muted/60 text-muted-foreground border border-border/40 leading-5">+{addon.tags.length - 2}</span>
+                          <span data-theme-part="badge" className="px-1.5 py-0 rounded-full text-xs font-medium bg-muted/60 text-muted-foreground border border-border/40 leading-5">+{addon.tags.length - 2}</span>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap mt-0.5">
@@ -332,7 +333,7 @@ export function LibrarySyncTab({
                       )}
                     </Button>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-muted/30 px-2.5 py-2">
+                  <div data-theme-part="panel" className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-lg bg-muted/30 px-2.5 py-2">
                     {deployedAccounts.map(account => (
                       <div key={account.id} className="flex items-center gap-1.5 text-xs min-w-0">
                         <span className="w-4 text-center leading-none shrink-0">

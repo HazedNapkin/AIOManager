@@ -32,7 +32,7 @@ export function WeeklyRhythm({ weeklyRhythm, loading }: WeeklyRhythmProps) {
     const subtitle = isWeekendWarrior ? 'Weekends are your prime time' : peakDay >= 0 ? `${DAY_LABELS[peakDay]} is your biggest day` : ''
 
     return (
-        <div ref={ref} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
+        <div ref={ref} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">{subtitle}</span>
                 <span className="text-xs font-bold">{total} plays</span>

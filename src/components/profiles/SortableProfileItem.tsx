@@ -30,6 +30,7 @@ export const SortableProfileItem = React.memo(function SortableProfileItem({ id,
 
     return (
         <div
+            data-theme-part="card"
             ref={setNodeRef}
             className={cn(
                 'flex items-center gap-3 p-3 bg-card border rounded-lg',

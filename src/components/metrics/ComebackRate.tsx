@@ -33,6 +33,7 @@ export function ComebackRate({ titles, loading }: ComebackRateProps) {
                 return (
                     <motion.div
                         key={`${t.name}-${i}`}
+                        data-theme-part="panel"
                         className="flex items-center gap-3 rounded-2xl border border-border/35 bg-muted/15 p-2.5"
                         initial={{ opacity: 0, x: -8 }}
                         animate={inView ? { opacity: 1, x: 0 } : { opacity: 0, x: -8 }}

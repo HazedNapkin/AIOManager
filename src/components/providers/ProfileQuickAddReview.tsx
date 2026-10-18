@@ -163,7 +163,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                                     </div>
                                 )}
                                 {email && (
-                                    <div className="flex items-center justify-between gap-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2">
+                                    <div data-theme-part="panel" className="flex items-center justify-between gap-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2">
                                         <span className="min-w-0 truncate text-xs text-muted-foreground">{email}</span>
                                         <span className="shrink-0 text-[11px] text-muted-foreground/70">login</span>
                                     </div>
@@ -209,7 +209,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
 
                         <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
                             {createdAccounts.map(({ result, account }) => (
-                                <div key={result.accountId} className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card px-3 py-2 shadow-sm">
+                                <div key={result.accountId} data-theme-part="panel" className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card px-3 py-2 shadow-sm">
                                     <AccountAvatar size="sm" showStatus={false} account={account!} />
                                     <div className="min-w-0 flex-1">
                                         <p className="truncate text-sm font-medium">{account!.name}</p>
@@ -222,7 +222,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                             ))}
 
                             {[...skipped, ...failed].map((result, i) => (
-                                <div key={`miss-${i}`} className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/8 px-3 py-2.5">
+                                <div data-theme-tone="status" key={`miss-${i}`} data-theme-part="panel" className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/8 px-3 py-2.5">
                                     <AlertCircle className="h-4 w-4 shrink-0 text-warning mt-0.5" />
                                     <div className="min-w-0 flex-1">
                                         <p className="truncate text-xs font-medium">{result.entry.name}</p>

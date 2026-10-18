@@ -21,7 +21,7 @@ export function AccountSection() {
     if (!auth.isAuthenticated) {
         return (
             <section>
-                <div className="rounded-[1.75rem] border border-dashed border-border/50 bg-card/60 p-8 text-center text-sm text-muted-foreground shadow-sm">
+                <div data-theme-part="panel" className="rounded-[1.75rem] border border-dashed border-border/50 bg-card/60 p-8 text-center text-sm text-muted-foreground shadow-sm">
                     <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-2xl border border-border/40 bg-muted/30">
                         <User className="h-4 w-4" />
                     </div>
@@ -33,13 +33,13 @@ export function AccountSection() {
 
     return (
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-            <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm">
+            <div data-theme-part="panel" className="rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm">
                 <div className="mb-5 flex items-start justify-between gap-4">
                     <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cloud account</p>
                         <h3 className="mt-1 text-xl font-semibold tracking-tight">Sync Identity</h3>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+                    <span data-theme-part="badge" className="inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
                         <Check className="h-3.5 w-3.5" />
                         Authenticated
                     </span>
@@ -49,7 +49,7 @@ export function AccountSection() {
                     <div className="space-y-2">
                         <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Display Name</Label>
                         <div className="flex items-center gap-3">
-                            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-primary/25 bg-primary/10 flex items-center justify-center">
+                            <div data-theme-part="avatar" className="h-16 w-16 shrink-0 overflow-hidden rounded-full border border-primary/25 bg-primary/10 flex items-center justify-center">
                                 {auth.avatar ? (
                                     <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
                                 ) : (
@@ -107,7 +107,7 @@ export function AccountSection() {
                 </p>
             </div>
 
-            <div className="rounded-[1.75rem] border border-primary/20 bg-primary/10 p-5 shadow-sm">
+            <div data-theme-part="panel" className="rounded-[1.75rem] border border-primary/20 bg-primary/10 p-5 shadow-sm">
                 <div className="flex h-full flex-col justify-between gap-5">
                     <div>
                         <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-primary/25 bg-background/70 text-primary">

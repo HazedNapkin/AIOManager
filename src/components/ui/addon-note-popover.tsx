@@ -252,7 +252,7 @@ export function AddonNoteEditor({
                 </Tooltip>
             ) : (
                 <Tooltip content={hasNote ? `Note: ${note!.slice(0, 60)}${note!.length > 60 ? '…' : ''}` : `Add note for ${addonName}`} side="top">
-                <button
+                <button data-theme-part="button"
                     className={cn(
                         'rounded-md p-1.5 transition-colors',
                         hasNote
@@ -292,7 +292,7 @@ export function AddonNoteEditor({
 
                     {isEditing ? (
                         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-                            <div className="flex items-center gap-1 rounded-2xl border border-border/35 bg-muted/50 p-1">
+                            <div data-theme-part="toolbar" className="flex items-center gap-1 rounded-2xl border border-border/35 bg-muted/50 p-1">
                                 <Tooltip content="Undo (Ctrl+Z)" side="top"><Button variant="ghost" size="icon" className={toolbarButtonClass} onClick={handleUndo} disabled={historyIndex === 0}><Undo2 className="h-3.5 w-3.5" /></Button></Tooltip>
                                 <Tooltip content="Redo (Ctrl+Y)" side="top"><Button variant="ghost" size="icon" className={toolbarButtonClass} onClick={handleRedo} disabled={historyIndex >= history.length - 1}><Redo2 className="h-3.5 w-3.5" /></Button></Tooltip>
                                 <div className="mx-1 h-5 w-px bg-border/60" />
@@ -308,8 +308,9 @@ export function AddonNoteEditor({
                                 )}
                             </div>
 
-                            <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/35 bg-background">
+                            <div data-theme-part="field" className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-border/35 bg-background">
                                 <Textarea
+                                    data-theme-part="inline-input"
                                     ref={textareaRef}
                                     data-autofocus="true"
                                     value={value}
@@ -383,7 +384,7 @@ export function AddonNoteEditor({
                         </div>
                     ) : (
                         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-                            <div className="min-h-[160px] overflow-auto rounded-2xl border border-border/35 bg-background p-4 text-sm leading-relaxed space-y-1 prose-sm break-words overflow-wrap-anywhere">
+                            <div data-theme-part="field" className="min-h-[160px] overflow-auto rounded-2xl border border-border/35 bg-background p-4 text-sm leading-relaxed space-y-1 prose-sm break-words overflow-wrap-anywhere">
                                 {renderMarkdown(value)}
                             </div>
                             <div className="flex items-center justify-end">

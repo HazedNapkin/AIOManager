@@ -285,7 +285,7 @@ export function CinemetaConfigurationDialog({
                     Remove Search Artifacts
                   </Label>
                   {patchStatus?.searchArtifactsPatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
+                    <span data-theme-part="badge" className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -311,7 +311,7 @@ export function CinemetaConfigurationDialog({
                     Remove Standard Catalogs
                   </Label>
                   {patchStatus?.standardCatalogsPatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
+                    <span data-theme-part="badge" className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -338,7 +338,7 @@ export function CinemetaConfigurationDialog({
                     Remove Metadata Resource
                   </Label>
                   {patchStatus?.metaResourcePatched && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
+                    <span data-theme-part="badge" className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
                       Patched
                     </span>
                   )}
@@ -357,7 +357,7 @@ export function CinemetaConfigurationDialog({
           </div>
 
           {config.removeMetaResource && (
-            <div className="flex items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
+            <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
               <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0" />
               <p className="text-sm text-warning">
                 Warning: Removing the metadata resource may affect addon functionality

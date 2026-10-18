@@ -12,8 +12,9 @@ body:not(:has(#kronorium-root)) {
   color: hsl(var(--foreground));
 }
 
-/* Scoped fumadocs-ui styles - only active inside #kronorium-root */
+/* Keep docs and their body-level portals on the same neutral palette. */
 
+:root:has(#kronorium-root),
 #kronorium-root {
   /* fumadocs-ui neutral theme tokens (0 saturation = pure neutral) */
   --fd-background: 0 0% 7%;
@@ -35,16 +36,34 @@ body:not(:has(#kronorium-root)) {
   --fd-ring: 0 0% 54.9%;
   --fd-radius: 0.75rem;
 
-  /* Tailwind v4 color tokens */
-  --color-fd-primary: hsl(0, 0%, 98%);
-  --color-fd-primary-foreground: hsl(0, 0%, 9%);
+  /* Fumadocs v4 utilities consume full colors rather than HSL triplets. */
+  --color-fd-background: hsl(var(--fd-background));
+  --color-fd-foreground: hsl(var(--fd-foreground));
+  --color-fd-card: hsl(var(--fd-card));
+  --color-fd-card-foreground: hsl(var(--fd-card-foreground));
+  --color-fd-popover: hsl(var(--fd-popover));
+  --color-fd-popover-foreground: hsl(var(--fd-popover-foreground));
+  --color-fd-primary: hsl(var(--fd-primary));
+  --color-fd-primary-foreground: hsl(var(--fd-primary-foreground));
+  --color-fd-secondary: hsl(var(--fd-secondary));
+  --color-fd-secondary-foreground: hsl(var(--fd-secondary-foreground));
+  --color-fd-muted: hsl(var(--fd-muted));
+  --color-fd-muted-foreground: hsl(var(--fd-muted-foreground));
+  --color-fd-accent: hsl(var(--fd-accent));
+  --color-fd-accent-foreground: hsl(var(--fd-accent-foreground));
+  --color-fd-border: hsl(var(--fd-border));
+  --color-fd-input: hsl(var(--fd-input));
+  --color-fd-ring: hsl(var(--fd-ring));
+}
 
+#kronorium-root {
   /* Override body variables for fumadocs */
   --background: 0 0% 7%;
   --foreground: 0 0% 92%;
 
   font-family: 'Inter', system-ui, sans-serif;
   color-scheme: dark;
+  color: hsl(var(--foreground));
   background-color: hsl(0, 0%, 7%);
   min-height: 100vh;
   scrollbar-gutter: stable;
@@ -53,9 +72,9 @@ body:not(:has(#kronorium-root)) {
 
 /* Sidebar & Search Portal Restoration */
 #kronorium-root .fd-sidebar {
-    background-color: var(--fd-background);
+    background-color: hsl(var(--fd-background));
     border-right-width: 1px;
-    border-color: var(--fd-border);
+    border-color: hsl(var(--fd-border));
 }
 
 /* Ensure body-level portals (Search) inherit variables only when docs are active */
@@ -82,12 +101,6 @@ body:has(#kronorium-root) [data-search-dialog] {
 
 [data-search-dialog] [data-search-group-title] {
     @apply !text-[10px] !uppercase !tracking-[0.15em] !font-bold !text-fd-muted-foreground/50 !py-3 !px-2;
-}
-
-/* Override fd-primary when Kronorium is active - prevents app gold leaking */
-:root:has(#kronorium-root) {
-    --color-fd-primary: hsl(0, 0%, 98%);
-    --color-fd-primary-foreground: hsl(0, 0%, 9%);
 }
 
 /* Hide theme toggle in docs sidebar */

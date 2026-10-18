@@ -271,11 +271,11 @@ export function BulkSaveDialog({
                             </DialogDescription>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                            <span data-theme-part="badge" className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
                                 {filteredAddons.length} saving
                             </span>
                             {internalAddonsCount > 0 && (
-                                <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+                                <span data-theme-part="badge" className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
                                     {internalAddonsCount} internal
                                 </span>
                             )}
@@ -285,7 +285,7 @@ export function BulkSaveDialog({
 
                 <div className="grid min-h-0 gap-4 overflow-y-auto p-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
                     <div className="space-y-4">
-                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                        <section data-theme-part="panel" className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
                             <div className="mb-3 flex items-center justify-between gap-3">
                                 <div className="flex items-center gap-2">
                                     <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/20 bg-primary/12 text-primary">
@@ -343,7 +343,7 @@ export function BulkSaveDialog({
                             )}
                         </section>
 
-                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                        <section data-theme-part="panel" className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
                             <div className="mb-3 flex items-center gap-2">
                                 <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-border/40 bg-muted/35 text-muted-foreground">
                                     <Tags className="h-4 w-4" />
@@ -361,7 +361,7 @@ export function BulkSaveDialog({
                             />
                         </section>
 
-                        <section className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
+                        <section data-theme-part="panel" className="rounded-[1.35rem] border border-border/40 bg-card/70 p-4">
                             <div className="mb-3">
                                 <Label>Conflict Resolution</Label>
                                 <p className="text-xs text-muted-foreground">Choose what happens when a matching addon already exists.</p>
@@ -374,6 +374,8 @@ export function BulkSaveDialog({
                                         type="button"
                                         role="radio"
                                         aria-checked={saveMode === option.value}
+                                        data-theme-part="button"
+                                        data-state={saveMode === option.value ? 'active' : 'inactive'}
                                         tabIndex={saveMode === option.value ? 0 : -1}
                                         onClick={() => setSaveMode(option.value)}
                                         onKeyDown={(e) => handleSaveModeKeyDown(e, index)}
@@ -398,7 +400,7 @@ export function BulkSaveDialog({
                     </div>
 
                     <aside className="space-y-3">
-                        <div className="rounded-[1.35rem] border border-border/40 bg-background/55 p-4">
+                        <div data-theme-part="panel" className="rounded-[1.35rem] border border-border/40 bg-background/55 p-4">
                             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Save Summary</p>
                             <div className="mt-3 space-y-2 text-sm">
                                 <div className="flex justify-between gap-2">

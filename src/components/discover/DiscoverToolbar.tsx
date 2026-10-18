@@ -37,6 +37,9 @@ function FacetChip({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       type="button"
+      data-theme-part="button"
+      data-state={active ? 'active' : 'inactive'}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -112,10 +115,12 @@ export function DiscoverToolbar({
 
         <div className="flex items-center gap-2 flex-wrap sm:ml-auto sm:flex-nowrap sm:shrink-0">
           {showSort && (
-            <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+            <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
               <Button
                 variant="ghost"
                 size="sm"
+                data-theme-part="tab"
+                data-state={sortBy === 'stars' ? 'active' : 'inactive'}
                 className={cn('h-7 gap-1.5 rounded-lg px-2.5 text-xs', sortBy === 'stars' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => onSortByChange('stars')}
               >
@@ -125,6 +130,8 @@ export function DiscoverToolbar({
               <Button
                 variant="ghost"
                 size="sm"
+                data-theme-part="tab"
+                data-state={sortBy === 'createdAt' ? 'active' : 'inactive'}
                 className={cn('h-7 gap-1.5 rounded-lg px-2.5 text-xs', sortBy === 'createdAt' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => onSortByChange('createdAt')}
               >
@@ -135,12 +142,14 @@ export function DiscoverToolbar({
           )}
 
           {showSort && onToggleCompact && (
-            <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+            <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
               <Tooltip content="Grid view" side="bottom">
               <Button
                 variant="ghost"
                 size="sm"
                 ripple={false}
+                data-theme-part="tab"
+                data-state={!compact ? 'active' : 'inactive'}
                 aria-label="Grid view"
                 className={cn('h-7 rounded-lg px-2', !compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => { if (compact) onToggleCompact() }}
@@ -153,6 +162,8 @@ export function DiscoverToolbar({
                 variant="ghost"
                 size="sm"
                 ripple={false}
+                data-theme-part="tab"
+                data-state={compact ? 'active' : 'inactive'}
                 aria-label="Compact view"
                 className={cn('h-7 rounded-lg px-2', compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => { if (!compact) onToggleCompact() }}
@@ -230,6 +241,9 @@ export function DiscoverToolbar({
               <button
                 key={c.slug}
                 type="button"
+                data-theme-part="button"
+                data-state={active ? 'active' : 'inactive'}
+                aria-pressed={active}
                 onClick={() => onToggleCategory(c.slug)}
                 className={cn(
                   'shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',

@@ -92,6 +92,8 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
     return (
         <>
             <div
+                data-theme-part="addon-card"
+                data-selected={Boolean(isSelected)}
                 {...longPressProps}
                 className={cn(
                     "group flex items-center gap-2 px-3 py-3 rounded-2xl border transition-[transform,opacity,box-shadow] duration-150 sm:gap-3 sm:px-4",
@@ -106,7 +108,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                 }}
             >
                 {isSelectionMode && (
-                    <div className={cn(
+                    <div data-theme-part="checkbox" data-state={isSelected ? 'checked' : 'unchecked'} className={cn(
                         "shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors",
                         isSelected ? "bg-primary border-primary" : "border-border/40"
                     )}>
@@ -146,13 +148,13 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         {savedAddon.syncWithInstalled && (
                             hasUpdate ? (
                                 <Tooltip content={`${manifestChangeLabel || 'A newer version is available to push to your installed accounts'} (${getSyncScopeLabel(savedAddon.syncAccountIds)})`} side="top">
-                                    <span aria-label="Update ready" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
+                                    <span aria-label="Update ready" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning shrink-0">
                                         <ArrowUpCircle className="h-3 w-3" />
                                     </span>
                                 </Tooltip>
                             ) : (
                                 <Tooltip content={`In sync with your installed accounts (${getSyncScopeLabel(savedAddon.syncAccountIds)})`} side="top">
-                                    <span aria-label="In sync" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success shrink-0">
+                                    <span aria-label="In sync" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success shrink-0">
                                         <Link2 className="h-3 w-3" />
                                     </span>
                                 </Tooltip>
@@ -160,7 +162,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         )}
                         {hasManifestShapeChange && (
                             <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'} side="top">
-                                <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                                <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
                                     <FileEdit className="h-3 w-3" />
                                 </span>
                             </Tooltip>
@@ -203,6 +205,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                         return (
                                             <span
                                                 key={tag}
+                                                data-theme-part="badge"
                                                 className="text-xs pointer-events-none px-1.5 py-0 rounded-full shrink-0 leading-5 font-medium"
                                                 style={{ background: color.bg, color: color.text, border: `1px solid ${color.border}` }}
                                             >
@@ -225,7 +228,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                         {(() => { const p = extractAddonParams(savedAddon.installUrl).params; if (!p.tag && !p.variant) return null; return (
                             <>
                                 <span className="hidden shrink-0 sm:inline">·</span>
-                                <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
+                                <span data-theme-part="badge" className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
                                     {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
                                     {p.tag || p.variant}
                                 </span>
@@ -252,6 +255,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                             <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label="More options"
                                 onClick={(e) => e.stopPropagation()}
                                 className="h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground"
                             >

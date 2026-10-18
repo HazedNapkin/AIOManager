@@ -597,16 +597,17 @@ export function CommandPalette() {
             >
                 <DialogTitle className="sr-only">Command palette</DialogTitle>
 
-                <div className="mx-3 mt-3 flex items-center gap-3 rounded-2xl border border-border/40 bg-muted/25 px-4 py-3 shadow-inner">
+                <div data-theme-part="field" className="mx-3 mt-3 flex items-center gap-3 rounded-2xl border border-border/40 bg-muted/25 px-4 py-3 shadow-inner">
                     <Search className="h-4 w-4 text-muted-foreground/80 flex-shrink-0" />
                     <input
+                        data-theme-part="inline-input"
                         ref={inputRef}
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder="Search pages, accounts, addons, actions..."
                         className="h-6 w-full min-w-0 flex-1 border-0 bg-transparent p-0 text-base font-medium text-foreground outline-none placeholder:text-muted-foreground/55 focus:ring-0 sm:text-sm"
                     />
-                    <button
+                    <button data-theme-part="button"
                         onClick={() => setOpen(false)}
                         className="hidden sm:inline-flex items-center gap-0.5 rounded-lg border border-border/50 bg-background/40 px-2 py-1 text-[11px] font-mono text-muted-foreground shadow-sm transition-colors hover:bg-muted/60 hover:text-foreground"
                     >
@@ -618,7 +619,7 @@ export function CommandPalette() {
                 <ScrollArea className="max-h-[min(54vh,440px)]" ref={scrollRef}>
                     <div className="py-3">
                         {filtered.length === 0 && (
-                            <div className="mx-3 rounded-2xl border border-dashed border-border/40 bg-muted/15 px-4 py-10 text-center text-sm text-muted-foreground">
+                            <div data-theme-part="panel" className="mx-3 rounded-2xl border border-dashed border-border/40 bg-muted/15 px-4 py-10 text-center text-sm text-muted-foreground">
                                 No results found for "{query}"
                             </div>
                         )}
@@ -633,7 +634,7 @@ export function CommandPalette() {
                                     const isSelected = flatIndex === selectedIndex
 
                                     return (
-                                        <button
+                                        <button data-theme-part="nav-item" data-state={isSelected ? "active" : "inactive"}
                                             key={item.id}
                                             data-index={flatIndex}
                                             onClick={(e) => {
@@ -649,11 +650,11 @@ export function CommandPalette() {
                                                 <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" />
                                             )}
                                                 {item.avatarUrl ? (
-                                                    <span className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden transition-colors">
+                                                    <span data-theme-part="avatar" className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden transition-colors">
                                                         <img src={item.avatarUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
                                                     </span>
                                                 ) : (
-                                                    <span
+                                                    <span data-theme-part="badge"
                                                         className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted/45 text-muted-foreground'}`}
                                                     >
                                                         {item.icon}
@@ -682,17 +683,17 @@ export function CommandPalette() {
                 </ScrollArea>
 
 
-                <div className="m-3 mt-0 flex items-center gap-4 rounded-2xl border border-border/35 bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground">
+                <div data-theme-part="toolbar" className="m-3 mt-0 flex items-center gap-4 rounded-2xl border border-border/35 bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
-                        <kbd className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">↑↓</kbd>
+                        <kbd data-theme-part="badge" className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">↑↓</kbd>
                         Navigate
                     </span>
                     <span className="flex items-center gap-1">
-                        <kbd className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">↵</kbd>
+                        <kbd data-theme-part="badge" className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">↵</kbd>
                         Select
                     </span>
                     <span className="flex items-center gap-1">
-                        <kbd className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">Esc</kbd>
+                        <kbd data-theme-part="badge" className="rounded-lg border border-border/50 bg-background/40 px-1.5 py-0.5 text-xs shadow-sm">Esc</kbd>
                         Close
                     </span>
                 </div>

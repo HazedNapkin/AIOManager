@@ -108,6 +108,8 @@ const Button = React.forwardRef<
 
   return (
     <Comp
+      data-theme-part="button"
+      data-variant={variant ?? 'default'}
       type={resolvedType}
       className={cn(
         buttonVariants({ variant, size, className }),

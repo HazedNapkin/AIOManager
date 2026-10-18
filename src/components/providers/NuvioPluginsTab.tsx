@@ -103,7 +103,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
             <div className="flex items-center gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground flex-1">Plugins</p>
                 {baseline.length > 0 && (
-                    <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
+                    <span data-theme-part="badge" className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                         {plugins.length}
                     </span>
                 )}
@@ -141,7 +141,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
 
 
             {error && (
-                <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3.5 py-2.5 text-sm text-destructive">{error}</div>
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3.5 py-2.5 text-sm text-destructive">{error}</div>
             )}
 
 
@@ -164,6 +164,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
                     {plugins.map((p, i) => (
                         <div
                             key={`${p.url}-${i}`}
+                            data-theme-part="panel"
                             className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5 transition-[background-color,border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md"
                         >
                             <div className="min-w-0 flex-1">
@@ -217,7 +218,7 @@ export function NuvioPluginsPanel({ accountId, connection }: { accountId: string
 
 
             {dirty && (
-                <div className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-3.5 py-2.5 shadow-sm">
+                <div data-theme-tone="status" data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-3.5 py-2.5 shadow-sm">
                     <p className="text-xs text-warning">Saving will replace this profile's plugins on Nuvio.</p>
                     <div className="flex gap-2 shrink-0">
                         <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPlugins(baseline)} disabled={saving}>

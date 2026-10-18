@@ -188,6 +188,7 @@ export function EpisodeDetailPage({
                 {/* Close button */}
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={onClose}
                     aria-label="Close"
                     className={cn('absolute right-4 top-4 z-30 flex h-9 w-9 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 active:scale-95', heroFrostedBtn)}
@@ -201,6 +202,7 @@ export function EpisodeDetailPage({
                 {/* Back button */}
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={onGoBack}
                     className={cn('mb-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold backdrop-blur-md transition-all active:scale-95', heroGhostBtn)}
                 >
@@ -212,6 +214,7 @@ export function EpisodeDetailPage({
                     <div className="absolute right-4 top-16 z-20 flex gap-1.5">
                         <button
                             type="button"
+                            data-theme-part="button"
                             onClick={() => {
                                 if (episodeNumber > 1) {
                                     onNavigateEpisode(seasonNumber, episodeNumber - 1)
@@ -227,6 +230,7 @@ export function EpisodeDetailPage({
                         </button>
                         <button
                             type="button"
+                            data-theme-part="button"
                             onClick={() => {
                                 if (maxEpisodesInSeason != null && episodeNumber >= maxEpisodesInSeason) {
                                     if (hasNextSeason) onNavigateEpisode(seasonNumber + 1, 1)
@@ -257,11 +261,11 @@ export function EpisodeDetailPage({
 
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
+                            <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
                                 S{seasonNumber} E{episodeNumber}
                             </span>
                             {productionCode && (
-                                <span className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium', isLight ? 'border-border bg-card text-muted-foreground' : 'border-white/15 bg-white/5 text-white/60')}>
+                                <span data-theme-part="badge" className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium', isLight ? 'border-border bg-card text-muted-foreground' : 'border-white/15 bg-white/5 text-white/60')}>
                                     {productionCode}
                                 </span>
                             )}
@@ -313,12 +317,12 @@ export function EpisodeDetailPage({
 
                 {/* Synopsis card */}
                 {overview && (
-                    <div className={cn('mt-4 rounded-xl border p-2.5 text-xs leading-relaxed backdrop-blur-sm sm:p-3.5 sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
+                    <div data-theme-part="panel" className={cn('mt-4 rounded-xl border p-2.5 text-xs leading-relaxed backdrop-blur-sm sm:p-3.5 sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
                         <p className={cn(!synopsisExpanded && 'line-clamp-3 sm:line-clamp-4')}>
                             {overview}
                         </p>
                         {overview.length > 220 && (
-                            <button type="button" onClick={() => setSynopsisExpanded(!synopsisExpanded)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
+                            <button type="button" data-theme-part="button" onClick={() => setSynopsisExpanded(!synopsisExpanded)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
                                 {synopsisExpanded ? <>Show Less <ChevronUp className="h-3 w-3" /></> : <>Read More <ChevronDown className="h-3 w-3" /></>}
                             </button>
                         )}
@@ -409,10 +413,10 @@ export function EpisodeDetailPage({
                                 Gallery
                             </h3>
                             <div className="flex items-center gap-1">
-                                <button type="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: -320, behavior: 'smooth' })} aria-label="Scroll gallery left" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
+                                <button type="button" data-theme-part="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: -320, behavior: 'smooth' })} aria-label="Scroll gallery left" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
                                     <ChevronLeft className="h-4 w-4" />
                                 </button>
-                                <button type="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: 320, behavior: 'smooth' })} aria-label="Scroll gallery right" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
+                                <button type="button" data-theme-part="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: 320, behavior: 'smooth' })} aria-label="Scroll gallery right" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
                                     <ChevronRight className="h-4 w-4" />
                                 </button>
                             </div>
@@ -470,7 +474,7 @@ export function EpisodeDetailPage({
 
                 {/* DEV NOTICE */}
                 {!seriesTmdbId && !loading && import.meta.env?.DEV && (
-                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-600 dark:text-yellow-400">
+                    <div data-theme-part="panel" data-theme-tone="status" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
                         No TMDB ID available. Episode enrichment data requires a TMDB ID.
                     </div>
                 )}

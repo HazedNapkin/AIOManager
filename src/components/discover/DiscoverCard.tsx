@@ -56,7 +56,7 @@ function DiscoverCardInner({ addon, saved, saving, favorite, compact, onSave, on
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="truncate text-xs font-semibold tracking-tight">{name}</h3>
             {isRecentlyUpdated && updated && (
-              <span className="inline-flex shrink-0 items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+              <span data-theme-part="badge" className="inline-flex shrink-0 items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
                 {updated}
               </span>
             )}

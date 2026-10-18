@@ -265,6 +265,8 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                         <button
                             key={s.seasonNumber}
                             type="button"
+                            data-theme-part="tab"
+                            data-state={isActive ? 'active' : 'inactive'}
                             onClick={() => setSelectedSeason(s.seasonNumber)}
                             className={cn(
                                 'shrink-0 rounded-full px-4 py-2 text-xs font-bold transition-all active:scale-95',
@@ -302,6 +304,8 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                             <button
                                 key={ep.episodeNumber}
                                 type="button"
+                                data-theme-part="nav-item"
+                                data-state={isWatched ? 'active' : 'inactive'}
                                 onClick={() => handleEpisodeClick(ep)}
                                 className={cn(
                                     'group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',

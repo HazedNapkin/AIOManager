@@ -37,7 +37,7 @@ type PreviewStat = {
 
 function PreviewStatCard({ stat }: { stat: PreviewStat }) {
   return (
-    <div className={cn(
+    <div data-theme-tone="status" data-theme-part="panel" className={cn(
       "rounded-xl border border-border/35 bg-background/45 p-2.5",
       stat.tone === 'success' && "border-success/25 bg-success/5",
       stat.tone === 'warning' && "border-warning/25 bg-warning/5",
@@ -212,7 +212,7 @@ export function DeploymentPreview({
     ]
 
   return (
-    <div className="rounded-xl border border-border/40 bg-muted/20 p-3 text-xs">
+    <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/20 p-3 text-xs">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="font-semibold text-foreground">
@@ -224,7 +224,7 @@ export function DeploymentPreview({
               : 'Selected add-ons are added where missing and updated where already installed.'}
           </div>
         </div>
-        <div className="shrink-0 rounded-full border border-border/35 bg-background/60 px-2.5 py-1 font-semibold tabular-nums">
+        <div data-theme-part="badge" className="shrink-0 rounded-full border border-border/35 bg-background/60 px-2.5 py-1 font-semibold tabular-nums">
           {preview.rows.length} account{preview.rows.length !== 1 ? 's' : ''}
         </div>
       </div>
@@ -233,7 +233,7 @@ export function DeploymentPreview({
         {selectedAddons.slice(0, 8).map(addon => {
           const logo = addon.metadata?.customLogo || addon.manifest.logo
           return (
-            <div key={addon.id} className="flex min-w-0 max-w-[190px] flex-1 basis-[150px] items-center gap-2 rounded-xl border border-border/25 bg-background/40 px-2.5 py-2">
+            <div key={addon.id} data-theme-part="addon-card" className="flex min-w-0 max-w-[190px] flex-1 basis-[150px] items-center gap-2 rounded-xl border border-border/25 bg-background/40 px-2.5 py-2">
               <AddonPreviewIcon name={addon.name} logo={logo} />
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium">{addon.name}</div>
@@ -244,7 +244,7 @@ export function DeploymentPreview({
                   <span>{operation === 'remove' ? 'Will remove if found' : 'Will add/update'}</span>
                   {(() => { const p = extractAddonParams(addon.installUrl).params; if (!p.tag && !p.variant) return null; return (
                     <Tooltip content={`${p.tag ? 'Tag' : 'Variant'}: ${p.tag || p.variant}`} side="top">
-                      <span className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1 text-primary">
+                      <span data-theme-part="badge" className="inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1 text-primary">
                         {p.tag ? <Tag className="h-2.5 w-2.5" /> : <Layers className="h-2.5 w-2.5" />}
                         <span className="truncate max-w-[100px]">{p.tag || p.variant}</span>
                       </span>
@@ -256,7 +256,7 @@ export function DeploymentPreview({
           )
         })}
         {selectedAddons.length > 8 && (
-          <div className="flex min-w-20 items-center justify-center rounded-xl border border-border/25 bg-background/35 px-3 text-xs font-semibold text-muted-foreground">
+          <div data-theme-part="badge" className="flex min-w-20 items-center justify-center rounded-xl border border-border/25 bg-background/35 px-3 text-xs font-semibold text-muted-foreground">
             +{selectedAddons.length - 8} more
           </div>
         )}
@@ -268,7 +268,7 @@ export function DeploymentPreview({
 
       <div className="mt-3 max-h-28 space-y-1 overflow-y-auto pr-1">
         {preview.rows.map(row => (
-          <div key={row.accountId} className="flex items-center justify-between gap-3 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
+          <div key={row.accountId} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
             <div className="min-w-0 truncate font-medium">
               {row.accountEmoji && <span className="mr-1.5">{row.accountEmoji}</span>}
               {row.accountName}

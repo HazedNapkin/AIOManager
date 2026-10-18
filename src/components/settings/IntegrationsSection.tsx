@@ -246,7 +246,7 @@ export function IntegrationsSection() {
 
     return (
         <section className="space-y-4">
-            <div className="space-y-4 sm:space-y-5 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
+            <div data-theme-part="panel" className="space-y-4 sm:space-y-5 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex items-start gap-3">
                         <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -256,7 +256,7 @@ export function IntegrationsSection() {
                         <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                                 <h3 className="text-sm sm:text-base font-semibold">Metadata Integrations</h3>
-                                <div className="inline-flex items-center gap-1.5 rounded-full border border-border/35 bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                <div data-theme-part="badge" className="inline-flex items-center gap-1.5 rounded-full border border-border/35 bg-background/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                                     <span className="text-muted-foreground/60">Powered by</span>
                                     {[
                                         ...providers.flatMap(p => {
@@ -288,19 +288,19 @@ export function IntegrationsSection() {
                     <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Configured keys</p>
                         {providers.length > 0 && (
-                            <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-primary">
+                            <span data-theme-part="badge" className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-primary">
                                 {providers.length}
                             </span>
                         )}
                     </div>
 
                     {loading ? (
-                        <div className="flex items-center gap-2 rounded-2xl border border-border/30 bg-background/35 p-3 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="flex items-center gap-2 rounded-2xl border border-border/30 bg-background/35 p-3 text-xs text-muted-foreground">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             Loading configured keys...
                         </div>
                     ) : providers.length === 0 ? (
-                        <div className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
                             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                             <span>No API keys configured. Add your TMDB key below to enable trailer fallback and recommendations.</span>
                         </div>
@@ -315,6 +315,7 @@ export function IntegrationsSection() {
                                 return (
                                     <div
                                         key={provider.provider}
+                                        data-theme-part="panel"
                                         className="rounded-2xl border border-border/35 bg-background/35 p-2.5 sm:p-3 space-y-2"
                                     >
                                         <div className="flex items-center gap-2">
@@ -403,6 +404,7 @@ export function IntegrationsSection() {
                                                 <>
                                                     <button
                                                         type="button"
+                                                        data-theme-part="input"
                                                         className="flex h-8 min-w-0 flex-1 cursor-text items-center truncate rounded-lg border border-border/30 bg-muted/20 px-2 font-mono text-xs text-muted-foreground transition-colors hover:border-border/50 hover:text-foreground"
                                                         onClick={() => {
                                                             setInlineEditProvider(provider.provider)
@@ -474,7 +476,7 @@ export function IntegrationsSection() {
                     )}
                 </div>
 
-                <div className="space-y-3 rounded-2xl border border-border/30 bg-background/30 p-2.5 sm:p-3 md:p-4">
+                <div data-theme-part="panel" className="space-y-3 rounded-2xl border border-border/30 bg-background/30 p-2.5 sm:p-3 md:p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                         <div className="space-y-1.5">
                             <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Provider</Label>
@@ -485,6 +487,8 @@ export function IntegrationsSection() {
                                         <button
                                             key={opt.id}
                                             type="button"
+                                            data-theme-part="tab"
+                                            data-state={isSelected ? 'active' : 'inactive'}
                                             disabled={!opt.available}
                                             onClick={() => opt.available && setSelectedProvider(opt.id)}
                                             className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 sm:px-2.5 sm:py-1.5 text-xs font-semibold transition-colors ${
@@ -633,7 +637,7 @@ export function IntegrationsSection() {
                             </Label>
                             <div className="grid gap-2">
                                 {detectedInstances.length === 0 && (
-                                    <p className="rounded-xl border border-dashed border-border/40 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground/60">
+                                    <p data-theme-part="panel" className="rounded-xl border border-dashed border-border/40 bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground/60">
                                         No AIOMetadata instances detected from your accounts. Add one manually below.
                                     </p>
                                 )}
@@ -643,6 +647,7 @@ export function IntegrationsSection() {
                                         <button
                                             key={instKey}
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => {
                                                 setSelectedInstance(instKey)
                                                 setImportForm({
@@ -671,7 +676,7 @@ export function IntegrationsSection() {
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="text-xs font-semibold text-foreground">{inst.addonName}</span>
                                                     {inst.hasPassword && (
-                                                        <span className="inline-flex items-center gap-0.5 rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-success">
+                                                        <span data-theme-part="badge" className="inline-flex items-center gap-0.5 rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-success">
                                                             <CheckCircle2 className="h-2.5 w-2.5" /> Key saved
                                                         </span>
                                                     )}
@@ -686,6 +691,7 @@ export function IntegrationsSection() {
                                 })}
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={() => {
                                         setSelectedInstance(CUSTOM_INSTANCE_ID)
                                         setImportForm(EMPTY_IMPORT_FORM)
@@ -757,9 +763,10 @@ export function IntegrationsSection() {
                             </div>
                         </div>
 
-                        <div className="rounded-xl border border-border/30 bg-muted/15 p-1">
+                        <div data-theme-part="panel" className="rounded-xl border border-border/30 bg-muted/15 p-1">
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => setShowAddonPassword(s => !s)}
                                 className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
                             >
@@ -793,7 +800,7 @@ export function IntegrationsSection() {
                             </AnimatePresence>
                         </div>
 
-                        <div className="flex items-start gap-2 rounded-xl border border-info/25 bg-info/8 p-2 sm:p-2.5 text-[11px] text-muted-foreground">
+                        <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 rounded-xl border border-info/25 bg-info/8 p-2 sm:p-2.5 text-[11px] text-muted-foreground">
                             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
                             <span>Your AIOMetadata password is used once to fetch your keys, then discarded. It is never stored on the AIOManager server.</span>
                         </div>
@@ -805,6 +812,7 @@ export function IntegrationsSection() {
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
                                     className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-2 sm:p-2.5 text-[11px] text-destructive"
+                                    data-theme-part="panel"
                                 >
                                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                                     <span>{importError}</span>

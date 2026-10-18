@@ -90,9 +90,10 @@ export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps
     }
 
     return (
-        <div className="rounded-xl border border-border/40 bg-muted/20 overflow-hidden">
+        <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/20 overflow-hidden">
             <button
                 type="button"
+                data-theme-part="button"
                 onClick={() => setExpanded(!expanded)}
                 className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/40"
             >
@@ -112,6 +113,7 @@ export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps
             {expanded && (
                 <div className="border-t border-border/40 p-4 space-y-3">
                     <textarea
+                        data-theme-part="textarea"
                         value={jsonText}
                         onChange={(e) => handleChange(e.target.value)}
                         onKeyDown={(e) => {
@@ -126,7 +128,7 @@ export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps
                     />
 
                     {error && (
-                        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+                        <div data-theme-tone="status" data-theme-part="panel" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
                             <p className="text-xs text-destructive font-medium">{error}</p>
                         </div>
                     )}

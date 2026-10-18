@@ -4,19 +4,14 @@ import { cn } from '@/lib/utils'
 const Card = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
->(({ className, onFocus, ...props }, ref) => (
+>(({ className, ...props }, ref) => (
   <div
+    data-theme-part="card"
     ref={ref}
     className={cn(
       'rounded-2xl border bg-card text-card-foreground shadow-sm outline-none',
       className
     )}
-    onFocus={(e) => {
-      // Blur immediately if the card itself (not a child) receives focus -
-      // prevents browser focus ring from appearing when clicking or Shift-tabbing onto the card div
-      if (e.target === e.currentTarget) e.currentTarget.blur()
-      onFocus?.(e)
-    }}
     {...props}
   />
 ))

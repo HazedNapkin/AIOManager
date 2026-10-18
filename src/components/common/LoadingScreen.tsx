@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTheme } from '@/contexts/ThemeContext'
+import { BrandLogo } from './BrandLogo'
 import { cn } from '@/lib/utils'
 
 const BOOT_STEPS = [
@@ -22,7 +23,7 @@ export function AppLoader({
   steps = BOOT_STEPS,
   className,
 }: AppLoaderProps) {
-  const { isLight } = useTheme()
+  const { logoUrl } = useTheme()
   const [activeStep, setActiveStep] = useState(0)
 
   useEffect(() => {
@@ -49,8 +50,8 @@ export function AppLoader({
 
   if (variant === 'route') {
     return (
-      <div className={cn('min-h-screen bg-background flex items-center justify-center p-6', className)} role="status">
-        <div className="flex items-center gap-3 rounded-full border border-border/60 bg-card px-4 py-2 shadow-sm">
+      <div data-theme-part="app-shell" className={cn('min-h-screen bg-background flex items-center justify-center p-6', className)} role="status">
+        <div data-theme-part="panel" className="flex items-center gap-3 rounded-full border border-border/60 bg-card px-4 py-2 shadow-sm">
           <span className="h-2 w-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
           <span className="text-xs font-medium text-muted-foreground">{label}</span>
         </div>
@@ -61,8 +62,8 @@ export function AppLoader({
   const progress = Math.round(((activeStep + 1) / Math.max(steps.length, 1)) * 100)
 
   return (
-    <div className={cn('min-h-screen bg-background flex items-center justify-center p-6', className)}>
-      <section
+    <div data-theme-part="app-shell" className={cn('min-h-screen bg-background flex items-center justify-center p-6', className)}>
+      <section data-theme-part="panel"
         className="w-full max-w-md rounded-xl border border-border/60 bg-card p-6 shadow-sm"
         aria-label="Application startup status"
         role="status"
@@ -70,19 +71,13 @@ export function AppLoader({
       >
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center">
-            <img
-              src="/apple-touch-icon.png"
-              alt="AIOManager"
-              loading="eager"
-              fetchPriority="high"
-              className={cn('h-11 w-11 object-contain', isLight && 'invert')}
-            />
+            <BrandLogo logoUrl={logoUrl} className="h-11 w-11 text-foreground" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-lg font-bold tracking-tight">AIOManager</p>
             <p className="text-sm text-muted-foreground">{label}</p>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-xs font-semibold text-muted-foreground">
+          <div data-theme-part="badge" className="inline-flex items-center gap-2 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-xs font-semibold text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
             Loading
           </div>
@@ -106,7 +101,7 @@ export function AppLoader({
                         : 'border-border/40 bg-muted/20'
                   )}
                 >
-                  <span
+                  <span data-theme-part="badge"
                     className={cn(
                       'flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
                       isActive
@@ -137,7 +132,7 @@ export function AppLoader({
               <span className="text-muted-foreground">Workspace readiness</span>
               <span className="font-mono text-xs text-muted-foreground">{progress}%</span>
             </div>
-            <div
+            <div data-theme-part="progress"
               className="h-2 overflow-hidden rounded-full bg-muted/40"
               role="progressbar"
               aria-valuenow={progress}
@@ -145,7 +140,7 @@ export function AppLoader({
               aria-valuemax={100}
               aria-label="Workspace readiness"
             >
-              <div
+              <div data-theme-part="progress-indicator"
                 className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
                 style={{ width: `${progress}%` }}
               />

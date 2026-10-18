@@ -207,7 +207,7 @@ export function AddonMetadataDialog({
 
                     <div className="space-y-4 pt-4 md:pt-0">
 
-                        <div className="border rounded-md p-4 bg-muted/20 flex flex-col items-center justify-start gap-4 h-full min-h-[250px] overflow-hidden">
+                        <div data-theme-part="panel" className="border rounded-md p-4 bg-muted/20 flex flex-col items-center justify-start gap-4 h-full min-h-[250px] overflow-hidden">
                             <span className="text-xs font-medium text-muted-foreground uppercase">Dashboard Preview</span>
 
                             <div className="flex flex-col items-center gap-3 w-full">
@@ -226,7 +226,7 @@ export function AddonMetadataDialog({
                                         {customDescription || addon.manifest.description}
                                     </p>
                                 </div>
-                                <span className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded-full mt-2 shrink-0">
+                                <span data-theme-part="badge" className="text-xs text-muted-foreground px-2 py-1 bg-muted rounded-full mt-2 shrink-0">
                                     v{addon.manifest.version}
                                 </span>
                             </div>
@@ -235,7 +235,7 @@ export function AddonMetadataDialog({
                 </div>
 
 
-                <div className="bg-muted/50 -mx-6 px-6 py-4 mt-2 border-t text-xs text-muted-foreground grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div data-theme-part="panel" className="bg-muted/50 -mx-6 px-6 py-4 mt-2 border-t text-xs text-muted-foreground grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <span className="font-semibold block mb-1">Developer Info</span>
                         <p className="break-all line-clamp-2">ID: {addon.manifest.id}</p>

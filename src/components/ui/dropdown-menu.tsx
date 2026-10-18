@@ -60,6 +60,7 @@ const DropdownMenuTrigger = React.forwardRef<HTMLButtonElement, DropdownMenuTrig
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const child = children as React.ReactElement<any>
       return React.cloneElement(child, {
+        'data-theme-part': child.props['data-theme-part'] ?? 'button',
         ref,
         onClick: (e: React.MouseEvent<HTMLButtonElement>) => {
           handleClick(e)
@@ -73,6 +74,7 @@ const DropdownMenuTrigger = React.forwardRef<HTMLButtonElement, DropdownMenuTrig
 
     return (
       <button
+        data-theme-part="button"
         ref={ref}
         type="button"
         className={cn('inline-flex items-center justify-center', className)}
@@ -137,6 +139,8 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
     return (
       <div
         ref={menuRef}
+        data-theme-part="menu"
+        data-state={context.open ? 'open' : 'closed'}
         style={{
           marginTop: sideOffset ? `${sideOffset}px` : undefined,
           willChange: 'transform, opacity',
@@ -177,6 +181,8 @@ const DropdownMenuItem = React.forwardRef<HTMLButtonElement, DropdownMenuItemPro
       <button
         ref={ref}
         type="button"
+        data-theme-part="menu-item"
+        data-variant={destructive ? 'destructive' : 'default'}
         className={cn(
           'relative flex w-full cursor-pointer select-none items-center rounded-lg px-2 py-1.5 text-sm outline-none transition-colors',
           'hover:bg-muted/50 hover:text-foreground focus:bg-muted/50 focus:text-foreground',

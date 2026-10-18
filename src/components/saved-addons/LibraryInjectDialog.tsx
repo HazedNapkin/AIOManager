@@ -301,6 +301,7 @@ export function LibraryInjectDialog({
                           disabled={!locked}
                         >
                           <label
+                            data-theme-part="menu-item"
                             className={`flex items-center gap-3 rounded-md p-2 transition-colors ${
                               locked
                                 ? 'cursor-not-allowed opacity-60'
@@ -384,6 +385,7 @@ export function LibraryInjectDialog({
                     return (
                       <div
                         key={r.key}
+                        data-theme-part="panel"
                         className="rounded-md border border-border/50 p-2.5"
                       >
                         <div className="flex items-start gap-2.5">

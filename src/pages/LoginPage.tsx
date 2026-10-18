@@ -11,6 +11,7 @@ import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert, UserRoun
 import { toast } from '@/hooks/use-toast'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { useTheme } from '@/contexts/ThemeContext'
+import { BrandLogo } from '@/components/common/BrandLogo'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -29,7 +30,6 @@ import { useConfetti } from '@/components/ui/confetti'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { TypingText } from '@/components/ui/typing-text'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { cn } from '@/lib/utils'
 import pkg from '../../package.json'
 
 interface LoginPageProps {
@@ -48,7 +48,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const login = useSyncStore(s => s.login)
     const logout = useSyncStore(s => s.logout)
     const { isLocked, unlock } = useAuthStore()
-    const { isLight, logoUrl } = useTheme()
+    const { logoUrl } = useTheme()
 
     const confetti = useConfetti()
     const [searchParams] = useSearchParams()
@@ -343,13 +343,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 <div className="text-center space-y-4">
                     <div className="flex justify-center">
                         <div className="flex h-20 w-20 items-center justify-center">
-                            <img
-                                src={logoUrl || "/logo.png"}
-                                alt="AIOManager"
-                                loading="lazy"
-                                onError={(e) => { if (e.currentTarget.src !== window.location.origin + '/logo.png') e.currentTarget.src = '/logo.png' }}
-                                className={cn('h-20 w-20 object-contain', !logoUrl && isLight && 'invert')}
-                            />
+                            <BrandLogo logoUrl={logoUrl} className="h-20 w-20 text-foreground" />
                         </div>
                     </div>
                     <div className="space-y-1">
@@ -361,7 +355,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 </div>
 
                 {!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && (
-                    <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
+                    <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
                         <div className="flex items-center gap-2 text-sm text-destructive font-semibold">
                             <ShieldAlert className="h-5 w-5" />
                             <span>Secure connection required</span>
@@ -400,7 +394,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
                                     <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
-                                    <div className="p-3 bg-muted/20 rounded-lg border border-border/40 text-center">
+                                    <div data-theme-part="panel" className="p-3 bg-muted/20 rounded-lg border border-border/40 text-center">
                                         <p className="text-xs text-muted-foreground">
                                             A unique UUID will be generated automatically.
                                         </p>
@@ -560,7 +554,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                         </p>
                                     )}
                                     {sessionRestoreError && (
-                                        <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning space-y-2 animate-in slide-in-from-top-1">
+                                        <div data-theme-tone="status" data-theme-part="panel" className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning space-y-2 animate-in slide-in-from-top-1">
                                             <p className="font-medium">This browser session could not be restored.</p>
                                             <p className="text-warning/90">Sign in from cloud with this UUID/password to continue.</p>
                                             <Button
@@ -599,7 +593,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </form>
 
                                 {isLocked && auth.isAuthenticated && unlockFailures >= 2 && (
-                                    <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 space-y-2 animate-in slide-in-from-top-1">
+                                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-warning/30 bg-warning/10 p-3 space-y-2 animate-in slide-in-from-top-1">
                                         <p className="text-xs font-semibold text-warning">Still not working? This browser's saved session may be corrupted.</p>
                                         <p className="text-xs text-muted-foreground leading-relaxed">
                                             Sign in from cloud instead: it resets this browser's broken saved session and restores everything from your sync. Anything already synced is safe.
@@ -641,7 +635,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                             <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">or</span>
                                             <div className="h-px flex-1 bg-border" />
                                         </div>
-                                        <div className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-muted/20 p-2.5">
+                                        <div data-theme-part="panel" className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-muted/20 p-2.5">
                                             <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
                                             {auth.avatar ? (
                                                 <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
@@ -718,7 +712,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <div className="space-y-2">
                                 <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
                                 <div className="relative group">
-                                    <div className="p-4 bg-success/10 rounded-lg border border-success/20 flex items-center justify-between gap-3 group-hover:border-success/40 transition-colors">
+                                    <div data-theme-part="field" className="p-4 bg-success/10 rounded-lg border border-success/20 flex items-center justify-between gap-3 group-hover:border-success/40 transition-colors">
                                         <code className="text-sm font-mono font-bold break-all text-success">
                                             {registeredId}
                                         </code>
@@ -732,7 +726,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </div>
                             </div>
 
-                            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-2">
+                            <div data-theme-tone="status" data-theme-part="panel" className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-2">
                                 <div className="flex items-center gap-2 text-warning font-semibold text-xs uppercase">
                                     <ShieldAlert className="h-4 w-4" />
                                     No password reset

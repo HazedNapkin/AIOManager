@@ -305,7 +305,7 @@ export function AIOStreamsPage() {
             ) : (
                 <div className="flex flex-col md:flex-row gap-6 min-h-[calc(100vh-14rem)]">
                     <div className="w-full md:w-56 lg:w-64 shrink-0 flex flex-col gap-3">
-                        <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
+                        <div data-theme-part="panel" className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
                                 <Tooltip content="Instance overview and quick stats" side="right">
                                     <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Summary</h2>
@@ -314,7 +314,7 @@ export function AIOStreamsPage() {
                             <DesktopSidebar activeSection={activeSection} onChange={changeSection} group="core" />
                         </div>
                         
-                        <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
+                        <div data-theme-part="panel" className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
                                 <Tooltip content="Configure addon orchestration and failover" side="right">
                                     <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Orchestration</h2>
@@ -328,8 +328,8 @@ export function AIOStreamsPage() {
                         </div>
                     </div>
 
-                    <div className="flex-1 min-w-0 bg-card border border-border/40 rounded-2xl overflow-hidden shadow-sm flex flex-col">
-                        <div className="p-4 md:p-6 border-b border-border/40 bg-muted/5 shrink-0">
+                    <div data-theme-part="panel" className="flex-1 min-w-0 bg-card border border-border/40 rounded-2xl overflow-hidden shadow-sm flex flex-col">
+                        <div data-theme-part="panel" className="p-4 md:p-6 border-b border-border/40 bg-muted/5 shrink-0">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div className="flex items-center gap-3 min-w-0">
                                     <AddonIcon
@@ -481,7 +481,7 @@ function CredentialsGate({ password, setPassword, showPassword, setShowPassword,
                         <Label htmlFor="remember" className="text-sm font-normal cursor-pointer">Remember password locally</Label>
                     </div>
                     {error && (
-                        <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
+                        <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
                             <p>{error}</p>
                         </div>
@@ -509,7 +509,7 @@ function CredentialsGate({ password, setPassword, showPassword, setShowPassword,
 function MobileSectionBar({ activeSection, onChange }: { activeSection: Section; onChange: (s: Section) => void }) {
     return (
         <div className="md:hidden -mx-4 px-4 pb-1">
-            <div className="flex flex-wrap gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
+            <div data-theme-part="tabs-list" className="flex flex-wrap gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
                 {SIDEBAR_ITEMS.map((item, i) => {
                     const isActive = activeSection === item.id
                     return (
@@ -517,6 +517,8 @@ function MobileSectionBar({ activeSection, onChange }: { activeSection: Section;
                             {i === 2 && <div className="w-full h-0" />}
                             <button
                                 type="button"
+                                data-theme-part="tab"
+                                data-state={isActive ? 'active' : 'inactive'}
                                 onClick={() => onChange(item.id)}
                                 className={cn(
                                     'flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -551,6 +553,8 @@ function DesktopSidebar({ activeSection, onChange, group }: { activeSection: Sec
                     <button
                         key={item.id}
                         type="button"
+                        data-theme-part="nav-item"
+                        data-state={isActive ? 'active' : 'inactive'}
                         onClick={() => onChange(item.id)}
                         className={cn(
                             'relative flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-sm font-medium transition-[color,background-color,border-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring text-left w-full',
@@ -752,7 +756,7 @@ function SectionContent({
                         <StatCard value={stats.keys} label="API Keys" />
                     </div>
 
-                    <div className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-3">
+                    <div data-theme-part="panel" className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-3">
                         <h3 className="text-sm font-semibold">Instance Details</h3>
                         <div className="grid gap-3 text-sm">
                             <div className="flex items-center justify-between">
@@ -792,7 +796,7 @@ function SectionContent({
                             <h3 className="text-sm font-semibold">Quick Settings</h3>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 {toggleSections.map(section => (
-                                    <div key={section.key} className="flex items-center justify-between px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
+                                    <div key={section.key} data-theme-part="panel" className="flex items-center justify-between px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
                                         <span className="text-xs font-medium">{section.label}</span>
                                         <span className={cn(
                                             "text-xs font-semibold",
@@ -807,7 +811,7 @@ function SectionContent({
                     )}
 
                     {(filterSections.length > 0 || sortSection) && (
-                        <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                        <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-sm font-semibold">Filters & Sorting</h3>
                                 <span className="text-xs text-muted-foreground">{filterSections.length} filter rule{filterSections.length !== 1 ? 's' : ''}</span>
@@ -826,17 +830,17 @@ function SectionContent({
                     )}
 
                     {installUrl && (
-                        <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                        <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                             <h3 className="text-sm font-semibold">Install URL</h3>
                             <div className="flex items-center gap-2">
-                                <code className="flex-1 text-xs font-mono bg-muted/30 px-3 py-2 rounded-lg truncate">{installUrl}</code>
+                                <code data-theme-part="field" className="flex-1 text-xs font-mono bg-muted/30 px-3 py-2 rounded-lg truncate">{installUrl}</code>
                                 <CopyButton value={installUrl} variant="outline" className="h-9 w-9 shrink-0" iconSize={14} />
                             </div>
                         </div>
                     )}
 
                     {availableVariants.length > 0 && (
-                        <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                        <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                             <h3 className="text-sm font-semibold flex items-center gap-1.5">
                                 <Layers className="w-3.5 h-3.5" /> Active Variant
                             </h3>
@@ -869,14 +873,14 @@ function SectionContent({
                     )}
 
                     {sameUserAccounts.length > 0 && (
-                        <div className="p-4 rounded-2xl border border-info/20 bg-info/5 shadow-sm space-y-2">
+                        <div data-theme-tone="status" data-theme-part="panel" className="p-4 rounded-2xl border border-info/20 bg-info/5 shadow-sm space-y-2">
                             <h3 className="text-sm font-semibold">Same User Also Installed</h3>
                             <p className="text-xs text-muted-foreground">
                                 These accounts already use this exact AIOStreams user, so they are shown here instead of as sync targets.
                             </p>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 {sameUserAccounts.map(acc => (
-                                    <span key={acc.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-background/60 border border-info/20">
+                                    <span key={acc.id} data-theme-part="badge" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-background/60 border border-info/20">
                                         <Users className="w-3 h-3 text-info" />
                                         {acc.emoji ? `${acc.emoji} ` : ''}{acc.name || acc.email || acc.id}
                                     </span>
@@ -886,12 +890,12 @@ function SectionContent({
                     )}
 
                     {linkedAccounts.length > 0 && (
-                        <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                        <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                             <h3 className="text-sm font-semibold">Other Users On This Instance</h3>
                             <p className="text-xs text-muted-foreground">Other accounts using different AIOStreams users on this same instance</p>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 {linkedAccounts.map(acc => (
-                                    <span key={acc.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/30 border border-border/30">
+                                    <span key={acc.id} data-theme-part="badge" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/30 border border-border/30">
                                         <Link2 className="w-3 h-3 text-muted-foreground" />
                                         {acc.emoji ? `${acc.emoji} ` : ''}{acc.name || acc.email || acc.id}
                                     </span>
@@ -901,7 +905,7 @@ function SectionContent({
                     )}
 
                     {configureUrl && (
-                        <div className="rounded-2xl border border-border/40 bg-muted/25 p-4 space-y-2">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-muted/25 p-4 space-y-2">
                             <p className="text-sm text-muted-foreground">For detailed configuration, use AIOStreams' visual editor.</p>
                             <Button variant="outline" size="sm" className="gap-2" asChild>
                                 <a href={configureUrl} target="_blank" rel="noopener noreferrer">
@@ -949,7 +953,7 @@ function SectionContent({
                                     const credentialCount = Object.values(credentials).filter(v => v != null && String(v).trim()).length
 
                                     return (
-                                        <div key={idx} className={cn(
+                                        <div key={idx} data-theme-part="panel" className={cn(
                                             "p-4 rounded-2xl border shadow-sm flex items-center gap-3",
                                             isEnabled ? "border-border/40 bg-card" : "border-border/30 bg-muted/10"
                                         )}>
@@ -1007,7 +1011,7 @@ function SectionContent({
                                             const isEnabled = ad.enabled !== false
                                             const logo = (adOptions.logo ?? ad.logo) as string | undefined
                                             return (
-                                                <div key={idx} className={cn(
+                                                <div key={idx} data-theme-part="addon-card" className={cn(
                                                     "p-4 rounded-2xl border shadow-sm flex items-center gap-3",
                                                     isEnabled ? "border-border/40 bg-card" : "border-border/30 bg-muted/10"
                                                 )}>
@@ -1021,7 +1025,7 @@ function SectionContent({
                                                         <p className="text-sm font-semibold truncate">{name}</p>
                                                         <p className="text-xs text-muted-foreground font-mono truncate">{String(adOptions.id || ad.id || ad.instanceId || '')}</p>
                                                     </div>
-                                                    <span className={cn(
+                                                    <span data-theme-part="badge" className={cn(
                                                         "rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide",
                                                         isEnabled ? "bg-success/10 text-success" : "bg-muted/35 text-muted-foreground"
                                                     )}>
@@ -1056,7 +1060,7 @@ function SectionContent({
                     </div>
 
                     {configureUrl && !presetsEditing && (
-                        <div className="p-4 rounded-xl border border-primary/25 bg-primary/5 space-y-2 mt-4">
+                        <div data-theme-part="panel" className="p-4 rounded-xl border border-primary/25 bg-primary/5 space-y-2 mt-4">
                             <p className="text-sm text-muted-foreground">For advanced configuration, use the official AIOStreams UI.</p>
                             <Button variant="outline" size="sm" className="gap-2" asChild>
                                 <a href={configureUrl} target="_blank" rel="noopener noreferrer">
@@ -1123,7 +1127,7 @@ function SectionContent({
 
 function StatCard({ value, label }: { value: number; label: string }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <p className="text-xl font-semibold">{value}</p>
             <p className="text-xs text-muted-foreground">{label}</p>
         </div>

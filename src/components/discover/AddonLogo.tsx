@@ -14,12 +14,12 @@ export function AddonLogo({
   className?: string
   letterClassName?: string
 }) {
-  const [failed, setFailed] = useState(false)
-  const showImage = !!src && !failed
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const showImage = !!src && failedSrc !== src
   return (
-    <div className={cn('flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/40 bg-muted/40', className)}>
+    <div data-theme-part="image-tile" className={cn('flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/40 bg-muted/40', className)}>
       {showImage ? (
-        <img src={src!} alt="" loading="lazy" className="h-full w-full object-contain" onError={() => setFailed(true)} />
+        <img src={src!} alt="" loading="lazy" className="h-full w-full object-contain" onError={() => setFailedSrc(src ?? null)} />
       ) : (
         <span className={cn('font-bold text-muted-foreground', letterClassName)}>{(name.charAt(0) || '?').toUpperCase()}</span>
       )}

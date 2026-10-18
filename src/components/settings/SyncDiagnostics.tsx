@@ -33,7 +33,7 @@ function DiagnosticStat({
     tone?: 'muted' | 'success' | 'warning' | 'destructive'
 }) {
     return (
-        <div className={cn(
+        <div data-theme-tone="status" data-theme-part="panel" className={cn(
             "min-w-0 rounded-2xl border bg-background/35 p-3",
             tone === 'success' && "border-success/25 bg-success/5",
             tone === 'warning' && "border-warning/25 bg-warning/5",
@@ -115,7 +115,7 @@ export function SyncDiagnostics() {
     }
 
     return (
-        <div className="overflow-hidden rounded-[1.75rem] border border-border/45 bg-card/80 shadow-sm">
+        <div data-theme-part="panel" className="overflow-hidden rounded-[1.75rem] border border-border/45 bg-card/80 shadow-sm">
             <div className="flex items-center gap-3 p-4">
                 <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                     <SquircleOverlay />
@@ -161,7 +161,7 @@ export function SyncDiagnostics() {
 
 
                     <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-2xl border border-border/35 bg-background/35 p-3">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/35 p-3">
                             <Button
                                 variant="outline"
                                 onClick={() => setShowPushConfirm(true)}
@@ -175,7 +175,7 @@ export function SyncDiagnostics() {
                             </p>
                         </div>
 
-                        <div className="rounded-2xl border border-border/35 bg-background/35 p-3">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/35 p-3">
                             <Button
                                 variant="outline"
                                 onClick={() => setShowMirrorConfirm(true)}
@@ -197,7 +197,7 @@ export function SyncDiagnostics() {
                             <Badge variant="outline" className="text-xs py-0 px-1.5 h-4 font-normal">Session Only</Badge>
                         </h4>
 
-                        <ScrollArea className="h-[200px] rounded-2xl border border-border/35 bg-background/35">
+                        <ScrollArea data-theme-part="panel" className="h-[200px] rounded-2xl border border-border/35 bg-background/35">
                             <div className="p-2 space-y-1">
                                 {history.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center py-8 text-muted-foreground">

@@ -162,7 +162,7 @@ export function QRLinkDialog({
         <Dialog open={open} onOpenChange={handleOpenChange}>
             <DialogContent hideClose className="max-w-md gap-0 overflow-hidden p-0">
                 <DialogHeader className="items-center px-6 pb-2 pt-7 text-center">
-                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/25 bg-primary/10 text-primary shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.08)]">
+                    <div data-theme-part="badge" className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/25 bg-primary/10 text-primary shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.08)]">
                         <QrCode className="h-6 w-6" />
                     </div>
                     <DialogTitle className="text-xl tracking-tight">{title}</DialogTitle>
@@ -181,7 +181,7 @@ export function QRLinkDialog({
                     )}
                     {phase === 'error' && (
                         <div className="space-y-4">
-                            <div className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">
+                            <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">
                                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <p>{error}</p>
                             </div>
@@ -193,7 +193,7 @@ export function QRLinkDialog({
                     )}
                     {phase === 'expired' && (
                         <div className="space-y-4">
-                            <div className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning">
+                            <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning">
                                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <p>This code expired before it was approved. Generate a new one to continue.</p>
                             </div>
@@ -215,7 +215,7 @@ export function QRLinkDialog({
                                 <img src={session.qrImage} alt="Login QR code" className="h-48 w-48" />
                             </div>
                             <p className="max-w-full break-all px-2 text-center font-mono text-lg font-bold tracking-[0.2em]">{session.code}</p>
-                            <div className="flex w-full items-start gap-2 rounded-xl border border-border/40 bg-muted/30 px-3 py-2">
+                            <div data-theme-part="field" className="flex w-full items-start gap-2 rounded-xl border border-border/40 bg-muted/30 px-3 py-2">
                                 <span className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-muted-foreground">
                                     {session.link}
                                 </span>
@@ -232,7 +232,7 @@ export function QRLinkDialog({
                         </div>
                     )}
                 </div>
-                <button
+                <button data-theme-part="button"
                     type="button"
                     onClick={requestClose}
                     aria-label="Close dialog"

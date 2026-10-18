@@ -260,6 +260,7 @@ export function ReplaySharePage() {
                 gap-3 p-2 bg-white/5 border border-white/10 shadow-2xl rounded-full 
                 hidden md:flex backdrop-blur-md items-center">
                 <button
+                    data-theme-part="button"
                     onClick={() => handleScrollDirection('up')}
                     disabled={activeSection === sections[0].id}
                     className="text-white/40 hover:text-white disabled:opacity-20 
@@ -272,6 +273,8 @@ export function ReplaySharePage() {
                     <div key={section.id}
                         className="relative group flex items-center justify-center">
                         <button
+                            data-theme-part="tab"
+                            data-state={activeSection === section.id ? 'active' : 'inactive'}
                             onClick={() => scrollToSection(section.id)}
                             className={`w-3 h-3 rounded-full transition-all duration-300 ${activeSection === section.id
                                 ? 'bg-white scale-125 shadow-[0_0_10px_rgba(255,255,255,0.5)]'
@@ -288,6 +291,7 @@ export function ReplaySharePage() {
                 ))}
                 <div className="w-px h-2 bg-white/10" />
                 <button
+                    data-theme-part="button"
                     onClick={() => handleScrollDirection('down')}
                     disabled={activeSection === sections[sections.length - 1].id}
                     className="text-white/40 hover:text-white disabled:opacity-20 

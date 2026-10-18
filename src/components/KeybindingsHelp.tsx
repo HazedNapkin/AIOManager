@@ -61,15 +61,15 @@ export function KeybindingsHelp({ isOpen, onClose }: KeybindingsHelpProps) {
                 <DialogTitle className="sr-only">Keyboard Shortcuts</DialogTitle>
 
                 <div className="flex items-start gap-3 border-b border-border/40 bg-gradient-to-br from-card to-card/60 px-5 py-4">
-                    <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/35 bg-muted/25">
+                    <div data-theme-part="badge" className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/35 bg-muted/25">
                         <SquircleOverlay />
                         <Keyboard className="relative z-10 h-4 w-4 text-muted-foreground" />
                     </div>
                     <div className="flex-1">
                         <h2 className="text-sm font-bold leading-tight">Keyboard Shortcuts</h2>
-                        <p className="text-xs text-muted-foreground mt-0.5">Press <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono text-[10px]">?</kbd> anywhere to reopen.</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Press <kbd data-theme-part="badge" className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono text-[10px]">?</kbd> anywhere to reopen.</p>
                     </div>
-                    <button
+                    <button data-theme-part="button"
                         type="button"
                         onClick={onClose}
                         aria-label="Close"
@@ -94,7 +94,7 @@ export function KeybindingsHelp({ isOpen, onClose }: KeybindingsHelpProps) {
                                             <span className="text-xs text-muted-foreground">{item.desc}</span>
                                             <div className="flex items-center gap-0.5 shrink-0">
                                                 {item.keys.map((k, i) => (
-                                                    <kbd key={i} className="rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground/70 min-w-[20px] text-center">
+                                                    <kbd data-theme-part="badge" key={i} className="rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground/70 min-w-[20px] text-center">
                                                         {k}
                                                     </kbd>
                                                 ))}

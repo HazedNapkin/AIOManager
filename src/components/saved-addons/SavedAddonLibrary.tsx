@@ -519,7 +519,7 @@ export function SavedAddonLibrary() {
               <Link2 className="h-3.5 w-3.5" />
               Sync
               {syncOverviewData.length > 0 && (
-                <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
+                <span data-theme-part="badge" className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
               )}
             </TabsTrigger>
           </TabsList>
@@ -757,7 +757,7 @@ export function SavedAddonLibrary() {
                 />
               )}
 
-              <div className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
+              <div data-theme-part="panel" className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                 <p>
                   <span className="font-medium text-foreground/80">Version numbers are informational.</span>{' '}

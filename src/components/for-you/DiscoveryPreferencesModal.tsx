@@ -135,7 +135,7 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                 <div className="flex items-start justify-between gap-4 border-b border-border/40 bg-gradient-to-br from-card to-card/60 px-5 py-5 sm:px-7">
                     <div className="min-w-0">
                         <div className="flex items-center gap-2.5">
-                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-muted/40 text-primary">
+                            <span data-theme-part="badge" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-muted/40 text-primary">
                                 <LayoutGrid className="h-4 w-4" />
                             </span>
                             <div className="min-w-0">
@@ -152,6 +152,7 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                     </div>
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => onOpenChange(false)}
                         aria-label="Close"
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/30 text-muted-foreground transition-all hover:bg-muted/60 hover:text-foreground active:scale-95"
@@ -168,12 +169,12 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                     Display
                                 </h3>
                             </div>
-                            <span className="shrink-0 rounded-full border border-border/40 bg-muted/30 px-2.5 py-0.5 text-xs font-bold tabular-nums text-foreground">
+                            <span data-theme-part="badge" className="shrink-0 rounded-full border border-border/40 bg-muted/30 px-2.5 py-0.5 text-xs font-bold tabular-nums text-foreground">
                                 {activeSize}
                             </span>
                         </div>
 
-                        <div className="rounded-2xl border border-border/40 bg-muted/15 p-3 space-y-2">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-muted/15 p-3 space-y-2">
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                     Shelf Size
@@ -185,6 +186,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                     <button
                                         key={size}
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={activeSize === size ? 'active' : 'inactive'}
                                         onClick={() => applySize(size)}
                                         className={cn(
                                             'rounded-lg border py-2 text-sm font-semibold tabular-nums transition-colors',
@@ -227,6 +230,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                     <button
                                         key={opt.value}
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={discoveryPrefs.obscurity === opt.value ? 'active' : 'inactive'}
                                         onClick={() => discoveryPrefs.setObscurity(opt.value)}
                                         className={cn(
                                             'rounded-lg border px-3 py-2 text-left text-xs transition-colors',
@@ -249,6 +254,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                     <button
                                         key={opt.value}
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={discoveryPrefs.typeMix === opt.value ? 'active' : 'inactive'}
                                         onClick={() => discoveryPrefs.setTypeMix(opt.value)}
                                         className={cn(
                                             'flex-1 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
@@ -266,11 +273,11 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
                                 <span className="text-xs font-medium text-muted-foreground">Minimum Rating</span>
-                                <span className="rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-bold tabular-nums text-foreground">
+                                <span data-theme-part="badge" className="rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-bold tabular-nums text-foreground">
                                     {discoveryPrefs.minRating.toFixed(1)}+
                                 </span>
                             </div>
-                            <input
+                            <input data-theme-part="slider"
                                 type="range"
                                 min={0}
                                 max={10}
@@ -286,6 +293,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                             <div className="flex flex-wrap gap-1">
                                 <button
                                     type="button"
+                                    data-theme-part="tab"
+                                    data-state={!activeDecade ? 'active' : 'inactive'}
                                     onClick={() => discoveryPrefs.setEraRange(1990, new Date().getFullYear())}
                                     className={cn(
                                         'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -300,6 +309,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                     <button
                                         key={d.label}
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={activeDecade?.label === d.label ? 'active' : 'inactive'}
                                         onClick={() => discoveryPrefs.setEraRange(d.from, d.to)}
                                         className={cn(
                                             'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -333,6 +344,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                 return (
                                     <button
                                         key={genre}
+                                        data-theme-part="badge"
+                                        data-state={state}
                                         type="button"
                                         onClick={() => cycleGenre(genre)}
                                         className={cn(
@@ -366,6 +379,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                 <div className="space-y-1.5">
                                     <button
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={discoveryPrefs.enabledAccounts === 'all' ? 'active' : 'inactive'}
                                         onClick={() => discoveryPrefs.setEnabledAccounts('all')}
                                         className={cn(
                                             'flex w-full items-center justify-between rounded-xl border px-3 py-2 text-xs transition-colors',
@@ -382,6 +397,9 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                         return (
                                             <button
                                                 key={acc.id}
+                                                data-theme-part="button"
+                                                data-state={enabled ? 'active' : 'inactive'}
+                                                aria-pressed={enabled}
                                                 type="button"
                                                 onClick={() => {
                                                     if (discoveryPrefs.enabledAccounts === 'all') {
@@ -406,6 +424,8 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                         <button
                                             key={opt.value}
                                             type="button"
+                                            data-theme-part="tab"
+                                            data-state={discoveryPrefs.mergeMode === opt.value ? 'active' : 'inactive'}
                                             onClick={() => discoveryPrefs.setMergeMode(opt.value)}
                                             className={cn(
                                                 'flex-1 rounded-lg border px-2 py-1.5 text-left text-xs transition-colors',
@@ -435,7 +455,7 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                                         Manage this account's row size preference
                                     </p>
                                 </div>
-                                <div className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-muted/20 px-3 py-2.5">
+                                <div data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-muted/20 px-3 py-2.5">
                                     <div className="min-w-0">
                                         <p className="text-sm font-medium text-foreground">
                                             {hasOverride
@@ -465,7 +485,7 @@ export function DiscoveryPreferencesModal({ open, onOpenChange, accountId }: Dis
                     )}
                 </div>
 
-                <div className="flex items-center justify-between gap-2 border-t border-border/40 bg-muted/15 px-5 py-4 sm:px-7">
+                <div data-theme-part="toolbar" className="flex items-center justify-between gap-2 border-t border-border/40 bg-muted/15 px-5 py-4 sm:px-7">
                     <Button
                         variant="ghost"
                         size="sm"

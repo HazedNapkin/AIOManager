@@ -200,11 +200,12 @@ function KeyDetailPanel({
                 </div>
             </div>
 
-            <div className="rounded-2xl border border-border overflow-hidden mb-5">
+            <div data-theme-part="field" className="rounded-2xl border border-border overflow-hidden mb-5">
                 <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">API Key</span>
                     <div className="flex items-center gap-1">
                         <button
+                            data-theme-part="button"
                             onClick={() => setReveal(r => !r)}
                             className="h-7 px-2 rounded-md hover:bg-muted/60 text-xs font-medium text-muted-foreground flex items-center gap-1"
                         >
@@ -212,6 +213,7 @@ function KeyDetailPanel({
                             {reveal ? 'Hide' : 'Reveal'}
                         </button>
                         <button
+                            data-theme-part="button"
                             onClick={() => {
                                 navigator.clipboard.writeText(keyData.value)
                                 setCopied(true)
@@ -231,10 +233,11 @@ function KeyDetailPanel({
             </div>
 
             {keyData.serverUrl && (
-                <div className="rounded-2xl border border-border overflow-hidden mb-5">
+                <div data-theme-part="field" className="rounded-2xl border border-border overflow-hidden mb-5">
                     <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
                         <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Server</span>
                         <a
+                            data-theme-part="button"
                             href={keyData.serverUrl}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -251,7 +254,7 @@ function KeyDetailPanel({
             )}
 
             {health && (
-                <div className="rounded-2xl border border-border overflow-hidden mb-5">
+                <div data-theme-part="panel" className="rounded-2xl border border-border overflow-hidden mb-5">
                     <div className="px-5 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
                         <span className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Subscription</span>
                         <Button
@@ -308,32 +311,33 @@ function KeyDetailPanel({
             )}
 
             <div className="grid grid-cols-1 gap-4 mb-5 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-border p-4">
+                <div data-theme-part="panel" className="rounded-2xl border border-border p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground mb-1">Provider</div>
                     <div className="text-sm font-semibold flex items-center gap-2">
                         <ProviderTile k={keyData} size={20} />
                         {providerLabel}
                     </div>
                 </div>
-                <div className="rounded-2xl border border-border p-4">
+                <div data-theme-part="panel" className="rounded-2xl border border-border p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground mb-1">Group</div>
                     <div className="text-sm font-semibold">{group}</div>
                 </div>
-                <div className="rounded-2xl border border-border p-4">
+                <div data-theme-part="panel" className="rounded-2xl border border-border p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground mb-1">Last Checked</div>
                     <div className="text-sm font-semibold">
                         {health?.lastChecked ? getTimeAgo(new Date(health.lastChecked)) : 'Never'}
                     </div>
                 </div>
-                <div className="rounded-2xl border border-border p-4">
+                <div data-theme-part="panel" className="rounded-2xl border border-border p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground mb-1">Key ID</div>
                     <div className="text-sm font-mono text-muted-foreground truncate">{keyData.id.slice(0, 8)}…</div>
                 </div>
             </div>
 
             {dashboardUrl && (
-                <div className="rounded-2xl border border-border divide-y divide-border mb-5">
+                <div data-theme-part="panel" className="rounded-2xl border border-border divide-y divide-border mb-5">
                     <a
+                        data-theme-part="button"
                         href={dashboardUrl}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -559,6 +563,8 @@ export function VaultPage() {
         return (
             <button
                 key={id}
+                data-theme-part="nav-item"
+                data-state={isActive ? 'active' : 'inactive'}
                 onClick={() => {
                     setActiveFilter(filterType === 'smart' ? { type: 'smart', id: id as SmartFilter } : { type: 'group', name: id })
                     setSelectedId(null)
@@ -614,6 +620,8 @@ export function VaultPage() {
         return (
             <button
                 key={item.key}
+                data-theme-part="nav-item"
+                data-state={isActive ? 'active' : 'inactive'}
                 onClick={() => {
                     setActiveFilter(item.filter)
                     setSelectedId(null)
@@ -643,7 +651,7 @@ export function VaultPage() {
     return (
         <div className="flex flex-col gap-4">
             {saveFailed && (
-                <div className="flex items-center gap-2 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-600 dark:text-yellow-400">
+                <div data-theme-part="panel" data-theme-tone="status" className="flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-sm text-warning">
                     <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                         <line x1="12" y1="9" x2="12" y2="13" />
@@ -655,7 +663,7 @@ export function VaultPage() {
         <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-16rem)] lg:min-h-[500px]">
             {/* Desktop Notes-style layout: navigation on the left, details on the right. */}
             <div className="hidden lg:flex gap-6 h-full w-full">
-                <section className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm">
+                <section data-theme-part="card" className="flex w-[300px] shrink-0 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm">
                     {desktopFilterOpen ? (
                         <>
                             <div className="flex items-center gap-2 px-5 pt-5 pb-4 shrink-0">
@@ -688,6 +696,7 @@ export function VaultPage() {
                                             </Tooltip>
                                             <Tooltip content={categorySort === 'default' ? 'Default order' : categorySort === 'alpha' ? 'Alphabetical' : 'By count'} side="top">
                                                 <button
+                                                    data-theme-part="button"
                                                     onClick={() => setCategorySort(s => s === 'default' ? 'alpha' : s === 'alpha' ? 'count' : 'default')}
                                                     className="text-muted-foreground hover:text-foreground transition-colors"
                                                     aria-label="Toggle category sort"
@@ -706,7 +715,7 @@ export function VaultPage() {
                                 </div>
                             </div>
 
-                            <div className="mt-auto border-t border-border/40 px-4 py-3 shrink-0">
+                            <div data-theme-part="toolbar" className="mt-auto border-t border-border/40 px-4 py-3 shrink-0">
                                 <Tooltip content="Sync subscription status from all providers" side="top">
                                     <Button
                                         variant="ghost"
@@ -758,7 +767,7 @@ export function VaultPage() {
 
                             <div className="px-5 pt-4 pb-3 border-b border-border/40 shrink-0">
                                 <div className="flex items-center gap-2">
-                                    <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 hover:border-border transition-colors flex-1">
+                                    <div data-theme-part="input" className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 hover:border-border transition-colors flex-1">
                                         <Search className="w-3.5 h-3.5 text-muted-foreground" />
                                         <input
                                             value={search}
@@ -767,13 +776,14 @@ export function VaultPage() {
                                             className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
                                         />
                                         {search && (
-                                            <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
+                                            <button data-theme-part="button" onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
                                                 <X className="w-3 h-3" />
                                             </button>
                                         )}
                                     </div>
                                     <Tooltip content={entrySort === 'default' ? 'Default order' : entrySort === 'name-asc' ? 'Name A-Z' : entrySort === 'name-desc' ? 'Name Z-A' : 'Recently updated'} side="top">
                                         <button
+                                            data-theme-part="button"
                                             onClick={() => setEntrySort(s => s === 'default' ? 'name-asc' : s === 'name-asc' ? 'name-desc' : s === 'name-desc' ? 'updated' : 'default')}
                                             className="h-8 w-8 shrink-0 rounded-lg border border-border/40 bg-muted/30 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                                             aria-label="Toggle entry sort"
@@ -800,6 +810,8 @@ export function VaultPage() {
                                         return (
                                             <button
                                                 key={k.id}
+                                                data-theme-part="nav-item"
+                                                data-state={isSelected ? 'active' : 'inactive'}
                                                 onClick={() => setSelectedId(k.id)}
                                                 className={cn(
                                                     "w-full text-left px-5 py-3.5 flex items-center gap-4 border-b border-l-2 border-border/40 transition-colors",
@@ -837,7 +849,7 @@ export function VaultPage() {
                     )}
                 </section>
 
-                <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm">
+                <section data-theme-part="card" className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/40 bg-card shadow-sm">
                     {selected ? (
                         <KeyDetailPanel
                             keyData={selected}
@@ -865,7 +877,7 @@ export function VaultPage() {
             </div>
 
             {/* Mobile/Tablet layout */}
-            <div className="lg:hidden flex flex-col flex-1 min-h-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden relative">
+            <div data-theme-part="card" className="lg:hidden flex flex-col flex-1 min-h-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden relative">
                 <div className="px-4 pt-4 pb-3 flex items-center gap-2 border-b border-border shrink-0">
                     {!mobileFilterOpen && (
                         <Button
@@ -915,7 +927,7 @@ export function VaultPage() {
                 {!mobileFilterOpen && !mobileDetailId && (
                     <div className="px-4 pt-3 pb-2 border-b border-border/40 shrink-0">
                         <div className="flex items-center gap-2">
-                            <div className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 flex-1">
+                            <div data-theme-part="input" className="h-8 rounded-lg bg-muted/30 border border-border/40 flex items-center px-2.5 gap-2 flex-1">
                                 <Search className="w-3.5 h-3.5 text-muted-foreground" />
                                 <input
                                     value={search}
@@ -924,13 +936,14 @@ export function VaultPage() {
                                     className="bg-transparent outline-none flex-1 text-xs text-foreground placeholder-muted-foreground"
                                 />
                                 {search && (
-                                    <button onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
+                                    <button data-theme-part="button" onClick={() => setSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
                                         <X className="w-3 h-3" />
                                     </button>
                                 )}
                             </div>
                             <Tooltip content={entrySort === 'default' ? 'Default order' : entrySort === 'name-asc' ? 'Name A-Z' : entrySort === 'name-desc' ? 'Name Z-A' : 'Recently updated'} side="top">
                                 <button
+                                    data-theme-part="button"
                                     onClick={() => setEntrySort(s => s === 'default' ? 'name-asc' : s === 'name-asc' ? 'name-desc' : s === 'name-desc' ? 'updated' : 'default')}
                                     className="h-8 w-8 shrink-0 rounded-lg border border-border/40 bg-muted/30 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                                     aria-label="Toggle entry sort"
@@ -1011,6 +1024,7 @@ export function VaultPage() {
                             return (
                                 <button
                                     key={k.id}
+                                    data-theme-part="button"
                                     onClick={() => setMobileDetailId(k.id)}
                                     className="w-full text-left px-4 py-3 flex items-center gap-3 border-b border-border/40 hover:bg-muted/40 transition-colors"
                                 >

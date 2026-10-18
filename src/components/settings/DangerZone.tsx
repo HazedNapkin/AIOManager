@@ -142,11 +142,11 @@ export function DangerZone() {
 
     return (
         <>
-            <div className="overflow-hidden rounded-[1.75rem] border border-destructive/30 bg-destructive/10 p-1">
-                <div className="space-y-6 rounded-[1.55rem] bg-card/90 p-5">
+            <div data-theme-part="panel" data-theme-tone="status" className="overflow-hidden rounded-[1.75rem] border border-destructive/30 bg-destructive/10 p-1">
+                <div data-theme-part="panel" className="space-y-6 rounded-[1.55rem] bg-card/90 p-5">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="rounded-2xl border border-destructive/20 bg-destructive/10 p-2.5">
+                        <div data-theme-part="panel" data-theme-tone="status" className="rounded-2xl border border-destructive/20 bg-destructive/10 p-2.5">
                             <ShieldAlert className="h-5 w-5 text-destructive" />
                         </div>
                         <div>
@@ -154,7 +154,7 @@ export function DangerZone() {
                             <p className="text-sm text-muted-foreground">Actions below will permanently delete data.</p>
                         </div>
                     </div>
-                    <div className="flex w-fit self-start items-center gap-2 rounded-full border border-destructive/20 bg-destructive/5 px-3 py-2 sm:self-auto">
+                    <div data-theme-part="panel" data-theme-tone="status" className="flex w-fit self-start items-center gap-2 rounded-full border border-destructive/20 bg-destructive/5 px-3 py-2 sm:self-auto">
                         <Label htmlFor="unsafe-mode" className="text-xs font-bold text-destructive/70 uppercase">Unlock Actions</Label>
                         <Switch
                             id="unsafe-mode"

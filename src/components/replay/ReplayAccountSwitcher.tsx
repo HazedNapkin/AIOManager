@@ -55,6 +55,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
         <div ref={containerRef} className="relative shrink-0 pointer-events-auto">
 
             <button
+                data-theme-part="select-trigger"
                 onClick={() => setOpen(v => !v)}
                 style={{
                     display: 'flex', alignItems: 'center', gap: 8,
@@ -133,7 +134,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
             </button>
 
             {open && (
-                <div style={{
+                <div data-theme-part="popover" style={{
                     position: 'absolute',
                     top: 'calc(100% + 8px)',
                     left: '50%',
@@ -163,6 +164,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
                             <Search style={{ width: 13, height: 13, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }} />
                             <input
                                 ref={inputRef}
+                                data-theme-part="input"
                                 value={query}
                                 onChange={e => setQuery(e.target.value)}
                                 placeholder="Search accounts..."
@@ -173,7 +175,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
                                 }}
                             />
                             {query && (
-                                <button onClick={() => setQuery('')} style={{
+                                <button data-theme-part="button" onClick={() => setQuery('')} style={{
                                     background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '50%',
                                     width: 16, height: 16, cursor: 'pointer', color: 'rgba(255,255,255,0.5)',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -187,6 +189,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
 
                         {!query && (
                             <button
+                                data-theme-part="menu-item"
                                 onClick={() => { onSelect('all'); setOpen(false); setQuery('') }}
                                 style={{
                                     width: '100%', display: 'flex', alignItems: 'center', gap: 10,
@@ -244,6 +247,7 @@ export function ReplayAccountSwitcher({ accounts, selectedAccountId, onSelect }:
                                 return (
                                     <button
                                         key={acc.id}
+                                        data-theme-part="menu-item"
                                         onClick={() => { onSelect(acc.id); setOpen(false); setQuery('') }}
                                         style={{
                                             width: '100%', display: 'flex', alignItems: 'center', gap: 10,

@@ -486,7 +486,7 @@ export function MetricsPage() {
                     </div >
 
                     {/* COMMUNITY AWARDS */}
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <Tooltip content="Leaderboards for unusual watch habits" side="top">
@@ -510,7 +510,7 @@ export function MetricsPage() {
                                 </CardHeader>
                                 <CardContent className="space-y-2">
                                     {stats.awards?.midnightSnackers?.map((u, i: number) => (
-                                        <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
+                                        <div key={u.id} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
                                                 <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
@@ -540,7 +540,7 @@ export function MetricsPage() {
                                 </CardHeader>
                                 <CardContent className="space-y-2">
                                     {stats.awards?.weekendWarriors?.map((u, i: number) => (
-                                        <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
+                                        <div key={u.id} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
                                                 <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
@@ -570,7 +570,7 @@ export function MetricsPage() {
                                 </CardHeader>
                                 <CardContent className="space-y-2">
                                     {stats.awards?.completionChampions?.map((u, i: number) => (
-                                        <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
+                                        <div key={u.id} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/30 bg-background/35 px-3 py-2">
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="text-xs font-bold text-muted-foreground/70">#{i + 1}</span>
                                                 <span className="truncate text-sm font-bold">{maskAccountName(u.name)}</span>
@@ -592,7 +592,7 @@ export function MetricsPage() {
                     </div>
 
 
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <div>
                                 <Tooltip content="Best and current streaks by account" side="top">
@@ -639,7 +639,7 @@ export function MetricsPage() {
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 <div className="grid gap-3 md:grid-cols-3">
-                                    <div className="rounded-2xl border border-border/35 bg-muted/15 p-4">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-4">
                                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                             <Clock className="h-3.5 w-3.5 text-info" />
                                             Peak hour
@@ -647,7 +647,7 @@ export function MetricsPage() {
                                         <div className="mt-3 text-2xl font-bold tracking-tight">{formatMetricHour(stats.maxActivityHour)}</div>
                                         <p className="mt-1 text-xs text-muted-foreground">Busiest watch window.</p>
                                     </div>
-                                    <div className="rounded-2xl border border-border/35 bg-muted/15 p-4">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-4">
                                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                             <Tv className="h-3.5 w-3.5 text-success" />
                                             Series loyalty
@@ -657,7 +657,7 @@ export function MetricsPage() {
                                         </div>
                                         <p className="mt-1 text-xs text-muted-foreground">Top shows' share of series plays.</p>
                                     </div>
-                                    <div className="rounded-2xl border border-border/35 bg-muted/15 p-4">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-4">
                                         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                             <Crown className="h-3.5 w-3.5 text-warning" />
                                             Most replayed
@@ -674,6 +674,7 @@ export function MetricsPage() {
                                     const relativeTime = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : daysAgo < 7 ? `${daysAgo} days ago` : daysAgo < 30 ? `${Math.floor(daysAgo / 7)} weeks ago` : daysAgo < 365 ? `${Math.floor(daysAgo / 30)} months ago` : `${Math.floor(daysAgo / 365)}y ago`
                                     return (
                                     <motion.div
+                                        data-theme-part="panel"
                                         onClick={() => openDetail(fw.item.type, fw.item.itemId)}
                                         className="group relative flex cursor-pointer items-stretch gap-0 overflow-hidden rounded-2xl border border-border/35 bg-muted/15"
                                         initial={{ opacity: 0, y: 8 }}
@@ -745,6 +746,7 @@ export function MetricsPage() {
                                                             return (
                                                                 <Tooltip key={bi} content={PERSONA_DESCRIPTIONS[b.type] || 'Earned through watch behavior'} side="top">
                                                                     <span
+                                                                        data-theme-part="badge"
                                                                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium border cursor-help"
                                                                         style={{ background: s.bg, color: s.text, borderColor: s.border }}
                                                                     >
@@ -761,7 +763,7 @@ export function MetricsPage() {
                                             {traits && (
                                                 <div className="flex gap-2">
                                                     <Tooltip content={CHRONOTYPE_DESCRIPTIONS[traits.chronotype.label] || 'Peak watching time'} side="top">
-                                                        <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
+                                                        <div data-theme-part="panel" className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
                                                             {(() => {
                                                                 const ChronoIcon = IconMap[traits.chronotype.icon] || Clock
                                                                 const s = CHART_PALETTE[traits.chronotype.color] || CHART_PALETTE.blue
@@ -777,7 +779,7 @@ export function MetricsPage() {
                                                         </div>
                                                     </Tooltip>
                                                     <Tooltip content={FORMAT_DESCRIPTIONS[traits.formatLoyalty.label] || 'Content format preference'} side="top">
-                                                        <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
+                                                        <div data-theme-part="panel" className="flex items-center gap-2 p-2 bg-muted/30 rounded-xl border border-border/40 flex-1 min-w-0 cursor-help">
                                                             {(() => {
                                                                 const FormatIcon = IconMap[traits.formatLoyalty.icon] || LayoutGrid
                                                                 const s = CHART_PALETTE[traits.formatLoyalty.color] || CHART_PALETTE.blue
@@ -944,7 +946,7 @@ export function MetricsPage() {
                     </div>
 
                     {/* SHARED UNIVERSE (ACCOUNT OVERLAP) */}
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <div>
                                 <h2 className="text-sm font-semibold">Shared Universe</h2>
@@ -1007,7 +1009,7 @@ export function MetricsPage() {
                         </div>
                     </div>
 
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-3">
                         <div className="flex items-center justify-between gap-3">
                             <h2 className="text-sm font-semibold">Global Hall of Fame</h2>
                             <StatusChip variant="muted">{stats.topAllTime?.length || 0} titles</StatusChip>
@@ -1044,7 +1046,7 @@ export function MetricsPage() {
                     </div>
 
                     {/* HIDDEN GEMS */}
-                    <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4">
                         <div className="flex items-center justify-between gap-3">
                             <h2 className="text-sm font-semibold">Hidden Gems</h2>
                             <StatusChip variant="muted">{stats.rareFinds?.length || 0} rare</StatusChip>
@@ -1182,7 +1184,7 @@ export function MetricsPage() {
                     </div>
 
                         {/* Franchise Spotlight */}
-                        <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4 mt-6">
+                        <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4 mt-6">
                             <div className="flex items-center justify-between gap-3">
                                 <h2 className="text-sm font-semibold">Franchise Focus</h2>
                                 <StatusChip variant="muted">{stats.franchiseFocus?.length || 0} groups</StatusChip>
@@ -1191,7 +1193,7 @@ export function MetricsPage() {
                         </div>
 
                         {/* BINGE VELOCITY */}
-                        <div className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4 mt-6">
+                        <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm space-y-4 mt-6">
                             <div className="flex items-center justify-between gap-3">
                                 <h2 className="text-sm font-semibold">Binge Velocity</h2>
                                 <StatusChip variant="muted">{stats.contentVelocity?.length || 0} tracked</StatusChip>

@@ -146,7 +146,7 @@ export function AccountPickerDialog({
                         </Button>
                     </div>
 
-                    <ScrollArea className="h-64 rounded-md border p-2">
+                    <ScrollArea data-theme-part="panel" className="h-64 rounded-md border p-2">
                         <div className="space-y-1">
                             {filteredAccounts.map((account) => (
                                 <label

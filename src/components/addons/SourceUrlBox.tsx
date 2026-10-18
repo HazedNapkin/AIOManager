@@ -130,6 +130,7 @@ export function SourceUrlBox({
 
   return (
     <div
+      data-theme-part="field"
       onClick={(event) => event.stopPropagation()}
       className={cn(
         'group/url min-w-0 overflow-hidden rounded-lg border border-border/35 bg-muted/20 px-2 py-1.5 transition-colors hover:border-border/60 hover:bg-muted/30',
@@ -192,7 +193,7 @@ export function SourceUrlBox({
       </div>
 
       {needsConfirm && pendingDescriptor && (
-        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-warning">
+        <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-warning">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div className="min-w-0">
             <p className="font-semibold">This looks like a different addon.</p>

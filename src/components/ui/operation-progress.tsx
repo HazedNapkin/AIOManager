@@ -39,7 +39,7 @@ export function OperationProgress({
 
     const inner = (
         <div className="flex items-center gap-3">
-            <div className={cn(
+            <div data-theme-part="badge" className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl',
                 status === 'error' ? 'bg-destructive/10' : 'bg-primary/10',
             )}>
@@ -81,7 +81,7 @@ export function OperationProgress({
     }
 
     return (
-        <div className={cn(
+        <div data-theme-part="panel" className={cn(
             'rounded-2xl border border-border/40 bg-card shadow-sm p-4 space-y-3',
             status === 'error' && 'border-destructive/30',
             className,

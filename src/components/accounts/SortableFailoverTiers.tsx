@@ -107,7 +107,7 @@ export const SortableDialogTier = memo(function SortableDialogTier({
         zIndex: isDragging ? 10 : 'auto' as const,
     }
     return (
-        <div ref={setNodeRef} style={style} className="bg-muted/30 border border-border/40 rounded-2xl px-4 py-3 flex flex-col gap-1.5">
+        <div ref={setNodeRef} style={style} data-theme-part="panel" className="bg-muted/30 border border-border/40 rounded-2xl px-4 py-3 flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <div
@@ -121,6 +121,7 @@ export const SortableDialogTier = memo(function SortableDialogTier({
                     <span className="font-mono text-xs font-medium text-muted-foreground uppercase">TIER {index + 1}</span>
                 </div>
                 <button
+                    data-theme-part="button"
                     className="text-foreground/60 hover:text-destructive transition-colors disabled:opacity-30 disabled:hover:text-foreground/60"
                     onClick={() => removeFromChain(index)}
                     disabled={chainLength <= 2}

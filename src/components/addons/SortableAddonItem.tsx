@@ -32,6 +32,7 @@ export const AddonReorderRow = memo(function AddonReorderRow({
 
   return (
     <div
+      data-theme-part="addon-card"
       ref={setNodeRef}
       style={style}
       className={[
@@ -69,13 +70,13 @@ export const AddonReorderRow = memo(function AddonReorderRow({
             {addon.metadata?.customName || addon.manifest.name}
           </h3>
           {addon.flags?.protected && (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase text-muted-foreground bg-muted/50 border border-border/40 rounded-full px-1.5 py-0.5 shrink-0">
+            <span data-theme-part="badge" className="inline-flex items-center gap-1 text-xs font-semibold uppercase text-muted-foreground bg-muted/50 border border-border/40 rounded-full px-1.5 py-0.5 shrink-0">
               <ShieldCheck className="h-2.5 w-2.5" />
               Protected
             </span>
           )}
           {addon.flags?.official && !addon.flags?.protected && (
-            <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase text-primary bg-primary/12 border border-primary/25 rounded-full px-1.5 py-0.5 shrink-0">
+            <span data-theme-part="badge" className="inline-flex items-center gap-1 text-xs font-semibold uppercase text-primary bg-primary/12 border border-primary/25 rounded-full px-1.5 py-0.5 shrink-0">
               Official
             </span>
           )}

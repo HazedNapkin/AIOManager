@@ -1,10 +1,14 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Theme, ThemeOption, THEME_OPTIONS, useTheme, CustomThemeData, ThemePalette } from '@/contexts/ThemeContext'
-import { Check, Plus, Pencil, Copy, Upload, Download, Import, Layers } from 'lucide-react'
+import { Check, Plus, Pencil, Copy, Upload, Download, Import, Layers, Search, X } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
+import { normalizeCommandText } from '@/lib/command-search'
+import { createCustomThemeId, parseThemePalette } from '@/lib/theme-utils'
 
 interface ThemeExportPayload {
     aioThemeVersion: 1
@@ -16,6 +20,8 @@ interface ThemeExportPayload {
         hue: number
         saturation: number
         palette: Record<string, string>
+        customCss?: string
+        logoUrl?: string
     }
 }
 
@@ -30,20 +36,24 @@ function themeToPayload(ct: CustomThemeData): ThemeExportPayload {
             hue: ct.hue,
             saturation: ct.saturation,
             palette: ct.palette as unknown as Record<string, string>,
+            customCss: ct.customCss,
+            logoUrl: ct.logoUrl,
         },
     }
 }
 
 function payloadToThemeData(payload: ThemeExportPayload): CustomThemeData {
     return {
-        id: `custom-${crypto.randomUUID().slice(0, 8)}` as Theme,
+        id: createCustomThemeId(),
         label: payload.theme.name,
         description: payload.theme.description,
         emoji: payload.theme.emoji,
         base: payload.theme.base,
         hue: payload.theme.hue,
         saturation: payload.theme.saturation,
-        palette: payload.theme.palette as unknown as ThemePalette,
+        palette: parseThemePalette(payload.theme.palette)!,
+        customCss: payload.theme.customCss,
+        logoUrl: payload.theme.logoUrl,
     }
 }
 
@@ -53,15 +63,15 @@ function validatePayload(data: unknown): data is ThemeExportPayload {
     const t = d.theme as Record<string, unknown> | undefined
     if (!t || typeof t !== 'object') return false
     if (typeof t.name !== 'string' || t.name.trim().length === 0) return false
+    if (t.description !== undefined && typeof t.description !== 'string') return false
     if (t.base !== 'dark' && t.base !== 'light' && t.base !== 'oled') return false
     if (typeof t.emoji !== 'string') return false
     if (typeof t.hue !== 'number' || typeof t.saturation !== 'number') return false
-    const palette = t.palette as Record<string, unknown> | null
-    if (typeof palette !== 'object' || palette === null) return false
-    if (typeof palette.background !== 'string' || typeof palette.card !== 'string' || typeof palette.primary !== 'string') return false
-    const overrides = Object.keys(palette).filter(k => typeof palette[k] === 'string')
-    if (overrides.length < 3) return false
-    return true
+    if (!Number.isFinite(t.hue) || t.hue < 0 || t.hue > 360) return false
+    if (!Number.isFinite(t.saturation) || t.saturation < 0 || t.saturation > 100) return false
+    if (t.customCss !== undefined && typeof t.customCss !== 'string') return false
+    if (t.logoUrl !== undefined && typeof t.logoUrl !== 'string') return false
+    return parseThemePalette(t.palette) !== null
 }
 
 function ThemeCard({ option, selected, onSelect, onEdit, onClone, onCopy, onDownload }: {
@@ -89,6 +99,8 @@ function ThemeCard({ option, selected, onSelect, onEdit, onClone, onCopy, onDown
     return (
         <div
             role="button"
+            aria-label={`Select ${option.label} theme`}
+            aria-pressed={selected}
             tabIndex={0}
             onClick={() => onSelect(option.id)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(option.id) } }}
@@ -180,7 +192,7 @@ function ThemeCard({ option, selected, onSelect, onEdit, onClone, onCopy, onDown
                             className="inline-flex h-7 items-center rounded-lg border px-2 text-[11px] font-bold"
                             style={actionStyle}
                         >
-                            {isCustom ? 'Custom' : 'Preset'}
+                            {isCustom ? 'Custom' : isSpecialTheme(option) ? 'Special' : 'Preset'}
                         </span>
                     )}
                     <div className="flex flex-wrap justify-start gap-1 min-[420px]:justify-end">
@@ -248,14 +260,79 @@ interface ThemeSectionProps {
     setTheme: (theme: Theme) => void
 }
 
+const PRESET_PAGE_SIZE = 5
+const PRESET_PAGE_STEP = 10
+
+type ThemeFilter = 'all' | 'special' | 'light' | 'dark' | 'oled' | 'community' | 'custom'
+
+const isSpecialTheme = (option: ThemeOption) => option.category === 'standard' && Boolean(option.customCss?.trim())
+
+const THEME_FILTERS: { id: ThemeFilter; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'special', label: 'Special' },
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'oled', label: 'OLED' },
+    { id: 'community', label: 'Community' },
+    { id: 'custom', label: 'Custom' },
+]
+
+const PRESET_SECTIONS: { key: ThemeFilter; heading: string; description?: string; moreLabel: string; match: (option: ThemeOption) => boolean }[] = [
+    { key: 'special', heading: 'Special Themes', description: 'Distinctive shapes, textures and animations. Clone a theme to make it your own.', moreLabel: 'Special', match: isSpecialTheme },
+    { key: 'light', heading: 'Light', moreLabel: 'Light', match: o => o.category === 'standard' && !isSpecialTheme(o) && o.subcategory === 'light' },
+    { key: 'dark', heading: 'Dark', moreLabel: 'Dark', match: o => o.category === 'standard' && !isSpecialTheme(o) && o.subcategory === 'dark' },
+    { key: 'oled', heading: 'OLED / High Contrast', moreLabel: 'OLED', match: o => o.category === 'standard' && !isSpecialTheme(o) && o.subcategory === 'oled' },
+    { key: 'community', heading: 'Community', moreLabel: 'Community', match: o => o.category === 'community' },
+]
+
 export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
     const { customThemes, addCustomTheme, getAllThemeOptions } = useTheme()
     const navigate = useNavigate()
     const fileInputRef = useRef<HTMLInputElement>(null)
     const { toast } = useToast()
+    const [query, setQuery] = useState('')
+    const [filter, setFilter] = useState<ThemeFilter>('all')
+    const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
 
     const allOptions = getAllThemeOptions()
     const customOptions = allOptions.filter(opt => typeof opt.id === 'string' && opt.id.startsWith('custom-'))
+    const currentOption = allOptions.find(option => option.id === theme)
+
+    const words = normalizeCommandText(query).split(' ').filter(Boolean)
+    const searchActive = words.length > 0
+    const filtersActive = searchActive || filter !== 'all'
+
+    const matchesQuery = (option: ThemeOption) => {
+        if (!searchActive) return true
+        const isCustom = typeof option.id === 'string' && option.id.startsWith('custom-')
+        const haystack = normalizeCommandText(
+            [option.label, option.description, option.category, option.subcategory, isCustom ? 'custom' : '', isSpecialTheme(option) && !isCustom ? 'special' : ''].filter(Boolean).join(' ')
+        )
+        return words.every(word => haystack.includes(word))
+    }
+
+    const matchesFilter = (option: ThemeOption) => {
+        if (filter === 'all') return true
+        if (filter === 'special') return isSpecialTheme(option)
+        if (filter === 'community') return option.category === 'community'
+        if (filter === 'custom') return false
+        return option.category === 'standard' && option.subcategory === filter
+    }
+
+    const presetSections = PRESET_SECTIONS.map(section => {
+        const inCategory = THEME_OPTIONS.filter(section.match)
+        const matching = inCategory.filter(matchesFilter).filter(matchesQuery)
+        const visible = searchActive ? matching : matching.slice(0, visibleCounts[section.key] ?? PRESET_PAGE_SIZE)
+        return { ...section, total: matching.length, matching, visible, shown: matching.length > 0 }
+    })
+    const filteredCustomOptions = customOptions.filter(() => filter === 'all' || filter === 'custom').filter(matchesQuery)
+    const anyResults = presetSections.some(section => section.shown && section.matching.length > 0) || filteredCustomOptions.length > 0
+    const totalMatching = presetSections.reduce((sum, section) => sum + (section.shown ? section.matching.length : 0), 0) + filteredCustomOptions.length
+    const totalThemes = THEME_OPTIONS.length + customOptions.length
+
+    const resetPagination = () => setVisibleCounts({})
+    const resetFilters = () => { setQuery(''); setFilter('all'); setVisibleCounts({}) }
+    const showMore = (key: string) => setVisibleCounts(counts => ({ ...counts, [key]: (counts[key] ?? PRESET_PAGE_SIZE) + PRESET_PAGE_STEP }))
 
     const handleEdit = (ct: CustomThemeData) => {
         navigate('/settings/theme/editor', { state: { editingTheme: ct } })
@@ -270,16 +347,18 @@ export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
         const bgL = bgParts[2] ?? 10
         const primary = option.palette.primary.split(' ').map(v => parseFloat(v))
         // Use background hue as the base hue (the formula derives background from hue directly)
-        const bgHue = bgParts[0] || primary[0] || 220
+        const bgHue = bgParts[0] ?? primary[0] ?? 220
         const seed: CustomThemeData = {
-            id: `custom-${crypto.randomUUID().slice(0, 8)}` as Theme,
+            id: createCustomThemeId(),
             label: `${option.label} (Custom)`,
-            description: '',
+            description: option.description,
             emoji: option.emoji,
-            base: bgL < 50 ? 'dark' : 'light',
+            base: customThemes.find(ct => ct.id === option.id)?.base ?? option.subcategory ?? (bgL === 0 ? 'oled' : bgL < 50 ? 'dark' : 'light'),
             hue: Math.round(bgHue),
-            saturation: Math.round(primary[1] || 70),
+            saturation: Math.round(primary[1] ?? 70),
             palette: option.palette as unknown as ThemePalette,
+            customCss: option.customCss,
+            logoUrl: option.logoUrl,
         }
         navigate('/settings/theme/editor', { state: { editingTheme: seed } })
     }
@@ -295,6 +374,7 @@ export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
             const themeData = payloadToThemeData(data)
             addCustomTheme(themeData)
             setTheme(themeData.id)
+            resetFilters()
             toast({ title: 'Theme Imported', description: `"${data.theme.name}" has been added to your custom themes.` })
         } catch {
             toast({ variant: 'destructive', title: 'Import Failed', description: 'Could not parse the provided JSON.' })
@@ -346,10 +426,88 @@ export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
     }
 
     return (
-        <div className="p-5 rounded-2xl border border-border/40 bg-card shadow-sm space-y-6">
+        <div data-theme-part="panel" className="p-5 rounded-2xl border border-border/40 bg-card shadow-sm space-y-6">
 
-            <h3 className="text-xs font-medium text-foreground/60 uppercase">Appearance</h3>
+            <div className="space-y-1">
+                <h3 className="text-xs font-medium text-foreground/60 uppercase">Appearance</h3>
+                {currentOption && (
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <span className="text-xs text-muted-foreground">Current theme</span>
+                        <span className="min-w-0 truncate text-sm font-semibold">{currentOption.emoji} {currentOption.label}</span>
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 bg-muted/45 px-1.5 py-1" aria-hidden="true">
+                            {[currentOption.preview.background, currentOption.preview.surface, currentOption.preview.accent].map((color, i) => (
+                                <span key={i} className="h-3 w-3 rounded-full border border-foreground/25" style={{ background: color }} />
+                            ))}
+                        </span>
+                    </div>
+                )}
+            </div>
 
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                    <Input
+                        aria-label="Search themes"
+                        placeholder="Search themes"
+                        value={query}
+                        onChange={event => { setQuery(event.target.value); resetPagination() }}
+                        className="h-9 pl-9 pr-9 text-xs"
+                    />
+                    {query && (
+                        <button
+                            type="button"
+                            data-theme-part="button"
+                            aria-label="Clear theme search"
+                            onClick={() => { setQuery(''); resetPagination() }}
+                            className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Theme category">
+                    {THEME_FILTERS.map(category => (
+                        <button
+                            key={category.id}
+                            type="button"
+                            data-theme-part="tab"
+                            data-state={filter === category.id ? 'active' : 'inactive'}
+                            aria-pressed={filter === category.id}
+                            onClick={() => { setFilter(category.id); resetPagination() }}
+                            className={cn(
+                                'rounded-full px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                filter === category.id
+                                    ? 'bg-primary/12 font-medium text-primary'
+                                    : 'text-muted-foreground hover:bg-muted/30 hover:text-foreground'
+                            )}
+                        >
+                            {category.label}
+                        </button>
+                    ))}
+                    {filtersActive && (
+                        <button
+                            type="button"
+                            data-theme-part="button"
+                            onClick={resetFilters}
+                            className="ml-1 rounded-full px-2 py-1 text-xs text-primary underline-offset-2 transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                            Clear filters
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {filtersActive && (
+                <p className="-mt-3 text-xs text-muted-foreground/70" role="status" aria-live="polite">
+                    {totalMatching} of {totalThemes} theme{totalThemes !== 1 ? 's' : ''} match{totalMatching !== 1 ? '' : 'es'}
+                </p>
+            )}
+
+            {filtersActive && !anyResults && (
+                <div className="-mt-3 flex flex-col items-center gap-2 py-4 text-center">
+                    <p className="text-sm text-muted-foreground">No themes match the current search or filter.</p>
+                </div>
+            )}
 
             <div className="space-y-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -399,82 +557,56 @@ export function ThemeSection({ theme, setTheme }: ThemeSectionProps) {
                 </div>
 
                 {customOptions.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                        {customOptions.map(option => {
-                            const ctData = customThemes.find(ct => ct.id === option.id)
-                            return (
-                                <ThemeCard
-                                    key={option.id}
-                                    option={option}
-                                    selected={theme === option.id}
-                                    onSelect={setTheme}
-                                    onEdit={ctData ? () => handleEdit(ctData) : undefined}
-                                    onCopy={ctData ? () => handleExportCopy(ctData) : undefined}
-                                    onDownload={ctData ? () => handleExportFile(ctData) : undefined}
-                                />
-                            )
-                        })}
-                    </div>
+                    filteredCustomOptions.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                            {filteredCustomOptions.map(option => {
+                                const ctData = customThemes.find(ct => ct.id === option.id)
+                                return (
+                                    <ThemeCard
+                                        key={option.id}
+                                        option={option}
+                                        selected={theme === option.id}
+                                        onSelect={setTheme}
+                                        onEdit={ctData ? () => handleEdit(ctData) : undefined}
+                                        onCopy={ctData ? () => handleExportCopy(ctData) : undefined}
+                                        onDownload={ctData ? () => handleExportFile(ctData) : undefined}
+                                    />
+                                )
+                            })}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground py-2">No custom themes match the current search or filter.</p>
+                    )
                 ) : (
                     <p className="text-xs text-muted-foreground py-2">No custom themes yet. Click <strong>Create</strong> to design your own, or <strong>Paste</strong> a shared theme.</p>
                 )}
             </div>
 
 
-            <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-foreground/60 uppercase">Light</span>
-                    <div className="flex-1 h-px bg-border/50" />
-                    <span className="text-xs text-muted-foreground/60">{THEME_OPTIONS.filter(o => o.category === 'standard' && o.subcategory === 'light').length} themes</span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {THEME_OPTIONS.filter(opt => opt.category === 'standard' && opt.subcategory === 'light').map(option => (
-                        <ThemeCard key={option.id} option={option} selected={theme === option.id} onSelect={setTheme} onClone={() => handleClone(option)} />
-                    ))}
-                </div>
-            </div>
-
-
-            <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-foreground/60 uppercase">Dark</span>
-                    <div className="flex-1 h-px bg-border/50" />
-                    <span className="text-xs text-muted-foreground/60">{THEME_OPTIONS.filter(o => o.category === 'standard' && o.subcategory === 'dark').length} themes</span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {THEME_OPTIONS.filter(opt => opt.category === 'standard' && opt.subcategory === 'dark').map(option => (
-                        <ThemeCard key={option.id} option={option} selected={theme === option.id} onSelect={setTheme} onClone={() => handleClone(option)} />
-                    ))}
-                </div>
-            </div>
-
-
-            <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-foreground/60 uppercase">OLED / High Contrast</span>
-                    <div className="flex-1 h-px bg-border/50" />
-                    <span className="text-xs text-muted-foreground/60">{THEME_OPTIONS.filter(o => o.category === 'standard' && o.subcategory === 'oled').length} themes</span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {THEME_OPTIONS.filter(opt => opt.category === 'standard' && opt.subcategory === 'oled').map(option => (
-                        <ThemeCard key={option.id} option={option} selected={theme === option.id} onSelect={setTheme} onClone={() => handleClone(option)} />
-                    ))}
-                </div>
-            </div>
-
-
-            <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                    <span className="text-xs font-medium text-foreground/60 uppercase">Community</span>
-                    <div className="flex-1 h-px bg-border/50" />
-                    <span className="text-xs text-muted-foreground/60">{THEME_OPTIONS.filter(o => o.category === 'community').length} themes</span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {THEME_OPTIONS.filter(opt => opt.category === 'community').map(option => (
-                        <ThemeCard key={option.id} option={option} selected={theme === option.id} onSelect={setTheme} onClone={() => handleClone(option)} />
-                    ))}
-                </div>
-            </div>
+            {presetSections
+                .filter(section => section.shown && (!filtersActive || section.matching.length > 0))
+                .map(section => (
+                    <div key={section.key} className="space-y-4">
+                        <div className="flex items-center gap-3">
+                            <span className="text-xs font-medium text-foreground/60 uppercase">{section.heading}</span>
+                            <div className="flex-1 h-px bg-border/50" />
+                            <span className="text-xs text-muted-foreground/60">
+                                {section.visible.length < section.total ? `${section.visible.length} of ${section.total}` : section.total} themes
+                            </span>
+                        </div>
+                        {section.description && <p className="text-xs text-muted-foreground">{section.description}</p>}
+                        <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                            {section.visible.map(option => (
+                                <ThemeCard key={option.id} option={option} selected={theme === option.id} onSelect={setTheme} onClone={() => handleClone(option)} />
+                            ))}
+                        </div>
+                        {!searchActive && section.visible.length < section.matching.length && (
+                            <Button variant="ghost" size="sm" className="w-full text-xs text-primary" onClick={() => showMore(section.key)}>
+                                Show more {section.moreLabel} themes ({section.matching.length - section.visible.length} remaining)
+                            </Button>
+                        )}
+                    </div>
+                ))}
 
         </div>
     )

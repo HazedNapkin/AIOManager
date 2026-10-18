@@ -70,6 +70,7 @@ function ManageLink({ href, label }: { href: string; label: string }) {
             href={href}
             target="_blank"
             rel="noreferrer"
+            data-theme-part="button"
             className="inline-flex h-8 w-fit items-center gap-1.5 rounded-xl border border-border/40 bg-card px-2.5 text-xs font-medium text-muted-foreground shadow-sm transition-colors hover:bg-muted/50 hover:text-foreground"
         >
             {label}
@@ -89,7 +90,7 @@ function StremioMembership({ premium }: { premium: PremiumStatus | undefined }) 
                     ? `Supporter until ${formatPremiumUntil(premium.expiresAt)}`
                     : 'Active supporter'
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Stremio membership</p>
                 <p className="text-xs text-muted-foreground">Supporter status for this Stremio account.</p>
@@ -98,7 +99,7 @@ function StremioMembership({ premium }: { premium: PremiumStatus | undefined }) 
                 {premium?.active ? (
                     <StremioSupportersBadge />
                 ) : premium !== undefined && (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    <span data-theme-part="badge" className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                         Free
                     </span>
                 )}
@@ -124,7 +125,7 @@ function NuvioMembership({ nuvioMember }: { nuvioMember: NuvioMemberStatus | und
             ? 'Gradient themes, profile backgrounds, avatar collection, badge and a Discord role.'
             : 'Supporting Nuvio unlocks gradient themes, profile backgrounds, avatar collection, a badge and a Discord role.'
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Nuvio membership</p>
                 <p className="text-xs text-muted-foreground">Membership tier for this Nuvio connection.</p>
@@ -145,7 +146,7 @@ function NuvioMembership({ nuvioMember }: { nuvioMember: NuvioMemberStatus | und
 // absence instead of a fabricated tier.
 function RealStreamMembership() {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">RealStream membership</p>
                 <p className="text-xs text-muted-foreground">Membership tier for this RealStream connection.</p>

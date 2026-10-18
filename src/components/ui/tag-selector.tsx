@@ -29,7 +29,7 @@ export function TagSelector({ value, onChange, options, placeholder }: TagSelect
                 {value.map((tag) => (
                     <Badge key={tag} variant="destructive" className="gap-1 pr-1">
                         {tag}
-                        <button
+                        <button data-theme-part="button"
                             type="button"
                             aria-label={`Remove ${tag} tag`}
                             className="rounded-full hover:bg-black/20 p-0.5 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

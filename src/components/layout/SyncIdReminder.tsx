@@ -26,7 +26,7 @@ export function SyncIdReminder() {
     return (
         <AnimatePresence>
             {show && (
-                <motion.div
+                <motion.div data-theme-part="panel"
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
@@ -34,7 +34,7 @@ export function SyncIdReminder() {
                 >
                     <div className="max-w-[1800px] mx-auto w-full px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                            <div data-theme-part="badge" className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
                                 <Rocket className="h-5 w-5 text-primary" />
                             </div>
                             <div className="space-y-0.5">
@@ -49,7 +49,7 @@ export function SyncIdReminder() {
                         </div>
 
                         <div className="flex items-center gap-2 w-full md:w-auto">
-                            <div className="flex-1 md:flex-none flex items-center gap-2 bg-background/50 border rounded-lg px-3 py-1.5 font-mono text-xs select-all">
+                            <div data-theme-part="field" className="flex-1 md:flex-none flex items-center gap-2 bg-background/50 border rounded-lg px-3 py-1.5 font-mono text-xs select-all">
                                 <span className="truncate max-w-[150px] md:max-w-[200px]">{auth.id}</span>
                                 <CopyButton
                                     value={auth.id || ''}

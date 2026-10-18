@@ -17,6 +17,8 @@ export function Toaster() {
           return (
             <motion.div
               key={toast.id}
+              data-theme-part="toast"
+              data-variant={toast.variant ?? 'default'}
               layout
               initial={{ opacity: 0, y: -16, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -28,7 +30,7 @@ export function Toaster() {
               )}
             >
               <div className="flex items-center gap-3 px-4 py-3.5">
-                <div className={cn(
+                <div data-theme-part="badge" className={cn(
                   "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
                   isDestructive
                     ? "border-destructive/20 bg-destructive/10 text-destructive"
@@ -57,6 +59,8 @@ export function Toaster() {
                   )}
                 </div>
                 <button
+                  data-theme-part="button"
+                  data-variant="ghost"
                   onClick={() => dismiss(toast.id)}
                   className="shrink-0 rounded-full p-1 text-muted-foreground/60 transition-colors hover:bg-muted/70 hover:text-foreground"
                 >

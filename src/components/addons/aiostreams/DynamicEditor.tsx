@@ -120,7 +120,7 @@ function RecursiveEditor({
 
     if (typeof value === 'boolean') {
         return (
-            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/5 border border-border/20">
+            <div data-theme-part="panel" className="flex items-center justify-between p-2 rounded-lg bg-muted/5 border border-border/20">
                 <Label className="text-xs font-medium truncate pr-2">{dataKey}</Label>
                 <Switch
                     checked={value}
@@ -181,7 +181,7 @@ function RecursiveEditor({
         const canAddItem = !isPrimitiveArray && (value.length === 0 || (!('id' in value[0]) && !('type' in value[0])))
 
         return (
-            <div className="space-y-2 border border-border/20 rounded-xl p-3 bg-muted/5">
+            <div data-theme-part="panel" className="space-y-2 border border-border/20 rounded-xl p-3 bg-muted/5">
                 <div className="flex items-center justify-between">
                     <Label className="text-xs font-semibold">{dataKey}</Label>
                     {isPrimitiveArray && (
@@ -205,7 +205,7 @@ function RecursiveEditor({
                             if (typeof item === 'object' && item !== null) {
                                 const canDelete = !('id' in item) && !('type' in item)
                                 return (
-                                    <div key={idx} className="border border-border/20 rounded-lg p-3 bg-background relative pt-6">
+                                    <div key={idx} data-theme-part="panel" className="border border-border/20 rounded-lg p-3 bg-background relative pt-6">
                                         <div className="absolute top-2 right-2 flex items-center gap-1">
                                             <span className="text-xs text-muted-foreground mr-2">Item {idx + 1}</span>
                                             {canDelete && (
@@ -363,7 +363,7 @@ export function DynamicEditor({ sectionKey, value, onSave, onCancel }: DynamicEd
     }
 
     return (
-        <div className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
+        <div data-theme-part="panel" className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
             <div className="flex items-center justify-between border-b border-border/20 pb-3">
                 <h3 className="font-semibold text-sm capitalize">{sectionKey === 'presets' ? 'Addons Editor' : `${sectionKey.replace(/([A-Z])/g, ' $1').trim()} Editor`}</h3>
                 <Button

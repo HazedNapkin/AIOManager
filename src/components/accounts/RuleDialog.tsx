@@ -348,7 +348,7 @@ export function RuleDialog({
         <>
             <Dialog open={open} onOpenChange={onOpenChange}>
                 <DialogContent
-                    className='!grid-cols-none !gap-0 !p-0 flex flex-col overflow-hidden !h-[92vh] !max-h-[92vh] !rounded-t-3xl sm:!h-auto sm:!max-w-2xl sm:!max-h-[92vh] text-card-foreground'
+                    className='!grid-cols-none !gap-0 !p-0 flex flex-col overflow-hidden !h-[92vh] !max-h-[92vh] rounded-t-3xl sm:!h-auto sm:!max-w-2xl sm:!max-h-[92vh] text-card-foreground'
                 >
                     <div className="shrink-0 bg-card px-4 pb-3 pt-1 sm:px-8 sm:pb-5 sm:pt-3">
                         <DialogTitle className="flex items-center gap-2 min-w-0">
@@ -412,14 +412,14 @@ export function RuleDialog({
                                 <Plus className="w-4 h-4" /> Add Fallback Tier
                             </Button>
 
-                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
+                            <div data-theme-part="panel" className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
                                 <div className="space-y-0.5">
                                     <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
                                     <p className="text-xs text-muted-foreground/60">Watch a provider your addons depend on, like TorBox's API. When it goes down, the addons associated with it are skipped. Use the provider's API URL. Do not use your addon URLs.</p>
                                 </div>
 
                                 {showLegacyBanner && (
-                                    <div className="rounded-xl border border-warning/25 bg-warning/[0.07] px-3 py-2.5 flex items-start gap-2.5">
+                                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-warning/25 bg-warning/[0.07] px-3 py-2.5 flex items-start gap-2.5">
                                         <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
                                         <p className="text-xs leading-relaxed text-foreground/80 flex-1 pt-0.5">
                                             Saved before a recent fix, this check's scope may have been widened to all addons. Review the addons it applies to.
@@ -436,7 +436,7 @@ export function RuleDialog({
                                     const staleName = getAddonNameForUrl(unmatchedUrl)
                                     const closestName = closestUrl ? getAddonNameForUrl(closestUrl) : undefined
                                     return (
-                                        <div role="alert" className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 space-y-2.5">
+                                        <div data-theme-tone="status" role="alert" data-theme-part="panel" className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 space-y-2.5">
                                             <div className="flex items-start gap-2 text-destructive">
                                                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                                                 <p className="text-sm leading-relaxed">
@@ -485,6 +485,7 @@ export function RuleDialog({
                                                 else checkRowRefs.current.delete(index)
                                             }}
                                             className="rounded-xl border border-border/40 bg-muted/10 p-3 space-y-2"
+                                            data-theme-part="panel"
                                         >
                                             <div className="flex gap-2 items-center">
                                                 <Input
@@ -504,6 +505,7 @@ export function RuleDialog({
                                                     ) : 'Test'}
                                                 </Button>
                                                 <button
+                                                    data-theme-part="button"
                                                     className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
                                                     onClick={() => removeCustomCheck(index)}
                                                     aria-label="Remove URL"
@@ -560,7 +562,7 @@ export function RuleDialog({
                                                                 const addonLogo = addon?.metadata?.customLogo || addon?.manifest.logo
                                                                 const isStale = staleUrls.includes(addonUrl)
                                                                 return (
-                                                                    <div key={addonUrl} className={`rounded-xl px-3 py-2 flex items-center gap-2 ${isStale ? 'border border-warning/25 bg-warning/[0.08]' : 'bg-muted/30'}`}>
+                                                                    <div data-theme-tone="status" key={addonUrl} data-theme-part="panel" className={`rounded-xl px-3 py-2 flex items-center gap-2 ${isStale ? 'border border-warning/25 bg-warning/[0.08]' : 'bg-muted/30'}`}>
                                                                         <AddonIcon
                                                                             name={addonName}
                                                                             logo={addonLogo}
@@ -581,6 +583,7 @@ export function RuleDialog({
                                                                                 <Tooltip content="Remove this dormant association">
                                                                                     <button
                                                                                         type="button"
+                                                                                        data-theme-part="button"
                                                                                         className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
                                                                                         onClick={() => toggleAddonForCheck(index, addonUrl)}
                                                                                         aria-label="Remove association"
@@ -591,6 +594,7 @@ export function RuleDialog({
                                                                                 <Tooltip content="Replace with an addon from this chain">
                                                                                     <button
                                                                                         type="button"
+                                                                                        data-theme-part="button"
                                                                                         className="text-foreground/60 hover:text-foreground transition-colors shrink-0 px-1"
                                                                                         onClick={() => setReplacementPicker({
                                                                                             checkIndex: index,
@@ -606,6 +610,7 @@ export function RuleDialog({
                                                                         ) : (
                                                                             <button
                                                                                 type="button"
+                                                                                data-theme-part="button"
                                                                                 className="text-foreground/60 hover:text-destructive transition-colors shrink-0 px-1"
                                                                                 onClick={() => toggleAddonForCheck(index, addonUrl)}
                                                                                 aria-label="Remove addon"
@@ -658,6 +663,7 @@ export function RuleDialog({
                                                                     </Select>
                                                                     <button
                                                                         type="button"
+                                                                        data-theme-part="button"
                                                                         className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
                                                                         onClick={() => setReplacementPicker(null)}
                                                                     >
@@ -717,7 +723,7 @@ export function RuleDialog({
                                 )}
                             </div>
 
-                            <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
+                            <div data-theme-part="panel" className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
                                 <label className="text-xs font-medium text-muted-foreground uppercase">Notifications</label>
 
                                 <Select

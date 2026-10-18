@@ -104,7 +104,7 @@ function summarizeResult(result: BulkResult, accounts: Account[], action?: BulkA
 
 function PreviewStatCard({ stat }: { stat: PreviewStat }) {
   return (
-    <div className={cn(
+    <div data-theme-tone="status" data-theme-part="panel" className={cn(
       "min-w-0 rounded-xl border bg-background/45 p-2.5",
       stat.tone === 'success' && "border-success/25 bg-success/5",
       stat.tone === 'warning' && "border-warning/25 bg-warning/5",
@@ -122,7 +122,7 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
   const accountsById = new Map(accounts.map(account => [account.id, account]))
 
   return (
-    <div className={cn(
+    <div data-theme-tone="status" data-theme-part="panel" className={cn(
       "space-y-3 rounded-2xl border border-dashed bg-muted/20 p-3",
       preview.tone === 'warning' && "border-warning/35 bg-warning/5",
       preview.tone === 'destructive' && "border-destructive/35 bg-destructive/5",
@@ -138,7 +138,7 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
           <p className="mt-1 text-sm font-medium">{preview.title}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">{preview.description}</p>
         </div>
-        <div className="shrink-0 rounded-full border border-border/35 bg-background/60 px-2.5 py-1 text-xs font-semibold tabular-nums">
+        <div data-theme-part="badge" className="shrink-0 rounded-full border border-border/35 bg-background/60 px-2.5 py-1 text-xs font-semibold tabular-nums">
           {preview.targetCount} account{preview.targetCount !== 1 ? 's' : ''}
         </div>
       </div>
@@ -156,8 +156,9 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
           <div className="text-[11px] font-semibold uppercase text-muted-foreground">Add-ons this touches</div>
           <div className="flex gap-2 overflow-x-auto pb-1">
             {preview.addons.slice(0, 8).map((addon) => (
-              <div
+              <div data-theme-tone="status"
                 key={addon.id}
+                data-theme-part="panel"
                 className={cn(
                   "flex min-w-[150px] max-w-[190px] items-center gap-2 rounded-xl border border-border/25 bg-background/40 px-2.5 py-2",
                   addon.tone === 'destructive' && "border-destructive/25 bg-destructive/5",
@@ -199,7 +200,7 @@ function BatchImpactPreview({ preview, accounts }: { preview: BatchPreview; acco
           {preview.rows.slice(0, 4).map((row) => {
             const account = accountsById.get(row.id)
             return (
-              <div key={row.id} className="flex items-center justify-between gap-3 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
+              <div key={row.id} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
                 <span className="flex min-w-0 items-center gap-2">
                   {account && <AccountAvatar account={account} size="xs" showStatus={false} />}
                   <span className="min-w-0 truncate text-xs font-medium">{row.name}</span>
@@ -239,7 +240,7 @@ function ResultReceipt({ result, accounts, action }: { result: BulkResult; accou
   const hasWarnings = result.failed > 0 || summary.skipped > 0 || (labels.protectedIsWarning && summary.protected > 0)
 
   return (
-    <div className={cn(
+    <div data-theme-tone="status" data-theme-part="panel" className={cn(
       "space-y-3 rounded-2xl border p-3 animate-in fade-in slide-in-from-top-2",
       hasWarnings ? "border-warning/25 bg-warning/10" : "border-success/20 bg-success/10"
     )}>
@@ -260,7 +261,7 @@ function ResultReceipt({ result, accounts, action }: { result: BulkResult; accou
           {summary.rows.slice(0, 6).map((row) => {
             const account = accountsById.get(row.id)
             return (
-              <div key={row.id} className="flex items-center gap-2 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
+              <div key={row.id} data-theme-part="panel" className="flex items-center gap-2 rounded-xl border border-border/25 bg-background/35 px-2.5 py-2">
                 {account && <AccountAvatar account={account} size="xs" showStatus={false} />}
                 <div className="min-w-0">
                   <div className="truncate text-xs font-medium">{row.name}</div>
@@ -823,7 +824,7 @@ export function BatchOperationsDialog({
       )}
 
       {error && (
-        <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 animate-in fade-in slide-in-from-top-2">
+        <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 animate-in fade-in slide-in-from-top-2">
           <p className="text-sm text-destructive font-medium">{error}</p>
         </div>
       )}
@@ -846,6 +847,7 @@ export function BatchOperationsDialog({
                 ref={actionTriggerRef}
                 id="action-select"
                 type="button"
+                data-theme-part="select-trigger"
                 onClick={() => setActionMenuOpen(open => !open)}
                 onKeyDown={handleActionMenuKeyDown}
                 aria-haspopup="listbox"
@@ -880,6 +882,7 @@ export function BatchOperationsDialog({
                   tabIndex={-1}
                   aria-labelledby="action-select"
                   aria-activedescendant={getActionOptionId(activeAction)}
+                  data-theme-part="menu"
                   onKeyDown={handleActionMenuKeyDown}
                   className="mt-2 max-h-[min(52vh,26rem)] overflow-y-auto overscroll-contain rounded-2xl border border-border/40 bg-background p-1.5 shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
@@ -897,6 +900,7 @@ export function BatchOperationsDialog({
                             type="button"
                             role="option"
                             aria-selected={selected}
+                            data-theme-part="menu-item"
                             tabIndex={-1}
                             onClick={() => {
                               selectAction(item)
@@ -949,7 +953,7 @@ export function BatchOperationsDialog({
           <CardHeader className="pb-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-start gap-3">
-                <div
+                <div data-theme-part="panel" data-theme-tone="status"
                   className={cn(
                     "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border",
                     actionDefinition.severity === 'danger'
@@ -966,7 +970,7 @@ export function BatchOperationsDialog({
                   <p className="mt-1 text-sm text-muted-foreground">{actionDefinition.description}</p>
                 </div>
               </div>
-              <span className="w-fit rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+              <span data-theme-part="badge" className="w-fit rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-xs font-semibold text-muted-foreground">
                 {selectedAccounts.length} account{selectedAccounts.length !== 1 ? 's' : ''}
               </span>
             </div>
@@ -987,6 +991,7 @@ export function BatchOperationsDialog({
                       />
                       {filterQuery && (
                         <button
+                          data-theme-part="button"
                           onClick={() => handleFilterChange('')}
                           className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-accent rounded-full transition-colors"
                         >
@@ -1014,7 +1019,7 @@ export function BatchOperationsDialog({
                     </div>
                   </div>
                 </div>
-                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                <div data-theme-part="panel" className="border rounded-md max-h-60 overflow-y-auto bg-background">
                   {sortedSavedAddons.length === 0 ? (
                     <p className="text-sm text-muted-foreground p-8 text-center italic">
                       No saved add-ons in your library.
@@ -1028,6 +1033,7 @@ export function BatchOperationsDialog({
                         >
                           <input
                             type="checkbox"
+                            data-theme-part="checkbox"
                             className="rounded border-border/40 text-primary focus:ring-primary"
                             checked={selectedSavedAddonIds.has(savedAddon.id)}
                             onChange={() => toggleSavedAddon(savedAddon.id)}
@@ -1065,9 +1071,11 @@ export function BatchOperationsDialog({
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                 <div className="space-y-1.5 px-1">
                   <p className="text-xs font-medium uppercase text-muted-foreground">Installation Source</p>
-                  <div className="flex bg-muted/50 p-1 rounded-xl gap-1 border border-border/40">
+                  <div data-theme-part="tabs-list" className="flex bg-muted/50 p-1 rounded-xl gap-1 border border-border/40">
                     <Button
                       variant={installMode === 'profile' ? 'secondary' : 'ghost'}
+                      data-theme-part="tab"
+                      data-state={installMode === 'profile' ? 'active' : 'inactive'}
                       className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-2 ${installMode === 'profile' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
                       onClick={() => setInstallMode('profile')}
                       type="button"
@@ -1077,6 +1085,8 @@ export function BatchOperationsDialog({
                     </Button>
                     <Button
                       variant={installMode === 'tag' ? 'secondary' : 'ghost'}
+                      data-theme-part="tab"
+                      data-state={installMode === 'tag' ? 'active' : 'inactive'}
                       className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-2 ${installMode === 'tag' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
                       onClick={() => setInstallMode('tag')}
                       type="button"
@@ -1133,7 +1143,7 @@ export function BatchOperationsDialog({
                 )}
 
                 {((installMode === 'profile' && selectedInstallProfileId) || (installMode === 'tag' && selectedInstallTagName)) && (
-                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 space-y-2">
+                  <div data-theme-part="panel" className="p-3 rounded-lg bg-primary/5 border border-primary/10 space-y-2">
                     <p className="text-xs font-semibold uppercase text-primary/70">
                       Addons to Install
                     </p>
@@ -1142,7 +1152,7 @@ export function BatchOperationsDialog({
                         ? (selectedInstallProfileId === 'unassigned' ? Object.values(library).filter(a => !a.profileId) : Object.values(library).filter(a => a.profileId === selectedInstallProfileId))
                         : Object.values(library).filter(a => a.tags.includes(selectedInstallTagName))
                       ).map(addon => (
-                        <div key={addon.id} className="text-xs px-2 py-0.5 bg-background border rounded flex items-center gap-1.5">
+                        <div key={addon.id} data-theme-part="badge" className="text-xs px-2 py-0.5 bg-background border rounded flex items-center gap-1.5">
                           <AddonIcon
                             name={addon.name}
                             logo={addon.metadata?.customLogo || addon.manifest.logo}
@@ -1167,6 +1177,7 @@ export function BatchOperationsDialog({
                     Paste add-on links here, one per line. They will be checked and added to the selected accounts.
                   </p>
                   <textarea
+                    data-theme-part="textarea"
                     className="flex min-h-[120px] w-full rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                     placeholder="https://v3-cinemeta.strem.io/manifest.json&#10;https://opensubtitles.strem.io/manifest.json"
                     value={urlList}
@@ -1250,9 +1261,11 @@ export function BatchOperationsDialog({
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                       <div className="space-y-1.5 px-1">
                         <p className="text-xs font-medium uppercase text-muted-foreground">Clone Mode</p>
-                        <div className="flex bg-muted/50 p-1 rounded-xl gap-1 border border-border/40">
+                        <div data-theme-part="tabs-list" className="flex bg-muted/50 p-1 rounded-xl gap-1 border border-border/40">
                           <Button
                             variant={cloneMode === 'addons-only' ? 'secondary' : 'ghost'}
+                            data-theme-part="tab"
+                            data-state={cloneMode === 'addons-only' ? 'active' : 'inactive'}
                             className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'addons-only' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
                             onClick={() => setCloneMode('addons-only')}
                             type="button"
@@ -1262,6 +1275,8 @@ export function BatchOperationsDialog({
                           </Button>
                           <Button
                             variant={cloneMode === 'addons-settings' ? 'secondary' : 'ghost'}
+                            data-theme-part="tab"
+                            data-state={cloneMode === 'addons-settings' ? 'active' : 'inactive'}
                             className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'addons-settings' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
                             onClick={() => setCloneMode('addons-settings')}
                             type="button"
@@ -1271,6 +1286,8 @@ export function BatchOperationsDialog({
                           </Button>
                           <Button
                             variant={cloneMode === 'full-mirror' ? 'secondary' : 'ghost'}
+                            data-theme-part="tab"
+                            data-state={cloneMode === 'full-mirror' ? 'active' : 'inactive'}
                             className={`flex-1 h-9 text-xs transition-[transform,opacity,box-shadow] duration-200 rounded-lg gap-1.5 ${cloneMode === 'full-mirror' ? 'shadow-sm bg-background hover:bg-background' : 'text-muted-foreground hover:text-foreground'}`}
                             onClick={() => setCloneMode('full-mirror')}
                             type="button"
@@ -1288,7 +1305,7 @@ export function BatchOperationsDialog({
                     </div>
 
                     {cloneMode === 'full-mirror' && (
-                      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed mt-4 animate-in fade-in slide-in-from-top-2">
+                      <div data-theme-part="panel" className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed mt-4 animate-in fade-in slide-in-from-top-2">
                         <div className="space-y-0.5">
                           <Label className="text-sm font-semibold flex items-center gap-2">
                             Destructive Mirror
@@ -1306,7 +1323,7 @@ export function BatchOperationsDialog({
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed">
+                    <div data-theme-part="panel" className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-dashed">
                       <div className="space-y-0.5">
                         <Label htmlFor="mirror-autopilot" className="text-sm font-semibold">Also mirror Autopilot rules</Label>
                         <p className="text-xs text-muted-foreground leading-relaxed pr-8">
@@ -1350,7 +1367,7 @@ export function BatchOperationsDialog({
                 </div>
 
                 {selectedBulkTag && (
-                  <div className="p-3 rounded-lg bg-destructive/5 border border-destructive/10 space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <div data-theme-tone="status" data-theme-part="panel" className="p-3 rounded-lg bg-destructive/5 border border-destructive/10 space-y-2 animate-in fade-in slide-in-from-top-2">
                     <p className="text-xs font-semibold uppercase text-destructive/70 flex items-center gap-2">
                       <Trash2 className="h-3 w-3" />
                       Addons to be Removed
@@ -1359,7 +1376,7 @@ export function BatchOperationsDialog({
                       {Object.values(library)
                         .filter(a => a.tags.includes(selectedBulkTag))
                         .map(addon => (
-                          <div key={addon.id} className="text-xs px-2 py-0.5 bg-background border rounded flex items-center gap-1.5 opacity-70">
+                          <div key={addon.id} data-theme-part="badge" className="text-xs px-2 py-0.5 bg-background border rounded flex items-center gap-1.5 opacity-70">
                             <AddonIcon
                               name={addon.name}
                               logo={addon.metadata?.customLogo || addon.manifest.logo}
@@ -1423,7 +1440,7 @@ export function BatchOperationsDialog({
                     </div>
                   </div>
                 </div>
-                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                <div data-theme-part="panel" className="border rounded-md max-h-60 overflow-y-auto bg-background">
                   {allAddons.length === 0 ? (
                     <p className="text-sm text-muted-foreground p-8 text-center italic">No add-ons found on selected accounts.</p>
                   ) : (
@@ -1435,6 +1452,7 @@ export function BatchOperationsDialog({
                         >
                           <input
                             type="checkbox"
+                            data-theme-part="checkbox"
                             className="rounded border-border/40 text-destructive focus:ring-destructive"
                             checked={selectedAddonIds.has(item.addon.transportUrl)}
                             onChange={() => toggleAddon(item.addon.transportUrl)}
@@ -1457,7 +1475,7 @@ export function BatchOperationsDialog({
                                 )}
                               </p>
                               {(item.addon.flags?.protected || item.addon.flags?.official) && (
-                                <span className={`text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap ${item.addon.flags?.protected
+                                <span data-theme-part="badge" className={`text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap ${item.addon.flags?.protected
                                   ? 'bg-warning/10 text-warning'
                                   : 'bg-primary/12 text-primary'
                                   }`}>
@@ -1467,7 +1485,7 @@ export function BatchOperationsDialog({
                             </div>
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-muted-foreground truncate font-mono">{item.addon.manifest.id}</p>
-                              <span className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
+                              <span data-theme-part="badge" className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
                                 {item.accounts.length === selectedAccounts.length ? 'All selected' : item.accounts.map(a => a.name || 'Unknown').join(', ')}
                               </span>
                             </div>
@@ -1528,7 +1546,7 @@ export function BatchOperationsDialog({
                 <p className="text-xs text-muted-foreground mb-2">
                   Checks selected add-ons again and uses the newest copy available.
                 </p>
-                <div className="border rounded-md max-h-60 overflow-y-auto bg-background">
+                <div data-theme-part="panel" className="border rounded-md max-h-60 overflow-y-auto bg-background">
                   {allAddons.length === 0 ? (
                     <p className="text-sm text-muted-foreground p-8 text-center italic">No add-ons available.</p>
                   ) : (
@@ -1540,6 +1558,7 @@ export function BatchOperationsDialog({
                         >
                           <input
                             type="checkbox"
+                            data-theme-part="checkbox"
                             className="rounded border-border/40 text-primary focus:ring-primary"
                             checked={selectedUpdateAddonIds.has(item.addon.transportUrl)}
                             onChange={() => {
@@ -1572,7 +1591,7 @@ export function BatchOperationsDialog({
                                 )}
                               </p>
                               {(item.addon.flags?.protected || item.addon.flags?.official) && (
-                                <span className={`text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap ${item.addon.flags?.protected
+                                <span data-theme-part="badge" className={`text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap ${item.addon.flags?.protected
                                   ? 'bg-warning/10 text-warning'
                                   : 'bg-primary/12 text-primary'
                                   }`}>
@@ -1582,7 +1601,7 @@ export function BatchOperationsDialog({
                             </div>
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-muted-foreground truncate">v{item.addon.manifest.version}</p>
-                              <span className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
+                              <span data-theme-part="badge" className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
                                 {item.accounts.length === selectedAccounts.length ? 'All selected' : item.accounts.map(a => a.name || 'Unknown').join(', ')}
                               </span>
                             </div>
@@ -1597,7 +1616,7 @@ export function BatchOperationsDialog({
 
             {(action === 'protect-all' || action === 'unprotect-all' || action === 'reinstall-all' || action === 'hide-configure-all' || action === 'show-configure-all') && (
               <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-muted/30 border border-dashed text-center">
+                <div data-theme-part="panel" className="p-4 rounded-lg bg-muted/30 border border-dashed text-center">
                   <p className="text-sm font-medium">
                     {action === 'reinstall-all'
                       ? `This will check every add-on on the ${selectedAccounts.length} selected accounts.`

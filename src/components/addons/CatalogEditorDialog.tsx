@@ -61,6 +61,7 @@ function SortableCatalogItem({ catalog, onRename, onDelete, onToggleHome }: Sort
 
     return (
         <div
+            data-theme-part="addon-card"
             ref={setNodeRef}
             style={style}
             className={cn(
@@ -74,6 +75,7 @@ function SortableCatalogItem({ catalog, onRename, onDelete, onToggleHome }: Sort
                 {...attributes}
                 {...listeners}
                 type="button"
+                data-theme-part="button"
                 aria-label={`Drag ${catalog.name || catalog.id} to reorder`}
                 className="flex h-10 w-10 shrink-0 cursor-grab items-center justify-center rounded-lg border border-border/45 bg-muted/20 text-muted-foreground transition-colors hover:border-border/70 hover:bg-accent hover:text-foreground active:cursor-grabbing"
                 style={{ touchAction: 'none' }}
@@ -303,7 +305,7 @@ export function CatalogEditorDialog({
                     </DialogDescription>
                 </DialogHeader>
                 {isCinemeta && (
-                    <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                    <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
                         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                         <span>
                             Stremio keeps official Cinemeta catalog labels, so renames may still show as Popular, New, or Featured there. Deleting and reordering Cinemeta catalogs still applies.

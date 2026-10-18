@@ -105,6 +105,7 @@ function ShareButtons({ data, userName }: { data: ReplayData; userName?: string 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', marginTop: '12px' }}>
             <button
+                data-theme-part="button"
                 onClick={handleCopyLink}
                 style={{
                     display: 'flex', alignItems: 'center', gap: '8px',

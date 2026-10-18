@@ -40,6 +40,7 @@ export function LightboxViewer({ images, index, zoom, onClose, onNavigate, onTog
             {index > 0 && (
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={(e) => { e.stopPropagation(); onNavigate(index - 1) }}
                     className="absolute left-4 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
                     aria-label="Previous image"
@@ -50,6 +51,7 @@ export function LightboxViewer({ images, index, zoom, onClose, onNavigate, onTog
             {index < images.length - 1 && (
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={(e) => { e.stopPropagation(); onNavigate(index + 1) }}
                     className="absolute right-4 top-1/2 -translate-y-1/2 flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
                     aria-label="Next image"
@@ -59,6 +61,7 @@ export function LightboxViewer({ images, index, zoom, onClose, onNavigate, onTog
             )}
             <button
                 type="button"
+                data-theme-part="button"
                 onClick={(e) => { e.stopPropagation(); onToggleZoom() }}
                 className="absolute bottom-4 left-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
                 aria-label={zoom ? 'Zoom out' : 'Zoom in'}
@@ -70,6 +73,7 @@ export function LightboxViewer({ images, index, zoom, onClose, onNavigate, onTog
             </span>
             <button
                 type="button"
+                data-theme-part="button"
                 onClick={onClose}
                 className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/80 hover:scale-110"
                 aria-label="Close"
@@ -77,6 +81,7 @@ export function LightboxViewer({ images, index, zoom, onClose, onNavigate, onTog
                 <X className="h-5 w-5" />
             </button>
             <a
+                data-theme-part="button"
                 href={src}
                 download
                 target="_blank"

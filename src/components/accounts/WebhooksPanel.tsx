@@ -81,7 +81,7 @@ export function WebhooksPanel({ accountId, accountName, accountRules, onEditRule
 
     return (
         <>
-        <div className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
+        <div data-theme-part="panel" className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
             <div className="flex items-start justify-between">
                 <div>
                     <h3 className="flex items-center gap-2 text-lg font-bold">
@@ -127,7 +127,7 @@ export function WebhooksPanel({ accountId, accountName, accountRules, onEditRule
             </p>
         </div>
 
-        <div className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
+        <div data-theme-part="panel" className="bg-card border border-border/40 rounded-2xl p-5 space-y-4 shadow-sm">
             <div>
                 <h3 className="flex items-center gap-2 text-lg font-bold">
                     <Webhook className="w-5 h-5 text-primary" />
@@ -144,7 +144,7 @@ export function WebhooksPanel({ accountId, accountName, accountRules, onEditRule
             ) : (
                 <div className="space-y-2">
                     {accountRules.filter(r => r.webhookUrl && r.notifyEnabled !== false).map(rule => (
-                        <div key={rule.id} className="flex items-center justify-between bg-muted/20 border border-border/40 rounded-xl px-4 py-3 gap-3">
+                        <div key={rule.id} data-theme-part="panel" className="flex items-center justify-between bg-muted/20 border border-border/40 rounded-xl px-4 py-3 gap-3">
                             <div className="flex flex-col gap-0.5 min-w-0">
                                 <span className="text-sm font-medium truncate">
                                     {rule.name || `Rule ${rule.id.slice(0, 8)}`}

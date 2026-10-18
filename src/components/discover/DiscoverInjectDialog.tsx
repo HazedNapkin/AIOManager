@@ -177,7 +177,7 @@ export function DiscoverInjectDialog({
                 )}
               </div>
 
-              <ScrollArea className="h-64 rounded-md border p-2">
+              <ScrollArea data-theme-part="panel" className="h-64 rounded-md border p-2">
                 <div className="space-y-1">
                   {instances.map((inst) => {
                     const key = instanceKey(inst)
@@ -195,6 +195,7 @@ export function DiscoverInjectDialog({
                         disabled={!locked}
                       >
                         <label
+                          data-theme-part="menu-item"
                           className={`flex items-center gap-3 rounded-md p-2 transition-colors ${
                             locked
                               ? 'cursor-not-allowed opacity-60'

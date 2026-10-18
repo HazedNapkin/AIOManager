@@ -74,7 +74,7 @@ export function AccountSetupCreateDialog({
               autoFocus
             />
           </div>
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-border/45 bg-muted/25 p-3">
+          <div data-theme-part="panel" className="flex items-start justify-between gap-4 rounded-xl border border-border/45 bg-muted/25 p-3">
             <div className="space-y-1">
               <Label htmlFor="clone" className="text-sm font-semibold">
                 Clone current setup

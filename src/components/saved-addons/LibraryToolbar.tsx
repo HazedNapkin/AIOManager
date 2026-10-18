@@ -91,7 +91,7 @@ export function LibraryToolbar({
             <SlidersHorizontal className="h-3.5 w-3.5" />
             Filters
             {(selectedProfileId !== null || selectedTag !== null) && (
-              <span className="w-4 h-4 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
+              <span data-theme-part="badge" className="w-4 h-4 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">
                 {(selectedProfileId !== null ? 1 : 0) + (selectedTag !== null ? 1 : 0)}
               </span>
             )}
@@ -120,11 +120,13 @@ export function LibraryToolbar({
             )}
           </div>
 
-          <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+          <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
             <Tooltip content="Grid view" side="bottom">
             <Button
               variant="ghost"
               size="sm"
+              data-theme-part="tab"
+              data-state={viewMode === 'grid' ? 'active' : 'inactive'}
               className={cn('h-8 w-8 rounded-lg p-0', viewMode === 'grid' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
               onClick={() => onViewModeChange('grid')}
               aria-label="Grid view"
@@ -136,6 +138,8 @@ export function LibraryToolbar({
             <Button
               variant="ghost"
               size="sm"
+              data-theme-part="tab"
+              data-state={viewMode === 'list' ? 'active' : 'inactive'}
               className={cn('h-8 w-8 rounded-lg p-0', viewMode === 'list' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
               onClick={() => onViewModeChange('list')}
               aria-label="List view"
@@ -148,7 +152,7 @@ export function LibraryToolbar({
 
         <div className="grid w-full grid-cols-2 items-center gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
           {savedAddonsCount > 0 && (
-            <div className="hidden sm:flex items-center gap-2 px-2.5 h-8 rounded-md bg-muted/40 border border-border/40 text-xs font-medium text-muted-foreground shrink-0">
+            <div data-theme-part="badge" className="hidden sm:flex items-center gap-2 px-2.5 h-8 rounded-md bg-muted/40 border border-border/40 text-xs font-medium text-muted-foreground shrink-0">
               <Tooltip content={`${healthSummary.online} online`} side="top">
                 <span className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-success" />

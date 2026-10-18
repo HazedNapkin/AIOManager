@@ -587,7 +587,7 @@ export function AddonList({ accountId }: AddonListProps) {
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{displayName}</h2>
               {updatesAvailable.length > 0 && (
-                <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                <span data-theme-part="badge" className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
                   {updatesAvailable.length} update{updatesAvailable.length !== 1 ? 's' : ''} available
                 </span>
               )}
@@ -665,7 +665,7 @@ export function AddonList({ accountId }: AddonListProps) {
         </div>
 
         {accounts.length > 1 && (
-          <div className="self-end rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm sm:self-auto" data-account-switcher-pill>
+          <div data-theme-part="panel" className="self-end rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm sm:self-auto" data-account-switcher-pill>
             <AccountSwitcher
             mode="pagination"
             accounts={accounts}
@@ -685,7 +685,7 @@ export function AddonList({ accountId }: AddonListProps) {
           <TabsTrigger value="addons" className="relative">
             Installed Addons
             {addons.length > 0 && (
-              <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
+              <span data-theme-part="badge" className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                 {addons.length}
               </span>
             )}
@@ -719,6 +719,7 @@ export function AddonList({ accountId }: AddonListProps) {
                 />
                 {searchQuery && (
                   <button
+                    data-theme-part="button"
                     onClick={() => handleSearchChange('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors"
                   >
@@ -726,11 +727,11 @@ export function AddonList({ accountId }: AddonListProps) {
                   </button>
                 )}
               </div>
-              <div className="hidden items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0 md:flex">
-                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('grid')} aria-label="Grid view">
+              <div data-theme-part="tabs-list" className="hidden items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0 md:flex">
+                <Button variant="ghost" size="sm" data-theme-part="tab" data-state={addonListView === 'grid' ? 'active' : 'inactive'} className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('grid')} aria-label="Grid view">
                   <LayoutGrid className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('list')} aria-label="List view">
+                <Button variant="ghost" size="sm" data-theme-part="tab" data-state={addonListView === 'list' ? 'active' : 'inactive'} className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('list')} aria-label="List view">
                   <List className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -785,7 +786,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       <span className="sm:hidden">Actions</span>
                       <span className="hidden sm:inline">Bulk Actions</span>
                       {updatesAvailable.length > 0 && (
-                        <span className="ml-1 w-4 h-4 flex items-center justify-center text-xs font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
+                        <span data-theme-part="badge" className="ml-1 w-4 h-4 flex items-center justify-center text-xs font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
                           {updatesAvailable.length}
                         </span>
                       )}
@@ -938,7 +939,7 @@ export function AddonList({ accountId }: AddonListProps) {
               action={<Button variant="outline" onClick={() => setSearchQuery('')}>Clear Search</Button>}
             />
           ) : (
-            <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
             <>
             <StaggerContainer className={effectiveAddonListView === 'list' ? 'flex flex-col gap-2' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}>
               {filteredAddons.slice(0, visibleCount).map((addon) => {

@@ -155,7 +155,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
   return (
     <form onSubmit={handleSubmit} className="min-w-0">
       {(formError || error) && (
-        <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-3">
+        <div data-theme-tone="status" data-theme-part="panel" className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 p-3">
           <p className="text-sm text-destructive">{formError || error}</p>
         </div>
       )}
@@ -222,6 +222,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
             <div className="flex gap-2">
               <textarea
                 id="edit-description"
+                data-theme-part="textarea"
                 className="flex min-h-[80px] w-full rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 value={formData.customDescription}
                 onChange={(e) => setFormData((prev) => ({ ...prev, customDescription: e.target.value }))}
@@ -242,7 +243,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         </div>
 
         <div className="pt-4 md:pt-0">
-          <div className="flex h-full min-h-[250px] flex-col items-center justify-center gap-4 overflow-hidden rounded-md border bg-muted/20 p-4">
+          <div data-theme-part="panel" className="flex h-full min-h-[250px] flex-col items-center justify-center gap-4 overflow-hidden rounded-md border bg-muted/20 p-4">
             <span className="text-xs font-medium uppercase text-muted-foreground">Dashboard Preview</span>
 
             <div className="flex w-full flex-col items-center gap-3">
@@ -261,7 +262,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
                   {formData.customDescription || savedAddon.manifest.description}
                 </p>
               </div>
-              <span className="mt-2 shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+              <span data-theme-part="badge" className="mt-2 shrink-0 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
                 v{savedAddon.manifest.version}
               </span>
             </div>
@@ -320,13 +321,15 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         </div>
 
         {formData.syncWithInstalled && deployedAccounts.length > 0 && (
-          <div className="space-y-1.5 rounded-xl border border-border/40 bg-muted/20 p-3">
+          <div data-theme-part="panel" className="space-y-1.5 rounded-xl border border-border/40 bg-muted/20 p-3">
             <p className="text-xs font-medium text-muted-foreground">
               {syncAccountIds === null ? 'Syncing to all accounts (default)' : `Syncing to ${syncAccountIds.length} of ${deployedAccounts.length} accounts`}
             </p>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
+                data-theme-part="button"
+                data-state={syncAccountIds === null ? 'active' : 'inactive'}
                 onClick={() => setSyncAccountIds(null)}
                 className={cn(
                   'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -343,6 +346,9 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
                   <button
                     key={acc.id}
                     type="button"
+                    data-theme-part="button"
+                    data-state={checked ? 'active' : 'inactive'}
+                    aria-pressed={checked}
                     onClick={() => {
                       setSyncAccountIds(prev => {
                         const current = prev ?? deployedAccounts.map(a => a.id)
@@ -367,7 +373,7 @@ export function SavedAddonDetails({ savedAddon, deployedAccounts = [], onClose }
         )}
       </div>
 
-      <div className="-mx-6 mt-4 grid grid-cols-1 gap-4 border-t bg-muted/50 px-6 py-4 text-xs text-muted-foreground sm:grid-cols-2">
+      <div data-theme-part="panel" className="-mx-6 mt-4 grid grid-cols-1 gap-4 border-t bg-muted/50 px-6 py-4 text-xs text-muted-foreground sm:grid-cols-2">
         <div>
           <span className="mb-1 block font-semibold">Developer Info</span>
           <p className="break-all line-clamp-2">ID: {isPrivacyModeEnabled ? '********' : savedAddon.manifest.id}</p>

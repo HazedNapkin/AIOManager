@@ -57,6 +57,7 @@ export const AccountReorderRow = memo(function AccountReorderRow({
         <div
             ref={setNodeRef}
             style={style}
+            data-theme-part="card"
             className={cn(
                 'group relative flex min-h-[76px] w-full items-center gap-2 rounded-[1.35rem] border border-border/45 bg-card/80 px-3 py-3 shadow-sm sm:gap-3 sm:px-4',
                 !isDragging ? 'transition-[transform,opacity,box-shadow,border-color] duration-200' : '',
@@ -130,7 +131,7 @@ export const AccountReorderRow = memo(function AccountReorderRow({
                 </span>
             </div>
 
-            <span className="shrink-0 rounded-full border border-border/40 bg-muted/50 px-1.5 py-0.5 text-xs font-semibold text-muted-foreground sm:hidden">
+            <span data-theme-part="badge" className="shrink-0 rounded-full border border-border/40 bg-muted/50 px-1.5 py-0.5 text-xs font-semibold text-muted-foreground sm:hidden">
                 {account.addons.length}
             </span>
         </div>
@@ -174,7 +175,7 @@ export const SortableAccountCard = memo(function SortableAccountCard({
     }
 
     return (
-        <div ref={setNodeRef} style={style}>
+        <div ref={setNodeRef} style={style} className="h-full">
             <AccountCard
                 account={account}
                 isSelected={isSelected}

@@ -572,14 +572,14 @@ export function AIOMetadataSyncTab({
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Sync scope">
-                        <button type="button" role="radio" aria-checked={syncMode === 'full'} disabled={editingLocked}
+                        <button type="button" role="radio" aria-checked={syncMode === 'full'} disabled={editingLocked} data-theme-part="button" data-state={syncMode === 'full' ? 'active' : 'inactive'}
                             onClick={() => setSyncMode('full')}
                             className={cn('rounded-xl border p-3 text-left transition-colors disabled:opacity-60',
                                 syncMode === 'full' ? 'border-primary/35 bg-primary/5' : 'border-border/30 bg-muted/10 hover:bg-muted/20')}>
                             <span className="flex items-center gap-2 text-sm font-semibold"><ClipboardCheck className="h-4 w-4 text-primary" /> Everything</span>
                             <span className="mt-1 block text-xs text-muted-foreground">Copies providers, API keys, catalogs, search, and filters.</span>
                         </button>
-                        <button type="button" role="radio" aria-checked={syncMode === 'sections'} disabled={editingLocked}
+                        <button type="button" role="radio" aria-checked={syncMode === 'sections'} disabled={editingLocked} data-theme-part="button" data-state={syncMode === 'sections' ? 'active' : 'inactive'}
                             onClick={() => setSyncMode('sections')}
                             className={cn('rounded-xl border p-3 text-left transition-colors disabled:opacity-60',
                                 syncMode === 'sections' ? 'border-primary/35 bg-primary/5' : 'border-border/30 bg-muted/10 hover:bg-muted/20')}>
@@ -589,7 +589,7 @@ export function AIOMetadataSyncTab({
                     </div>
 
                     {syncMode === 'sections' && (
-                        <div className="space-y-2 rounded-xl border border-border/30 bg-muted/10 p-3">
+                        <div data-theme-part="panel" className="space-y-2 rounded-xl border border-border/30 bg-muted/10 p-3">
                             <div className="flex items-center justify-between">
                                 <p className="text-xs font-medium uppercase text-muted-foreground">Settings groups</p>
                                 <Button type="button" variant="ghost" size="sm" disabled={editingLocked}
@@ -702,13 +702,13 @@ export function AIOMetadataSyncTab({
                                 {createIds.size > 0 ? `Create ${createIds.size} setup${createIds.size !== 1 ? 's' : ''}` : 'Create setups'}
                             </Button>
                         </div>
-                        <p className="rounded-xl border border-border/30 bg-background/45 p-2 text-xs text-muted-foreground">
+                        <p data-theme-part="panel" className="rounded-xl border border-border/30 bg-background/45 p-2 text-xs text-muted-foreground">
                             New setups use the scope above: Everything clones the full config; Groups builds from only the selected groups.
                         </p>
                         {createResults.length > 0 && (
                             <div className="space-y-1">
                                 {createResults.map(result => (
-                                    <div key={result.accountId} className={cn('flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs',
+                                    <div data-theme-tone="status" key={result.accountId} data-theme-part="panel" className={cn('flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs',
                                         result.status === 'created' ? 'border-success/20 bg-success/5 text-success' : 'border-destructive/20 bg-destructive/5 text-destructive')}>
                                         {result.status === 'created' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
                                         <span className="min-w-0 flex-1 truncate font-medium">{result.accountName}</span>
@@ -766,7 +766,7 @@ export function AIOMetadataSyncTab({
                                         const preview = previews.get(target.transportUrl)
                                         const targetId = getTargetDomId(target)
                                         return (
-                                            <article key={target.transportUrl} className={cn('rounded-2xl border p-3 transition-colors',
+                                            <article key={target.transportUrl} data-theme-part="addon-card" className={cn('rounded-2xl border p-3 transition-colors',
                                                 isSelected ? 'border-primary/30 bg-primary/[0.04]' : 'border-border/30 bg-muted/[0.08] hover:bg-muted/15')}>
                                                 <div className="flex items-center gap-3">
                                                     <Checkbox id={targetId} checked={isSelected} disabled={editingLocked} onCheckedChange={() => toggleTarget(target)} className="shrink-0" />
@@ -781,7 +781,7 @@ export function AIOMetadataSyncTab({
                                                         </span>
                                                     )}
                                                     {stored && !isSelected && phase === 'select' && (
-                                                        <span className="hidden rounded-full bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline">Password saved</span>
+                                                        <span data-theme-part="badge" className="hidden rounded-full bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline">Password saved</span>
                                                     )}
                                                 </div>
                                                 {isSelected && (
@@ -823,11 +823,11 @@ export function AIOMetadataSyncTab({
                             <Button type="button" variant="ghost" size="sm" onClick={resetToSelect}>Back to edit</Button>
                         </div>
                         {preservedLabels.length > 0 && (
-                            <div className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5">
+                            <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5">
                                 <p className="text-xs text-info">Left unchanged: {preservedLabels.join(', ')}.</p>
                             </div>
                         )}
-                        <div className="rounded-2xl border border-border/30 bg-muted/[0.08] px-3 py-2 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/30 bg-muted/[0.08] px-3 py-2 text-xs text-muted-foreground">
                             {previewChanged} will update · {previewSkipped} already match · {previewErrors} need a password or check
                         </div>
                     </CardHeader>
@@ -838,7 +838,7 @@ export function AIOMetadataSyncTab({
                             const icon = preview.error ? <XCircle className="h-3.5 w-3.5" /> : changedCount > 0 ? <AlertTriangle className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />
                             const label = preview.error ? 'Needs password/check' : changedCount > 0 ? `${changedCount} change${changedCount !== 1 ? 's' : ''}` : 'Already matches'
                             return (
-                                <details key={preview.target.transportUrl} open={!!preview.error} className="overflow-hidden rounded-2xl border border-border/30 bg-muted/[0.06]">
+                                <details key={preview.target.transportUrl} open={!!preview.error} data-theme-part="panel" className="overflow-hidden rounded-2xl border border-border/30 bg-muted/[0.06]">
                                     <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
                                         <AddonIcon name={preview.target.addonName} logo={preview.target.logo} className="h-8 w-8" textClassName="text-xs" />
                                         <div className="min-w-0 flex-1">
@@ -847,7 +847,7 @@ export function AIOMetadataSyncTab({
                                         </div>
                                         <StatusChip variant={variant} icon={icon}>{label}</StatusChip>
                                     </summary>
-                                    {preview.error && <div className="border-t border-destructive/10 bg-destructive/5 px-3 py-2 text-xs text-destructive">{preview.error}</div>}
+                                    {preview.error && <div data-theme-tone="status" data-theme-part="panel" className="border-t border-destructive/10 bg-destructive/5 px-3 py-2 text-xs text-destructive">{preview.error}</div>}
                                     <div className="divide-y divide-border/10">
                                         {preview.entries.map(entry => (
                                             <div key={entry.section} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-2 text-xs">
@@ -911,7 +911,7 @@ export function AIOMetadataSyncTab({
                     </CardHeader>
                     <CardContent className="space-y-2">
                         {results.map(result => (
-                            <div key={result.target.transportUrl} className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs',
+                            <div data-theme-tone="status" key={result.target.transportUrl} data-theme-part="panel" className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs',
                                 result.status === 'failed' ? 'border-destructive/20 bg-destructive/5' : result.status === 'skipped' ? 'border-border/30 bg-muted/10' : 'border-success/20 bg-success/5')}>
                                 {result.status === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" /> : result.status === 'skipped' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />}
                                 <span className="truncate font-semibold">{result.target.accountName}</span>
@@ -981,7 +981,7 @@ export function AIOMetadataSyncTab({
 function ReceiptStat({ label, value, tone }: { label: string; value: number; tone: 'success' | 'destructive' }) {
     const toneClass = tone === 'success' ? 'border-success/20 bg-success/5 text-success' : 'border-destructive/20 bg-destructive/5 text-destructive'
     return (
-        <div className={cn('rounded-xl border px-3 py-2 text-center', toneClass)}>
+        <div data-theme-part="panel" className={cn('rounded-xl border px-3 py-2 text-center', toneClass)}>
             <p className="text-sm font-semibold">{value}</p>
             <p className="text-xs uppercase tracking-wide opacity-75">{label}</p>
         </div>

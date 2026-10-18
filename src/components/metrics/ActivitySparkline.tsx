@@ -37,7 +37,7 @@ export function ActivitySparkline({ streakMap, loading }: ActivitySparklineProps
     const total = data.reduce((sum, d) => sum + d.count, 0)
 
     return (
-        <div ref={ref} className="h-[140px] rounded-2xl border border-border/35 bg-muted/15 p-3">
+        <div ref={ref} data-theme-part="panel" className="h-[140px] rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Last 30 days</span>
                 <span className="text-xs font-bold text-foreground">{total} plays</span>

@@ -44,7 +44,7 @@ export function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="h-[100dvh] bg-background flex flex-col overflow-hidden md:h-auto md:min-h-[100dvh] md:overflow-visible">
+    <div data-theme-part="app-shell" className="h-[100dvh] bg-background flex flex-col overflow-hidden md:h-auto md:min-h-[100dvh] md:overflow-visible">
       <svg width="0" height="0" className="absolute">
         <defs>
           <filter id="squircle">

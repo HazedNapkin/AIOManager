@@ -146,13 +146,13 @@ export function PresetsEditor({ value, onSave, onCancel, saving }: PresetsEditor
     const handleSave = () => onSave(local)
 
     return (
-        <div className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
+        <div data-theme-part="panel" className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
             <div className="flex items-center justify-between border-b border-border/20 pb-3">
                 <h3 className="font-semibold text-sm">Addons Editor</h3>
                 <span className="text-xs text-muted-foreground">{local.length} preset{local.length !== 1 ? 's' : ''}</span>
             </div>
 
-            <div className="border border-border/20 rounded-lg p-2.5 space-y-2 bg-background/40">
+            <div data-theme-part="panel" className="border border-border/20 rounded-lg p-2.5 space-y-2 bg-background/40">
                 <span className="text-xs text-muted-foreground font-medium block">Add via manifest URL</span>
                 <div className="flex gap-2">
                     <Input
@@ -206,6 +206,7 @@ export function PresetsEditor({ value, onSave, onCancel, saving }: PresetsEditor
                     return (
                         <div
                             key={String(addon.instanceId || getNested(addon, 'id') || `idx-${idx}`)}
+                            data-theme-part="addon-card"
                             className={cn(
                                 'border rounded-lg p-3 space-y-2 transition-colors',
                                 isEnabled ? 'border-border/30 bg-background/50' : 'border-border/15 bg-muted/5 opacity-50'

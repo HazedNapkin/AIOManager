@@ -215,6 +215,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                             {onMoreInfo && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={onMoreInfo}
                                     className="inline-flex h-11 items-center gap-2.5 rounded-full bg-white px-7 text-sm font-bold text-black shadow-xl transition-all hover:bg-white/90 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                                 >
@@ -225,6 +226,7 @@ function ForYouHero({ item, loading, onMoreInfo, onSurpriseMe, surpriseSpinning 
                             {onSurpriseMe && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={onSurpriseMe}
                                     className="inline-flex h-11 items-center gap-2.5 rounded-full border border-white/20 bg-white/10 px-6 text-sm font-semibold text-white backdrop-blur-md transition-all hover:bg-white/20 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
                                 >
@@ -780,13 +782,14 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
 
             {subTab === 'accounts' ? (
                 <div className="space-y-4 pt-2">
-                    <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
+                    <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
                     <div className="grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         {accountStats.map(({ account, topGenres }) => (
                             <div
                                 key={account.id}
                                 role="button"
                                 tabIndex={0}
+                                data-theme-part="card"
                                 onClick={() => onAccountClick?.(account.id)}
                                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAccountClick?.(account.id) } }}
                                 className="group relative flex h-full cursor-pointer flex-col rounded-[1.35rem] border border-border/45 bg-card/80 shadow-sm transition-[background-color,border-color,box-shadow,transform,opacity] duration-200 hover:-translate-y-0.5 hover:border-border/70 hover:bg-card/95 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
@@ -806,7 +809,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                                 {topGenres.length > 0 && (
                                     <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-3">
                                         {topGenres.map(genre => (
-                                            <span key={genre} className="rounded-md border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                            <span key={genre} data-theme-part="badge" className="rounded-md border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                                                 {genre}
                                             </span>
                                         ))}
@@ -845,6 +848,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 <>
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setHeroIndex(i => (i - 1 + heroItems.length) % heroItems.length)}
                         className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/70 hover:scale-105"
                         aria-label="Previous"
@@ -853,6 +857,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                     </button>
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setHeroIndex(i => (i + 1) % heroItems.length)}
                         className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/50 text-white shadow-lg backdrop-blur-md transition-all hover:bg-black/70 hover:scale-105"
                         aria-label="Next"
@@ -864,6 +869,8 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                             <button
                                 key={i}
                                 type="button"
+                                data-theme-part="tab"
+                                data-state={i === heroIndex ? 'active' : 'inactive'}
                                 onClick={() => setHeroIndex(i)}
                                 className={cn(
                                     'h-1.5 rounded-full transition-all',
@@ -893,7 +900,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             )}
 
             {showError && (
-                <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4">
+                <div data-theme-part="panel" data-theme-tone="status" className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4">
                             <div className="flex items-start gap-3">
                                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
                                 <div className="flex-1">

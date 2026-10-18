@@ -40,10 +40,12 @@ export function ReplayTopTitles({ data, allTimeData }: ReplayTopTitlesProps) {
                     </div>
 
                     {data.year !== 'all-time' && allTimeData && (
-                        <div className="flex p-1.5 border border-white/10 rounded-full bg-white/5 shadow-xl">
+                        <div data-theme-part="tabs-list" className="flex p-1.5 border border-white/10 rounded-full bg-white/5 shadow-xl">
                             {['year', 'all-time'].map((v) => (
                                 <button
                                     key={v}
+                                    data-theme-part="tab"
+                                    data-state={view === v ? 'active' : 'inactive'}
                                     onClick={() => setView(v as 'year' | 'all-time')}
                                     className={`px-6 py-2 rounded-full text-xs font-semibold uppercase transition-all ${view === v ? 'bg-white text-black' : 'text-white/40 hover:text-white'
                                         }`}

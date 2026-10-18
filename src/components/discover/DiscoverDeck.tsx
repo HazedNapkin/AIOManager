@@ -26,6 +26,7 @@ interface DiscoverDeckProps {
 function DeckBackdrop({ offset }: { offset: number }) {
   return (
     <div
+      data-theme-part="addon-card"
       className="absolute inset-0 -z-10 overflow-hidden rounded-3xl border border-border/40 bg-card shadow-lg"
       style={{ transform: `scale(${1 - offset * 0.04}) translateY(${offset * 14}px)`, opacity: 1 - offset * 0.6 }}
       aria-hidden
@@ -63,6 +64,7 @@ function DeckFace({ addon, saved, deployedOn, prefersReducedMotion }: { addon: D
 
   return (
     <div
+      data-theme-part="addon-card"
       className="relative flex h-full select-none flex-col rounded-3xl bg-card"
       style={{
         border: `2px solid ${rarity.color}50`,
@@ -96,7 +98,7 @@ function DeckFace({ addon, saved, deployedOn, prefersReducedMotion }: { addon: D
         )}
 
         {saved && (
-          <div className="absolute right-2 top-2 rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-semibold text-white shadow-md">In Library</div>
+          <div data-theme-part="badge" className="absolute right-2 top-2 rounded-full bg-emerald-500/90 px-2 py-0.5 text-[10px] font-semibold text-white shadow-md">In Library</div>
         )}
       </div>
 
@@ -114,10 +116,10 @@ function DeckFace({ addon, saved, deployedOn, prefersReducedMotion }: { addon: D
       <div className="rounded-xl bg-black/10 p-2 dark:bg-black/25">
         <div className="flex flex-wrap items-center gap-1">
           {resources.map((r) => (
-            <span key={r} className="rounded-md border border-border/30 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium">{RESOURCE_LABELS[r] ?? r}</span>
+            <span key={r} data-theme-part="badge" className="rounded-md border border-border/30 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium">{RESOURCE_LABELS[r] ?? r}</span>
           ))}
           {types.slice(0, 3).map((t) => (
-            <span key={t} className="rounded-md bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium capitalize opacity-60">{t}</span>
+            <span key={t} data-theme-part="badge" className="rounded-md bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium capitalize opacity-60">{t}</span>
           ))}
         </div>
         {deployedOn > 0 && (
@@ -318,7 +320,7 @@ export function DiscoverDeck({ pool, loading, onReshuffle, isSaved, savingKey, o
         </motion.div>
       </div>
 
-      <div className="flex items-center gap-2.5 sm:gap-3 rounded-2xl border border-border/40 bg-card p-3 shadow-sm">
+      <div data-theme-part="toolbar" className="flex items-center gap-2.5 sm:gap-3 rounded-2xl border border-border/40 bg-card p-3 shadow-sm">
         <Tooltip content="Undo" side="bottom">
           <Button
             variant="outline"

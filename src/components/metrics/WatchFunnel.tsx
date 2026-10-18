@@ -28,7 +28,7 @@ export function WatchFunnel({ funnel, loading }: WatchFunnelProps) {
                 const previous = index === 0 ? entry.count : data[index - 1].count
                 const retention = previous > 0 ? Math.round((entry.count / previous) * 100) : 0
                 return (
-                    <div key={entry.stage} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
+                    <div key={entry.stage} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
                         <div className="mb-2 flex items-center justify-between gap-3">
                             <div>
                                 <div className="text-sm font-semibold">{entry.stage}</div>

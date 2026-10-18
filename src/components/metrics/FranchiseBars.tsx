@@ -32,7 +32,7 @@ export function FranchiseBars({ franchiseFocus, loading }: FranchiseBarsProps) {
     return (
         <div ref={ref} className="space-y-2">
             {data.map((entry, index) => (
-                <div key={entry.name} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
+                <div key={entry.name} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="flex min-w-0 items-center gap-2">
                             <span className="text-xs font-bold text-muted-foreground/60">#{index + 1}</span>

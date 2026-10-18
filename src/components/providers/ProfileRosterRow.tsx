@@ -42,7 +42,7 @@ function IndexBadge({ index, colorHex }: { index: number; colorHex?: string }) {
 
 function ActiveChip() {
     return (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary">
+        <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/25 bg-primary/12 px-1.5 py-0.5 text-[11px] font-medium text-primary">
             <Check className="h-3 w-3" />
             Active
         </span>
@@ -57,7 +57,7 @@ function ActiveChip() {
 export function ProfileRosterRow({ profile, state, claimedBy, onAdd, onNavigate, disabled }: ProfileRosterRowProps) {
     if (state === 'active-here') {
         return (
-            <div className={cn(ROW_CLASS, 'cursor-default')}>
+            <div data-theme-part="card" className={cn(ROW_CLASS, 'cursor-default')}>
                 <IndexBadge index={profile.index} colorHex={profile.avatarColorHex} />
                 <span className="min-w-0 flex-1 truncate font-medium">{profile.name}</span>
                 <ActiveChip />
@@ -71,6 +71,7 @@ export function ProfileRosterRow({ profile, state, claimedBy, onAdd, onNavigate,
     return (
         <button
             type="button"
+            data-theme-part="card"
             onClick={interactive ? action : undefined}
             disabled={!interactive}
             className={cn(
@@ -83,7 +84,7 @@ export function ProfileRosterRow({ profile, state, claimedBy, onAdd, onNavigate,
             <IndexBadge index={profile.index} colorHex={profile.avatarColorHex} />
             <span className="min-w-0 flex-1 truncate font-medium">{profile.name}</span>
             {state === 'claimed' ? (
-                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground">
+                <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground">
                     {claimedBy ? (
                         <AccountAvatar
                             size="sm"
@@ -100,11 +101,11 @@ export function ProfileRosterRow({ profile, state, claimedBy, onAdd, onNavigate,
                     Account: {claimedBy?.accountName || 'Another account'}
                 </span>
             ) : state === 'gone' ? (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-border/40 bg-muted/20 px-2 py-0.5 text-[11px] font-medium text-muted-foreground/70">
+                <span data-theme-part="badge" className="inline-flex shrink-0 items-center rounded-full border border-border/40 bg-muted/20 px-2 py-0.5 text-[11px] font-medium text-muted-foreground/70">
                     Removed on Nuvio
                 </span>
             ) : (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors group-hover:border-border/70 group-hover:text-foreground">
+                <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors group-hover:border-border/70 group-hover:text-foreground">
                     Add as account
                 </span>
             )}

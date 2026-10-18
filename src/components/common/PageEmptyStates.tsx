@@ -21,7 +21,7 @@ function EmptyShell({ children, className }: { children: ReactNode; className?: 
 export function VaultEmptyState({ onAdd, onImport }: EmptyActionProps) {
   return (
     <EmptyShell>
-      <div className="w-full max-w-sm rounded-2xl border border-border/40 bg-card/80 p-8 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06),0_18px_80px_hsl(var(--background)/0.35)]">
+      <div data-theme-part="panel" className="w-full max-w-sm rounded-2xl border border-border/40 bg-card/80 p-8 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06),0_18px_80px_hsl(var(--background)/0.35)]">
         <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center">
           <div className="absolute inset-0 rounded-[1.35rem] border border-primary/25 bg-primary/12" />
           <Shield className="relative h-9 w-9 text-primary" />
@@ -154,8 +154,8 @@ export function FailoverEmptyState({
 }: EmptyActionProps & { rulesCount?: number; addonsCount?: number }) {
   return (
     <EmptyShell>
-      <div className="w-full max-w-md rounded-2xl border border-dashed border-success/30 bg-success/[0.04] p-8 shadow-sm">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-success/30 bg-success/12 text-success">
+      <div data-theme-tone="status" data-theme-part="panel" className="w-full max-w-md rounded-2xl border border-dashed border-success/30 bg-success/[0.04] p-8 shadow-sm">
+        <div data-theme-part="badge" className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-success/30 bg-success/12 text-success">
           <CheckCircle2 className="h-6 w-6" />
         </div>
         <h3 className="text-lg font-bold tracking-tight">No failovers yet</h3>
@@ -218,7 +218,7 @@ export function MetricsEmptyState() {
         <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
           Charts, trends, and milestones appear automatically once watch activity lands from your connected platforms.
         </p>
-        <div className="mx-auto mt-6 flex w-fit items-center gap-2 rounded-full border border-border/40 bg-card/60 px-4 py-2 text-xs font-medium text-muted-foreground">
+        <div data-theme-part="badge" className="mx-auto mt-6 flex w-fit items-center gap-2 rounded-full border border-border/40 bg-card/60 px-4 py-2 text-xs font-medium text-muted-foreground">
           <BarChart3 className="h-3.5 w-3.5 text-primary" />
           Tracking across all your platforms
         </div>

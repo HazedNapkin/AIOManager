@@ -126,14 +126,14 @@ export function StremioSocialAuth({ onAuthKey, onError, disabled }: StremioSocia
                     <span className="text-xs text-muted-foreground italic">
                         Complete the {pending === 'facebook' ? 'Facebook' : 'Apple'} login in the window that opened...
                     </span>
-                    <button type="button" onClick={stop} className="text-xs text-primary hover:underline">
+                    <button type="button" data-theme-part="button" onClick={stop} className="text-xs text-primary hover:underline">
                         Cancel
                     </button>
                 </div>
             )}
 
             {manualUrl && (
-                <div className="rounded-md border border-warning/25 bg-warning/10 p-3 text-xs text-warning">
+                <div data-theme-tone="status" data-theme-part="panel" className="rounded-md border border-warning/25 bg-warning/10 p-3 text-xs text-warning">
                     <p className="font-medium">Popup blocked</p>
                     <p className="mt-1 text-warning/85">
                         Open the login page manually:{' '}
@@ -151,7 +151,7 @@ export function StremioSocialAuth({ onAuthKey, onError, disabled }: StremioSocia
             )}
 
             {error && (
-                <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20 flex items-start gap-2 text-xs text-destructive">
+                <div data-theme-tone="status" data-theme-part="panel" className="p-3 rounded-md bg-destructive/10 border border-destructive/20 flex items-start gap-2 text-xs text-destructive">
                     <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                     <p>{error}</p>
                 </div>

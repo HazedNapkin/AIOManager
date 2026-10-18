@@ -47,6 +47,7 @@ export function SavedAddonDeploymentBadge({
               propagating so the surrounding card/row never opens. */}
           <button
             type="button"
+            data-theme-part="badge"
             aria-label={`${hoverText}. Details`}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}

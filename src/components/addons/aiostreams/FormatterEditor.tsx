@@ -46,7 +46,7 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
     }
 
     return (
-        <div className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
+        <div data-theme-part="panel" className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
             <div className="flex items-center justify-between border-b border-border/20 pb-3">
                 <h3 className="font-semibold text-sm flex items-center gap-2">
                     <Zap className="w-4 h-4" />
@@ -61,6 +61,8 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
                         <button
                             key={fmt.id}
                             type="button"
+                            data-theme-part="button"
+                            data-state={selectedId === fmt.id ? 'active' : 'inactive'}
                             onClick={() => { setSelectedId(fmt.id); setJsonError('') }}
                             className={cn(
                                 'flex flex-col items-start gap-0.5 p-2.5 rounded-lg border text-left transition-colors',
@@ -83,6 +85,8 @@ export function FormatterEditor({ value, onSave, onCancel }: FormatterEditorProp
                     ))}
                     <button
                         type="button"
+                        data-theme-part="button"
+                        data-state={selectedId === 'custom' ? 'active' : 'inactive'}
                         onClick={() => { setSelectedId('custom'); setJsonError('') }}
                         className={cn(
                             'flex flex-col items-start gap-0.5 p-2.5 rounded-lg border text-left transition-colors',

@@ -31,7 +31,7 @@ const ChainPill = memo(({ url, status, addons }: { url: string; status: 'active'
     const s = styles[status]
 
     return (
-        <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${s.wrapper}`}>
+        <span data-theme-part="badge" className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${s.wrapper}`}>
             <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
             {logo ? (
                 <img src={logo} alt="" className="h-4 w-4 rounded-sm object-contain" loading="lazy" />
@@ -112,7 +112,7 @@ export function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]
 
     return (
         <>
-        <div className="bg-card border border-border/40 rounded-2xl p-5 mb-6 shadow-sm">
+        <div data-theme-part="panel" className="bg-card border border-border/40 rounded-2xl p-5 mb-6 shadow-sm">
             <div className="flex items-center justify-between mb-5">
                 <div>
                     <h3 className="text-lg font-bold">Event Log</h3>
@@ -154,7 +154,7 @@ export function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]
                     const latencyMs = log.metadata?.latencyMs as number | undefined
 
                     return (
-                        <div key={log.id} className="rounded-xl border border-border/30 bg-muted/20 p-4">
+                        <div key={log.id} data-theme-part="panel" className="rounded-xl border border-border/30 bg-muted/20 p-4">
                             <div className="flex items-start gap-3">
                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
                                     <Icon className={`w-4 h-4 ${typeColor}`} />
@@ -166,7 +166,7 @@ export function FailoverHistory({ addons, accountId }: { addons: FailoverAddon[]
                                                 {log.type}{repeats > 1 ? ` ×${repeats}` : ''}
                                             </StatusChip>
                                             {latencyMs != null && (
-                                                <span className="text-xs font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
+                                                <span data-theme-part="badge" className="text-xs font-mono text-muted-foreground/50 bg-muted/30 rounded px-1.5 py-0.5">
                                                     {latencyMs < 1000 ? `${Math.round(latencyMs)}ms` : `${(latencyMs / 1000).toFixed(1)}s`}
                                                 </span>
                                             )}

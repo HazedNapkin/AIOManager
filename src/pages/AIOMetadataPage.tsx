@@ -202,7 +202,7 @@ export function AIOMetadataPage() {
             ) : (
                 <div className="flex flex-col md:flex-row gap-6 min-h-[calc(100vh-14rem)]">
                     <div className="w-full md:w-56 lg:w-64 shrink-0 flex flex-col gap-3">
-                        <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
+                        <div data-theme-part="panel" className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
                                 <Tooltip content="Metadata setup overview and quick stats" side="right">
                                     <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Summary</h2>
@@ -211,7 +211,7 @@ export function AIOMetadataPage() {
                             <DesktopSidebar activeSection={activeSection} onChange={setActiveSection} group="core" />
                         </div>
 
-                        <div className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
+                        <div data-theme-part="panel" className="hidden bg-card border border-border/40 rounded-2xl p-3 shadow-sm space-y-1 md:block">
                             <div className="flex items-center justify-between px-2 py-1.5 mb-1 shrink-0">
                                 <Tooltip content="Configure metadata orchestration" side="right">
                                     <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground cursor-help">Orchestration</h2>
@@ -225,8 +225,8 @@ export function AIOMetadataPage() {
                         </div>
                     </div>
 
-                    <div className="flex-1 min-w-0 bg-card border border-border/40 rounded-2xl overflow-hidden shadow-sm flex flex-col">
-                        <div className="p-4 md:p-6 border-b border-border/40 bg-muted/5 shrink-0">
+                    <div data-theme-part="panel" className="flex-1 min-w-0 bg-card border border-border/40 rounded-2xl overflow-hidden shadow-sm flex flex-col">
+                        <div data-theme-part="panel" className="p-4 md:p-6 border-b border-border/40 bg-muted/5 shrink-0">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                 <div className="flex items-center gap-3 min-w-0">
                                     <AddonIcon name={addonName} logo={addon.metadata?.customLogo || addon.manifest.logo} alt={addonName} className="h-10 w-10" textClassName="text-sm" />
@@ -295,7 +295,7 @@ function DesktopSidebar({ activeSection, onChange, group }: { activeSection: Sec
             {items.map(item => {
                 const isActive = activeSection === item.id
                 return (
-                    <button key={item.id} type="button" onClick={() => onChange(item.id)}
+                    <button key={item.id} type="button" data-theme-part="nav-item" data-state={isActive ? 'active' : 'inactive'} onClick={() => onChange(item.id)}
                         className={cn('relative flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-sm font-medium transition-[transform,opacity,box-shadow] text-left w-full',
                             isActive ? 'border-border/40 bg-background text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50')}>
                         <div className={cn('relative z-10 w-5 h-5 flex items-center justify-center shrink-0 transition-colors', isActive ? 'text-foreground' : 'text-muted-foreground/60')}>
@@ -312,13 +312,13 @@ function DesktopSidebar({ activeSection, onChange, group }: { activeSection: Sec
 function MobileSectionBar({ activeSection, onChange }: { activeSection: Section; onChange: (s: Section) => void }) {
     return (
         <div className="md:hidden -mx-4 px-4 pb-1">
-            <div className="flex flex-wrap gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
+            <div data-theme-part="tabs-list" className="flex flex-wrap gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
                 {SIDEBAR_ITEMS.map((item, i) => {
                     const isActive = activeSection === item.id
                     return (
                         <Fragment key={item.id}>
                             {i === 2 && <div className="w-full h-0" />}
-                            <button type="button" onClick={() => onChange(item.id)}
+                            <button type="button" data-theme-part="tab" data-state={isActive ? 'active' : 'inactive'} onClick={() => onChange(item.id)}
                                 className={cn('flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition-[transform,opacity,box-shadow]',
                                     isActive ? 'border-border/40 bg-background text-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground')}>
                                 <div className={cn('w-5 h-5 rounded flex items-center justify-center shrink-0', isActive ? 'text-foreground' : 'text-muted-foreground/60')}>
@@ -387,7 +387,7 @@ function CredentialsGate({
                         <Label htmlFor="remember" className="text-sm font-normal cursor-pointer">Remember password locally</Label>
                     </div>
                     {error && (
-                        <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
+                        <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
                             <AlertTriangle className="w-4 h-4 shrink-0" />
                             <p>{error}</p>
                         </div>
@@ -422,7 +422,7 @@ function SectionHeader({ title, description }: { title: string; description: str
 
 function StatCard({ value, label }: { value: number; label: string }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <p className="text-xl font-semibold">{value}</p>
             <p className="text-xs text-muted-foreground">{label}</p>
         </div>
@@ -554,7 +554,7 @@ function SectionContent({
                     <StatCard value={stats.toggles} label="Features On" />
                 </div>
 
-                <div className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-3">
+                <div data-theme-part="panel" className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-3">
                     <h3 className="text-sm font-semibold">Instance Details</h3>
                     <div className="grid gap-3 text-sm">
                         <Detail label="URL"><span className="font-mono text-xs truncate max-w-[60%]">{baseUrl}</span></Detail>
@@ -569,16 +569,16 @@ function SectionContent({
                     </div>
                 </div>
 
-                <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                     <h3 className="text-sm font-semibold">Install URL</h3>
                     <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs font-mono bg-muted/30 px-3 py-2 rounded-lg truncate">{transportUrl}</code>
+                        <code data-theme-part="field" className="flex-1 text-xs font-mono bg-muted/30 px-3 py-2 rounded-lg truncate">{transportUrl}</code>
                         <CopyButton value={transportUrl} variant="outline" className="h-9 w-9 shrink-0" iconSize={14} />
                     </div>
                 </div>
 
                 {availableTags.length > 0 && (
-                    <div className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
+                    <div data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-2">
                         <h3 className="text-sm font-semibold flex items-center gap-1.5">
                             <Tag className="w-3.5 h-3.5" /> Active Tag
                         </h3>
@@ -611,7 +611,7 @@ function SectionContent({
                 )}
 
                 {configureUrl && (
-                    <div className="rounded-2xl border border-border/40 bg-muted/25 p-4 space-y-2">
+                    <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-muted/25 p-4 space-y-2">
                         <p className="text-sm text-muted-foreground">For full catalog and provider editing, use the AIOMetadata visual editor.</p>
                         <Button variant="outline" size="sm" className="gap-2" asChild>
                             <a href={configureUrl} target="_blank" rel="noopener noreferrer">
@@ -632,7 +632,7 @@ function SectionContent({
                 {objectSections.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {objectSections.map(section => (
-                            <div key={section.key} className="p-4 rounded-2xl border border-border/40 bg-card shadow-sm flex items-center gap-3">
+                            <div key={section.key} data-theme-part="panel" className="p-4 rounded-2xl border border-border/40 bg-card shadow-sm flex items-center gap-3">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted/30 text-muted-foreground">
                                     <SectionIcon icon={section.icon} />
                                 </div>
@@ -650,7 +650,7 @@ function SectionContent({
                         <h3 className="text-sm font-semibold">Features</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {toggleSections.map(section => (
-                                <div key={section.key} className="flex items-center justify-between px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
+                                <div key={section.key} data-theme-part="panel" className="flex items-center justify-between px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
                                     <span className="text-xs font-medium">{section.label}</span>
                                     <span className={cn('text-xs font-semibold', section.data ? 'text-success' : 'text-muted-foreground')}>
                                         {section.data ? 'On' : 'Off'}
@@ -666,7 +666,7 @@ function SectionContent({
                         <h3 className="text-sm font-semibold">Settings</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {keySections.map(section => (
-                                <div key={section.key} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
+                                <div key={section.key} data-theme-part="panel" className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-border/30 bg-muted/10">
                                     <span className="text-xs font-medium shrink-0">{section.label}</span>
                                     <span className="text-xs text-muted-foreground truncate">{getSectionSummary(section.key, section.data)}</span>
                                 </div>

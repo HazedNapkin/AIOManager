@@ -67,7 +67,7 @@ export function ConfirmationDialog({
       <DialogContent hideClose className="max-w-md gap-0 overflow-hidden p-0">
         <DialogHeader className="items-center px-6 pb-5 pt-7 text-center">
           {Icon && resolvedSeverity && (
-            <div className={cn(
+            <div data-theme-part="badge" className={cn(
               "mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.08)]",
               severityConfig[resolvedSeverity].className
             )}>
@@ -79,7 +79,7 @@ export function ConfirmationDialog({
             {description}
           </DialogDescription>
           {impactItems && impactItems.length > 0 && (
-            <div className="mt-4 w-full rounded-2xl border border-border/40 bg-muted/25 p-3 text-left">
+            <div data-theme-part="panel" className="mt-4 w-full rounded-2xl border border-border/40 bg-muted/25 p-3 text-left">
               <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Impact</div>
               <div className="space-y-1.5">
                 {impactItems.map((item, index) => (

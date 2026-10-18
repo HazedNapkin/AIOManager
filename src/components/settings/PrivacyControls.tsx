@@ -21,9 +21,9 @@ interface PrivacyControlsProps {
 }
 
 // Synthetic values rendered in the preview card only. No store data is read here.
-const SAMPLE_ACCOUNT_NAME = "Alex's account"
+const SAMPLE_ACCOUNT_NAME = "Sonic's account"
 const SAMPLE_PROFILE_NAME = 'Family setup'
-const SAMPLE_EMAIL = 'alex@example.com'
+const SAMPLE_EMAIL = 'sonic@example.com'
 const SAMPLE_ADDON_NAME = 'Personal Config'
 const SAMPLE_ADDON_URL = 'https://addons.example.com/personal-config/manifest.json?token=demo'
 
@@ -72,7 +72,7 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
     const shownAddonUrl = showOriginal ? SAMPLE_ADDON_URL : maskUrlLevel(SAMPLE_ADDON_URL, urlsLevel)
 
     return (
-        <div className="mt-2 flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4">
+        <div data-theme-part="panel" className="mt-2 flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4">
             <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                     <Shield className="h-3.5 w-3.5 text-muted-foreground" />
@@ -114,6 +114,7 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-medium text-muted-foreground">Live Preview</p>
                         <span
+                            data-theme-part="badge"
                             className="rounded-full border border-border/30 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                             title="Synthetic sample data, not real account information"
                         >
@@ -121,29 +122,29 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                         </span>
                     </div>
 
-                    <div className="rounded-[1.35rem] border border-border/45 bg-card/80 p-4 shadow-sm">
+                    <div data-theme-part="card" className="rounded-[1.35rem] border border-border/45 bg-card/80 p-4 shadow-sm">
                         <div className="flex items-center gap-3">
                             <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                <span className="relative z-10 text-sm font-bold leading-none text-muted-foreground">A</span>
+                                <span className="relative z-10 text-sm font-bold leading-none text-muted-foreground">S</span>
                             </div>
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm font-semibold tracking-tight" title={shownName}>{shownName}</p>
                                 <p className="mt-0.5 truncate text-xs text-muted-foreground" title={shownEmail}>{shownEmail}</p>
                             </div>
-                            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
+                            <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
                                 <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
                                 Active
                             </span>
                         </div>
 
                         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                            <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/30 bg-muted/30 px-2.5 py-0.5 text-[11px] text-muted-foreground">
+                            <span data-theme-part="badge" className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/30 bg-muted/30 px-2.5 py-0.5 text-[11px] text-muted-foreground">
                                 <Users className="h-3 w-3 shrink-0" aria-hidden="true" />
                                 <span className="truncate" title={shownProfile}>{shownProfile}</span>
                             </span>
                         </div>
 
-                        <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-border/30 bg-muted/20 p-2.5">
+                        <div data-theme-part="panel" className="mt-3 flex items-start gap-2.5 rounded-xl border border-border/30 bg-muted/20 p-2.5">
                             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted/40 ring-1 ring-border/25">
                                 <Puzzle className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                             </div>
@@ -170,7 +171,7 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
             </div>
 
             <div className="flex flex-col gap-2">
-                <div className="flex flex-col gap-2 rounded-lg border border-border/20 bg-muted/10 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4">
+                <div data-theme-part="panel" className="flex flex-col gap-2 rounded-lg border border-border/20 bg-muted/10 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4">
                     <span className="shrink-0 text-[11px] font-medium text-muted-foreground">Levels</span>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                         {LEVEL_LEGEND.map((entry) => (

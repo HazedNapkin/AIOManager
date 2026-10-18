@@ -1,6 +1,7 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { createContext, useContext, useEffect, useState, useCallback, useMemo, ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
+import { isLightPalette, themeVariables } from '@/lib/theme-styles'
 
 // Re-export all types and data so existing imports from '@/contexts/ThemeContext' keep working
 export { THEME_OPTIONS } from '@/data/themes'
@@ -10,63 +11,29 @@ import type { Theme, ThemePalette, ThemeOption } from '@/data/themes'
 import { THEME_OPTIONS as _THEME_OPTIONS, derivePreview } from '@/data/themes'
 const THEME_OPTIONS = _THEME_OPTIONS
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function hslToHex(hsl: string): string {
-    const [h, s, l] = hsl.split(' ').map(v => parseFloat(v))
-    const sl = s / 100, ll = l / 100
-    const c = (1 - Math.abs(2 * ll - 1)) * sl
-    const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
-    const m = ll - c / 2
-    let r = 0, g = 0, b = 0
-    if (h < 60) { r = c; g = x }
-    else if (h < 120) { r = x; g = c }
-    else if (h < 180) { g = c; b = x }
-    else if (h < 240) { g = x; b = c }
-    else if (h < 300) { r = x; b = c }
-    else { r = c; b = x }
-    const toHex = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, '0')
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`
-}
-
-function getLuminance(hex: string): number {
-    const r = parseInt(hex.slice(1, 3), 16) / 255
-    const g = parseInt(hex.slice(3, 5), 16) / 255
-    const b = parseInt(hex.slice(5, 7), 16) / 255
-    const lin = (c: number) => c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
-}
-
-function computedForeground(backgroundHsl: string): string {
-    return getLuminance(hslToHex(backgroundHsl)) < 0.18 ? '0 0% 100%' : '0 0% 0%'
-}
-
 // ── Theme Application ────────────────────────────────────────────────────────
 
 function applyTheme(palette: ThemePalette) {
     const root = document.documentElement
-    const priFg = palette.primaryForeground ?? computedForeground(palette.primary)
-    const desFg = palette.destructiveForeground ?? computedForeground(palette.destructive)
+    for (const [key, value] of Object.entries(themeVariables(palette))) {
+        root.style.setProperty(key, value)
+    }
+}
 
-    root.style.setProperty('--background', palette.background)
-    root.style.setProperty('--foreground', palette.cardForeground)
-    root.style.setProperty('--card', palette.card)
-    root.style.setProperty('--card-foreground', palette.cardForeground)
-    root.style.setProperty('--popover', palette.card)
-    root.style.setProperty('--popover-foreground', palette.cardForeground)
-    root.style.setProperty('--primary', palette.primary)
-    root.style.setProperty('--primary-foreground', priFg)
-    root.style.setProperty('--secondary', palette.muted)
-    root.style.setProperty('--secondary-foreground', palette.cardForeground)
-    root.style.setProperty('--muted', palette.muted)
-    root.style.setProperty('--muted-foreground', palette.mutedForeground)
-    root.style.setProperty('--accent', palette.muted)
-    root.style.setProperty('--accent-foreground', palette.cardForeground)
-    root.style.setProperty('--destructive', palette.destructive)
-    root.style.setProperty('--destructive-foreground', desFg)
-    root.style.setProperty('--border', palette.border)
-    root.style.setProperty('--input', palette.input)
-    root.style.setProperty('--ring', palette.ring)
+function applyThemeOption(option: ThemeOption) {
+    applyTheme(option.palette)
+    document.documentElement.setAttribute('data-theme', option.id)
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', option.preview.background)
+    const existingStyle = document.getElementById('aioman-custom-theme-css')
+    const css = option.customCss?.trim()
+    if (!css) {
+        existingStyle?.remove()
+        return
+    }
+    const style = existingStyle ?? document.createElement('style')
+    style.id = 'aioman-custom-theme-css'
+    style.textContent = css
+    if (!existingStyle) document.head.appendChild(style)
 }
 
 // ── Custom Theme Storage ─────────────────────────────────────────────────────
@@ -135,6 +102,16 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 const STORAGE_KEY = 'aioman-theme'
 
+// Builtin themes removed from the catalog. A saved selection matching one of
+// these resolves to its fallback so the app never starts on a missing theme.
+// Custom clones use `custom-*` ids and are unaffected.
+const REMOVED_BUILTIN_THEMES = new Map<string, Theme>([
+    ['borderlands', 'dark'],
+    ['deep-orbit', 'dark'],
+    ['cupertino', 'dark'],
+    ['cupertino-dark', 'dark'],
+])
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
     const [customThemes, setCustomThemes] = useState<CustomThemeData[]>(loadCustomThemes)
 
@@ -164,6 +141,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
                 }
                 localStorage.setItem('aio-theme-migrated-v3', '1')
             }
+            // Repair saved selections that point at removed builtins (e.g. an
+            // old 'borderlands' pick, or one synced back from another device).
+            if (saved) {
+                const replacement = REMOVED_BUILTIN_THEMES.get(saved)
+                if (replacement) {
+                    saved = replacement
+                    localStorage.setItem(STORAGE_KEY, saved)
+                }
+            }
             const allOptions = [...THEME_OPTIONS, ...loadCustomThemes().map(customToOption)]
             const match = saved ? allOptions.find(t => t.id === saved) : undefined
             return (match ? saved : 'dark') as Theme
@@ -176,7 +162,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const allOptions = getAllThemeOptions()
         const themeOption = allOptions.find(t => t.id === theme)
         if (!themeOption) return false
-        return getLuminance(hslToHex(themeOption.palette.background)) > 0.18
+        return isLightPalette(themeOption.palette)
     }, [theme, getAllThemeOptions])
 
     const logoUrl = useMemo(() => {
@@ -188,37 +174,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     // Apply theme whenever it changes
     useEffect(() => {
         if (isDocs) {
-            if (isLight) {
-                // Docs Isolation Palette (Neutral Light)
-                applyTheme({
-                    background: '0 0% 100%',
-                    card: '0 0% 100%',
-                    cardForeground: '240 10% 3.9%',
-                    primary: '45 93% 47%',
-                    muted: '240 4.8% 95.9%',
-                    mutedForeground: '240 3.8% 46.1%',
-                    border: '240 5.9% 90%',
-                    input: '240 5.9% 90%',
-                    ring: '45 100% 50%',
-                    destructive: '0 84% 60%',
-                })
-                document.documentElement.setAttribute('data-theme', 'light')
-            } else {
-                // Docs Isolation Palette (Neutral Dark)
-                applyTheme({
-                    background: '0 0% 0%',
-                    card: '240 10% 2%',
-                    cardForeground: '0 0% 98%',
-                    primary: '45 93% 47%',
-                    muted: '240 5% 15%',
-                    mutedForeground: '240 5% 65%',
-                    border: '240 5% 12%',
-                    input: '240 5% 12%',
-                    ring: '45 100% 50%',
-                    destructive: '0 84% 60%',
-                })
-                document.documentElement.setAttribute('data-theme', 'dark')
-            }
+            document.getElementById('aioman-custom-theme-css')?.remove()
+            // Match Kronorium's forced dark layout, including body-level portals.
+            applyTheme({
+                background: '0 0% 0%',
+                card: '240 10% 2%',
+                cardForeground: '0 0% 98%',
+                primary: '45 93% 47%',
+                muted: '240 5% 15%',
+                mutedForeground: '240 5% 65%',
+                border: '240 5% 12%',
+                input: '240 5% 12%',
+                ring: '45 100% 50%',
+                destructive: '0 84% 60%',
+            })
+            document.documentElement.setAttribute('data-theme', 'dark')
             document.documentElement.classList.add('kronorium-active')
             return
         }
@@ -231,29 +201,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const allOptions = getAllThemeOptions()
         const themeOption = allOptions.find(t => t.id === theme)
         if (themeOption) {
-            applyTheme(themeOption.palette)
-            document.documentElement.setAttribute('data-theme', theme)
-
-            const metaThemeColor = document.querySelector('meta[name="theme-color"]')
-            if (metaThemeColor) {
-                metaThemeColor.setAttribute('content', themeOption.preview.background)
-            }
-
-            const customTheme = customThemes.find(t => t.id === theme)
-            const cssContent = customTheme?.customCss?.trim() || themeOption.customCss?.trim()
-            const existingStyleEl = document.getElementById('aioman-custom-theme-css')
-            if (cssContent) {
-                if (existingStyleEl) {
-                    existingStyleEl.textContent = cssContent
-                } else {
-                    const styleEl = document.createElement('style')
-                    styleEl.id = 'aioman-custom-theme-css'
-                    styleEl.textContent = cssContent
-                    document.head.appendChild(styleEl)
-                }
-            } else if (existingStyleEl) {
-                existingStyleEl.remove()
-            }
+            applyThemeOption(themeOption)
         } else {
             const existingStyleEl = document.getElementById('aioman-custom-theme-css')
             if (existingStyleEl) existingStyleEl.remove()
@@ -269,6 +217,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             const allOptions = getAllThemeOptions()
             if (allOptions.find(t => t.id === newValue)) {
                 setThemeState(newValue as Theme)
+            } else {
+                const replacement = REMOVED_BUILTIN_THEMES.get(newValue)
+                if (replacement) {
+                    // A removed builtin arrived from another tab or device:
+                    // fall back to its replacement and repair local storage.
+                    // Unknown ids (custom clones not synced here yet) stay untouched.
+                    setThemeState(replacement)
+                    try { localStorage.setItem(STORAGE_KEY, replacement) } catch {}
+                }
             }
         }
         window.addEventListener('storage', handleStorage as EventListener)
@@ -281,16 +238,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         const handleReapply = () => {
+            if (isDocs) return
             const allOptions = getAllThemeOptions()
             const themeOption = allOptions.find(t => t.id === theme)
             if (themeOption) {
-                applyTheme(themeOption.palette)
-                document.documentElement.setAttribute('data-theme', theme)
+                applyThemeOption(themeOption)
             }
         }
         window.addEventListener('aio-theme-reapply', handleReapply)
         return () => window.removeEventListener('aio-theme-reapply', handleReapply)
-    }, [theme, getAllThemeOptions])
+    }, [theme, getAllThemeOptions, isDocs])
 
     useEffect(() => {
         const handleCustomThemesSync = (e: CustomEvent) => {

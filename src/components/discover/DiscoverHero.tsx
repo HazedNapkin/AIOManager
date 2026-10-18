@@ -58,6 +58,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
 
   return (
     <div
+      data-theme-part="addon-card"
       className="group relative w-full overflow-hidden rounded-3xl bg-background text-foreground shadow-2xl ring-1 ring-border/30 cursor-pointer"
       style={{ height: 'clamp(280px, 36vh, 380px)' }}
       onMouseEnter={() => setPaused(true)}
@@ -131,15 +132,15 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
             </div>
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-primary/85 px-2.5 py-0.5 text-[11px] font-extrabold uppercase tracking-widest text-primary-foreground shadow-sm">
+                <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2.5 py-0.5 text-[11px] font-extrabold uppercase tracking-widest text-primary-foreground shadow-sm">
                   Featured Addon
                 </span>
-                <span className="rounded-md bg-amber-500/90 px-2 py-0.5 text-[11px] font-black text-black shadow flex items-center gap-1">
+                <span data-theme-part="badge" className="rounded-md bg-amber-500/90 px-2 py-0.5 text-[11px] font-black text-black shadow flex items-center gap-1">
                   <Star className="h-3 w-3 fill-black text-black" />
                   {(addon.stars ?? 0).toLocaleString()}
                 </span>
                 {deployedOn > 0 && (
-                  <span className="rounded-md border border-white/20 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-md flex items-center gap-1">
+                  <span data-theme-part="badge" className="rounded-md border border-white/20 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-md flex items-center gap-1">
                     <Send className="h-3 w-3" />
                     On {deployedOn} account{deployedOn !== 1 ? 's' : ''}
                   </span>
@@ -203,6 +204,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
         <>
           <button
             type="button"
+            data-theme-part="button"
             aria-label="Previous featured addon"
             onClick={(e) => { e.stopPropagation(); go(-1) }}
             className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"
@@ -211,6 +213,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
           </button>
           <button
             type="button"
+            data-theme-part="button"
             aria-label="Next featured addon"
             onClick={(e) => { e.stopPropagation(); go(1) }}
             className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-border/40 bg-card/70 text-foreground/80 shadow-lg backdrop-blur transition-colors hover:bg-card"

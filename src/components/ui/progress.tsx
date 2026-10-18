@@ -13,6 +13,7 @@ const Progress = React.forwardRef<
     ProgressProps
 >(({ className, value, shimmer = false, ...props }, ref) => (
   <ProgressPrimitive.Root
+    data-theme-part="progress"
     ref={ref}
     className={cn(
         "relative h-4 w-full overflow-hidden rounded-full bg-secondary",
@@ -21,6 +22,7 @@ const Progress = React.forwardRef<
     {...props}
   >
     <motion.div
+      data-theme-part="progress-indicator"
       className="h-full bg-primary rounded-full relative"
       initial={{ width: '0%' }}
       animate={{ width: `${value || 0}%` }}

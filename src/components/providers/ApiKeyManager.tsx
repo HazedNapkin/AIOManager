@@ -55,7 +55,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
             : maskNameLevel(account.name || accountEmail || 'Unnamed Account', privacyLevel)
 
     return (
-        <div className="space-y-3 sm:space-y-4 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
+        <div data-theme-part="panel" className="space-y-3 sm:space-y-4 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
             <div className="flex items-start gap-3">
                 <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                     <SquircleOverlay />
@@ -69,7 +69,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
                 </div>
             </div>
 
-            <div className="rounded-2xl border border-border/35 bg-background/35 p-2.5 sm:p-3 space-y-2">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/35 p-2.5 sm:p-3 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                     <AccountAvatar account={account} size="sm" showStatus={false} />
                     <span className="min-w-0 flex-1 truncate text-xs font-bold">{displayName}</span>
@@ -94,7 +94,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
                 {apiKey && (
                     <>
                         <div className="flex items-center gap-1.5">
-                            <div className="flex h-8 min-w-0 flex-1 items-center truncate rounded-lg border border-border/30 bg-muted/20 px-2 font-mono text-xs text-muted-foreground">
+                            <div data-theme-part="input" className="flex h-8 min-w-0 flex-1 items-center truncate rounded-lg border border-border/30 bg-muted/20 px-2 font-mono text-xs text-muted-foreground">
                                 {showKey ? apiKey : `${MASKED_BULLETS}${apiKey.slice(-4)}`}
                             </div>
                             <Button

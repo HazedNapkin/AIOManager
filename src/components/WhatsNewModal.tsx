@@ -209,7 +209,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
 
                 <DialogHeader className="flex-shrink-0 border-b border-border/30 bg-card px-6 pb-4 pt-6">
                     <div className="flex items-start gap-3 pr-10">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-muted/25 text-primary">
+                        <div data-theme-part="badge" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/40 bg-muted/25 text-primary">
                             <Sparkles className="h-5 w-5" />
                         </div>
                         <div className="min-w-0">
@@ -258,7 +258,7 @@ export function WhatsNewModal({ triggerOpen, onOpenChange }: {
                                         <span className="text-sm font-semibold text-foreground">{release.name || release.tag_name}</span>
                                         <span className="ml-auto text-xs text-muted-foreground">{date}</span>
                                         {isCurrentVersion && (
-                                            <span className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-success">
+                                            <span data-theme-part="badge" className="inline-flex items-center gap-1 rounded-full border border-success/25 bg-success/10 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-success">
                                                 <CheckCircle2 className="h-3 w-3" />
                                                 Current
                                             </span>

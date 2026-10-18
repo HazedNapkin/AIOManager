@@ -21,7 +21,7 @@ export function SyncSummarySection() {
 
     return (
         <section className="space-y-4">
-            <div className="space-y-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm">
+            <div data-theme-part="panel" className="space-y-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-5 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-3">
                         <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -31,7 +31,7 @@ export function SyncSummarySection() {
                         <div>
                             <div className="flex items-center gap-2">
                                 <h3 className="text-base font-semibold">Active Sync Connections</h3>
-                                <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-xs font-bold uppercase tracking-tighter text-primary">
+                                <span data-theme-part="badge" className="rounded-full bg-primary/12 px-1.5 py-0.5 text-xs font-bold uppercase tracking-tighter text-primary">
                                     {syncedAddons.length}
                                 </span>
                             </div>
@@ -51,7 +51,7 @@ export function SyncSummarySection() {
 
                 <div className="grid gap-2">
                     {syncedAddons.slice(0, displayCount).map((addon, idx) => (
-                        <div key={idx} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-border/35 bg-background/35 p-2.5">
+                        <div key={idx} data-theme-part="panel" className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-border/35 bg-background/35 p-2.5">
                             <AddonIcon
                                 name={addon.name}
                                 logo={addon.metadata?.customLogo || addon.manifest.logo}
@@ -60,7 +60,7 @@ export function SyncSummarySection() {
                                 imageClassName="p-0.5"
                             />
                             <span className="truncate text-xs font-bold">{addon.name}</span>
-                            <span className="shrink-0 rounded-full border border-border/30 bg-muted/25 px-2 py-1 text-xs text-muted-foreground">
+                            <span data-theme-part="badge" className="shrink-0 rounded-full border border-border/30 bg-muted/25 px-2 py-1 text-xs text-muted-foreground">
                                 {(() => {
                                     let count = 0
                                     for (const accState of Object.values(accountStates)) {

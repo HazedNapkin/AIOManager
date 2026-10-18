@@ -1,3 +1,5 @@
+import { BLUEPRINT_LIVE_CSS, COMIC_BOOK_CSS, COMIC_BOOK_CLASSIC_CSS, RETRO_DESKTOP_CSS, CRT_TERMINAL_CSS, LIQUID_CHROME_CSS, MATRIX_RAIN_CSS, NEON_ARCADE_CSS, PIP_BOY_CSS } from './theme-css'
+
 export function hslToHex(hsl: string): string {
     const [h, s, l] = hsl.split(' ').map(v => parseFloat(v))
     const sl = s / 100, ll = l / 100
@@ -138,6 +140,14 @@ export type Theme =
     | 'ruby'
     | 'amethyst'
     | 'comic-book'
+    | 'comic-book-plus'
+    | 'retro-desktop'
+    | 'crt-terminal'
+    | 'blueprint-live'
+    | 'liquid-chrome'
+    | 'matrix-rain'
+    | 'pip-boy'
+    | 'neon-arcade'
     | 'stained-glass'
     | 'lime-zest'
     | 'tangerine'
@@ -272,6 +282,57 @@ function theme(
 }
 
 export const THEME_OPTIONS: ThemeOption[] = [
+
+    theme('matrix-rain', 'Matrix Rain', 'Two speeds of cascading code, bright rain trails and black-green terminal panels.', '🟩', 'standard', {
+        background: '150 40% 3%', card: '150 32% 7%', cardForeground: '140 35% 92%',
+        primary: '145 85% 61%', primaryForeground: '150 45% 4%',
+        muted: '150 25% 13%', mutedForeground: '140 20% 70%',
+        destructive: '4 85% 69%', border: '145 28% 27%',
+    }, { subcategory: 'dark', customCss: MATRIX_RAIN_CSS }),
+    theme('pip-boy', 'Pip-Boy', 'Fallout-inspired green phosphor, instrument frames, scanlines and a slow CRT sweep.', '☢️', 'standard', {
+        background: '110 28% 4%', card: '115 25% 8%', cardForeground: '107 75% 82%',
+        primary: '106 90% 68%', primaryForeground: '110 40% 5%',
+        muted: '110 20% 13%', mutedForeground: '106 30% 65%',
+        destructive: '8 85% 68%', border: '106 35% 30%',
+    }, { subcategory: 'dark', customCss: PIP_BOY_CSS }),
+    theme('neon-arcade', 'Neon Arcade', 'Hot-pink controls, cyan cabinet frames and an animated neon grid.', '🕹️', 'standard', {
+        background: '266 48% 5%', card: '262 35% 10%', cardForeground: '290 30% 96%',
+        primary: '320 100% 72%', primaryForeground: '266 48% 5%',
+        muted: '262 28% 17%', mutedForeground: '270 22% 75%',
+        destructive: '5 95% 72%', border: '188 55% 29%', ring: '188 100% 68%',
+    }, { subcategory: 'dark', customCss: NEON_ARCADE_CSS }),
+
+    theme('blueprint-live', 'Blueprint Live', 'Cyan instrument panels on a precision grid. The header scans during sync.', '📐', 'standard', {
+        background: '222 55% 9%', card: '218 45% 15%', cardForeground: '205 75% 95%',
+        primary: '190 90% 65%', primaryForeground: '222 55% 9%',
+        muted: '218 38% 21%', mutedForeground: '207 30% 72%',
+        destructive: '8 90% 68%', border: '205 38% 34%',
+    }, { subcategory: 'dark', customCss: BLUEPRINT_LIVE_CSS }),
+    theme('liquid-chrome', 'Liquid Chrome', 'Brushed chrome, violet selections and a moving title-bar sheen. Clone to remix its CSS.', '🪩', 'standard', {
+        background: '218 15% 88%', card: '218 15% 96%', cardForeground: '225 30% 14%',
+        primary: '252 68% 45%', primaryForeground: '0 0% 100%',
+        muted: '218 13% 84%', mutedForeground: '225 14% 36%',
+        destructive: '350 75% 43%', border: '218 12% 65%',
+    }, { subcategory: 'light', customCss: LIQUID_CHROME_CSS }),
+
+    theme('comic-book-plus', 'Comic Book+', 'Halftone paper, inked panels and punchy offset shadows. Clone to remix its CSS.', '💥', 'standard', {
+        background: '45 80% 94%', card: '45 65% 99%', cardForeground: '225 30% 12%',
+        primary: '355 78% 43%', primaryForeground: '0 0% 100%',
+        muted: '45 35% 86%', mutedForeground: '225 20% 32%',
+        destructive: '0 80% 40%', border: '225 30% 12%', ring: '215 85% 42%',
+    }, { subcategory: 'light', customCss: COMIC_BOOK_CSS }),
+    theme('retro-desktop', 'Retro Desktop', 'Teal desktop, beveled controls and classic system typography. Clone to remix its CSS.', '🖥️', 'standard', {
+        background: '180 40% 83%', card: '0 0% 83%', cardForeground: '225 20% 12%',
+        primary: '232 68% 32%', primaryForeground: '0 0% 100%',
+        muted: '0 0% 76%', mutedForeground: '225 10% 30%',
+        destructive: '0 75% 38%', border: '0 0% 48%', ring: '232 68% 32%',
+    }, { subcategory: 'light', customCss: RETRO_DESKTOP_CSS }),
+    theme('crt-terminal', 'CRT Terminal', 'Phosphor green, static scanlines and glowing terminal panels. Clone to remix its CSS.', '📟', 'standard', {
+        background: '150 35% 5%', card: '150 30% 9%', cardForeground: '142 55% 86%',
+        primary: '142 76% 65%', primaryForeground: '150 40% 6%',
+        muted: '150 22% 13%', mutedForeground: '142 23% 65%',
+        destructive: '6 80% 67%', destructiveForeground: '0 0% 0%', border: '142 28% 26%',
+    }, { subcategory: 'dark', customCss: CRT_TERMINAL_CSS }),
 
     theme('coral-reef', 'Coral Reef', 'Tropical underwater warmth with coral and turquoise sea life', '🪸', 'standard', {
         background: '10 40% 92%', card: '180 30% 98%', cardForeground: '10 35% 15%',
@@ -825,12 +886,12 @@ export const THEME_OPTIONS: ThemeOption[] = [
         muted: '60 25% 88%', mutedForeground: '180 15% 35%',
         destructive: '0 72% 45%', border: '40 25% 75%', ring: '42 45% 56%',
     }, { subcategory: 'light' }),
-    theme('comic-book', 'Comic Book', 'Bold primary colors and thick black borders, pop art halftone', '💥', 'standard', {
+    theme('comic-book', 'Comic Book', 'Bold primary colors and thick black borders and offset shadows', '💥', 'standard', {
         background: '0 0% 96%', card: '0 0% 100%', cardForeground: '0 0% 10%',
         primary: '355 85% 50%', primaryForeground: '0 0% 100%',
         muted: '0 0% 90%', mutedForeground: '0 0% 30%',
         destructive: '0 90% 50%', border: '0 0% 15%', ring: '215 90% 50%',
-    }, { subcategory: 'light', customCss: `[class*="bg-card"]:not([class*="bg-card-"]) { border: 2px solid hsl(0 0% 10%) !important; border-radius: 4px !important; box-shadow: 3px 3px 0 hsl(0 0% 10%) !important; } [class*="btn"]:not([class*="btn-"]), button[class*="default"] { border: 2px solid hsl(0 0% 10%) !important; border-radius: 4px !important; box-shadow: 2px 2px 0 hsl(0 0% 10%) !important; } [class*="rounded"]:not([class*="rounded-"]) { border-radius: 4px !important; }` }),
+    }, { subcategory: 'light', customCss: COMIC_BOOK_CLASSIC_CSS }),
     theme('deep-space', 'Deep Space', 'Near-black indigo with electric violet, deeper and more cosmic than Aurora', '🪐', 'standard', {
         background: '244 55% 6%', card: '244 45% 25%', cardForeground: '250 60% 95%',
         primary: '262 80% 62%', muted: '244 38% 8%', mutedForeground: '248 22% 56%',

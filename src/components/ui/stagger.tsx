@@ -36,9 +36,11 @@ function StaggerContainer({
 function StaggerItem({
   children,
   className,
+  'data-theme-part': themePart,
 }: {
   children: React.ReactNode
   className?: string
+  'data-theme-part'?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(() => !appBootSettled)
@@ -102,6 +104,7 @@ function StaggerItem({
   return (
     <div
       ref={ref}
+      data-theme-part={themePart}
       className={cn('h-full', className)}
       style={style}
     >

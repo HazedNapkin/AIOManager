@@ -230,7 +230,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
 
                     {step === 'test' && (
                         <div className="space-y-4 mt-2">
-                            <div className="rounded-2xl border border-border/40 bg-card p-4 space-y-2">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-4 space-y-2">
                                 <div className="flex items-center gap-2 text-sm">
                                     <Globe className="h-4 w-4 text-muted-foreground" />
                                     <span className="font-medium truncate">{name}</span>
@@ -256,7 +256,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                             )}
 
                             {testResult && (
-                                <div className="rounded-2xl border border-success/30 bg-success/5 p-4 space-y-2">
+                                <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-success/30 bg-success/5 p-4 space-y-2">
                                     <div className="flex items-center gap-2">
                                         <Check className="h-4 w-4 text-success" />
                                         <span className="text-sm font-semibold text-success">Connected</span>
@@ -284,7 +284,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                             )}
 
                             {testError && (
-                                <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-2">
+                                <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 space-y-2">
                                     <div className="flex items-center gap-2">
                                         <AlertCircle className="h-4 w-4 text-destructive" />
                                         <span className="text-sm font-semibold text-destructive">Connection Failed</span>
@@ -299,7 +299,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                         <div className="space-y-4 mt-2">
                             <p className="text-sm text-muted-foreground">Review your provider configuration before adding.</p>
 
-                            <div className="rounded-2xl border border-border/40 bg-card p-4 space-y-3">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-4 space-y-3">
                                 <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                                     <span className="text-muted-foreground">Name</span>
                                     <span className="font-medium truncate">{name}</span>
@@ -326,7 +326,7 @@ export function ProviderSetupDialog({ open, onOpenChange, onComplete }: Provider
                                 )}
                             </div>
 
-                            <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
+                            <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
                                 <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                                 <span>The credential is held on this device and stored encrypted on your sync server.</span>
                             </div>

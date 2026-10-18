@@ -46,7 +46,7 @@ export function ImageUploadButton({ onUploaded, options, className, label, child
                     e.target.value = ''
                 }}
             />
-            <button
+            <button data-theme-part="button"
                 type="button"
                 disabled={processing}
                 onClick={() => inputRef.current?.click()}
