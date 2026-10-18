@@ -415,7 +415,7 @@ export function RuleDialog({
                             <div className="bg-muted/20 border border-border/40 rounded-2xl p-4 space-y-3">
                                 <div className="space-y-0.5">
                                     <label className="text-xs font-medium text-muted-foreground uppercase">Custom Health Checks (Optional)</label>
-                                    <p className="text-xs text-muted-foreground/60">Watch a provider your addons depend on, like TorBox's API. When it goes down, the addons associated with it are skipped. Use the provider's API URL — never your addon URLs.</p>
+                                    <p className="text-xs text-muted-foreground/60">Watch a provider your addons depend on, like TorBox's API. When it goes down, the addons associated with it are skipped. Use the provider's API URL. Do not use your addon URLs.</p>
                                 </div>
 
                                 {showLegacyBanner && (
@@ -572,7 +572,7 @@ export function RuleDialog({
                                                                         {isStale && (
                                                                             <Tooltip content="Doesn't apply while this addon is out of the chain; reactivates automatically if it returns.">
                                                                                 <StatusChip variant="warning" size="sm" className="cursor-help shrink-0">
-                                                                                    Not in chain — inactive
+                                                                                    Not in chain (inactive)
                                                                                 </StatusChip>
                                                                             </Tooltip>
                                                                         )}
@@ -730,7 +730,7 @@ export function RuleDialog({
                                     <SelectContent>
                                         <SelectItem value="default">Use global webhook</SelectItem>
                                         <SelectItem value="custom">Custom webhook for this rule</SelectItem>
-                                        <SelectItem value="off">Off — no notifications for this rule</SelectItem>
+                                        <SelectItem value="off">Off (no notifications for this rule)</SelectItem>
                                     </SelectContent>
                                 </Select>
 

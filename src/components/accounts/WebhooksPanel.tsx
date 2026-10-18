@@ -97,7 +97,7 @@ export function WebhooksPanel({ accountId, accountName, accountRules, onEditRule
                     <p className="text-xs text-muted-foreground mt-1">Fallback for all rules unless a rule has its own custom webhook.</p>
                     {!webhook.url && serverGlobalWebhook?.configured && (
                         <p className="text-xs text-muted-foreground/70 mt-1">
-                            A global webhook is saved on the server{serverGlobalWebhook.masked ? ` (${serverGlobalWebhook.masked})` : ''} for this account. This browser has no local copy — paste the URL and save to replace or test it.
+                            A global webhook is saved on the server{serverGlobalWebhook.masked ? ` (${serverGlobalWebhook.masked})` : ''} for this account. This browser has no local copy. Paste the URL and save to replace or test it.
                         </p>
                     )}
                 </div>

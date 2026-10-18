@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNotesStore, type Note, type NoteMeta, extractTags } from '@/store/notesStore'
@@ -1550,6 +1551,9 @@ function NoteCard({
 
 export function NotesPage() {
     useDocumentTitle('Notes')
+    const location = useLocation()
+    const requestedNoteId = new URLSearchParams(location.search).get('note')
+    const openedNoteLink = useRef<string | null>(null)
     const notes = useNotesStore(s => s.notes)
     const trash = useNotesStore(s => s.trash)
     const createNote = useNotesStore(s => s.createNote)
@@ -1661,12 +1665,25 @@ export function NotesPage() {
     }, [loadNoteContent])
 
     useEffect(() => {
+        if (requestedNoteId && notes.some(note => note.id === requestedNoteId)) {
+            const linkKey = `${location.key}:${requestedNoteId}`
+            if (openedNoteLink.current !== linkKey) {
+                openedNoteLink.current = linkKey
+                setSelectedId(requestedNoteId)
+                setView('notes')
+                setSearch('')
+                setActiveTag(null)
+                setShowEditor(true)
+                void loadNoteContent(requestedNoteId)
+            }
+            return
+        }
         if (!selectedId && sorted.length > 0) {
             const firstId = sorted[0].id
             setSelectedId(firstId)
             loadNoteContent(firstId)
         }
-    }, [selectedId, sorted, loadNoteContent])
+    }, [selectedId, sorted, notes, loadNoteContent, requestedNoteId, location.key])
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {

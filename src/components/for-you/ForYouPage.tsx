@@ -888,7 +888,7 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
             {popularFallbackNotice && showRails && (
                 <div className="flex items-center gap-2 rounded-xl border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                     <Info className="h-3.5 w-3.5 shrink-0" />
-                    Personalized recommendations are unavailable right now — showing popular titles instead.
+                    Personalized recommendations are unavailable right now. Showing popular titles instead.
                 </div>
             )}
 
