@@ -23,6 +23,8 @@ interface ConnectionCardProps {
     onToggle: () => void
     email?: string
     badge?: React.ReactNode
+    addonCount?: number
+    /** Which truth the count represents: the account's recorded collection or the count recorded at the connection's last sync. */
 }
 
 export const ConnectionCard = memo(function ConnectionCard({
@@ -35,6 +37,7 @@ export const ConnectionCard = memo(function ConnectionCard({
     onToggle,
     email,
     badge,
+    addonCount,
 }: ConnectionCardProps) {
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
@@ -89,7 +92,9 @@ export const ConnectionCard = memo(function ConnectionCard({
                         <p className="text-xs text-muted-foreground truncate">{email}</p>
                     )}
                     <p className="line-clamp-1 text-xs text-muted-foreground">
-                        {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}Synced {lastSync ? timeAgo(lastSync) : 'never'}
+                        {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}
+                        {addonCount !== undefined ? `${addonCount} account addon${addonCount === 1 ? '' : 's'} \u00b7 ` : ''}
+                        Synced {lastSync ? timeAgo(lastSync) : 'never'}
                     </p>
                     {lastError && (
                         <p className="line-clamp-1 text-xs text-destructive">{lastError}</p>
@@ -107,6 +112,7 @@ export const ConnectionCard = memo(function ConnectionCard({
                         onCheckedChange={() => { setEnabled(v => !v); onToggle() }}
                         className="scale-90"
                         aria-label={`${enabled ? 'Disable' : 'Enable'} ${name}`}
+                        disabled={syncing}
                     />
                     <ChevronRight className="h-4 w-4 text-muted-foreground/40 mt-1" />
                 </div>

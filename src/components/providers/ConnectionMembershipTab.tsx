@@ -141,6 +141,22 @@ function NuvioMembership({ nuvioMember }: { nuvioMember: NuvioMemberStatus | und
     )
 }
 
+// RealStream has no membership program we can read, so the slot stays with an honest
+// absence instead of a fabricated tier.
+function RealStreamMembership() {
+    return (
+        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            <div className="min-w-0">
+                <p className="text-sm font-semibold">RealStream membership</p>
+                <p className="text-xs text-muted-foreground">Membership tier for this RealStream connection.</p>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground/80">
+                RealStream does not expose a membership tier through its API, so there is nothing to show here.
+            </p>
+        </div>
+    )
+}
+
 export function ConnectionMembershipTab({ platform, premium, nuvioMember }: {
     platform: string
     premium?: PremiumStatus
@@ -148,5 +164,6 @@ export function ConnectionMembershipTab({ platform, premium, nuvioMember }: {
 }) {
     if (platform === 'stremio') return <StremioMembership premium={premium} />
     if (platform === 'nuvio') return <NuvioMembership nuvioMember={nuvioMember} />
+    if (platform === 'realstream') return <RealStreamMembership />
     return null
 }

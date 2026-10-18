@@ -132,7 +132,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                 try {
                     let token = getCachedNuvioToken(conn.id)
                     if (!token) {
-                        token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+                        token = await fetchConnectionToken(accountId, conn.id, 'nuvio', conn.credentials?.baseUrl)
                         setCachedNuvioToken(conn.id, token)
                     }
                     const rows = await nuvioDriverFor(conn).getMemberAccess(token.accessToken)
@@ -166,7 +166,10 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     const notifySubDialog = (open: boolean) => onSubDialogChange?.(open)
 
     const resolvedConnections = connections
-    const activeCount = resolvedConnections.filter(c => (accountStates[c.id]?.status || c.status) === 'active').length
+    const activeCount = resolvedConnections.filter(c => {
+        const state = accountStates[c.id]
+        return (state ? state.status : c.status) === 'active'
+    }).length
 
     const handleSync = async () => {
         await syncConnections(accountId)
@@ -379,22 +382,34 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {resolvedConnections.map(conn => {
                             const state = accountStates[conn.id]
+                            // The live state entry is authoritative while present: its
+                            // lastError: null means the error is CLEARED (the stored
+                            // connection copy must not resurrect it) and lastSync: 0
+                            // means never synced. Only fall back to the stored fields
+                            // when there is no live entry at all.
+                            const liveStatus = state ? state.status : conn.status
+                            const liveLastSync = state ? state.lastSync : conn.lastSync
+                            const liveLastError = state ? state.lastError : (conn.lastError ?? null)
                             const needsSignIn = conn.platform === 'stremio' && !conn.credentials?.authKey
                             const connEmail = conn.credentials?.email || (conn.platform === 'stremio' && account ? getAccountEmail(account) : undefined)
                             const maskedConnEmail = connEmail ? maskEmailLevel(connEmail, emailPrivacyLevel) : undefined
                             const premium = conn.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined
                             const nuvioMember = conn.platform === 'nuvio' ? nuvioMemberByConnection.get(conn.id) : undefined
+                            // lastKnownAddonCount is not maintained after connection creation.
+                            // Show the current account collection rather than a stale remote count.
+                            const accountAddonCount = statusAccount?.addons?.length
                             return (
                                 <ConnectionCard
                                     key={conn.id}
                                     connection={conn}
-                                    status={needsSignIn ? 'pending' : (state?.status || conn.status)}
-                                    lastSync={state?.lastSync || conn.lastSync}
-                                    lastError={state?.lastError}
+                                    status={needsSignIn ? 'pending' : liveStatus}
+                                    lastSync={liveLastSync}
+                                    lastError={liveLastError}
                                     syncing={isSyncing === accountId}
                                     onEdit={() => setEditingId(conn.id)}
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
                                     email={maskedConnEmail}
+                                    addonCount={accountAddonCount}
                                     badge={
                                         needsSignIn ? (
                                             <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-warning">Needs sign-in</span>
@@ -425,14 +440,23 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     return (
         <>
             {editing ? (
-                <ConnectionEditPanel
-                    accountId={accountId}
-                    connection={editing}
-                    status={accountStates[editing.id]?.status || editing.status}
-                    premium={editing.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined}
-                    nuvioMember={editing.platform === 'nuvio' ? nuvioMemberByConnection.get(editing.id) : undefined}
-                    onBack={() => setEditingId(null)}
-                />
+                (() => {
+                    // Same authority rule as the cards: the live state entry wins as a
+                    // whole; the stored connection fields only serve when it is absent.
+                    const editState = accountStates[editing.id]
+                    return (
+                        <ConnectionEditPanel
+                            accountId={accountId}
+                            connection={editing}
+                            status={editState ? editState.status : editing.status}
+                            lastError={editState ? editState.lastError : (editing.lastError ?? null)}
+                            lastSync={editState ? editState.lastSync : editing.lastSync}
+                            premium={editing.platform === 'stremio' ? premiumByAccount.get(accountId) : undefined}
+                            nuvioMember={editing.platform === 'nuvio' ? nuvioMemberByConnection.get(editing.id) : undefined}
+                            onBack={() => setEditingId(null)}
+                        />
+                    )
+                })()
             ) : hasApiKeyTab ? (
                 <Tabs value={subTab} onValueChange={setSubTab} className="space-y-4">
                     <TabsList>

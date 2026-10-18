@@ -688,7 +688,7 @@ function SectionContent({
                 }
                 const total = 1 + success
                 if (fail === 0) {
-                    toast({ title: 'Variant updated across accounts', description: `${variantId ? `Switched to ${variantId}` : 'Switched to base config'} — ${total} account${total !== 1 ? 's' : ''}` })
+                    toast({ title: 'Variant updated across accounts', description: `${variantId ? `Switched to ${variantId}` : 'Switched to base config'}. ${total} account${total !== 1 ? 's' : ''}` })
                 } else {
                     toast({ title: 'Variant partially updated', description: `${total} succeeded, ${fail} failed`, variant: 'destructive' })
                 }

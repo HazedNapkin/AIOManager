@@ -6,7 +6,7 @@ import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState } from '@/components/common/EmptyState'
-import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown } from 'lucide-react'
+import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown, ChevronRight } from 'lucide-react'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
@@ -28,7 +28,8 @@ import { cn } from '@/lib/utils'
 import type { Connection, ConnectionStatus } from '@/types/connection'
 import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
 import { StremioSocialAuth } from '@/components/accounts/StremioSocialAuth'
-import { displayStatus, tokenExpiry } from '@/lib/connection-format'
+import { displayStatus, tokenExpiry, timeAgo } from '@/lib/connection-format'
+import { getPlatformEntry } from '@/lib/platform-registry'
 import { NuvioBackupTab, NuvioPluginsTab, NuvioProfilesTab, NuvioLibraryTab, NuvioCollectionsTab } from './NuvioWorkspace'
 import { ConnectionMembershipTab } from './ConnectionMembershipTab'
 import { ProfileRosterRow } from './ProfileRosterRow'
@@ -51,14 +52,17 @@ function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
 function TestResultBanner({ result }: { result: { ok: boolean; message: string } | null }) {
     if (!result) return null
     return (
-        <div className={cn(
-            'flex items-center gap-2 rounded-xl border px-3 py-2 text-xs',
-            result.ok
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                : 'border-destructive/30 bg-destructive/10 text-destructive'
-        )}>
-            {result.ok ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
-            <span className="truncate">{result.message}</span>
+        <div
+            role={result.ok ? 'status' : 'alert'}
+            className={cn(
+                'flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
+                result.ok
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive'
+            )}
+        >
+            {result.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="min-w-0 break-words">{result.message}</span>
         </div>
     )
 }
@@ -557,7 +561,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         setTesting(true)
         setTestResult(null)
         try {
-            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'nuvio'))
+            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'nuvio', connection.credentials?.baseUrl))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
         } catch (err) {
@@ -730,6 +734,8 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
         setTesting(true)
         setTestResult(null)
         try {
+            // Beta's RealStream token path never passes a baseUrl (self-hosted
+            // RealStream is gone), so the test must match it exactly.
             const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'realstream'))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
@@ -1181,21 +1187,35 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
     )
 }
 
-function StremioAddonsSection({ accountId }: { accountId: string }) {
+function ConnectionAddonsSection({ accountId, platform }: { accountId: string; platform: string }) {
     const { addons } = useAddons(accountId)
+    const platformName = getPlatformEntry(platform)?.name || platform
+
+    // This list is AIOManager's recorded collection for the account. It is not a
+    // fresh read from the platform (RealStream especially exposes no live addon
+    // read here), so the note says what the rows actually are.
+    const note = (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+            This is the account's recorded AIOManager collection. Check {platformName} to confirm its current addons.
+        </p>
+    )
 
     if (addons.length === 0) {
         return (
-            <EmptyState
-                icon={<Puzzle className="h-5 w-5" />}
-                title="No addons found"
-                description="Addons installed on this Stremio account will appear here."
-            />
+            <div className="space-y-2">
+                {note}
+                <EmptyState
+                    icon={<Puzzle className="h-5 w-5" />}
+                    title="No addons recorded"
+                    description="Addons recorded for this account will appear here."
+                />
+            </div>
         )
     }
 
     return (
         <div className="space-y-1.5">
+            {note}
             {addons.map((addon, i) => {
                 const name = addon.metadata?.customName || addon.transportName || addon.manifest.name || 'Unknown addon'
                 const logo = addon.metadata?.customLogo || addon.manifest.logo
@@ -1244,6 +1264,42 @@ function StatCard({ label, value }: { label: string; value: string }) {
             <p className="text-[11px] text-muted-foreground mt-0.5">{label}</p>
         </div>
     )
+}
+
+function HeaderStat({ label, value, isError, wide }: { label: string; value: string; isError?: boolean; wide?: boolean }) {
+    return (
+        <div className={cn('min-w-0', wide && 'col-span-2 sm:col-span-4')}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className={cn('mt-0.5 text-xs font-medium', wide ? 'break-words' : 'truncate', isError ? 'text-destructive' : 'text-foreground/80')}>{value}</p>
+        </div>
+    )
+}
+
+// The same four facts render on every platform's detail surface, so no connection reads
+// thinner than the others. The Session entry is the platform's honest re-auth state:
+// a stored Stremio auth key proves the key is saved, not that Stremio is reachable,
+// so the label never claims live presence.
+function sessionState(connection: Connection, display: string): string {
+    // Hydra-outbound connections can carry a platform-like slug (e.g. a target
+    // named "Nuvio"), so the outbound check must come before platform checks
+    // or an outbound connection would show the slug platform's auth expectations.
+    if (connection.connectionType === 'hydra-outbound') return 'Static API key'
+    if (connection.platform === 'stremio') {
+        if (display === 'expired') return 'Re-auth required'
+        return connection.credentials?.authKey ? 'Auth key stored' : 'Sign in required'
+    }
+    if (connection.platform === 'nuvio') {
+        // A stored access token only proves a session is saved. It does not by
+        // itself prove refresh works, so the label never claims auto-refresh;
+        // an expired or failing session says so instead.
+        if (display === 'expired' || display === 'error') return 'Re-auth required'
+        return connection.credentials?.accessToken ? 'Session stored' : 'Sign in required'
+    }
+    if (connection.platform === 'realstream') {
+        if (display === 'expired' || display === 'error') return 'Re-auth required'
+        return connection.credentials?.password ? 'Silent re-auth ready' : 'Manual re-auth'
+    }
+    return connection.credentials?.accessToken ? 'Session stored' : 'No session'
 }
 
 function StremioLibrarySection({ accountId }: { accountId: string }) {
@@ -1329,6 +1385,8 @@ export function ConnectionEditPanel({
     accountId,
     connection,
     status,
+    lastError,
+    lastSync,
     premium,
     nuvioMember,
     onBack,
@@ -1336,21 +1394,27 @@ export function ConnectionEditPanel({
     accountId: string
     connection: Connection
     status: ConnectionStatus
+    lastError?: string | null
+    lastSync?: number
     premium?: PremiumStatus
     nuvioMember?: NuvioMemberStatus
     onBack: () => void
 }) {
     const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
+    const { addons } = useAddons(accountId)
     const [testing, setTesting] = useState(false)
     const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
     const [tab, setTab] = useState('membership')
     const isHydra = connection.connectionType === 'hydra-outbound'
     const isStremio = connection.platform === 'stremio'
     const isNuvio = connection.platform === 'nuvio'
-    const showTabs = isStremio || isNuvio
+    const isRealStream = connection.platform === 'realstream'
+    const showTabs = isStremio || isNuvio || isRealStream
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
     const display = displayStatus(status, expiry)
+    const session = sessionState(connection, display)
+    const needsAttention = !!lastError || session === 'Re-auth required' || session === 'Sign in required'
 
     const handleTestConnection = async () => {
         if (!account) return
@@ -1389,6 +1453,7 @@ export function ConnectionEditPanel({
                         <p className="text-base font-semibold truncate">{name}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <ConnectionStatusPill status={display} />
+                            {!connection.enabled && <StatusChip size="sm" className="h-5 px-2 text-xs bg-muted/40">Paused</StatusChip>}
                             {isHydra && <StatusChip size="sm" className="h-5 px-2 text-xs bg-muted/40">Outbound</StatusChip>}
                             {connection.capabilities.map(c => (
                                 <StatusChip key={c} size="sm" className="h-5 px-2 text-xs bg-muted/40">{c}</StatusChip>
@@ -1396,6 +1461,25 @@ export function ConnectionEditPanel({
                         </div>
                     </div>
                 </div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-border/30 pt-3 sm:grid-cols-4">
+                    <HeaderStat
+                        label="Account addons"
+                        value={String(addons.length)}
+                    />
+                    <HeaderStat label="Last sync" value={lastSync ? timeAgo(lastSync) : 'Never'} />
+                    <HeaderStat label="Last error" value={lastError || 'None'} isError={!!lastError} wide={!!lastError} />
+                    <HeaderStat label="Session" value={session} isError={session === 'Re-auth required'} />
+                </div>
+                {showTabs && needsAttention && (
+                    <button
+                        type="button"
+                        onClick={() => setTab('connection')}
+                        className="mt-2.5 inline-flex items-center gap-1 rounded-md text-xs font-medium text-primary transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        Test or re-authenticate this connection
+                        <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                )}
             </div>
 
             {showTabs ? (
@@ -1406,11 +1490,11 @@ export function ConnectionEditPanel({
                         {isStremio && premium?.active && (
                             <TabsTrigger value="profiles">Supporters Profiles</TabsTrigger>
                         )}
+                        {(isStremio || isRealStream) && (
+                            <TabsTrigger value="addons">Addons</TabsTrigger>
+                        )}
                         {isStremio && (
-                            <>
-                                <TabsTrigger value="addons">Addons</TabsTrigger>
-                                <TabsTrigger value="library">Library</TabsTrigger>
-                            </>
+                            <TabsTrigger value="library">Library</TabsTrigger>
                         )}
                         {isNuvio && (
                             <>
@@ -1476,15 +1560,15 @@ export function ConnectionEditPanel({
                             <SupportersProfilesRoster accountId={accountId} connection={connection} />
                         </TabsContent>
                     )}
+                    {(isStremio || isRealStream) && (
+                        <TabsContent value="addons">
+                            <ConnectionAddonsSection accountId={accountId} platform={connection.platform} />
+                        </TabsContent>
+                    )}
                     {isStremio && (
-                        <>
-                            <TabsContent value="addons">
-                                <StremioAddonsSection accountId={accountId} />
-                            </TabsContent>
-                            <TabsContent value="library">
-                                <StremioLibrarySection accountId={accountId} />
-                            </TabsContent>
-                        </>
+                        <TabsContent value="library">
+                            <StremioLibrarySection accountId={accountId} />
+                        </TabsContent>
                     )}
 
                     {isNuvio && (
@@ -1509,10 +1593,6 @@ export function ConnectionEditPanel({
                 </Tabs>
             ) : (
                 <div className="space-y-4">
-                    {connection.platform === 'realstream' && (
-                        <RealStreamCredentialsSection accountId={accountId} connection={connection} />
-                    )}
-
                     {isHydra && (
                         <HydraCredentialsSection accountId={accountId} connection={connection} />
                     )}

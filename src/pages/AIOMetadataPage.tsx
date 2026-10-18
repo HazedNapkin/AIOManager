@@ -520,7 +520,7 @@ function SectionContent({
                 }
                 const total = 1 + success
                 if (fail === 0) {
-                    toast({ title: 'Tag updated across accounts', description: `${tag ? `Filtering by "${tag}"` : 'Showing all catalogs'} — ${total} account${total !== 1 ? 's' : ''}` })
+                    toast({ title: 'Tag updated across accounts', description: `${tag ? `Filtering by "${tag}"` : 'Showing all catalogs'}. ${total} account${total !== 1 ? 's' : ''}` })
                 } else {
                     toast({ title: 'Tag partially updated', description: `${total} succeeded, ${fail} failed`, variant: 'destructive' })
                 }
