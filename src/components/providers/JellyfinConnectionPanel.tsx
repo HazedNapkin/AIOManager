@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Power, RefreshCw, Trash2 } from 'lucide-react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Import, Power, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
@@ -14,6 +14,8 @@ import { cn } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
 import type { Connection } from '@/types/connection'
 import { PlatformLogo, ConnectionStatusPill, ConnectionTestButton, ConnectionTestResult, connectionLabel, type ConnectionTestOutcome } from './ConnectionPrimitives'
+
+const WatchMigrationDialog = lazy(() => import('./WatchMigrationDialog').then(module => ({ default: module.WatchMigrationDialog })))
 
 function HeaderStat({ label, value, isError, title }: { label: string; value: string; isError?: boolean; title?: string }) {
     return (
@@ -40,6 +42,7 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
     const [error, setError] = useState('')
     const [testResult, setTestResult] = useState<ConnectionTestOutcome | null>(null)
     const [confirmRemove, setConfirmRemove] = useState(false)
+    const [migrationOpen, setMigrationOpen] = useState(false)
     const request = useRef<AbortController | null>(null)
     const encryptionKey = useAuthStore(state => state.encryptionKey)
 
@@ -172,6 +175,14 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
 
                 <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
                     <div className="min-w-0">
+                        <p className="text-sm font-semibold">Import watch state</p>
+                        <p className="text-xs text-muted-foreground">Preview watched titles and resume points from another connection, then copy selected matches to this user.</p>
+                    </div>
+                    <Button variant="outline" disabled={busy || !connection.enabled || !encryptionKey || !connection.credentials?.jellyfin} onClick={() => setMigrationOpen(true)}><Import className="h-4 w-4" />Preview import…</Button>
+                </div>
+
+                <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                    <div className="min-w-0">
                         <p className="text-sm font-semibold">Remove connection</p>
                         <p className="text-xs leading-relaxed text-muted-foreground">Removes this saved connection from AIOManager. This does not revoke the token on your media server.</p>
                     </div>
@@ -193,5 +204,6 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
                     </div>
                 </div>
         </div>
+        {migrationOpen && <Suspense fallback={null}><WatchMigrationDialog open={migrationOpen} onOpenChange={setMigrationOpen} accountId={accountId} connection={connection} /></Suspense>}
     </div>
 }

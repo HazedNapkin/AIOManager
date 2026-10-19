@@ -33,6 +33,10 @@ function libraryItems(reads: LibraryReads | undefined): JellyfinItem[] {
 }
 export interface JellyfinMediaScope { accountId: string; connection: Connection }
 
+export function refreshJellyfinMedia(accountId: string, connectionId: string): void {
+    void mediaQueries.invalidateQueries({ queryKey: ['jellyfin-media', accountId, connectionId] })
+}
+
 export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
     const encryptionKey = useAuthStore(state => state.encryptionKey)
     const isVisible = useSyncExternalStore(subscribeVisibility, visible, () => false)
