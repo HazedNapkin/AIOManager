@@ -103,6 +103,26 @@ export interface JellyfinItemResult {
     limit: number
 }
 
+export interface JellyfinPagedReadOptions {
+    maxItems?: number
+    pageSize?: number
+}
+
+export interface JellyfinItemQuery {
+    ids?: string[]
+    parentId?: string
+    includeItemTypes?: string
+    startIndex?: number
+    limit?: number
+}
+
+export interface JellyfinUserDataUpdate {
+    Played?: true
+    PlaybackPositionTicks?: number
+    LastPlayedDate?: string
+    PlayCount?: number
+}
+
 /** Backward-compatible alias for the played-history result. */
 export type JellyfinPlayedResult = JellyfinItemResult
 
@@ -174,7 +194,12 @@ export interface JellyfinClient {
     getUser(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinUser>
     inspect(accessToken: string, user: JellyfinUser, signal?: AbortSignal): Promise<JellyfinServerDetails>
     readItem(accessToken: string, userId: string, itemId: string, signal?: AbortSignal): Promise<JellyfinItem>
+    readWatchItem(accessToken: string, userId: string, itemId: string, signal?: AbortSignal): Promise<JellyfinItem>
     readResume(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinItemResult>
     readPlayed(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinItemResult>
+    readAllPlayed(accessToken: string, userId: string, options?: JellyfinPagedReadOptions, signal?: AbortSignal): Promise<JellyfinItemResult>
+    readAllResume(accessToken: string, userId: string, options?: JellyfinPagedReadOptions, signal?: AbortSignal): Promise<JellyfinItemResult>
+    readAllLibrary(accessToken: string, userId: string, options?: JellyfinPagedReadOptions, signal?: AbortSignal): Promise<JellyfinItemResult>
+    queryUserItems(accessToken: string, userId: string, query: JellyfinItemQuery, signal?: AbortSignal): Promise<JellyfinItem[]>
     readSessions(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinSession[]>
 }

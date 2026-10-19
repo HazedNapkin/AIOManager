@@ -1,5 +1,5 @@
-// Browser-direct Jellyfin protocol client, read-only except for one scoped
-// watched-state mutation.
+// Browser-direct Jellyfin protocol client, read-only except for two scoped
+// watched-state mutations.
 //
 // Speaks the Jellyfin HTTP API against genuine Jellyfin servers and the
 // AIOStreams / AIOMetadata Jellyfin facades. Key invariants:
@@ -9,9 +9,9 @@
 //   - error messages never echo the base URL, request bodies or response bodies
 //     and error causes are sanitized so logged causes cannot leak them either
 //   - no retries, no token refresh; watched/progress state is mutated only by
-//     clearWatchState — a single DELETE scoped to one user/item that is only
-//     reported as cleared after a readback explicitly confirms Played=false
-//     and PlaybackPositionTicks=0 (acknowledgements alone prove nothing)
+//     the scoped clearWatchState and writeUserData operations. Callers must
+//     verify writeUserData with an explicit readback; clearWatchState verifies
+//     its own readback. Acknowledgements alone prove nothing.
 //   - fetch is injectable; globalThis.fetch is resolved per call, never captured
 //     at module load
 //   - completeness of bounded reads is reported honestly, never assumed
@@ -21,12 +21,15 @@ import type {
     JellyfinClientOptions,
     JellyfinErrorKind,
     JellyfinItem,
+    JellyfinItemQuery,
     JellyfinItemResult,
+    JellyfinPagedReadOptions,
     JellyfinProduct,
     JellyfinServerDetails,
     JellyfinSession,
     JellyfinSignIn,
     JellyfinSystemInfo,
+    JellyfinUserDataUpdate,
     JellyfinUser,
 } from './types.ts'
 
@@ -41,6 +44,11 @@ const PLAYED_PAGE_SIZE = 250
 const SESSION_FRESH_MS = 120000
 /** A check-in further than this into the future is clock skew or fabricated. */
 const SESSION_FUTURE_SKEW_MS = 5000
+const PLAYED_ALL_MAX_ITEMS = 50_000
+const RESUME_ALL_MAX_ITEMS = 10_000
+const RESUME_ALL_PAGE_SIZE = 50
+const LIBRARY_ALL_MAX_ITEMS = 100_000
+const LIBRARY_PAGE_SIZE = 500
 
 /**
  * Typed failure for every client operation. `kind` classifies the failure so
@@ -163,21 +171,17 @@ function defaultDeviceId(): string {
     return `aio-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`
 }
 
-/**
- * Product detection: only the authenticated PackageName positively identifies
- * the product. ProductName is always some variant of "Jellyfin Server" on every
- * Jellyfin-compatible facade — AIOStreams and AIOMetadata both claim it — so it
- * can never prove which product is behind the API. Unknown or missing packages
- * therefore stay 'compatible'. Genuine Jellyfin is proven only by the known
- * package names below; any future additions must be established from verified
- * local evidence, never guessed from a ProductName.
- */
-function detectProduct(packageName: string | undefined): JellyfinProduct {
+function detectProduct(packageName: string | undefined, info?: Record<string, unknown>): JellyfinProduct {
     const pkg = (packageName ?? '').trim().toLowerCase()
     if (pkg === 'aiostreams') return 'aiostreams'
     if (pkg === 'aiometadata') return 'aiometadata'
     if (pkg === 'jellyfin' || pkg === 'jellyfin-server') return 'jellyfin'
-    return 'compatible'
+    const nativeSystemInfo = !pkg && info?.ProductName === 'Jellyfin Server'
+        && typeof info.SupportsLibraryMonitor === 'boolean'
+        && typeof info.CanSelfRestart === 'boolean'
+        && typeof info.SystemArchitecture === 'string'
+        && Array.isArray(info.CompletedInstallations)
+    return nativeSystemInfo ? 'jellyfin' : 'compatible'
 }
 
 /** Stable display label for a detected product (raw names live in packageName). */
@@ -233,12 +237,12 @@ interface RequestSpec {
 }
 
 /**
- * The read-only JellyfinClient plus clearWatchState: the single watched-state
- * mutation this client performs. It exists as a separate interface (extending
- * JellyfinClient) so the read-only contract in types.ts stays intact for
- * callers that only read.
+ * The read-only JellyfinClient plus its two scoped watched-state mutations:
+ * clearWatchState and writeUserData. They exist on a separate interface
+ * (extending JellyfinClient) so the read-only contract in types.ts stays
+ * intact for callers that only read.
  */
-export interface JellyfinClearWatchClient extends JellyfinClient {
+export interface JellyfinWatchClient extends JellyfinClient {
     /**
      * Clears the watched flag and resume position of exactly one user/item
      * pair. Two requests, no more: a DELETE to
@@ -256,16 +260,16 @@ export interface JellyfinClearWatchClient extends JellyfinClient {
      * and no other item or user is ever addressed.
      */
     clearWatchState(accessToken: string, userId: string, itemId: string, signal?: AbortSignal): Promise<void>
+    writeUserData(accessToken: string, userId: string, itemId: string, update: JellyfinUserDataUpdate, signal?: AbortSignal): Promise<void>
 }
 
 /**
  * Creates a Jellyfin protocol client bound to one server base URL. Read-only
- * except for clearWatchState, the single scoped, readback-verified
- * watched-state mutation. Each method performs at most its documented
- * requests and accepts an optional AbortSignal; the client stores nothing
- * between calls.
+ * except for the two scoped, readback-verified watched-state mutations.
+ * Each method performs at most its documented requests and accepts an
+ * optional AbortSignal; the client stores nothing between calls.
  */
-export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOptions): JellyfinClearWatchClient {
+export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOptions): JellyfinWatchClient {
     const normalizedBase = normalizeJellyfinUrl(baseUrl)
     const deviceId = options?.deviceId ?? defaultDeviceId()
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -451,7 +455,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
             }
             throw err
         }
-        const product = detectProduct(optionalString(info.PackageName))
+        const product = detectProduct(optionalString(info.PackageName), info)
         return {
             product,
             productName: displayProductName(product),
@@ -539,7 +543,93 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
      * of the read. Sorting is a preference — correctness never relies on it.
      */
     async function readPlayed(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinItemResult> {
-        const basePath = `/Users/${encodeURIComponent(userId)}/Items`
+        return readItemPages(
+            accessToken,
+            {
+                label: 'Users/{userId}/Items',
+                basePath: `/Users/${encodeURIComponent(userId)}/Items`,
+                pageSize: PLAYED_PAGE_SIZE,
+                maxItems: PLAYED_MAX_ITEMS,
+                sorted: true,
+                stopOnTotal: true,
+                params: {
+                    IsPlayed: 'true',
+                    IncludeItemTypes: 'Movie,Episode',
+                    Recursive: 'true',
+                    Fields: 'UserData,ProviderIds',
+                    EnableImages: 'false',
+                },
+            },
+            signal
+        )
+    }
+
+    async function readAllPlayed(
+        accessToken: string,
+        userId: string,
+        options?: JellyfinPagedReadOptions,
+        signal?: AbortSignal
+    ): Promise<JellyfinItemResult> {
+        return readItemPages(
+            accessToken,
+            {
+                label: 'Users/{userId}/Items',
+                basePath: `/Users/${encodeURIComponent(userId)}/Items`,
+                pageSize: options?.pageSize ?? PLAYED_PAGE_SIZE,
+                maxItems: options?.maxItems ?? PLAYED_ALL_MAX_ITEMS,
+                sorted: true,
+                stopOnTotal: false,
+                params: {
+                    IsPlayed: 'true',
+                    IncludeItemTypes: 'Movie,Episode',
+                    Recursive: 'true',
+                    Fields: 'UserData,ProviderIds',
+                    EnableImages: 'false',
+                },
+            },
+            signal
+        )
+    }
+
+    async function readAllLibrary(
+        accessToken: string,
+        userId: string,
+        options?: JellyfinPagedReadOptions,
+        signal?: AbortSignal
+    ): Promise<JellyfinItemResult> {
+        return readItemPages(
+            accessToken,
+            {
+                label: 'Users/{userId}/Items',
+                basePath: `/Users/${encodeURIComponent(userId)}/Items`,
+                pageSize: options?.pageSize ?? LIBRARY_PAGE_SIZE,
+                maxItems: options?.maxItems ?? LIBRARY_ALL_MAX_ITEMS,
+                sorted: false,
+                stopOnTotal: false,
+                params: {
+                    IncludeItemTypes: 'Movie,Episode,Series',
+                    Recursive: 'true',
+                    Fields: 'UserData,ProviderIds',
+                    EnableImages: 'false',
+                },
+            },
+            signal
+        )
+    }
+
+    async function readItemPages(
+        accessToken: string,
+        spec: {
+            label: string
+            basePath: string
+            pageSize: number
+            maxItems: number
+            params: Record<string, string>
+            sorted: boolean
+            stopOnTotal: boolean
+        },
+        signal?: AbortSignal
+    ): Promise<JellyfinItemResult> {
         const seen = new Set<string>()
         const items: JellyfinItem[] = []
         let total: number | null = null
@@ -550,23 +640,15 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         let truncatedByCap = false
         let stoppedByCap = false
         let exhaustedNaturally = false
-        let allowSort = true
+        let allowSort = spec.sorted
         for (;;) {
-            const remaining = PLAYED_MAX_ITEMS - items.length
+            const remaining = spec.maxItems - items.length
             if (remaining <= 0) {
                 stoppedByCap = true
                 break
             }
-            const limit = Math.min(PLAYED_PAGE_SIZE, remaining)
-            const query = new URLSearchParams({
-                IsPlayed: 'true',
-                IncludeItemTypes: 'Movie,Episode',
-                Recursive: 'true',
-                Fields: 'UserData,ProviderIds',
-                EnableImages: 'false',
-                StartIndex: String(items.length),
-                Limit: String(limit),
-            })
+            const limit = Math.min(spec.pageSize, remaining)
+            const query = new URLSearchParams({ ...spec.params, StartIndex: String(items.length), Limit: String(limit) })
             if (allowSort) {
                 query.set('SortBy', 'DatePlayed')
                 query.set('SortOrder', 'Descending')
@@ -574,8 +656,8 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
             let res: unknown
             try {
                 res = await request({
-                    label: 'Users/{userId}/Items',
-                    path: `${basePath}?${query.toString()}`,
+                    label: spec.label,
+                    path: `${spec.basePath}?${query.toString()}`,
                     token: accessToken,
                     signal,
                 })
@@ -615,16 +697,12 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 fresh.push(parsed)
             }
             if (pageHadDuplicate) sawDuplicates = true
-            // Cap extras from an ignored Limit at the read bound; anything
-            // dropped there means data exists beyond what we return.
             if (fresh.length > remaining) {
                 fresh.length = remaining
                 truncatedByCap = true
             }
             items.push(...fresh)
             if (fresh.length === 0) {
-                // A non-empty page with no new ids means pagination is not
-                // advancing (repeated page); an empty page is exhaustion.
                 if (page.length > 0) sawRepeatedPage = true
                 else exhaustedNaturally = true
                 break
@@ -633,12 +711,155 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 exhaustedNaturally = true
                 break
             }
-            if (total !== null && items.length >= total) break
+            if (spec.stopOnTotal && total !== null && items.length >= total) break
         }
         const contradicted =
             stoppedByCap || truncatedByCap || sawRepeatedPage || sawDuplicates || totalMoved || limitIgnored
-        const reached = total !== null ? items.length === total : exhaustedNaturally
-        return { items, total, complete: !contradicted && reached, limit: PLAYED_MAX_ITEMS }
+        const reached = spec.stopOnTotal
+            ? total !== null ? items.length === total : exhaustedNaturally
+            : exhaustedNaturally && (total === null || items.length === total)
+        return { items, total, complete: !contradicted && reached, limit: spec.maxItems }
+    }
+
+    async function readAllResume(
+        accessToken: string,
+        userId: string,
+        options?: JellyfinPagedReadOptions,
+        signal?: AbortSignal
+    ): Promise<JellyfinItemResult> {
+        const pageSize = options?.pageSize ?? RESUME_ALL_PAGE_SIZE
+        const maxItems = options?.maxItems ?? RESUME_ALL_MAX_ITEMS
+        const maxPages = Math.ceil(maxItems / Math.max(1, Math.min(pageSize, maxItems))) * 2 + 4
+        const basePath = `/Users/${encodeURIComponent(userId)}/Items/Resume`
+        const seen = new Set<string>()
+        const items: JellyfinItem[] = []
+        let cursor = 0
+        let pages = 0
+        let total: number | null = null
+        let totalMoved = false
+        let sawDuplicates = false
+        let sawRepeatedPage = false
+        let limitIgnored = false
+        let truncatedByCap = false
+        let stoppedByCap = false
+        let stoppedByPageBound = false
+        let exhaustedNaturally = false
+        for (;;) {
+            if (items.length >= maxItems) {
+                stoppedByCap = true
+                break
+            }
+            if (pages >= maxPages) {
+                stoppedByPageBound = true
+                break
+            }
+            const query = new URLSearchParams({
+                StartIndex: String(cursor),
+                Limit: String(pageSize),
+                Fields: 'UserData,ProviderIds',
+                EnableImages: 'false',
+            })
+            const res = await request({
+                label: 'Users/{userId}/Items/Resume',
+                path: `${basePath}?${query.toString()}`,
+                token: accessToken,
+                signal,
+            })
+            pages++
+            let page: unknown[]
+            if (Array.isArray(res)) {
+                page = res
+            } else if (isRecord(res) && Array.isArray(res.Items)) {
+                page = res.Items
+                const rawTotal = parseTotalRecordCount(res.TotalRecordCount)
+                if (rawTotal !== null) {
+                    if (total !== null && total !== rawTotal) totalMoved = true
+                    total = rawTotal
+                }
+            } else {
+                throw new JellyfinError('invalid-response', 'Users/{userId}/Items/Resume returned an unexpected shape')
+            }
+            if (page.length > pageSize) {
+                limitIgnored = true
+                page = page.slice(0, pageSize)
+            }
+            cursor += page.length
+            const before = items.length
+            for (const entry of page) {
+                const parsed = parseItem(entry, 'Resume items')
+                if (seen.has(parsed.Id)) {
+                    sawDuplicates = true
+                    continue
+                }
+                seen.add(parsed.Id)
+                if (items.length < maxItems) items.push(parsed)
+                else truncatedByCap = true
+            }
+            if (page.length === 0) {
+                exhaustedNaturally = true
+                break
+            }
+            if (items.length === before) {
+                sawRepeatedPage = true
+                break
+            }
+            if (page.length < pageSize) {
+                exhaustedNaturally = true
+                break
+            }
+        }
+        const contradicted =
+            stoppedByCap || stoppedByPageBound || truncatedByCap || sawRepeatedPage || sawDuplicates || totalMoved || limitIgnored
+        const reached = exhaustedNaturally && (total === null || items.length === total)
+        return { items, total, complete: !contradicted && reached, limit: maxItems }
+    }
+
+    async function readWatchItem(accessToken: string, userId: string, itemId: string, signal?: AbortSignal): Promise<JellyfinItem> {
+        const item = parseItem(
+            await request({
+                label: 'Users/{userId}/Items/{itemId}',
+                path: `/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}?Fields=UserData,ProviderIds&EnableImages=false`,
+                token: accessToken,
+                signal,
+            }),
+            'Item details'
+        )
+        if (!sameItemId(itemId, item.Id)) {
+            throw new JellyfinError('invalid-response', 'Item details returned a different item')
+        }
+        return item
+    }
+
+    async function queryUserItems(
+        accessToken: string,
+        userId: string,
+        query: JellyfinItemQuery,
+        signal?: AbortSignal
+    ): Promise<JellyfinItem[]> {
+        const params = new URLSearchParams({
+            Fields: 'UserData,ProviderIds',
+            EnableImages: 'false',
+        })
+        if (query.ids?.length) params.set('Ids', query.ids.join(','))
+        if (query.parentId !== undefined) params.set('ParentId', query.parentId)
+        if (query.includeItemTypes !== undefined) params.set('IncludeItemTypes', query.includeItemTypes)
+        if (query.startIndex !== undefined) params.set('StartIndex', String(query.startIndex))
+        if (query.limit !== undefined) params.set('Limit', String(query.limit))
+        const res = await request({
+            label: 'Users/{userId}/Items',
+            path: `/Users/${encodeURIComponent(userId)}/Items?${params.toString()}`,
+            token: accessToken,
+            signal,
+        })
+        let page: unknown[]
+        if (Array.isArray(res)) {
+            page = res
+        } else if (isRecord(res) && Array.isArray(res.Items)) {
+            page = res.Items
+        } else {
+            throw new JellyfinError('invalid-response', 'Users/{userId}/Items returned an unexpected shape')
+        }
+        return page.map(entry => parseItem(entry, 'Item lookup'))
     }
 
     /**
@@ -731,6 +952,36 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         }
     }
 
+    async function writeUserData(
+        accessToken: string,
+        userId: string,
+        itemId: string,
+        update: JellyfinUserDataUpdate,
+        signal?: AbortSignal
+    ): Promise<void> {
+        if (typeof userId !== 'string' || userId === '') {
+            throw new JellyfinError('invalid-response', 'writeUserData requires a non-empty userId')
+        }
+        if (typeof itemId !== 'string' || itemId === '') {
+            throw new JellyfinError('invalid-response', 'writeUserData requires a non-empty itemId')
+        }
+        const body: Record<string, unknown> = {}
+        for (const [key, value] of Object.entries(update)) {
+            if (value !== undefined) body[key] = value
+        }
+        if (!Object.keys(body).length) {
+            throw new JellyfinError('invalid-response', 'writeUserData requires at least one field')
+        }
+        await request({
+            label: 'Users/{userId}/Items/{itemId}/UserData',
+            path: `/Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}/UserData`,
+            method: 'POST',
+            token: accessToken,
+            body,
+            signal,
+        })
+    }
+
     return {
         getPublicInfo,
         listPublicUsers,
@@ -740,9 +991,15 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         getUser: fetchUser,
         inspect,
         readItem,
+        readWatchItem,
         readResume,
         readPlayed,
+        readAllPlayed,
+        readAllResume,
+        readAllLibrary,
+        queryUserItems,
         readSessions,
         clearWatchState,
+        writeUserData,
     }
 }
