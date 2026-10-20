@@ -61,9 +61,14 @@ export function parseAccentColorHex(value?: string): string | undefined {
     return trimmed
 }
 
-function findSourceNuvioConnection(sourceAccountId: string) {
+function findSourceNuvioConnection(sourceAccountId: string, sourceConnectionId?: string) {
     const source = useAccountStore.getState().accounts.find(a => a.id === sourceAccountId)
-    const connection = source?.connections?.find(c => c.platform === 'nuvio')
+    // Multiple Nuvio logins may be bound to one account: sibling profiles are created
+    // through the connection the roster was opened on, never silently through the first.
+    const nuvioConnections = (source?.connections || []).filter(c => c.platform === 'nuvio')
+    const connection = sourceConnectionId
+        ? nuvioConnections.find(c => c.id === sourceConnectionId)
+        : nuvioConnections[0]
     if (!source || !connection) throw new Error('Could not find the Nuvio login for this account.')
     return connection
 }
@@ -94,13 +99,22 @@ export async function addNuvioProfiles(
     email: string,
     password: string,
     entries: ProfileQuickAddEntry[],
+    options: { sourceConnectionId?: string } = {},
 ): Promise<ProfileQuickAddOutcome> {
     if (!email || !password) throw new Error('Nuvio email and password are required to add profiles.')
-    const connection = findSourceNuvioConnection(sourceAccountId)
+    const connection = findSourceNuvioConnection(sourceAccountId, options.sourceConnectionId)
     // Backend identity comes from the source login's stored credentials:
     // every sibling profile lands on the same backend.
     const baseUrl = connection.credentials?.baseUrl || undefined
     const publishableKey = connection.credentials?.publishableKey || undefined
+    const { readNuvioProfiles } = await import('@/lib/nuvio-data')
+    let profiles: Awaited<ReturnType<typeof readNuvioProfiles>>
+    try { profiles = await readNuvioProfiles(sourceAccountId, connection) }
+    catch (error) {
+        return { succeeded: 0, failed: entries.length, results: entries.map(entry => ({ entry, accountId: null, ok: false, skipped: false,
+            error: error instanceof Error ? error.message : 'Could not verify the current profile list.' })) }
+    }
+    const snapshot = { baseUrl, loginId: loginScope(connection.credentials), profiles: profiles.map(profile => ({ id: profile.id, index: profile.profile_index })) }
 
     const results: ProfileQuickAddResult[] = []
 
@@ -113,7 +127,7 @@ export async function addNuvioProfiles(
             }
 
             // Decision 4 claim guard: a same-device rerun must not double-add.
-            const claims = getProfileClaims(useAccountStore.getState().accounts)
+            const claims = getProfileClaims(useAccountStore.getState().accounts, snapshot)
             if (claims.has(profileClaimKey({ platform: 'nuvio', profileId: String(profileIndex), baseUrl, loginId: loginScope(connection.credentials) }))) {
                 results.push({ entry, accountId: null, ok: false, skipped: true, error: 'Already added' })
                 continue

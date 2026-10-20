@@ -328,7 +328,7 @@ export function AddonList({ accountId }: AddonListProps) {
         allowCollectionShrink: true,
         previousCollection: account.addons,
       })
-      useAccountStore.getState().reorderAddons(account.id, [])
+      await useAccountStore.getState().reorderAddons(account.id, [], { explicitInstallUrls: [] })
       toast({ title: 'All Addons Cleared', description: `Removed ${account.addons.length} addons from ${account.name}.` })
       setShowClearAllConfirm(false)
       await syncAccount(account.id)
@@ -597,13 +597,18 @@ export function AddonList({ accountId }: AddonListProps) {
               <span className="text-border">/</span>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" className="h-7 gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
+                  <Button size="sm" variant="ghost" aria-label={`Active setup: ${activeProfileName}`} className="h-7 gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
                     <User className="h-3.5 w-3.5" />
+                    <span className="text-muted-foreground/70">Setup:</span>
                     <span className="truncate max-w-[140px]">{activeProfileName}</span>
                     <ChevronDown className="h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
+                <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+                  <div className="border-b border-border/40 px-3 py-3">
+                    <p className="text-xs font-semibold">Setups · Addons + Autopilot rules</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">One active setup for this local account. Switching changes its addons and activates that setup’s Autopilot rules.</p>
+                  </div>
                   <DropdownMenuItem
                     className="gap-2"
                     onClick={() => handleSwitchProfile('default')}
@@ -625,27 +630,31 @@ export function AddonList({ accountId }: AddonListProps) {
                         {account.activeProfileId === p.id && <Check className="h-4 w-4 text-primary shrink-0" />}
                       </DropdownMenuItem>
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity sm:opacity-60">
-                        <DropdownMenuItem
-                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setProfileEditName(p.name);
-                            setProfileToEdit({ id: p.id, name: p.name });
-                          }}
-                          title={`Rename ${p.name}`}
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setProfileToDelete({ id: p.id, name: p.name });
-                          }}
-                          title={`Delete ${p.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </DropdownMenuItem>
+                        <Tooltip content={`Rename ${p.name}`} side="top">
+                          <DropdownMenuItem
+                            className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfileEditName(p.name);
+                              setProfileToEdit({ id: p.id, name: p.name });
+                            }}
+                            aria-label={`Rename ${p.name}`}
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </DropdownMenuItem>
+                        </Tooltip>
+                        <Tooltip content={`Delete ${p.name}`} side="top">
+                          <DropdownMenuItem
+                            className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfileToDelete({ id: p.id, name: p.name });
+                            }}
+                            aria-label={`Delete ${p.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </DropdownMenuItem>
+                        </Tooltip>
                       </div>
                     </div>
                   ))}
@@ -656,8 +665,9 @@ export function AddonList({ accountId }: AddonListProps) {
                     className="gap-2 text-primary focus:text-primary"
                   >
                     <Plus className="h-4 w-4 shrink-0" />
-                    Create New Setup
+                    Create setup
                   </DropdownMenuItem>
+                  <div className="border-t border-border/40 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">Need a separate person or Nuvio profile? Open Connections to manage its login and local account.</div>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

@@ -4,7 +4,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertCircle, ArrowLeft, Clock, Flame, Heart, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { TabsTrigger } from '@/components/ui/tabs'
+import { WorkspaceTabs } from '@/components/ui/workspace-tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore } from '@/store/accountStore'
@@ -537,13 +538,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)}>
-        <TabsList>
+    <WorkspaceTabs value={viewMode} panelValue={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)} label="Discover views" contentClassName="space-y-5" tabs={<>
           <TabsTrigger value="store">Browse</TabsTrigger>
           <TabsTrigger value="deck">Deck</TabsTrigger>
-        </TabsList>
-      </Tabs>
+    </>}>
 
       {viewMode === 'deck' && (
           <DiscoverDeck
@@ -821,6 +819,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         instances={aioStreamsInstances}
         onConfirm={handleInjectConfirm}
       />
-    </div>
+    </WorkspaceTabs>
   )
 }

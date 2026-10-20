@@ -2,7 +2,8 @@ import { Button } from "@/components/ui/button"
 import { StatusChip } from "@/components/ui/status-chip"
 import { ToolbarShell } from "@/components/ui/toolbar-shell"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TabsContent, TabsTrigger } from "@/components/ui/tabs"
+import { WorkspaceTabs } from "@/components/ui/workspace-tabs"
 import { useAccountStore } from "@/store/accountStore"
 import { useFailoverStore } from "@/store/failoverStore"
 import type { FailoverRule } from "@/store/failoverStore"
@@ -312,19 +313,7 @@ export function FailoverManager({
 
     return (
         <div className="space-y-6">
-            <Tabs value={activeFailoverTab} onValueChange={handleFailoverTabChange} className="space-y-6">
-                {showViewTabs && (
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                        <div>
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
-                                <ActiveFailoverIcon className="w-5 h-5" />
-                                {activeFailoverMeta.title}
-                            </h3>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                {activeFailoverMeta.description}
-                            </p>
-                        </div>
-                        <TabsList className="shrink-0">
+            <WorkspaceTabs value={activeFailoverTab} onValueChange={handleFailoverTabChange} label="Autopilot views" contentClassName="space-y-5" tabs={showViewTabs ? <>
                             <TabsTrigger
                                 value="rules"
                                 className="gap-2"
@@ -346,9 +335,8 @@ export function FailoverManager({
                                 <Webhook className="w-4 h-4" />
                                 Webhooks
                             </TabsTrigger>
-                        </TabsList>
-                    </div>
-                )}
+            </> : null}>
+                {showViewTabs && <div><h3 className="flex items-center gap-2 text-lg font-semibold"><ActiveFailoverIcon className="h-5 w-5" />{activeFailoverMeta.title}</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{activeFailoverMeta.description}</p></div>}
 
                 <TabsContent value="webhooks" className="space-y-6">
                     <WebhooksPanel
@@ -850,7 +838,7 @@ export function FailoverManager({
                 <TabsContent value="history">
                     <FailoverHistory addons={addons} accountId={accountId} />
                 </TabsContent>
-            </Tabs>
+            </WorkspaceTabs>
 
             <ConfirmationDialog
                 open={!!ruleToDelete}

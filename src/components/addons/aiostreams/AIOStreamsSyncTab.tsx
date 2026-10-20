@@ -22,6 +22,8 @@ import {
     AIOSTREAMS_PARENT_CONFIG_KEYS,
     sanitizeAIOStreamsConfigForCreate,
     sanitizeAIOStreamsConfigForUpdate,
+    preserveAIOStreamsParentLinkage,
+    verifyAIOStreamsWriteReadback,
 } from '@/lib/aiostreams-utils'
 import { SectionPreview } from './SectionPreview'
 import { cn } from '@/lib/utils'
@@ -70,6 +72,7 @@ interface SyncResult {
     preserved?: string[]
     rollbackConfig?: Record<string, unknown>
     restored?: boolean
+    verifyWarning?: { mismatchedFields: string[]; lostFields: string[] }
 }
 
 interface DiffEntry {
@@ -300,7 +303,7 @@ function copyConfigFields(
 function preserveKeys(
     nextConfig: Record<string, unknown>,
     targetConfig: Record<string, unknown>,
-    keys: string[]
+    keys: readonly string[]
 ) {
     for (const key of keys) {
         if (targetConfig[key] !== undefined) {
@@ -411,9 +414,14 @@ function buildTargetConfig(
         }
     }
 
+    // Drop any parent reference that came in with the SOURCE values (a full
+    // copy must never re-link the target to the source's parent), then restore
+    // the target's own parent keys so a synced child keeps its inheritance
+    // instead of being flattened into a standalone config.
     stripParentConfig(nextConfig)
     stripSystemConfig(nextConfig)
     preserveKeys(nextConfig, targetConfig, AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS)
+    preserveAIOStreamsParentLinkage(nextConfig, targetConfig)
 
     if (copyBranding) copyConfigFields(nextConfig, sourceConfig, BRANDING_KEYS)
     else preserveKeys(nextConfig, targetConfig, BRANDING_KEYS)
@@ -467,6 +475,7 @@ export function AIOStreamsSyncTab({
     const [creatingTargets, setCreatingTargets] = useState(false)
     const [createTargetResults, setCreateTargetResults] = useState<CreateTargetResult[]>([])
     const [restoringTargetUrls, setRestoringTargetUrls] = useState<Set<string>>(new Set())
+    const [instanceAccessKey, setInstanceAccessKey] = useState('')
     const syncInFlightRef = useRef(false)
     const sourceLocationRef = useRef(`${window.location.pathname}${window.location.search}${window.location.hash}`)
 
@@ -606,7 +615,9 @@ export function AIOStreamsSyncTab({
             const account = accountById.get(accountId)
             const accountName = account?.accountName ?? accountId
             try {
-                const result = await createAIOStreamsUser(sourceBaseUrl, targetPassword, cloneConfig(baseConfig))
+                const result = await createAIOStreamsUser(sourceBaseUrl, targetPassword, cloneConfig(baseConfig), {
+                    instanceAccessKey: instanceAccessKey.trim() || undefined,
+                })
                 try { await saveAIOStreamsPassword(sourceBaseUrl, result.uuid, targetPassword) } catch {}
 
                 const addonUrl = `${sourceBaseUrl}/stremio/${result.uuid}/${result.encryptedPassword}/manifest.json`
@@ -659,6 +670,7 @@ export function AIOStreamsSyncTab({
         sourceConfig,
         toast,
         navigate,
+        instanceAccessKey,
     ])
 
     const handleRestoreTarget = useCallback(async (result: SyncResult) => {
@@ -681,7 +693,8 @@ export function AIOStreamsSyncTab({
                 result.target.baseUrl,
                 result.target.uuid,
                 rollbackPassword,
-                sanitizeAIOStreamsConfigForUpdate(result.rollbackConfig)
+                sanitizeAIOStreamsConfigForUpdate(result.rollbackConfig),
+                { instanceAccessKey: instanceAccessKey.trim() || undefined }
             )
             setResults(prev => prev.map(item => (
                 item.target.transportUrl === result.target.transportUrl
@@ -705,7 +718,7 @@ export function AIOStreamsSyncTab({
                 return next
             })
         }
-    }, [restoringTargetUrls, selectedTargets, toast])
+    }, [restoringTargetUrls, selectedTargets, toast, instanceAccessKey])
 
     const selectedPreviewKeys = useMemo(
         () => getPreviewKeys(syncMode, selectedSections, copyBranding),
@@ -773,7 +786,9 @@ export function AIOStreamsSyncTab({
             if (!target) return null
 
             try {
-                const targetData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password)
+                // Raw view: the write base must be the target's stored child
+                // config so parent inheritance survives the sync.
+                const targetData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })
                 const targetConfig = targetData.userData as Record<string, unknown>
                 const comparableTargetConfig = getComparableTargetConfig(targetConfig)
                 const plannedConfig = buildTargetConfig(sourceConfig, targetConfig, syncMode, selectedSections, copyBranding)
@@ -888,7 +903,7 @@ export function AIOStreamsSyncTab({
                     const hasUsablePreview = !!preview && !preview.error && !!preview.targetConfig && !!preview.plannedConfig
                     const targetConfig = hasUsablePreview
                         ? cloneConfig(preview!.targetConfig!)
-                        : ((await fetchAIOStreamsUser(target.baseUrl, target.uuid, password)).userData as Record<string, unknown>)
+                        : ((await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })).userData as Record<string, unknown>)
                     const comparableTargetConfig = getComparableTargetConfig(targetConfig)
                     const plannedConfig = hasUsablePreview
                         ? cloneConfig(preview!.plannedConfig!)
@@ -905,13 +920,42 @@ export function AIOStreamsSyncTab({
                         return { target, status: 'skipped' as const, changedSections: [], preserved: preservedLabels }
                     }
 
-                    await updateAIOStreamsUser(target.baseUrl, target.uuid, password, plannedConfig)
+                    await updateAIOStreamsUser(target.baseUrl, target.uuid, password, plannedConfig, {
+                        instanceAccessKey: instanceAccessKey.trim() || undefined,
+                    })
+
+                    // Post-write revalidation. The upstream PUT has no version
+                    // guard (last-write-wins), so verify the requested fields
+                    // actually persisted and the target's parent linkage and
+                    // target-local state survived. A mismatch is reported, never
+                    // silently retried.
+                    let verifyWarning: SyncResult['verifyWarning'] | undefined
+                    try {
+                        const readbackData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })
+                        const verification = verifyAIOStreamsWriteReadback({
+                            planned: plannedConfig,
+                            readback: readbackData.userData as Record<string, unknown>,
+                            fields: selectedPreviewFieldKeys,
+                            preWrite: targetConfig,
+                            preservedFields: [
+                                ...AIOSTREAMS_PARENT_CONFIG_KEYS.filter(key => targetConfig[key] !== undefined),
+                                ...AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS.filter(key => key !== 'accessKey' && targetConfig[key] !== undefined),
+                            ],
+                        })
+                        if (!verification.ok) {
+                            verifyWarning = { mismatchedFields: verification.mismatchedFields, lostFields: verification.lostFields }
+                        }
+                    } catch {
+                        // Readback is best-effort; the write itself already succeeded.
+                    }
+
                     return {
                         target,
                         status: 'changed' as const,
                         changedSections,
                         preserved: preservedLabels,
                         rollbackConfig: sanitizeAIOStreamsConfigForUpdate(targetConfig),
+                        verifyWarning,
                     }
                 } catch (e: unknown) {
                     return {
@@ -934,6 +978,7 @@ export function AIOStreamsSyncTab({
             const changedCount = finalizedResults.filter(r => r.status === 'changed').length
             const skippedCount = finalizedResults.filter(r => r.status === 'skipped').length
             const failCount = finalizedResults.filter(r => r.status === 'failed').length
+            const unverifiedCount = finalizedResults.filter(r => r.status === 'changed' && r.verifyWarning).length
             const selectedSectionLabels = syncMode === 'full'
                 ? ['Everything']
                 : Array.from(selectedSections).map(key => getSyncGroupDefinition(key)?.label ?? key)
@@ -952,15 +997,15 @@ export function AIOStreamsSyncTab({
                 preserved: preservedLabels,
             })
 
-            if (failCount === 0) {
+            if (failCount === 0 && unverifiedCount === 0) {
                 toast({
                     title: 'Sync complete',
                     description: `${changedCount} updated, ${skippedCount} already matched`,
                 })
             } else {
                 toast({
-                    title: 'Sync partially complete',
-                    description: `${changedCount} updated, ${skippedCount} skipped, ${failCount} failed`,
+                    title: failCount === 0 ? 'Sync complete (verify attention)' : 'Sync partially complete',
+                    description: `${changedCount} updated, ${skippedCount} skipped, ${failCount} failed${unverifiedCount > 0 ? `, ${unverifiedCount} stored differently than drafted (likely changed elsewhere)` : ''}`,
                     variant: 'destructive',
                 })
             }
@@ -975,7 +1020,7 @@ export function AIOStreamsSyncTab({
             setSyncing(false)
             syncInFlightRef.current = false
         }
-    }, [selectedTargets, targetOptions, selectedSections, selectedPreviewKeys, sourceConfig, syncMode, copyBranding, preservedLabels, sourceName, sourceAccountName, sourceBaseUrl, toast, previews, previewCreatedAt, previewChangedCount, previewErrorCount])
+    }, [selectedTargets, targetOptions, selectedSections, selectedPreviewKeys, selectedPreviewFieldKeys, sourceConfig, syncMode, copyBranding, preservedLabels, sourceName, sourceAccountName, sourceBaseUrl, toast, previews, previewCreatedAt, previewChangedCount, previewErrorCount, instanceAccessKey])
 
     const handleRetryFailed = useCallback(() => {
         const failedUrls = new Set(results.filter(r => r.status === 'failed').map(r => r.target.transportUrl))
@@ -1211,6 +1256,30 @@ export function AIOStreamsSyncTab({
                                         </button>
                                     </div>
                                 </div>
+
+                                <details data-theme-part="panel" className="rounded-2xl border border-border/30 bg-muted/[0.06] p-3">
+                                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                        Key-gated instance? Add its access key (optional)
+                                    </summary>
+                                    <div className="mt-2 space-y-1.5">
+                                        <Label htmlFor="aiostreams-instance-access-key" className="text-xs font-medium text-muted-foreground">
+                                            Instance access key
+                                        </Label>
+                                        <Input
+                                            id="aiostreams-instance-access-key"
+                                            type="password"
+                                            value={instanceAccessKey}
+                                            disabled={editingLocked}
+                                            onChange={e => setInstanceAccessKey(e.target.value)}
+                                            placeholder="Only for instances that gate config writes"
+                                            className="h-9 rounded-xl border-border/40 bg-background/70 font-mono"
+                                            autoComplete="off"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Some AIOStreams instances require a separate access key (instance dashboard / CONFIG_ACCESS_KEY) for config changes. The config password alone is rejected there. Applies to every write and creation from this tab.
+                                        </p>
+                                    </div>
+                                </details>
                         </section>
                     </CardContent>
                 </Card>
@@ -1687,6 +1756,15 @@ export function AIOStreamsSyncTab({
                                 >
                                     {result.restored ? 'Restored' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
                                 </StatusChip>
+                                {result.status === 'changed' && result.verifyWarning && (
+                                    <Tooltip content={`Stored differently than drafted${result.verifyWarning.mismatchedFields.length > 0 ? ` - fields: ${result.verifyWarning.mismatchedFields.join(', ')}` : ''}${result.verifyWarning.lostFields.length > 0 ? ` - lost: ${result.verifyWarning.lostFields.join(', ')}` : ''}. The instance may have been changed concurrently; re-run a preview to see the current state.`}>
+                                      <TooltipTrigger asChild>
+                                        <span data-theme-part="badge" className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning">
+                                            Verify attention
+                                        </span>
+                                      </TooltipTrigger>
+                                    </Tooltip>
+                                )}
                                 {result.status === 'failed' && result.error && (
                                     <Tooltip content={result.error}>
                                       <TooltipTrigger asChild>

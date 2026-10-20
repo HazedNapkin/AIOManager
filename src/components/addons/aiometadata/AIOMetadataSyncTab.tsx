@@ -31,6 +31,9 @@ import {
     getSyncGroupSummary,
     sanitizeAIOMetadataConfigForCreate,
     cloneAIOMetadataConfig,
+    getAIOMetadataConfigVersion,
+    verifyAIOMetadataWriteReadback,
+    AIOMetadataConfigConflictError,
 } from '@/lib/aiometadata-utils'
 import {
     Loader2, ArrowRightLeft, Eye, EyeOff, ListChecks, ClipboardCheck,
@@ -80,6 +83,8 @@ interface TargetPreview {
     changedSections: string[]
     targetConfig?: Record<string, unknown>
     plannedConfig?: Record<string, unknown>
+    /** Config version the target had when loaded; threaded to the write as baseVersion. */
+    targetVersion?: number | null
     error?: string
 }
 
@@ -89,6 +94,11 @@ interface SyncResult {
     error?: string
     rollbackConfig?: Record<string, unknown>
     restored?: boolean
+    /** Set when the write was rejected as a stale 409 CONFIG_CHANGED. */
+    conflict?: { currentVersion: number | null }
+    /** Server version after our successful write; guards the undo compensation. */
+    versionAfterWrite?: number | null
+    verifyWarning?: { mismatchedFields: string[]; lostFields: string[] }
 }
 
 interface CreateResult {
@@ -140,14 +150,14 @@ function changed(a: unknown, b: unknown): boolean {
     return stableStringify(a) !== stableStringify(b)
 }
 
-function copyFields(next: Record<string, unknown>, source: Record<string, unknown>, fields: string[]) {
+function copyFields(next: Record<string, unknown>, source: Record<string, unknown>, fields: readonly string[]) {
     for (const key of fields) {
         if (source[key] !== undefined) next[key] = cloneAIOMetadataConfig({ v: source[key] }).v
         else delete next[key]
     }
 }
 
-function preserveFields(next: Record<string, unknown>, target: Record<string, unknown>, fields: string[]) {
+function preserveFields(next: Record<string, unknown>, target: Record<string, unknown>, fields: readonly string[]) {
     for (const key of fields) {
         if (target[key] !== undefined) next[key] = target[key]
         else delete next[key]
@@ -400,6 +410,7 @@ export function AIOMetadataSyncTab({
                     changedSections: diffEntries.filter(e => e.changed).map(e => e.section),
                     targetConfig,
                     plannedConfig: planned,
+                    targetVersion: getAIOMetadataConfigVersion(targetConfig),
                 }
             } catch (e: unknown) {
                 return {
@@ -451,9 +462,56 @@ export function AIOMetadataSyncTab({
                     return { target, status: 'failed', error: preview?.error || 'Missing preview' }
                 }
                 if (preview.changedSections.length === 0) return { target, status: 'skipped' }
-                await updateAIOMetadataConfig(target.baseUrl, target.uuid, password, preview.plannedConfig, addonPassword || undefined)
-                return { target, status: 'changed', rollbackConfig: cloneAIOMetadataConfig(preview.targetConfig) }
+                // Guard the write with the version we loaded in the preview. A
+                // 409 CONFIG_CHANGED is surfaced as a typed conflict below;
+                // it is never forced through and never auto-retried.
+                const { configVersion: versionAfterWrite } = await updateAIOMetadataConfig(
+                    target.baseUrl,
+                    target.uuid,
+                    password,
+                    preview.plannedConfig,
+                    addonPassword || undefined,
+                    { baseVersion: preview.targetVersion ?? undefined }
+                )
+
+                // Semantic readback: reload and verify the requested groups
+                // persisted and destination-owned credentials survived.
+                let verifyWarning: SyncResult['verifyWarning'] | undefined
+                try {
+                    const readback = await fetchAIOMetadataConfig(target.baseUrl, target.uuid, password, addonPassword || undefined)
+                    const verifyFields = Array.from(new Set(previewKeys.flatMap(key =>
+                        key === BRANDING_KEY ? AIOMETADATA_BRANDING_KEYS : getSyncGroupFields(key)
+                    )))
+                    const verification = verifyAIOMetadataWriteReadback({
+                        planned: preview.plannedConfig,
+                        readback,
+                        fields: verifyFields,
+                        preWrite: preview.targetConfig,
+                        protectedPaths: ['apiKeys.traktTokenId', 'apiKeys.simklTokenId', 'simklUser'],
+                    })
+                    if (!verification.ok) {
+                        verifyWarning = { mismatchedFields: verification.mismatchedFields, lostFields: verification.lostFields }
+                    }
+                } catch {
+                    // Readback is best-effort; the guarded write itself succeeded.
+                }
+
+                return {
+                    target,
+                    status: 'changed',
+                    rollbackConfig: cloneAIOMetadataConfig(preview.targetConfig),
+                    versionAfterWrite,
+                    verifyWarning,
+                }
             } catch (e: unknown) {
+                if (e instanceof AIOMetadataConfigConflictError) {
+                    return {
+                        target,
+                        status: 'failed',
+                        error: e.message,
+                        conflict: { currentVersion: e.currentVersion },
+                    }
+                }
                 return { target, status: 'failed', error: e instanceof Error ? e.message : 'Unknown error' }
             } finally {
                 completed++
@@ -469,6 +527,9 @@ export function AIOMetadataSyncTab({
         const changedCount = final.filter(r => r.status === 'changed').length
         const skippedCount = final.filter(r => r.status === 'skipped').length
         const failCount = final.filter(r => r.status === 'failed').length
+        const conflictCount = final.filter(r => r.conflict && !r.restored).length
+        const unverifiedCount = final.filter(r => r.status === 'changed' && r.verifyWarning).length
+        const attention = conflictCount + unverifiedCount
         setReceipt({
             timestamp: new Date().toISOString(),
             sourceName, sourceAccountName, sourceBaseUrl,
@@ -480,11 +541,13 @@ export function AIOMetadataSyncTab({
             preserved: preservedLabels,
         })
         toast({
-            title: failCount === 0 ? 'Sync complete' : 'Sync partially complete',
-            description: `${changedCount} updated, ${skippedCount} matched, ${failCount} failed`,
-            variant: failCount > 0 ? 'destructive' : undefined,
+            title: failCount === 0 && attention === 0 ? 'Sync complete' : failCount === conflictCount ? 'Sync stopped at changed configs' : 'Sync partially complete',
+            description: `${changedCount} updated, ${skippedCount} matched, ${failCount} failed`
+                + (conflictCount > 0 ? `, ${conflictCount} changed elsewhere (reload & reapply)` : '')
+                + (unverifiedCount > 0 ? `, ${unverifiedCount} stored differently than drafted` : ''),
+            variant: failCount > 0 || attention > 0 ? 'destructive' : undefined,
         })
-    }, [previewErrors, previewChanged, previewAt, resetToSelect, selectedTargets, targetOptions, previews, addonPassword, syncMode, selectedGroups, copyBranding, sourceName, sourceAccountName, sourceBaseUrl, preservedLabels, toast])
+    }, [previewErrors, previewChanged, previewAt, resetToSelect, selectedTargets, targetOptions, previews, addonPassword, syncMode, selectedGroups, copyBranding, previewKeys, sourceName, sourceAccountName, sourceBaseUrl, preservedLabels, toast])
 
     const handleRestore = useCallback(async (result: SyncResult) => {
         if (!result.rollbackConfig) return
@@ -497,11 +560,26 @@ export function AIOMetadataSyncTab({
         }
         setRestoringUrls(prev => new Set(prev).add(url))
         try {
-            await updateAIOMetadataConfig(result.target.baseUrl, result.target.uuid, password, result.rollbackConfig, addonPassword || undefined)
+            // Compensate only when the revision is still ours: the undo write is
+            // guarded by the version our sync produced, so any intervening writer
+            // turns this into a typed conflict instead of a blind overwrite.
+            await updateAIOMetadataConfig(
+                result.target.baseUrl,
+                result.target.uuid,
+                password,
+                result.rollbackConfig,
+                addonPassword || undefined,
+                { baseVersion: result.versionAfterWrite ?? undefined }
+            )
             setResults(prev => prev.map(r => r.target.transportUrl === url ? { ...r, restored: true } : r))
             toast({ title: 'Target restored', description: `${result.target.accountName} was rolled back to its pre-sync config.` })
         } catch (e: unknown) {
-            toast({ title: 'Restore failed', description: e instanceof Error ? e.message : 'Unknown error', variant: 'destructive' })
+            if (e instanceof AIOMetadataConfigConflictError) {
+                setResults(prev => prev.map(r => r.target.transportUrl === url ? { ...r, conflict: { currentVersion: e.currentVersion } } : r))
+                toast({ title: 'Undo skipped - config changed elsewhere', description: `${result.target.accountName} was modified after this sync, so the rollback was not forced. Reload the target and reapply if you still want it.`, variant: 'destructive' })
+            } else {
+                toast({ title: 'Restore failed', description: e instanceof Error ? e.message : 'Unknown error', variant: 'destructive' })
+            }
         } finally {
             setRestoringUrls(prev => { const next = new Set(prev); next.delete(url); return next })
         }
@@ -910,15 +988,36 @@ export function AIOMetadataSyncTab({
                         )}
                     </CardHeader>
                     <CardContent className="space-y-2">
-                        {results.map(result => (
+                        {results.map(result => {
+                            const conflict = !!result.conflict && !result.restored
+                            return (
                             <div data-theme-tone="status" key={result.target.transportUrl} data-theme-part="panel" className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs',
                                 result.status === 'failed' ? 'border-destructive/20 bg-destructive/5' : result.status === 'skipped' ? 'border-border/30 bg-muted/10' : 'border-success/20 bg-success/5')}>
                                 {result.status === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" /> : result.status === 'skipped' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />}
                                 <span className="truncate font-semibold">{result.target.accountName}</span>
                                 <StatusChip className="ml-auto" variant={result.status === 'failed' ? 'destructive' : result.status === 'skipped' ? 'muted' : 'success'}>
-                                    {result.restored ? 'Restored' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
+                                    {result.restored ? 'Restored' : conflict ? 'Changed elsewhere' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
                                 </StatusChip>
+                                {result.status === 'changed' && result.verifyWarning && (
+                                    <Tooltip content={`Stored differently than drafted${result.verifyWarning.mismatchedFields.length > 0 ? ` - fields: ${result.verifyWarning.mismatchedFields.join(', ')}` : ''}${result.verifyWarning.lostFields.length > 0 ? ` - lost: ${result.verifyWarning.lostFields.join(', ')}` : ''}. Reload and reapply if intended.`}>
+                                      <TooltipTrigger asChild>
+                                        <span data-theme-part="badge" className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning">
+                                            Verify attention
+                                        </span>
+                                      </TooltipTrigger>
+                                    </Tooltip>
+                                )}
                                 {result.status === 'failed' && result.error && <Tooltip content={result.error}><TooltipTrigger asChild><span className="max-w-[180px] truncate text-destructive">{result.error}</span></TooltipTrigger></Tooltip>}
+                                {conflict && (
+                                    <Tooltip content="Discards this run's stale preview and returns to target selection with your choices kept. Preview again to load the current config, then reapply.">
+                                      <TooltipTrigger asChild>
+                                        <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={resetToSelect}>
+                                            <RotateCw className="h-3.5 w-3.5" />
+                                            Reload & reapply
+                                        </Button>
+                                      </TooltipTrigger>
+                                    </Tooltip>
+                                )}
                                 {result.status === 'changed' && result.rollbackConfig && !result.restored && (
                                     <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5"
                                         disabled={restoringUrls.has(result.target.transportUrl)} onClick={() => handleRestore(result)}>
@@ -927,7 +1026,8 @@ export function AIOMetadataSyncTab({
                                     </Button>
                                 )}
                             </div>
-                        ))}
+                            )
+                        })}
                     </CardContent>
                 </Card>
             )}

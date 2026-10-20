@@ -19,6 +19,8 @@ interface ProfileQuickAddReviewProps {
     sourceAccountId: string
     /** Login email carried by the current Nuvio credentials; undefined lets the user type it. */
     email?: string
+    /** The Nuvio connection whose login creates the sibling profiles (first login when omitted). */
+    sourceConnectionId?: string
     entries: ProfileQuickAddEntry[]
     onClose: () => void
 }
@@ -38,7 +40,7 @@ function ColorDot({ colorHex }: { colorHex?: string }) {
  * from the platform profiles. Batch adds always land here for the
  * count-confirm, never straight from the tab.
  */
-export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, onClose }: ProfileQuickAddReviewProps) {
+export function ProfileQuickAddReview({ open, sourceAccountId, email, sourceConnectionId, entries, onClose }: ProfileQuickAddReviewProps) {
     const [phase, setPhase] = useState<Phase>('review')
     const [rows, setRows] = useState<ProfileQuickAddEntry[]>(entries)
     const [password, setPassword] = useState('')
@@ -80,6 +82,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                 effectiveEmail,
                 password,
                 batch,
+                { sourceConnectionId },
             )
             if (phase === 'done') {
                 setFailed(prev => prev.filter(f => !batch.some(b =>

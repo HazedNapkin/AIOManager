@@ -1,11 +1,12 @@
 import { useState, memo, useEffect } from 'react'
-import { Key, RefreshCw, Eye, EyeOff, AlertTriangle } from 'lucide-react'
+import { Key, RefreshCw, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { StatusChip } from '@/components/ui/status-chip'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { StremioCredentialRepairNotice } from '@/components/accounts/StremioCredentialRepairNotice'
 import { Account } from '@/types/account'
 import { getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
 import { useSyncStore } from '@/store/syncStore'
@@ -64,7 +65,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
                 <div className="min-w-0 flex-1">
                     <h3 className="text-sm sm:text-base font-semibold">API Key</h3>
                     <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
-                        Backendless apps (e.g. Fusion) pull this account's addons using your AIOManager URL + API key via the Hydra API.
+                        Backendless apps (e.g. Odin) pull this account's addons using your AIOManager URL + API key via the Hydra API.
                     </p>
                 </div>
             </div>
@@ -124,12 +125,7 @@ export const ApiKeyManager = memo(function ApiKeyManager({ account }: ApiKeyMana
                             </Button>
                         </div>
 
-                        {isSplitBrain && (
-                            <p className="flex items-start gap-1 text-[10px] font-medium text-destructive">
-                                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                                API key active but no server-side Stremio credential. External Hydra writes only reach the server store until an AIOManager client syncs.
-                            </p>
-                        )}
+                        {isSplitBrain && <StremioCredentialRepairNotice account={account} />}
 
                         <ConfirmationDialog
                             open={confirmRegenerate}

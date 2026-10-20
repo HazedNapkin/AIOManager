@@ -34,12 +34,12 @@ export interface PlatformRegistryEntry {
 export const PLATFORM_REGISTRY: PlatformRegistryEntry[] = [
     {
         id: 'jellyfin',
-        name: 'Jellyfin, AIOStreams, AIOMetadata & more',
+        name: 'Jellyfin',
         logo: jellyfinLogo,
         connectionType: 'native',
         requiresAuth: true,
         hasNativeDriver: false,
-        description: 'Connect a server that supports the Jellyfin API. Available features depend on the server.',
+        description: 'Jellyfin servers, AIOStreams (AIOS) and AIOMetadata (AIOM).',
         available: true,
         features: [],
     },

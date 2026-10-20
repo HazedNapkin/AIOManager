@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react'
-import { Key, RefreshCw, Eye, EyeOff, AlertCircle, AlertTriangle, Search, SearchX, X, MoreVertical } from 'lucide-react'
+import { Key, RefreshCw, Eye, EyeOff, AlertCircle, Search, SearchX, X, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { StatusChip } from '@/components/ui/status-chip'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { StremioCredentialRepairNotice } from '@/components/accounts/StremioCredentialRepairNotice'
 import { Account } from '@/types/account'
 import { useAccountStore, getAccountEmail, getStremioAuthKey } from '@/store/accountStore'
 import { useSyncStore } from '@/store/syncStore'
@@ -130,10 +131,7 @@ const ApiKeyRow = memo(function ApiKeyRow({ account, isSplitBrain }: ApiKeyRowPr
             )}
 
             {apiKey && isSplitBrain && (
-                <p className="flex items-start gap-1 text-[10px] font-medium text-destructive sm:col-span-2">
-                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                    API key active but no server-side Stremio credential. External Hydra writes only reach the server store until an AIOManager client syncs.
-                </p>
+                <StremioCredentialRepairNotice account={account} className="sm:col-span-2" />
             )}
 
             {apiKey && (

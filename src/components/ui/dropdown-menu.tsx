@@ -149,6 +149,7 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, DropdownMenuContent
           'absolute z-50 min-w-[8rem] overflow-hidden rounded-2xl border border-border/40 bg-card p-1 text-card-foreground shadow-lg',
           'transition-[transform,opacity,box-shadow] duration-150 ease-out origin-top',
           visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-1',
+          !context.open && 'pointer-events-none',
           align === 'end' && 'right-0',
           align === 'start' && 'left-0',
           align === 'center' && 'left-1/2 -translate-x-1/2',

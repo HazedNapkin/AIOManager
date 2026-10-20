@@ -4,8 +4,30 @@ import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
 import { useAccountStore } from '@/store/accountStore'
 import { getAIOStreamsConfigureUrl, parseAIOStreamsUrl } from './aiostreams-url.ts'
+import {
+    AIOSTREAMS_RUNTIME_CONFIG_KEYS,
+    interpretAIOStreamsWriteFailure,
+} from './aiostreams-config-safety.ts'
 
 export { getAIOStreamsConfigureUrl, parseAIOStreamsUrl }
+export {
+    AIOSTREAMS_PARENT_CONFIG_KEYS,
+    AIOSTREAMS_RUNTIME_CONFIG_KEYS,
+    AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS,
+    AIOStreamsAccessKeyError,
+    AIOStreamsAuthError,
+    buildAIOStreamsWriteConfig,
+    cloneAIOStreamsConfig,
+    interpretAIOStreamsWriteFailure,
+    preserveAIOStreamsParentLinkage,
+    sanitizeAIOStreamsConfigForCreate,
+    sanitizeAIOStreamsConfigForUpdate,
+    verifyAIOStreamsWriteReadback,
+} from './aiostreams-config-safety.ts'
+export {
+    buildAIOStreamsVariantInstallUrl,
+    findAIOStreamsQuerySelectorCollisions,
+} from './aiostreams-variant-url.ts'
 
 const AIOSTREAMS_MANIFEST_IDS = [
     'community.aiostreams',
@@ -22,10 +44,21 @@ export function isAIOStreamsAddon(addon: AddonDescriptor): boolean {
 }
 
 
+export interface AIOStreamsFetchOptions {
+    /**
+     * Fetch the stored child config (`?raw=true`) instead of the merged view.
+     * Every config writer must base its edit on the raw view so inherited
+     * parent values are not baked into the child; display surfaces keep the
+     * default (effective) fetch.
+     */
+    raw?: boolean
+}
+
 export async function fetchAIOStreamsUser(
     baseUrl: string,
     uuid: string,
-    password: string
+    password: string,
+    options: AIOStreamsFetchOptions = {}
 ): Promise<{ userData: Record<string, unknown>; encryptedPassword: string }> {
     const auth = useSyncStore.getState().auth
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -36,7 +69,7 @@ export async function fetchAIOStreamsUser(
     const res = await fetch('/api/aiostreams-proxy/user', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ baseUrl, uuid, password }),
+        body: JSON.stringify({ baseUrl, uuid, password, raw: options.raw === true }),
     })
     const json = await res.json()
     if (!json.success) throw new Error(json.error?.message || 'Failed to fetch user')
@@ -47,11 +80,22 @@ function withAccessKey(config: Record<string, unknown>, accessKey: string): Reco
     return { ...config, accessKey }
 }
 
+export interface AIOStreamsWriteOptions {
+    /**
+     * Access key for key-gated instances (server dashboard / CONFIG_ACCESS_KEY).
+     * Do not assume the config password works: gated instances reject writes
+     * with ADDON_PASSWORD_INVALID unless this key matches. Falls back to the
+     * password for ungated instances (their gate is a no-op).
+     */
+    instanceAccessKey?: string
+}
+
 export async function updateAIOStreamsUser(
     baseUrl: string,
     uuid: string,
     password: string,
-    config: Record<string, unknown>
+    config: Record<string, unknown>,
+    options: AIOStreamsWriteOptions = {}
 ): Promise<void> {
     const auth = useSyncStore.getState().auth
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -62,16 +106,23 @@ export async function updateAIOStreamsUser(
     const res = await fetch('/api/aiostreams-proxy', {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ baseUrl, uuid, password, config: withAccessKey(config, password) }),
+        body: JSON.stringify({
+            baseUrl,
+            uuid,
+            password,
+            config: withAccessKey(config, options.instanceAccessKey ?? password),
+        }),
     })
     const json = await res.json()
-    if (!json.success) throw new Error(json.error?.message || 'Failed to update user')
+    const failure = interpretAIOStreamsWriteFailure(json)
+    if (failure) throw failure
 }
 
 export async function createAIOStreamsUser(
     baseUrl: string,
     password: string,
-    config: Record<string, unknown>
+    config: Record<string, unknown>,
+    options: AIOStreamsWriteOptions = {}
 ): Promise<{ uuid: string; encryptedPassword: string }> {
     const auth = useSyncStore.getState().auth
     const createPassword = password.trim()
@@ -83,10 +134,15 @@ export async function createAIOStreamsUser(
     const res = await fetch('/api/aiostreams-proxy', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ baseUrl, password: createPassword, config: withAccessKey(config, createPassword) }),
+        body: JSON.stringify({
+            baseUrl,
+            password: createPassword,
+            config: withAccessKey(config, options.instanceAccessKey ?? createPassword),
+        }),
     })
     const json = await res.json()
-    if (!json.success) throw new Error(json.error?.message || 'Failed to create user')
+    const failure = interpretAIOStreamsWriteFailure(json)
+    if (failure) throw failure
     return json.data
 }
 
@@ -144,38 +200,6 @@ export const SERVICE_VAULT_MAP: Record<string, string> = {
 
 export function getVaultProviderForService(serviceId: string): string | null {
     return SERVICE_VAULT_MAP[serviceId.toLowerCase()] ?? null
-}
-
-export const AIOSTREAMS_RUNTIME_CONFIG_KEYS = [
-    'uuid', 'encryptedPassword', 'trusted', 'ip', 'accessToken',
-]
-
-export const AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS = [
-    'appliedTemplates',
-    'accessKey',
-]
-
-export const AIOSTREAMS_PARENT_CONFIG_KEYS = [
-    'parentConfig', 'parentConfigUuid', 'parentConfigPassword',
-    'parentConfigMergeStrategy', 'parentMergeStrategy',
-]
-
-export function cloneAIOStreamsConfig(config: Record<string, unknown>): Record<string, unknown> {
-    return JSON.parse(JSON.stringify(config))
-}
-
-export function sanitizeAIOStreamsConfigForCreate(config: Record<string, unknown>): Record<string, unknown> {
-    const next = cloneAIOStreamsConfig(config)
-    for (const key of AIOSTREAMS_RUNTIME_CONFIG_KEYS) delete next[key]
-    for (const key of AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS) delete next[key]
-    for (const key of AIOSTREAMS_PARENT_CONFIG_KEYS) delete next[key]
-    return next
-}
-
-export function sanitizeAIOStreamsConfigForUpdate(config: Record<string, unknown>): Record<string, unknown> {
-    const next = cloneAIOStreamsConfig(config)
-    for (const key of AIOSTREAMS_RUNTIME_CONFIG_KEYS) delete next[key]
-    return next
 }
 
 const SYSTEM_KEYS = new Set([

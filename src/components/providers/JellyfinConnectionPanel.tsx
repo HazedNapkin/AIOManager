@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Import, Power, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
+import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { useConnectionStore } from '@/store/connectionStore'
 import { useAuthStore } from '@/store/authStore'
@@ -21,7 +22,9 @@ function HeaderStat({ label, value, isError, title }: { label: string; value: st
     return (
         <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-            <p title={title} className={cn('mt-0.5 truncate text-xs font-medium', isError ? 'text-destructive' : 'text-foreground/80')}>{value}</p>
+            <Tooltip content={title} disabled={!title}>
+                <p tabIndex={title ? 0 : undefined} className={cn('mt-0.5 truncate text-xs font-medium', isError ? 'text-destructive' : 'text-foreground/80')}>{value}</p>
+            </Tooltip>
         </div>
     )
 }
@@ -114,11 +117,13 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
             <div className="flex items-center gap-3">
                 <PlatformLogo platform={connection.platform} className="h-12 w-12 shrink-0" />
                 <div className="min-w-0 flex-1">
-                    <p className="text-base font-semibold truncate">{name}</p>
+                    <Tooltip content={name}>
+                        <p tabIndex={0} className="text-base font-semibold truncate">{name}</p>
+                    </Tooltip>
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <ConnectionStatusPill status={display} />
                         {!connection.enabled && <StatusChip size="sm" className="h-5 px-2 text-xs bg-muted/40">Paused</StatusChip>}
-                        {distinctServerName && <StatusChip size="sm" className="h-5 max-w-full truncate px-2 text-xs bg-muted/40" title={distinctServerName}>{distinctServerName}</StatusChip>}
+                        {distinctServerName && <Tooltip content={distinctServerName}><StatusChip tabIndex={0} size="sm" className="h-5 max-w-full truncate px-2 text-xs bg-muted/40">{distinctServerName}</StatusChip></Tooltip>}
                     </div>
                 </div>
             </div>
@@ -176,9 +181,9 @@ export function JellyfinConnectionPanel({ accountId, connection, onBack, onRecon
                 <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
                     <div className="min-w-0">
                         <p className="text-sm font-semibold">Import watch state</p>
-                        <p className="text-xs text-muted-foreground">Preview watched titles and resume points from another connection, then copy selected matches to this user.</p>
+                        <p className="text-xs text-muted-foreground">Import watched titles and continue-watching progress from another connection. You’ll always preview the changes and choose what to copy before anything is saved.</p>
                     </div>
-                    <Button variant="outline" disabled={busy || !connection.enabled || !encryptionKey || !connection.credentials?.jellyfin} onClick={() => setMigrationOpen(true)}><Import className="h-4 w-4" />Preview import…</Button>
+                    <Button variant="outline" disabled={busy || !connection.enabled || !encryptionKey || !connection.credentials?.jellyfin} onClick={() => setMigrationOpen(true)}><Import className="h-4 w-4" />Start import…</Button>
                 </div>
 
                 <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">

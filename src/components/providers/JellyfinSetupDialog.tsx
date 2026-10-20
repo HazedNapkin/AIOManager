@@ -5,12 +5,19 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { JellyfinClient, jellyfinSignInErrorMessage, type JellyfinSession } from '@/lib/jellyfin/session'
+import { JellyfinClient, jellyfinSignInErrorMessage, normalizeJellyfinUrl, type JellyfinSession } from '@/lib/jellyfin/session'
+import { parseJellyfinSecret } from '@/lib/jellyfin/connection-data'
+import { decrypt } from '@/lib/crypto'
+import { useAuthStore } from '@/store/authStore'
 
 interface Props {
     open: boolean
     onOpenChange: (open: boolean) => void
     onComplete: (session: JellyfinSession) => Promise<void>
+    reconnectCredentials?: string
+    initialBaseUrl?: string
+    initialUsername?: string
+    expectedSignIn?: { baseUrl: string; username: string }
 }
 
 // Fictitious sample values only — never a real user's name, password or server.
@@ -57,10 +64,12 @@ function CredentialHelp() {
     )
 }
 
-export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
-    const [baseUrl, setBaseUrl] = useState('')
+export function JellyfinSetupDialog({ open, onOpenChange, onComplete, reconnectCredentials, initialBaseUrl = '', initialUsername = '', expectedSignIn }: Props) {
+    const encryptionKey = useAuthStore(state => state.encryptionKey)
+    const [baseUrl, setBaseUrl] = useState(initialBaseUrl)
+    const [loadingAddress, setLoadingAddress] = useState(!!reconnectCredentials)
     const [method, setMethod] = useState<'password' | 'token'>('password')
-    const [username, setUsername] = useState('')
+    const [username, setUsername] = useState(initialUsername)
     const [password, setPassword] = useState('')
     const [accessToken, setAccessToken] = useState('')
     const [userId, setUserId] = useState('')
@@ -70,6 +79,23 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
     const running = useRef(false)
     const request = useRef<AbortController | null>(null)
     useEffect(() => () => { request.current?.abort() }, [])
+    useEffect(() => {
+        if (!reconnectCredentials) return
+        if (!encryptionKey) {
+            setBaseUrl(''); setLoadingAddress(false)
+            setError('Unlock your vault to load the saved server address.')
+            return
+        }
+        let cancelled = false
+        setLoadingAddress(true)
+        void decrypt(reconnectCredentials, encryptionKey).then(value => {
+            const saved = parseJellyfinSecret(value)
+            if (!cancelled) { setBaseUrl(saved.baseUrl); setError('') }
+        }).catch(() => {
+            if (!cancelled) setError('The saved server address could not be loaded. Enter the complete address to reconnect.')
+        }).finally(() => { if (!cancelled) setLoadingAddress(false) })
+        return () => { cancelled = true }
+    }, [reconnectCredentials, encryptionKey])
 
     const close = (value: boolean) => {
         if (running.current) return
@@ -80,7 +106,7 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
         onOpenChange(value)
     }
     const submit = async () => {
-        if (running.current) return
+        if (running.current || loadingAddress || (reconnectCredentials && !encryptionKey)) return
         running.current = true; setBusy(true); setError('')
         const controller = new AbortController()
         request.current = controller
@@ -90,6 +116,10 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
                 running.current = false
                 close(false)
             } else {
+                if (expectedSignIn) {
+                    if (normalizeJellyfinUrl(baseUrl) !== normalizeJellyfinUrl(expectedSignIn.baseUrl)) throw new Error('Sign in using the server address from this setup before saving the connection.')
+                    if (method !== 'password' || username.trim().toLowerCase() !== expectedSignIn.username.trim().toLowerCase()) throw new Error('Sign in as the household user selected in this setup. Use the prefilled username.')
+                }
                 const result = await new JellyfinClient(baseUrl, crypto.randomUUID()).signIn({ baseUrl, method, username, password, accessToken, userId }, controller.signal)
                 controller.signal.throwIfAborted()
                 setPassword(''); setAccessToken(''); setSession(result)
@@ -100,12 +130,15 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
 
     const verifiedServerName = session?.identity.serverName?.trim()
     const distinctVerifiedServerName = verifiedServerName && verifiedServerName !== session?.identity.productName ? verifiedServerName : ''
+    let submitLabel = session ? 'Save connection' : 'Verify sign-in'
+    if (busy) submitLabel = session ? 'Saving…' : 'Connecting…'
+    if (loadingAddress) submitLabel = 'Loading address…'
 
     return <Dialog open={open} onOpenChange={close}>
         <DialogContent>
             <DialogHeader>
-                <DialogTitle>Jellyfin, AIOStreams, AIOMetadata &amp; more</DialogTitle>
-                <DialogDescription>Connect a server that supports the Jellyfin API. Available features depend on the server.</DialogDescription>
+                <DialogTitle>Connect Jellyfin</DialogTitle>
+                <DialogDescription>Works with Jellyfin, AIOStreams (AIOS) and AIOMetadata (AIOM). Features depend on the server.</DialogDescription>
             </DialogHeader>
             <form className="space-y-4" onSubmit={event => { event.preventDefault(); void submit() }}>
                 {session ? <div className="space-y-2 text-sm">
@@ -114,13 +147,13 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
                     <p>Remote user: {session.identity.userName}</p>
                     <p className="break-all font-mono text-xs text-muted-foreground">User ID: {session.identity.userId}</p>
                     <p className="text-muted-foreground">Confirm this is the user whose media you want to read. The server address and token are saved encrypted. Your password is never saved.</p>
-                </div> : <fieldset disabled={busy} className="space-y-3">
+                </div> : <fieldset disabled={busy || loadingAddress} className="space-y-3">
                     <div className="space-y-1"><Label htmlFor="jf-address">Full server address</Label><Input id="jf-address" type="url" required value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://server.example/jellyfin" autoComplete="off" /></div>
                     <p className="text-xs text-muted-foreground">Keep the complete configuration path supplied by your server. Sign-in runs directly in your browser.</p>
-                    <div className="flex flex-wrap gap-2" role="group" aria-label="Sign-in method">
+                    {!expectedSignIn && <div className="flex flex-wrap gap-2" role="group" aria-label="Sign-in method">
                         <Button type="button" variant={method === 'password' ? 'default' : 'outline'} onClick={() => setMethod('password')}>Username &amp; password</Button>
                         <Button type="button" variant={method === 'token' ? 'default' : 'outline'} onClick={() => setMethod('token')}>Token / API key</Button>
-                    </div>
+                    </div>}
                     {method === 'password' ? <>
                         <div className="space-y-1"><Label htmlFor="jf-username">Server username</Label><Input id="jf-username" required value={username} onChange={e => setUsername(e.target.value)} placeholder="e.g. sam, media-room or media-room/sam" autoComplete="username" /></div>
                         <div className="space-y-1"><Label htmlFor="jf-password">Password</Label><Input id="jf-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Blank if this user has none" autoComplete="current-password" /></div>
@@ -135,7 +168,7 @@ export function JellyfinSetupDialog({ open, onOpenChange, onComplete }: Props) {
                 <div className="flex justify-end gap-2">
                     {session && <Button type="button" variant="outline" disabled={busy} onClick={() => setSession(null)}>Back</Button>}
                     <Button type="button" variant="subtle" disabled={busy} onClick={() => close(false)}>Cancel</Button>
-                    <Button type="submit" disabled={busy}>{busy ? session ? 'Saving…' : 'Connecting…' : session ? 'Save connection' : 'Verify sign-in'}</Button>
+                    <Button type="submit" disabled={busy || loadingAddress || (!!reconnectCredentials && !encryptionKey)}>{submitLabel}</Button>
                 </div>
             </form>
         </DialogContent>

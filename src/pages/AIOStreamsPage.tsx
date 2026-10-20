@@ -39,6 +39,9 @@ import {
     getConfigSections,
     getSectionSummary,
     getConfigStats,
+    verifyAIOStreamsWriteReadback,
+    buildAIOStreamsVariantInstallUrl,
+    findAIOStreamsQuerySelectorCollisions,
 } from '@/lib/aiostreams-utils'
 import { extractAddonParams, buildVariantUrl, extractVariantsFromConfig, getVariantSelectorLocation, NO_SELECTION } from '@/lib/addon-params'
 import { AIOStreamsSyncTab, TargetOption, MissingTargetAccount } from '@/components/addons/aiostreams/AIOStreamsSyncTab'
@@ -95,7 +98,10 @@ export function AIOStreamsPage() {
     const [error, setError] = useState('')
     const [activeSection, setActiveSection] = useState<Section>('overview')
     const [presetsEditing, setPresetsEditing] = useState(false)
+    // Effective (merged) view drives every display surface; the raw view is the
+    // editing base so writes never bake inherited parent values into the child.
     const [sourceConfig, setSourceConfig] = useState<Record<string, unknown> | null>(null)
+    const [sourceRawConfig, setSourceRawConfig] = useState<Record<string, unknown> | null>(null)
     const [instanceStatus, setInstanceStatus] = useState<Record<string, unknown> | null>(null)
     const [instanceReachable, setInstanceReachable] = useState(true)
 
@@ -166,6 +172,7 @@ export function AIOStreamsPage() {
         setConnected(false)
         setError('')
         setSourceConfig(null)
+        setSourceRawConfig(null)
         setActiveSection('overview')
         setInstanceStatus(null)
         setInstanceReachable(true)
@@ -189,14 +196,24 @@ export function AIOStreamsPage() {
         }
     }, [connected])
 
+    const loadConfigs = useCallback(async () => {
+        if (!uuid || !password) throw new Error('Missing AIOStreams user credentials')
+        // Effective view for display, raw view as the editing/writing base.
+        const [effective, raw] = await Promise.all([
+            fetchAIOStreamsUser(baseUrl, uuid, password),
+            fetchAIOStreamsUser(baseUrl, uuid, password, { raw: true }),
+        ])
+        setSourceConfig(effective.userData as Record<string, unknown>)
+        setSourceRawConfig(raw.userData as Record<string, unknown>)
+        return { effective: effective.userData as Record<string, unknown>, raw: raw.userData as Record<string, unknown> }
+    }, [baseUrl, uuid, password])
+
     const handleConnect = useCallback(async () => {
         if (!password.trim() || !uuid) { setError('Password is required'); return }
         setLoading(true)
         setError('')
         try {
-            const data = await fetchAIOStreamsUser(baseUrl, uuid, password)
-            const config = data.userData as Record<string, unknown>
-            setSourceConfig(config)
+            await loadConfigs()
             if (rememberPassword) {
                 try { await saveAIOStreamsPassword(baseUrl, uuid, password) } catch {}
             }
@@ -206,33 +223,48 @@ export function AIOStreamsPage() {
         } finally {
             setLoading(false)
         }
-    }, [baseUrl, uuid, password, rememberPassword])
+    }, [loadConfigs, password, uuid, rememberPassword, baseUrl])
 
     const handleRefresh = useCallback(async () => {
         if (!password || !uuid) return
         setLoading(true)
         try {
-            const data = await fetchAIOStreamsUser(baseUrl, uuid, password)
-            const config = data.userData as Record<string, unknown>
-            setSourceConfig(config)
+            await loadConfigs()
         } catch (e: unknown) {
             setError(e instanceof Error ? e.message : 'Failed to refresh')
         } finally {
             setLoading(false)
         }
-    }, [baseUrl, uuid, password])
+    }, [loadConfigs, uuid, password])
 
     const handleSavePresets = useCallback(async (presets: unknown[]): Promise<boolean> => {
-        if (!sourceConfig || !uuid || !password) {
+        const editBase = sourceRawConfig ?? sourceConfig
+        if (!editBase || !uuid || !password) {
             toast({ title: 'Cannot save presets', description: 'Missing AIOS password or vault locked.', variant: 'destructive' })
             return false
         }
         try {
-            const updated: Record<string, unknown> = { ...sourceConfig, presets }
+            // Edit the child's own (raw) config so inherited parent values stay inherited.
+            const updated: Record<string, unknown> = { ...editBase, presets }
             const sanitized = sanitizeAIOStreamsConfigForUpdate(updated)
             await updateAIOStreamsUser(baseUrl, uuid, password, sanitized)
-            const data = await fetchAIOStreamsUser(baseUrl, uuid, password)
-            setSourceConfig(data.userData as Record<string, unknown>)
+            const { raw } = await loadConfigs()
+            // Semantic readback: the presets we sent must be what the child now stores.
+            // The upstream PUT has no version guard, so a mismatch usually means a
+            // concurrent writer won; surface it instead of trusting the write.
+            const verification = verifyAIOStreamsWriteReadback({
+                planned: sanitized,
+                readback: raw,
+                fields: ['presets'],
+            })
+            if (!verification.ok) {
+                toast({
+                    title: 'Presets saved but did not verify',
+                    description: 'The instance stored different presets than were sent (it may have been changed elsewhere). Latest config was reloaded - review before retrying.',
+                    variant: 'destructive',
+                })
+                return false
+            }
             toast({
                 title: 'Presets updated',
                 description: `${Array.isArray(presets) ? presets.length : 0} addon${Array.isArray(presets) && presets.length !== 1 ? 's' : ''} saved`,
@@ -246,7 +278,7 @@ export function AIOStreamsPage() {
             })
             return false
         }
-    }, [sourceConfig, uuid, password, baseUrl, toast])
+    }, [sourceRawConfig, sourceConfig, uuid, password, baseUrl, loadConfigs, toast])
 
     useEffect(() => {
         if (shouldRedirect) {
@@ -383,6 +415,7 @@ export function AIOStreamsPage() {
                                 <SectionContent
                                     activeSection={activeSection}
                                     sourceConfig={sourceConfig}
+                                    sourceRawConfig={sourceRawConfig}
                                     baseUrl={baseUrl}
                                     configureUrl={configureUrl}
                                     uuid={uuid}
@@ -601,6 +634,7 @@ function resolveLinkedSavedAddonId(accountId: string, oldUrl: string): string | 
 function SectionContent({
     activeSection,
     sourceConfig,
+    sourceRawConfig,
     baseUrl,
     configureUrl,
     uuid,
@@ -623,6 +657,7 @@ function SectionContent({
 }: {
     activeSection: Section
     sourceConfig: Record<string, unknown>
+    sourceRawConfig: Record<string, unknown> | null
     baseUrl: string
     configureUrl: string | null
     uuid: string
@@ -657,7 +692,14 @@ function SectionContent({
     const handleVariantSwap = async (value: string) => {
         const variantId = value === NO_SELECTION ? null : value
         const variantLocation = getVariantSelectorLocation(sourceConfig)
-        const newUrl = buildVariantUrl(transportUrl, variantId, variantLocation)
+        const buildUrl = (current: string): string => {
+            // AIOS-scoped helper: path (`/v/`) selectors stay distinct in
+            // AIOManager's query-stripped addon identity; query (`?v=`) ones
+            // collapse onto one addon when they differ only by query string.
+            return buildAIOStreamsVariantInstallUrl(current, variantId, { selectorLocation: variantLocation })
+                ?? buildVariantUrl(current, variantId, variantLocation)
+        }
+        const newUrl = buildUrl(transportUrl)
         if (newUrl === transportUrl) return
 
         const otherTargets: { accountId: string; oldUrl: string; newUrl: string }[] = []
@@ -670,7 +712,7 @@ function SectionContent({
                 return p?.baseUrl === baseUrl && p.uuid === uuid
             })
             if (!matched) continue
-            const theirNewUrl = buildVariantUrl(matched.transportUrl, variantId, variantLocation)
+            const theirNewUrl = buildUrl(matched.transportUrl)
             if (theirNewUrl === matched.transportUrl) continue
             otherTargets.push({ accountId: acc.id, oldUrl: matched.transportUrl, newUrl: theirNewUrl })
         }
@@ -708,6 +750,31 @@ function SectionContent({
                     if (import.meta.env.DEV) console.warn('[AIOStreamsPage] Saved-addon library URL sync failed after variant swap:', err)
                 }
             }
+
+            // Query-selected variants of one AIOStreams user collapse onto a
+            // single AIOManager addon (identity strips the query string). If any
+            // affected account now holds colliding URLs, tell the user to switch
+            // the instance's variant selector to the path form (`/v/`).
+            if (variantLocation === 'query') {
+                const affectedIds = [accountId, ...otherTargets.map(t => t.accountId)]
+                const currentAccounts = useAccountStore.getState().accounts
+                for (const accId of affectedIds) {
+                    const acc = currentAccounts.find(a => a.id === accId)
+                    if (!acc) continue
+                    const urls = (acc.addons || [])
+                        .filter(isAIOStreamsAddon)
+                        .map(a => a.transportUrl)
+                    const collisions = findAIOStreamsQuerySelectorCollisions(urls)
+                    if (collisions.length > 0) {
+                        toast({
+                            title: 'Variant URLs collide in AIOManager',
+                            description: `${acc.name || acc.id} holds AIOStreams URLs that differ only by query string, so they overwrite each other. Switch the variant selector location to "Path segment (/v/)" on the AIOStreams instance and re-apply.`,
+                            variant: 'destructive',
+                        })
+                        break
+                    }
+                }
+            }
         } catch (err) {
             toast({ title: 'Failed to switch variant', description: err instanceof Error ? err.message : undefined, variant: 'destructive' })
         } finally {
@@ -739,6 +806,19 @@ function SectionContent({
         if (!Array.isArray(raw)) return []
         return raw as Record<string, unknown>[]
     }, [sourceConfig])
+    // The editor edits the child's OWN presets (raw view). When this config
+    // inherits presets from a parent, the effective list shown above is wider
+    // than what the editor may change; say so instead of silently flattening.
+    const editablePresets = useMemo(() => {
+        const base = sourceRawConfig ?? sourceConfig
+        const raw = base.presets
+        return Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []
+    }, [sourceRawConfig, sourceConfig])
+    const inheritedPresetsCount = useMemo(() => {
+        const effective = Array.isArray(sourceConfig.presets) ? sourceConfig.presets.length : 0
+        const own = Array.isArray((sourceRawConfig ?? sourceConfig).presets) ? ((sourceRawConfig ?? sourceConfig).presets as unknown[]).length : 0
+        return Math.max(0, effective - own)
+    }, [sourceConfig, sourceRawConfig])
     const filterSections = useMemo(() => sections.filter(s => s.category === 'filter'), [sections])
     const toggleSections = useMemo(() => sections.filter(s => s.category === 'toggle'), [sections])
     const sortSection = useMemo(() => sections.find(s => s.key === 'sortCriteria'), [sections])
@@ -1049,8 +1129,13 @@ function SectionContent({
                                         )}
                                     </div>
                                 </div>
+                                {inheritedPresetsCount > 0 && (
+                                    <p data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-info/20 bg-info/5 px-3 py-2 text-xs text-info">
+                                        This config inherits {inheritedPresetsCount} addon{inheritedPresetsCount !== 1 ? 's' : ''} from a parent config. The editor below manages this child's own addons only - inherited ones stay managed by the parent.
+                                    </p>
+                                )}
                                 <PresetsEditor
-                                    value={addons}
+                                    value={editablePresets}
                                     onSave={handlePresetsSave}
                                     onCancel={() => setPresetsEditing(false)}
                                     saving={presetsSaving}

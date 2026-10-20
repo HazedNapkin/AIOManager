@@ -11,6 +11,7 @@
 // rule 2) and the Supporters sub-profile id for Stremio.
 
 import type { Account } from '@/types/account'
+import { resolveNuvioPushProfile } from './nuvio-profile-resolve.ts'
 
 export type ProfileRosterState = 'active-here' | 'claimed' | 'unclaimed' | 'gone'
 
@@ -86,7 +87,13 @@ function normalizeProfileId(value: unknown): string {
  * rescanning the same account) yields the same entries; a deleted account's
  * connections simply stop existing, releasing its claims.
  */
-export function getProfileClaims(accounts: Account[]): Map<string, ProfileClaim> {
+export interface NuvioProfileClaimSnapshot {
+    baseUrl?: string
+    loginId: string
+    profiles: Array<{ id: string; index: number }>
+}
+
+export function getProfileClaims(accounts: Account[], snapshot?: NuvioProfileClaimSnapshot): Map<string, ProfileClaim> {
     const claims = new Map<string, ProfileClaim>()
 
     accounts.forEach((account, index) => {
@@ -94,8 +101,17 @@ export function getProfileClaims(accounts: Account[]): Map<string, ProfileClaim>
         for (const conn of connections) {
             const credentials = conn.credentials || {}
             if (conn.platform === 'nuvio') {
-                const profileId = normalizeProfileId(credentials.profileId)
+                // The same target precedence as addon pushes: Setup mapping,
+                // then numeric profileIndex, then the legacy profileId.
+                let profileId = normalizeProfileId(resolveNuvioPushProfile(conn, account.activeProfileId))
                 if (!profileId) continue
+                // Older connections can store only a UUID. A verified roster
+                // supplies the index, scoped to that exact backend and login.
+                if (snapshot && (snapshot.baseUrl || DEFAULT_BACKEND) === (credentials.baseUrl || DEFAULT_BACKEND)
+                    && snapshot.loginId === loginScope(credentials) && !/^\d+$/.test(profileId)) {
+                    const row = snapshot.profiles.find(profile => profile.id === profileId)
+                    if (row) profileId = String(row.index)
+                }
                 claims.set(profileClaimKey({ platform: 'nuvio', profileId, baseUrl: credentials.baseUrl, loginId: loginScope(credentials) }), {
                     accountId: account.id,
                     accountName: account.name,
@@ -140,11 +156,8 @@ export function getProfileClaims(accounts: Account[]): Map<string, ProfileClaim>
  * - 'gone': upstream-deleted profile that an account still claims (spec
  *   decision 11).
  *
- * `currentConnectionId` locates the rendering context. Ownership resolves per
- * ACCOUNT (a platform holds exactly one connection per account), so today the
- * active-here test only needs the account id; the parameter stays in the
- * contract for per-connection refinement once multi-backend backends exist on
- * one account.
+ * `currentConnectionId` distinguishes several connections on the same account.
+ * A sibling connection's claim is still managed separately from this roster.
  */
 export function resolveProfileState(
     profile: RosterProfile,
@@ -152,13 +165,12 @@ export function resolveProfileState(
     currentAccountId: string | null | undefined,
     currentConnectionId: string | null | undefined,
 ): ProfileRosterState {
-    void currentConnectionId
-
     if (!normalizeProfileId(profile.profileId)) return 'unclaimed'
     if (profile.upstreamDeleted && claims.has(profileClaimKey(profile))) return 'gone'
 
     const claim = claims.get(profileClaimKey(profile))
     if (!claim) return 'unclaimed'
-    if (currentAccountId && claim.accountId === currentAccountId) return 'active-here'
+    if (currentAccountId && claim.accountId === currentAccountId
+        && (!currentConnectionId || claim.connectionId === currentConnectionId)) return 'active-here'
     return 'claimed'
 }

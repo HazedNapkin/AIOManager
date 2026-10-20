@@ -31,7 +31,8 @@ import {
 import { buildCinemetaFatRails } from '@/lib/cinemeta-rails'
 import { useTmdbKeyStatus } from '@/hooks/useTmdbKeyStatus'
 import { tmdbAdapter, proxyFetch, fetchTmdbDetailsAsMeta, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { TabsTrigger } from '@/components/ui/tabs'
+import { WorkspaceTabs } from '@/components/ui/workspace-tabs'
 import { PublishToPmdbDialog } from '@/components/for-you/PublishToPmdbDialog'
 import { checkPmdbKeyConfigured, getLastPublishTime } from '@/lib/pmdb-list-publisher'
 import { getWatchlist, type WatchlistItem } from '@/lib/watchlist'
@@ -693,13 +694,10 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
     }, [heroItems.length, heroIndex])
 
     return (
-        <div className="space-y-4 sm:space-y-6 overflow-x-hidden">
-            <Tabs value={subTab} onValueChange={v => setSubTab(v as 'unified' | 'accounts')}>
-                <TabsList>
+        <WorkspaceTabs value={subTab} panelValue={subTab} onValueChange={v => setSubTab(v as 'unified' | 'accounts')} label="For You views" contentClassName="space-y-4 sm:space-y-6 overflow-x-hidden" tabs={<>
                     <TabsTrigger value="unified">Discover</TabsTrigger>
                     <TabsTrigger value="accounts">Accounts</TabsTrigger>
-                </TabsList>
-            </Tabs>
+        </>}>
 
             <ToolbarShell contentClassName="gap-2 sm:gap-3">
                 <div className="relative w-full sm:w-80 shrink-0 min-w-0">
@@ -1052,6 +1050,6 @@ export function ForYouPage({ onAccountClick }: ForYouPageProps) {
                 onOpenChange={(open) => { if (!open) { setDetailItem(null); refreshWatchlist() } }}
                 item={detailItem}
             />
-        </div>
+        </WorkspaceTabs>
     )
 }

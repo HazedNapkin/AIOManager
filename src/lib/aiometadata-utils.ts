@@ -2,6 +2,25 @@ import { AddonDescriptor } from '@/types/addon'
 import { useVaultStore } from '@/store/vaultStore'
 import { useSyncStore } from '@/store/syncStore'
 import { deriveSyncToken } from '@/lib/crypto'
+import {
+    AIOMETADATA_SESSION_KEYS,
+    buildAIOMetadataUpdateBody,
+    formatAIOMetadataError,
+    getAIOMetadataConfigVersion,
+    interpretAIOMetadataUpdateFailure,
+} from './aiometadata-config-safety.ts'
+
+export {
+    AIOMETADATA_SESSION_KEYS,
+    AIOMETADATA_TARGET_LOCAL_KEYS,
+    AIOMetadataConfigConflictError,
+    buildAIOMetadataUpdateBody,
+    cloneAIOMetadataConfig,
+    getAIOMetadataConfigVersion,
+    interpretAIOMetadataUpdateFailure,
+    sanitizeAIOMetadataConfigForCreate,
+    verifyAIOMetadataWriteReadback,
+} from './aiometadata-config-safety.ts'
 
 const AIOMETADATA_MANIFEST_IDS = [
     'aio-metadata',
@@ -37,12 +56,7 @@ export function getAIOMetadataConfigureUrl(transportUrl: string): string | null 
     }
 }
 
-function normalizeAuthError(message: string): string {
-    return message.replace(/uuid\s+or\s+/gi, '').replace(/\binvalid uuid\b/gi, 'Invalid password')
-}
-
-async function authHeaders(): Promise<Record<string, string>> {
-    const auth = useSyncStore.getState().auth
+async function authHeaders(): Promise<Record<string, string>> {    const auth = useSyncStore.getState().auth
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (auth.isAuthenticated) {
         headers['x-sync-user'] = auth.id
@@ -106,24 +120,40 @@ export async function fetchAIOMetadataConfig(
         body: JSON.stringify({ baseUrl, uuid, password, addonPassword }),
     })
     const json = await res.json()
-    if (!json.success) throw new Error(normalizeAuthError(json.error?.message || json.error || 'Failed to load config'))
+    if (!json.success) throw new Error(formatAIOMetadataError(json, 'Failed to load config'))
     return (json.config ?? {}) as Record<string, unknown>
 }
 
+/**
+ * Write a config, guarding stale saves with the loaded `baseVersion` when the
+ * caller supplies one. A 409 CONFIG_CHANGED surfaces as
+ * AIOMetadataConfigConflictError — reload and reapply; this helper never
+ * forces and never retries on its own.
+ *
+ * Returns the server's new top-level configVersion so follow-up writes (e.g.
+ * an undo) can guard against intervening writers.
+ */
 export async function updateAIOMetadataConfig(
     baseUrl: string,
     uuid: string,
     password: string,
     config: Record<string, unknown>,
-    addonPassword?: string
-): Promise<void> {
+    addonPassword?: string,
+    options: { baseVersion?: number } = {}
+): Promise<{ configVersion: number | null }> {
     const res = await fetch('/api/aiometadata-proxy/update', {
         method: 'POST',
         headers: await authHeaders(),
-        body: JSON.stringify({ baseUrl, uuid, password, config, addonPassword }),
+        body: JSON.stringify({
+            baseUrl,
+            uuid,
+            ...buildAIOMetadataUpdateBody({ config, password, addonPassword, baseVersion: options.baseVersion }),
+        }),
     })
     const json = await res.json()
-    if (!json.success) throw new Error(normalizeAuthError(json.error?.message || json.error || 'Failed to update config'))
+    const failure = interpretAIOMetadataUpdateFailure(json)
+    if (failure) throw failure
+    return { configVersion: getAIOMetadataConfigVersion(json) }
 }
 
 export async function createAIOMetadataUser(
@@ -138,7 +168,7 @@ export async function createAIOMetadataUser(
         body: JSON.stringify({ baseUrl, password: password.trim(), config, addonPassword }),
     })
     const json = await res.json()
-    if (!json.success) throw new Error(normalizeAuthError(json.error?.message || json.error || 'Failed to create config'))
+    if (!json.success) throw new Error(formatAIOMetadataError(json, 'Failed to create config'))
     return { uuid: json.userUUID, installUrl: json.installUrl }
 }
 
@@ -191,19 +221,6 @@ export async function removeAIOMetadataPassword(baseUrl: string, uuid: string): 
 }
 
 // Config shaping -------------------------------------------------------------
-
-export const AIOMETADATA_SESSION_KEYS = ['sessionId', 'configHash', 'configVersion', 'lastModified']
-export const AIOMETADATA_TARGET_LOCAL_KEYS = ['catalogSetupComplete']
-
-export function cloneAIOMetadataConfig(config: Record<string, unknown>): Record<string, unknown> {
-    return JSON.parse(JSON.stringify(config))
-}
-
-export function sanitizeAIOMetadataConfigForCreate(config: Record<string, unknown>): Record<string, unknown> {
-    const next = cloneAIOMetadataConfig(config)
-    for (const key of [...AIOMETADATA_SESSION_KEYS, ...AIOMETADATA_TARGET_LOCAL_KEYS]) delete next[key]
-    return next
-}
 
 type ConfigCategory = 'section' | 'toggle' | 'key' | 'system'
 

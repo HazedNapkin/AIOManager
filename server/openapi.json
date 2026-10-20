@@ -407,6 +407,9 @@
                   },
                   "password": {
                     "type": "string"
+                  },
+                  "raw": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -680,6 +683,9 @@
                   },
                   "addonPassword": {
                     "type": "string"
+                  },
+                  "baseVersion": {
+                    "type": "number"
                   }
                 }
               }

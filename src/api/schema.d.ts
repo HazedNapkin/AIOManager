@@ -756,6 +756,7 @@ export interface paths {
                         baseUrl: string;
                         uuid: string;
                         password: string;
+                        raw?: boolean;
                     };
                 };
             };
@@ -1054,6 +1055,7 @@ export interface paths {
                             [key: string]: unknown;
                         };
                         addonPassword?: string;
+                        baseVersion?: number;
                     };
                 };
             };
