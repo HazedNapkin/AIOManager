@@ -1,4 +1,11 @@
-import { BLUEPRINT_LIVE_CSS, COMIC_BOOK_CSS, COMIC_BOOK_CLASSIC_CSS, RETRO_DESKTOP_CSS, CRT_TERMINAL_CSS, LIQUID_CHROME_CSS, MATRIX_RAIN_CSS, NEON_ARCADE_CSS, PIP_BOY_CSS } from './theme-css'
+import { BLUEPRINT_LIVE_CSS, COMIC_BOOK_CSS, COMIC_BOOK_CLASSIC_CSS, RETRO_DESKTOP_CSS, CRT_TERMINAL_CSS, LIQUID_CHROME_CSS, MATRIX_RAIN_CSS, NEON_ARCADE_CSS, PIP_BOY_CSS } from './theme-css.ts'
+import {
+    DOT_MATRIX_CSS, WASHI_CSS, CLAY_STUDIO_CSS, DENIM_CSS,
+    ARCTIC_GLASS_CSS, SHERBET_CSS, COTTAGE_CSS, ZEN_GARDEN_CSS, ORIGAMI_CSS,
+    SONAR_CSS, LAVA_LAMP_CSS,
+} from './theme-css-special.ts'
+import { HOLO_LIQUID_CSS, TIDAL_PULSE_CSS } from './theme-css-animated.ts'
+import { WIN_MODERN_CSS } from './theme-css-desktop.ts'
 
 export function hslToHex(hsl: string): string {
     const [h, s, l] = hsl.split(' ').map(v => parseFloat(v))
@@ -176,6 +183,20 @@ export type Theme =
     | 'midnight-carnival'
     | 'dragon-fruit'
     | 'tamtaro'
+    | 'dot-matrix'
+    | 'washi'
+    | 'clay-studio'
+    | 'denim'
+    | 'arctic-glass'
+    | 'sherbet'
+    | 'cottage'
+    | 'zen-garden'
+    | 'origami'
+    | 'sonar'
+    | 'lava-lamp'
+    | 'holo-liquid'
+    | 'tidal-pulse'
+    | 'win-modern'
     | `custom-${string}`
 
 export interface ThemePalette {
@@ -333,6 +354,102 @@ export const THEME_OPTIONS: ThemeOption[] = [
         muted: '150 22% 13%', mutedForeground: '142 23% 65%',
         destructive: '6 80% 67%', destructiveForeground: '0 0% 0%', border: '142 28% 26%',
     }, { subcategory: 'dark', customCss: CRT_TERMINAL_CSS }),
+
+    // ── Approved Special Collection (2026-10) ─────────────────────────────────────────
+    // User-approved signature skins: eleven material/craft treatments, the
+    // retained animated skins. Skins live in theme-css-special/-animated.ts.
+
+    theme('dot-matrix', 'Dot Matrix', 'Handheld olive LCD: pixel grid, ink frames, inverted selections and hard offset shadows.', '🎮', 'standard', {
+        background: '75 25% 68%', card: '75 22% 78%', cardForeground: '75 30% 10%',
+        primary: '75 35% 16%', primaryForeground: '75 20% 88%',
+        muted: '75 18% 72%', mutedForeground: '75 22% 20%',
+        destructive: '20 70% 30%', border: '75 25% 45%', ring: '75 35% 16%',
+    }, { subcategory: 'light', customCss: DOT_MATRIX_CSS }),
+    theme('washi', 'Washi', 'Kozo paper fibers, deckle-soft edges and a vermillion hanko seal on warm cream.', '🏮', 'standard', {
+        background: '40 30% 93%', card: '42 35% 98%', cardForeground: '20 20% 14%',
+        primary: '355 45% 40%', primaryForeground: '0 0% 100%',
+        muted: '42 22% 90%', mutedForeground: '20 12% 26%',
+        destructive: '355 55% 40%', border: '42 20% 78%', ring: '355 45% 40%',
+    }, { subcategory: 'light', customCss: WASHI_CSS }),
+    theme('clay-studio', 'Clay Studio', 'Speckled artisan glaze over hand-thrown silhouettes and terracotta warmth.', '🪴', 'standard', {
+        background: '25 35% 88%', card: '28 40% 96%', cardForeground: '15 35% 15%',
+        primary: '16 60% 38%', primaryForeground: '0 0% 100%',
+        muted: '28 25% 90%', mutedForeground: '15 20% 28%',
+        destructive: '5 65% 40%', border: '28 20% 74%', ring: '16 60% 38%',
+    }, { subcategory: 'light', customCss: CLAY_STUDIO_CSS }),
+    theme('denim', 'Denim', 'Indigo twill weave with golden contrast stitching and deep-denim buttons.', '👖', 'standard', {
+        background: '220 30% 80%', card: '218 28% 90%', cardForeground: '222 40% 13%',
+        primary: '222 55% 30%', primaryForeground: '0 0% 100%',
+        muted: '220 20% 84%', mutedForeground: '222 20% 24%',
+        destructive: '5 65% 40%', border: '222 25% 60%', ring: '28 80% 40%',
+    }, { subcategory: 'light', customCss: DENIM_CSS }),
+    theme('arctic-glass', 'Arctic Glass', 'Frosted panes over an ice-sky gradient; light, chill and quietly glowing.', '🧊', 'standard', {
+        background: '205 45% 90%', card: '205 50% 97%', cardForeground: '210 40% 13%',
+        primary: '203 70% 36%', primaryForeground: '0 0% 100%',
+        muted: '205 35% 90%', mutedForeground: '210 25% 26%',
+        destructive: '350 70% 42%', border: '205 30% 74%', ring: '190 80% 38%',
+    }, { subcategory: 'light', customCss: ARCTIC_GLASS_CSS }),
+    theme('sherbet', 'Sherbet', 'Sorbet tri-gradient with candy-glow shadows and peach-mint-lilac scoops.', '🍧', 'standard', {
+        background: '18 60% 93%', card: '30 55% 98%', cardForeground: '280 30% 16%',
+        primary: '330 55% 42%', primaryForeground: '0 0% 100%',
+        muted: '160 30% 91%', mutedForeground: '280 20% 28%',
+        destructive: '350 65% 42%', border: '18 40% 78%', ring: '160 45% 34%',
+    }, { subcategory: 'light', customCss: SHERBET_CSS }),
+    theme('cottage', 'Cottage', 'Gingham tablecloth checks, cream china cards and rose-trim coziness.', '🏡', 'standard', {
+        background: '350 35% 92%', card: '40 40% 98%', cardForeground: '10 30% 15%',
+        primary: '345 55% 38%', primaryForeground: '0 0% 100%',
+        muted: '350 20% 88%', mutedForeground: '10 18% 26%',
+        destructive: '345 65% 42%', border: '350 18% 76%', ring: '100 35% 32%',
+    }, { subcategory: 'light', customCss: COTTAGE_CSS }),
+    theme('zen-garden', 'Zen Garden', 'Raked sand lines, pebble controls and one calm moss accent.', '🪷', 'standard', {
+        background: '42 18% 90%', card: '45 22% 96%', cardForeground: '100 12% 15%',
+        primary: '130 30% 28%', primaryForeground: '0 0% 100%',
+        muted: '45 12% 88%', mutedForeground: '100 8% 26%',
+        destructive: '20 55% 38%', border: '45 14% 74%', ring: '130 30% 28%',
+    }, { subcategory: 'light', customCss: ZEN_GARDEN_CSS }),
+    theme('origami', 'Origami', 'Creased paper gradient, folded dog-ear corners and crisp fold-orange accents.', '🕊️', 'standard', {
+        background: '220 25% 93%', card: '220 20% 98%', cardForeground: '225 35% 13%',
+        primary: '34 78% 34%', primaryForeground: '0 0% 100%',
+        muted: '220 15% 90%', mutedForeground: '225 18% 26%',
+        destructive: '345 65% 42%', border: '225 18% 76%', ring: '195 60% 38%',
+    }, { subcategory: 'light', customCss: ORIGAMI_CSS }),
+    theme('sonar', 'Sonar', 'Range rings and a slow sweep wedge pinging across the abyssal plain.', '📡', 'standard', {
+        background: '215 65% 5%', card: '215 50% 11%', cardForeground: '195 35% 94%',
+        primary: '175 85% 55%', primaryForeground: '215 65% 5%',
+        muted: '215 40% 8%', mutedForeground: '195 25% 68%',
+        destructive: '0 75% 60%', border: '175 45% 24%', ring: '175 85% 55%',
+    }, { subcategory: 'dark', customCss: SONAR_CSS }),
+    theme('lava-lamp', 'Lava Lamp', 'Two morphing wax blobs behind smoked-plum glass; retro lounge in motion.', '🫧', 'standard', {
+        background: '280 35% 7%', card: '280 25% 13%', cardForeground: '310 30% 95%',
+        primary: '315 90% 65%', primaryForeground: '280 35% 6%',
+        muted: '280 20% 10%', mutedForeground: '310 20% 72%',
+        destructive: '25 95% 60%', border: '315 50% 28%', ring: '25 95% 60%',
+    }, { subcategory: 'dark', customCss: LAVA_LAMP_CSS }),
+    theme('holo-liquid', 'Holographic Liquid', 'Iridescent sheen rolling across pearl panels on staggered clocks; buttons shimmer on hover.', '🫧', 'standard', {
+        background: '260 30% 95%', card: '260 35% 99%', cardForeground: '265 40% 14%',
+        primary: '265 60% 46%', primaryForeground: '0 0% 100%',
+        muted: '265 25% 91%', mutedForeground: '265 18% 30%',
+        destructive: '325 65% 42%', border: '265 25% 80%', ring: '190 80% 38%',
+    }, { subcategory: 'light', customCss: HOLO_LIQUID_CSS }),
+    theme('tidal-pulse', 'Tidal Pulse', 'Two out-of-phase wave layers lap the bottom of the sky and the sync progress surfs between them.', '🌊', 'standard', {
+        background: '195 55% 92%', card: '195 45% 98%', cardForeground: '200 45% 13%',
+        primary: '200 75% 38%', primaryForeground: '0 0% 100%',
+        muted: '195 35% 89%', mutedForeground: '200 25% 26%',
+        destructive: '350 70% 42%', border: '195 35% 76%', ring: '172 65% 34%',
+    }, { subcategory: 'light', customCss: TIDAL_PULSE_CSS }),
+
+    // ── Desktop / OS-inspired themes (2026-10) ───────────────────────────
+    // Modern Windows is the retained desktop-inspired addition:
+    // structural window-chrome homages (titlebar headers, taskbar nav,
+    // window edges, era type). Purely synthesized CSS chrome; no OS assets;
+    // decorations are inert.
+
+    theme('win-modern', 'Modern Windows', 'Calm mica light: soft rounding, hairline edges, centered taskbar and an accent underline.', '🔹', 'standard', {
+        background: '220 15% 94%', card: '220 14% 99%', cardForeground: '222 30% 14%',
+        primary: '205 100% 40%', primaryForeground: '0 0% 100%',
+        muted: '220 12% 92%', mutedForeground: '222 18% 32%',
+        destructive: '0 84% 46%', destructiveForeground: '0 0% 100%', border: '220 12% 80%', ring: '205 100% 42%',
+    }, { subcategory: 'light', customCss: WIN_MODERN_CSS }),
 
     theme('coral-reef', 'Coral Reef', 'Tropical underwater warmth with coral and turquoise sea life', '🪸', 'standard', {
         background: '10 40% 92%', card: '180 30% 98%', cardForeground: '10 35% 15%',

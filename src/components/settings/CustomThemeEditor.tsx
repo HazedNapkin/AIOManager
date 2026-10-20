@@ -218,6 +218,9 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     const [activeTab, setActiveTab] = useState<'edit' | 'import' | 'css'>('edit')
     const [rawPaletteText, setRawPaletteText] = useState('')
     const [rawPaletteError, setRawPaletteError] = useState('')
+    const [fxDuration, setFxDuration] = useState('7')
+    const [fxDensity, setFxDensity] = useState('170')
+    const [fxDepth, setFxDepth] = useState('16')
 
     const [editorState, dispatch] = useReducer(editorReducer, makeDefaultState(editingTheme))
 
@@ -422,6 +425,20 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         })
     }, [batchWithUndo, base])
 
+    const applyFxKnobs = useCallback(() => {
+        const entries: string[] = []
+        if (fxDuration.trim()) entries.push(`--fx-duration: ${fxDuration.trim()}s`)
+        if (fxDensity.trim()) entries.push(`--fx-density: ${fxDensity.trim()}px`)
+        if (fxDepth.trim()) entries.push(`--fx-depth: ${fxDepth.trim()}px`)
+        if (!entries.length) return
+        const block = `:root { ${entries.join('; ')}; }`
+        const css = editorStateRef.current.customCss
+        pushUndo()
+        // Upsert: refresh an existing --fx- root block in place, else prepend one.
+        const existing = css.match(/:root\s*\{[^}]*--fx-[^}]*\}/)
+        dispatch({ type: 'SET', key: 'customCss', value: existing ? css.replace(existing[0], block) : `${block}\n${css}` })
+    }, [fxDuration, fxDensity, fxDepth, pushUndo])
+
     const handleRawPaletteApply = () => {
         try {
             const parsed = JSON.parse(rawPaletteText)
@@ -489,16 +506,17 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
 
             {/* Page header: back, title, and save/delete actions span the full width */}
             <div className="flex flex-wrap items-center gap-3">
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onClose}
-                    aria-label="Back to appearance settings"
-                    title="Back to appearance settings"
-                    className="h-9 w-9 text-muted-foreground hover:text-foreground shrink-0"
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
+                <Tooltip content="Back to appearance settings" side="top">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        aria-label="Back to appearance settings"
+                        className="h-9 w-9 text-muted-foreground hover:text-foreground shrink-0"
+                    >
+                        <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                </Tooltip>
                 <div className="min-w-0">
                     <h1 className="text-lg font-semibold leading-tight">
                         {isEditing ? 'Edit Theme' : 'Create Theme'}
@@ -528,12 +546,16 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
 
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-5 py-3 border-b border-border/30">
                     <div className="flex items-center gap-1 shrink-0">
-                        <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} aria-label="Undo" title="Undo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
-                            <Undo2 className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} aria-label="Redo" title="Redo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
-                            <Redo2 className="w-3.5 h-3.5" />
-                        </Button>
+                        <Tooltip content="Undo" side="top">
+                            <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} aria-label="Undo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                                <Undo2 className="w-3.5 h-3.5" />
+                            </Button>
+                        </Tooltip>
+                        <Tooltip content="Redo" side="top">
+                            <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} aria-label="Redo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                                <Redo2 className="w-3.5 h-3.5" />
+                            </Button>
+                        </Tooltip>
                     </div>
                     <div className="w-px h-4 bg-border shrink-0" />
                     {/* @ts-expect-error Radix Select secretly accepts modal false */}
@@ -597,11 +619,13 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                             maxLength={4}
                                         />
                                         <Popover>
-                                            <PopoverTrigger asChild>
-                                                <Button type="button" variant="subtle" aria-label="Browse emojis" title="Browse emojis" className="h-12 w-8 rounded-xl flex items-center justify-center group">
-                                                    <Smile className="h-3.5 w-3.5 opacity-40 group-hover:opacity-80 transition-opacity" />
-                                                </Button>
-                                            </PopoverTrigger>
+                                            <Tooltip content="Browse emojis" side="top">
+                                                <PopoverTrigger asChild>
+                                                    <Button type="button" variant="subtle" aria-label="Browse emojis" className="h-12 w-8 rounded-xl flex items-center justify-center group">
+                                                        <Smile className="h-3.5 w-3.5 opacity-40 group-hover:opacity-80 transition-opacity" />
+                                                    </Button>
+                                                </PopoverTrigger>
+                                            </Tooltip>
                                             <PopoverContent className="w-[min(320px,90vw)] p-0 border-white/10 shadow-2xl overflow-hidden rounded-xl" align="start">
                                                 <div className="flex flex-col h-[360px] bg-popover">
                                                     <div className="p-3 border-b border-border/10 bg-muted/20">
@@ -802,6 +826,24 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                 <p className="text-xs text-muted-foreground mt-1">
                                     Style fonts, textures, controls, layout and animation. Changes appear in the live sample. Use <code>hsl(var(--primary))</code> for palette colors and <code>[data-theme-part="card"]</code> for panels. Load a preset to remix its commented CSS.
                                 </p>
+                            </div>
+                            <div className="flex flex-wrap items-end gap-2 rounded-xl border border-border/30 bg-muted/10 p-3">
+                                <p className="w-full text-[11px] font-medium text-muted-foreground">
+                                    FX knobs — retune themes that expose <code>--fx-duration</code> (motion speed), <code>--fx-density</code> (texture density) and <code>--fx-depth</code> (glow/shadow depth). Writes a <code>:root</code> block into the CSS below.
+                                </p>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Duration (s)</span>
+                                    <Input aria-label="FX duration in seconds" className="h-7 w-20 font-mono text-xs" value={fxDuration} onChange={e => setFxDuration(e.target.value)} />
+                                </label>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Density (px)</span>
+                                    <Input aria-label="FX density in pixels" className="h-7 w-20 font-mono text-xs" value={fxDensity} onChange={e => setFxDensity(e.target.value)} />
+                                </label>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Depth (px)</span>
+                                    <Input aria-label="FX depth in pixels" className="h-7 w-20 font-mono text-xs" value={fxDepth} onChange={e => setFxDepth(e.target.value)} />
+                                </label>
+                                <Button variant="outline" size="sm" className="h-7 px-3 text-xs" onClick={applyFxKnobs}>Apply to CSS</Button>
                             </div>
                             <textarea
                                 aria-label="Custom CSS"
