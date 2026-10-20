@@ -603,7 +603,9 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             })
         }
 
-        const MAX_RETRIES = 2
+        // A library replacement may have landed before a timeout or upstream error.
+        // Its caller must read back the saved row before deciding whether to retry.
+        const MAX_RETRIES = type === 'DatastorePut' ? 0 : 2
         let lastError = null
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -635,7 +637,16 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 clearTimeout(timeoutId)
 
                 if (!response.ok && response.status >= 500 && attempt < MAX_RETRIES) {
+                    await response.body?.cancel().catch(() => {})
                     continue
+                }
+
+                if (!response.ok && ['DatastoreGet', 'DatastorePut', 'DatastoreMeta', 'GetUser'].includes(type)) {
+                    const retryAfter = response.headers.get('retry-after')
+                    if (retryAfter) reply.header('Retry-After', retryAfter)
+                    reply.status(response.status)
+                    await response.body?.cancel().catch(() => {})
+                    return { error: 'Stremio request failed' }
                 }
 
                 let data
