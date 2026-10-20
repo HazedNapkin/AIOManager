@@ -114,9 +114,12 @@ export function jellyfinMediaActivity(account: MediaAccount, colorIndex: number,
     return result
 }
 
-function identity(item: Pick<ActivityItem, 'accountId' | 'type' | 'itemId' | 'uniqueItemId' | 'season' | 'episode'>) {
+function identity(item: Pick<ActivityItem, 'accountId' | 'type' | 'itemId' | 'uniqueItemId' | 'season' | 'episode' | 'source' | 'sourceConnectionId'>) {
     const series = item.type === 'series' || item.type === 'episode' || item.type === 'anime'
-    return `${item.accountId}|${series ? 'series' : item.type}|${item.itemId}|${series ? `${item.season ?? '?'}:${item.episode ?? item.uniqueItemId}` : ''}`
+    // Saved native logins own independent progress. The media overlay also runs when
+    // no media-server observations exist, so its merge key must preserve those origins.
+    const origin = item.sourceConnectionId ? `|${item.source || 'stremio'}:${item.sourceConnectionId}` : ''
+    return `${item.accountId}${origin}|${series ? 'series' : item.type}|${item.itemId}|${series ? `${item.season ?? '?'}:${item.episode ?? item.uniqueItemId}` : ''}`
 }
 
 function mergeCurrentState(prior: ActivityItem, item: ActivityItem): ActivityItem {

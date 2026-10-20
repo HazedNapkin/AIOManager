@@ -221,7 +221,7 @@ export const AddonCard = React.memo(function AddonCard({
     initProfiles()
   }, [initProfiles])
 
-  const handleSaveMetadata = async (metadata: { customName?: string; customLogo?: string; customDescription?: string }) => {
+  const handleSaveMetadata = async (metadata: { customName?: string; customLogo?: string; customDescription?: string }, destinations?: AddonDescriptor['destinations'] | null) => {
     const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
     const enabledConnections = account?.connections?.filter(c => c.enabled !== false && isAddonConnection(c)) || []
     const platformLabel = enabledConnections.length === 0
@@ -231,10 +231,12 @@ export const AddonCard = React.memo(function AddonCard({
         : 'synced to your connected platforms'
 
     try {
-      await useAccountStore.getState().updateAddonSettings(accountId, addon.transportUrl, { metadata }, index)
+      await useAccountStore.getState().updateAddonSettings(accountId, addon.transportUrl, {
+        metadata, ...(destinations !== undefined ? { destinations } : {}),
+      }, index)
       toast({
-        title: 'Appearance Updated',
-        description: `Addon metadata has been customized and ${platformLabel}.`
+        title: destinations !== undefined ? 'Addon settings updated' : 'Appearance Updated',
+        description: destinations !== undefined ? 'Appearance and sync destinations saved.' : `Addon metadata has been customized and ${platformLabel}.`
       })
     } catch (err) {
       if (import.meta.env.DEV) console.error('Metadata sync failed', err)
@@ -243,6 +245,7 @@ export const AddonCard = React.memo(function AddonCard({
         title: 'Sync Failed',
         description: `Failed to push customization to your platform${enabledConnections.length !== 1 ? 's' : ''}.`
       })
+      throw err
     }
   }
 
@@ -719,7 +722,7 @@ export const AddonCard = React.memo(function AddonCard({
                         </span>
                       </Tooltip>
                     )}
-                    {showPlatformSource && <PlatformSourceChip account={currentAccount} scope="addon" className="ml-1" />}
+                    {showPlatformSource && <PlatformSourceChip account={currentAccount} addon={addon} scope="addon" className="ml-1" />}
                   </div>
 
                   <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -1041,7 +1044,7 @@ export const AddonCard = React.memo(function AddonCard({
                       </span>
                     </Tooltip>
                   )}
-                  {showPlatformSource && <PlatformSourceChip account={currentAccount} scope="addon" className="ml-1" />}
+                  {showPlatformSource && <PlatformSourceChip account={currentAccount} addon={addon} scope="addon" className="ml-1" />}
                 </CardDescription>
               </div>
             </div>

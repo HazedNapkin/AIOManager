@@ -3,6 +3,7 @@ import {
       getAddons,
 } from '@/api/addons'
 import { normalizeAddonUrl, ACCOUNT_COLORS, hasFallbackAddonIdentity } from '@/lib/utils'
+import { mergeAddonDeletionState } from '@/lib/addon-tombstones'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { loginWithCredentials } from '@/api/auth'
 import { LoginResponse } from '@/api/stremio-client'
@@ -72,8 +73,9 @@ export const acquireSyncMutex = async (accountId: string): Promise<() => void> =
 export const getAccountById = (accounts: Account[], id: string): Account | undefined =>
   accounts.find(a => a.id === id)
 
-import { getStremioConnection, getStremioAuthKey, getAccountEmail } from '@/lib/account-compat'
-export { getStremioConnection, getStremioAuthKey, getAccountEmail }
+import { getStremioConnection, getStremioAuthKey, getAccountEmail, getStremioConnections } from '@/lib/account-compat'
+import { scopeStremioKeyRotation } from '@/lib/connection-identity'
+export { getStremioConnection, getStremioAuthKey, getAccountEmail, getStremioConnections }
 
 export function hasPlatformConnection(account: Account): boolean {
     return !!getStremioAuthKey(account) || !!(account.connections || []).some(c => c.enabled)
@@ -269,11 +271,9 @@ export const refreshAuthKeyFromStoredPassword = async (
       authKeyCache.set(encryptedAuthKey, response.authKey)
       await upsertAuthKeyHash(account.id, response.authKey)
 
-      const updatedConnections = (account.connections || []).map(c =>
-            c.platform === 'stremio'
-                  ? { ...c, credentials: { ...c.credentials, authKey: encryptedAuthKey } }
-                  : c
-      )
+      // A stored-password refresh rotates the account's CANONICAL Stremio login only;
+      // secondary Stremio logins on the same account keep their own sealed keys.
+      const updatedConnections = scopeStremioKeyRotation(account.connections, account.primaryConnectionId, encryptedAuthKey)
       return {
             authKey: response.authKey,
             account: {
@@ -349,7 +349,7 @@ export interface AccountStore {
       installAddonsToAccount: (accountId: string, addonUrls: string[], concurrency?: number) => Promise<{ successCount: number; failCount: number }>
       removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
       removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
-      reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
+      reorderAddons: (accountId: string, newOrder: AddonDescriptor[], options?: { explicitInstallUrls?: string[] }) => Promise<void>
       bulkDeleteAddons: (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => Promise<void>
       exportAccounts: (includeCredentials: boolean) => Promise<string>
       exportAccountsForSync: () => Promise<Record<string, unknown>>
@@ -386,6 +386,7 @@ export interface AccountStore {
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   manifest?: AddonDescriptor['manifest'],
                   note?: string,
+                  destinations?: AddonDescriptor['destinations'] | null,
             },
             targetIndex?: number
       ) => Promise<void>
@@ -911,9 +912,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             const { bulkDeleteAddons } = await import('./account/accountAddonOps')
             return bulkDeleteAddons(accountId, keptAddons, removedUrls)
       },
-      reorderAddons: async (accountId: string, newOrder: AddonDescriptor[]) => {
+      reorderAddons: async (accountId: string, newOrder: AddonDescriptor[], options?: { explicitInstallUrls?: string[] }) => {
             const { reorderAddons } = await import('./account/accountAddonOps')
-            return reorderAddons(accountId, newOrder)
+            return reorderAddons(accountId, newOrder, options)
       },
 
       exportAccounts: async (includeCredentials: boolean) => {
@@ -971,18 +972,23 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         authKeyCache.delete(getStremioAuthKey(account))
                         const encryptedNewKey = await encrypt(authKey, encryptionKey)
                         updatedAccount.authKey = encryptedNewKey
-                        updatedAccount.connections = (updatedAccount.connections || []).map(c =>
-                              c.platform === 'stremio'
-                                    ? { ...c, credentials: { ...c.credentials, authKey: encryptedNewKey } }
-                                    : c
-                        )
+                        // Rotating the account login updates the CANONICAL Stremio
+                        // connection; secondary logins keep their own sealed keys.
+                        updatedAccount.connections = scopeStremioKeyRotation(updatedAccount.connections, updatedAccount.primaryConnectionId, encryptedNewKey)
                         authKeyCache.set(getStremioAuthKey(updatedAccount), authKey)
                         await upsertAuthKeyHash(updatedAccount.id, authKey)
                         const addons = await getAddons(authKey, updatedAccount.id)
-                        updatedAccount.addons = addons.map((a) => ({
-                              ...a,
-                              manifest: sanitizeAddonManifest(a.manifest, a.transportUrl),
-                        }))
+                        // Re-authentication refreshes credentials, so a stale platform
+                        // snapshot must pass the same additive merge as a passive sync.
+                        const { mergeRemoteIntoHub } = await import('./account/accountSync')
+                        const deletionState = mergeAddonDeletionState(account.deletedAddons, undefined, account.restoredAddons, undefined)
+                        updatedAccount.addons = mergeRemoteIntoHub({ ...account, ...deletionState }, addons)
+                        Object.assign(updatedAccount, deletionState)
+                        updatedAccount.profiles = updatedAccount.profiles?.map(profile =>
+                              profile.id === (updatedAccount.activeProfileId || 'default')
+                                    ? { ...profile, addons: structuredClone(updatedAccount.addons) }
+                                    : profile
+                        )
                         updatedAccount.lastSync = new Date()
                         updatedAccount.status = 'active'
                   }
@@ -1054,6 +1060,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean; hideConfigure?: boolean },
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   note?: string,
+                  destinations?: AddonDescriptor['destinations'] | null,
             },
             targetIndex?: number
       ) => {

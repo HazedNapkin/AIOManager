@@ -7,6 +7,62 @@ import { parseCinemetaGenres, fetchCinemetaDetail } from './cinemeta-cache.ts'
 
 export { sanitizePosterUrl }
 
+/**
+ * Stable per-connection scope key for watch attribution: a secondary Stremio login's
+ * history lives under `${accountId}::${connectionId}`, while the canonical/legacy
+ * scope stays the bare accountId so every pre-multiplicity row, snapshot and
+ * tombstone keeps resolving exactly as before. Connection ids are uuids, so the
+ * double-colon separator can never occur inside either id.
+ */
+export function watchContextKey(accountId: string, sourceConnectionId?: string): string {
+    return sourceConnectionId ? `${accountId}::${sourceConnectionId}` : accountId
+}
+
+/**
+ * Split a server-side scoped account id (`${accountId}::${connectionId}` for
+ * per-connection rows, bare accountId for canonical/legacy rows) back into the real
+ * account and the originating connection. The connection part is absent for
+ * canonical/legacy history.
+ */
+export function parseScopedAccountId(scopedAccountId: string): { accountId: string; sourceConnectionId?: string } {
+    const raw = String(scopedAccountId || '')
+    const sep = raw.indexOf('::')
+    if (sep < 0) return { accountId: raw }
+    const accountId = raw.slice(0, sep)
+    const sourceConnectionId = raw.slice(sep + 2)
+    if (!accountId || !sourceConnectionId) return { accountId: raw }
+    return { accountId, sourceConnectionId }
+}
+
+/** Cache/feed identity of a Stremio item: canonical keeps the legacy key, secondaries carry their connection. */
+export function stremioActivityItemKey(accountId: string, uniqueItemId: string, sourceConnectionId?: string): string {
+    return sourceConnectionId
+        ? `${accountId}:stremio:${sourceConnectionId}:${uniqueItemId}`
+        : `${accountId}:${uniqueItemId}`
+}
+
+/**
+ * Human label distinguishing same-account peer logins (rail/detail surfaces): the
+ * connection's own email or displayName when known, else a stable per-platform ordinal
+ * ("Login 2"). Returns undefined without attribution or when the platform has only one
+ * login (the account label already covers it). Raw values — callers apply privacy masking.
+ */
+export function peerLoginLabel(
+    account: { connections?: Array<{ id: string; platform: string; enabled?: boolean; displayName?: string; credentials?: Record<string, string> }> } | undefined,
+    sourceConnectionId?: string,
+): string | undefined {
+    if (!account || !sourceConnectionId) return undefined
+    const conns = (account.connections || []).filter(c => c.platform !== 'jellyfin')
+    const conn = conns.find(c => c.id === sourceConnectionId)
+    if (!conn) return undefined
+    const samePlatform = conns.filter(c => c.platform === conn.platform)
+    if (samePlatform.length <= 1) return undefined
+    const email = conn.credentials?.email
+    if (email && email.includes('@')) return email
+    if (conn.displayName) return conn.displayName
+    return `Login ${samePlatform.findIndex(c => c.id === sourceConnectionId) + 1}`
+}
+
 export {
     fetchCinemetaDetail,
     getCachedCinemetaName,
@@ -150,7 +206,8 @@ export function parseStremioDate(dateStr: string | undefined): Date | undefined 
 export function transformLibraryItemToActivityItem(
     item: LibraryItem,
     account: Account,
-    accounts: Account[]
+    accounts: Account[],
+    options?: { connectionId?: string; distinctId?: boolean }
 ): ActivityItem {
     const uniqueItemId = getUniqueItemId(item)
     const timestamp = getWatchTimestamp(item)
@@ -171,9 +228,17 @@ export function transformLibraryItemToActivityItem(
     const progress = duration > 0 ? Math.min(100, Math.max(0, (timeOffset / duration) * 100)) : 0
     const isInProgress = (timeOffset > 3000 || progress > 0.5) && progress < 95
     const accountColorIndex = accounts.indexOf(account) % 10
+    // Stable per-origin identity: BOTH canonical and secondary items record which login
+    // they came from (deletes resolve the exact key after a canonical switch/promotion),
+    // but only a SECONDARY tags its id — the canonical keeps the legacy id so cached
+    // feeds, deleted-entry keys and tombstones stay valid, and two logins watching the
+    // same title stay independently visible and independently deletable.
+    const itemId = options?.connectionId && options.distinctId !== false
+        ? stremioActivityItemKey(account.id, uniqueItemId, options.connectionId)
+        : `${account.id}:${uniqueItemId}`
 
     return {
-        id: `${account.id}:${uniqueItemId}`,
+        id: itemId,
         accountId: account.id,
         accountName: account.name || getAccountEmail(account)?.split('@')[0] || account.id || 'Unknown',
         accountColorIndex,
@@ -194,6 +259,7 @@ export function transformLibraryItemToActivityItem(
         episode,
         overallTimeWatched,
         source: 'stremio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
     }
 }
 
@@ -249,7 +315,7 @@ function accountActivityMeta(account: Account, accounts: Account[]) {
     }
 }
 
-export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[]): Promise<ActivityItem> {
+export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[], options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const watchedAt = Number(row.watched_at) || Date.now()
@@ -264,7 +330,12 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
-        id: `${account.id}:nuvio:${uniqueItemId}`,
+        // Per-origin identity: with several Nuvio logins bound, each copy tags its
+        // connection so same-title watches stay separately visible and separately
+        // deletable; the single-connection shape keeps the legacy id untouched.
+        id: options?.connectionId
+            ? `${account.id}:nuvio:${options.connectionId}:${uniqueItemId}`
+            : `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
         accountName: meta.name,
         accountColorIndex: meta.colorIndex,
@@ -281,13 +352,14 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
         genres,
     }
 }
 
 // Progress rows carry no title (only watched rows do), so the caller can pass a title resolved
 // from the watched-items list for the same content_id to avoid showing a raw id as the name.
-export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string): Promise<ActivityItem> {
+export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string, options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = row.video_id || nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
     const duration = Number(row.duration) || 0
@@ -305,7 +377,9 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
-        id: `${account.id}:nuvio:${uniqueItemId}`,
+        id: options?.connectionId
+            ? `${account.id}:nuvio:${options.connectionId}:${uniqueItemId}`
+            : `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
         accountName: meta.name,
         accountColorIndex: meta.colorIndex,
@@ -322,6 +396,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
         genres,
     }
 }
@@ -348,6 +423,7 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         episode: entry.episode,
         overallTimeWatched: entry.overallTimeWatched,
         source: entry.source,
+        sourceConnectionId: entry.sourceConnectionId,
         backfill: entry.backfill,
         genres: entry.genres,
         readOnly: entry.readOnly,

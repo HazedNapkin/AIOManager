@@ -28,6 +28,12 @@ export interface AddonManifest {
   }
 }
 
+// Per-addon destination policy (deny-list) — see AddonDescriptor.destinations.
+export interface AddonDestinations {
+  excludedPlatforms?: string[]
+  excludedConnections?: string[]
+}
+
 export interface AddonDescriptor {
   transportUrl: string
   transportName?: string
@@ -37,6 +43,12 @@ export interface AddonDescriptor {
     protected?: boolean
     enabled?: boolean
   }
+  // Per-addon destination policy (deny-list). Absent = sync everywhere. Platform
+  // entries cover every login of that platform, present and future; connection ids
+  // are exact stable login ids. Never removed from the hub: exclusion means the
+  // target's next sync removes its copy, nothing more. Pure helpers live in
+  // src/lib/addon-destinations.ts; the server twin is server/utils/addon-destinations.js.
+  destinations?: AddonDestinations
   metadata?: {
     customName?: string
     customLogo?: string

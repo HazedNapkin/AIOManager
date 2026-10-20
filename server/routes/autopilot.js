@@ -19,18 +19,26 @@ export function registerAutopilotRoutes(fastify, autopilotEngine) {
         try {
             const credId = connectionId ? `${owner}:${connectionId}` : `${owner}:${accountId}`
             const now = Date.now()
+            const previous = !connectionId ? await db.get(
+                'SELECT auth_key, canonical_connection_id FROM server_credentials WHERE id = $1 AND sync_user = $2',
+                [credId, owner]
+            ) : null
+            const canonicalConnectionId = previous?.canonical_connection_id
+                && decrypt(previous.auth_key, FALLBACK_KEYS) === decrypt(encryptedAuthKey, FALLBACK_KEYS)
+                ? previous.canonical_connection_id : null
             if (db.type === 'postgres') {
                 await db.run(
-                    `INSERT INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                     ON CONFLICT (id) DO UPDATE SET auth_key = EXCLUDED.auth_key, updated_at = EXCLUDED.updated_at, credential_type = EXCLUDED.credential_type, connection_id = EXCLUDED.connection_id`,
-                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId]
+                    `INSERT INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id, canonical_connection_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     ON CONFLICT (id) DO UPDATE SET auth_key = EXCLUDED.auth_key, updated_at = EXCLUDED.updated_at, credential_type = EXCLUDED.credential_type, connection_id = EXCLUDED.connection_id, canonical_connection_id = EXCLUDED.canonical_connection_id`,
+                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId, canonicalConnectionId]
                 )
             } else {
                 await db.run(
-                    `INSERT OR REPLACE INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId]
+                    `INSERT INTO server_credentials (id, sync_user, account_id, account_name, auth_key, updated_at, credential_type, connection_id, canonical_connection_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                     ON CONFLICT (id) DO UPDATE SET auth_key = EXCLUDED.auth_key, updated_at = EXCLUDED.updated_at, credential_type = EXCLUDED.credential_type, connection_id = EXCLUDED.connection_id, canonical_connection_id = EXCLUDED.canonical_connection_id`,
+                    [credId, owner, accountId, accountName || '', encryptedAuthKey, now, credentialType, connectionId, canonicalConnectionId]
                 )
             }
             const { invalidateConnectionCache } = await import('../providers/reconciler.js')

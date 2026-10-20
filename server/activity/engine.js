@@ -177,10 +177,23 @@ function computeLibraryHash(library) {
 
 async function getRegisteredAccountsPage(limit, offset = 0) {
     // Stremio-only: Nuvio/RealStream auth_key rows are JSON token bundles, not Stremio authKeys.
+    // Per-connection rows (secondary logins) are scanned too, each under its OWN scope —
+    // two Stremio users on one account must never poll into one snapshot key. Duplicate
+    // rows of the same login (account-level dupes or per-connection re-registrations)
+    // collapse before pagination so duplicates cannot make a full page look like
+    // the end of the table and prevent later accounts from ever being scanned.
     return db.query(
-        `SELECT sync_user, account_id, account_name, auth_key
-         FROM server_credentials
-         WHERE credential_type = 'stremio' OR credential_type IS NULL
+        `SELECT sync_user, account_id, account_name, auth_key, connection_id
+         FROM (
+             SELECT sync_user, account_id, account_name, auth_key, connection_id, updated_at, id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY sync_user, account_id, connection_id
+                        ORDER BY updated_at DESC, id ASC
+                    ) AS login_rank
+             FROM server_credentials
+             WHERE credential_type = 'stremio' OR credential_type IS NULL
+         ) ranked
+         WHERE login_rank = 1
          ORDER BY updated_at DESC, id ASC
          LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -491,30 +504,39 @@ async function deleteSnapshots(keys, tx) {
     return deleted
 }
 
-async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null) {
+// Events and snapshots for a SECONDARY login are stored under the scoped account id
+// `${accountId}::${connectionId}` — the snapshot PK (sync_user, account_id, item_id)
+// then isolates the two users' libraries, and deterministic event ids stay unique per
+// login. The canonical/legacy login keeps the bare accountId exactly as before.
+function scanScopeAccountId(accountId, connectionId) {
+    return connectionId ? `${accountId}::${connectionId}` : accountId
+}
+
+async function scanAccount(syncUser, accountId, accountName, authKey, limits, log = null, connectionId = null) {
     const scanStart = Date.now()
-    trace('activity', 'scanAccount.start', { accountId })
+    trace('activity', 'scanAccount.start', { accountId, connectionId })
     // Deadline exhaustion halts the cycle without penalizing the account.
     if (limits.deadline && Date.now() >= limits.deadline) {
-        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: 'deadline-cut', timing: Date.now() - scanStart })
+        trace('activity', 'scanAccount.complete', { accountId, connectionId, libraryItems: 0, skipped: true, reason: 'deadline-cut', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: false, failed: false }
     }
     const library = await fetchLibrary(authKey, limits.deadline, log)
     if (!library || !Array.isArray(library)) {
         // An empty response after the deadline is a budget cut, not a fetch failure.
         const deadlineCut = Boolean(limits.deadline) && Date.now() >= limits.deadline
-        trace('activity', 'scanAccount.complete', { accountId, libraryItems: 0, skipped: true, reason: deadlineCut ? 'deadline-cut' : 'no-library', timing: Date.now() - scanStart })
+        trace('activity', 'scanAccount.complete', { accountId, connectionId, libraryItems: 0, skipped: true, reason: deadlineCut ? 'deadline-cut' : 'no-library', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: false, complete: !deadlineCut, failed: !deadlineCut }
     }
 
-    const hashKey = `${syncUser}:${accountId}`
+    const scopeAccountId = scanScopeAccountId(accountId, connectionId)
+    const hashKey = `${syncUser}:${scopeAccountId}`
     const libraryHash = computeLibraryHash(library)
     if (getCachedLibraryHash(hashKey) === libraryHash) {
-        trace('activity', 'scanAccount.complete', { accountId, libraryItems: library.length, skipped: true, reason: 'hash-match', timing: Date.now() - scanStart })
+        trace('activity', 'scanAccount.complete', { accountId, connectionId, libraryItems: library.length, skipped: true, reason: 'hash-match', timing: Date.now() - scanStart })
         return { eventsWritten: 0, snapshotWrites: 0, snapshotDeletes: 0, skippedByHash: true, complete: true }
     }
 
-    const existingSnapshots = await getSnapshot(syncUser, accountId)
+    const existingSnapshots = await getSnapshot(syncUser, scopeAccountId)
     const snapMap = buildSnapshotMap(existingSnapshots)
     const events = []
     const snapshots = []
@@ -567,7 +589,7 @@ async function scanAccount(syncUser, accountId, accountName, authKey, limits, lo
                 (s.video_id && String(s.video_id).trim() !== '') ||
                 (Number(s.flaggedWatched ?? 0) > 0)
             if (!hasWatchData) {
-                if (snap) snapshotsToDelete.push({ syncUser, accountId, itemId })
+                if (snap) snapshotsToDelete.push({ syncUser, accountId: scopeAccountId, itemId })
                 continue
             }
         }
@@ -578,27 +600,27 @@ async function scanAccount(syncUser, accountId, accountName, authKey, limits, lo
             const isSeries = isSeriesItem(item)
             if (!isSeries || item.video_id) {
                 const eventTs = parseEventTime(item._ctime) || mtime
-                if (!enqueueEvent(buildEvent(syncUser, accountId, accountName, item, 'first_watch', eventTs))) break
+                if (!enqueueEvent(buildEvent(syncUser, scopeAccountId, accountName, item, 'first_watch', eventTs))) break
             }
-            if (!enqueueSnapshot(buildSnapshot(syncUser, accountId, itemId, item, mtime), null)) break
+            if (!enqueueSnapshot(buildSnapshot(syncUser, scopeAccountId, itemId, item, mtime), null)) break
             continue
         }
 
         const snapMtime = Number(snap.mtime ?? 0)
         if (shouldPreserveSnapshotEpisode(itemId, item, snap, mtime, snapMtime)) {
-            if (!enqueueEvent(buildEvent(syncUser, accountId, accountName, snapshotToItem(itemId, snap, item), 'snapshot_watch', snapMtime))) break
+            if (!enqueueEvent(buildEvent(syncUser, scopeAccountId, accountName, snapshotToItem(itemId, snap, item), 'snapshot_watch', snapMtime))) break
         }
 
         if (mtime > snapMtime && hasWatchStateChange({ ...item, video_id: videoId }, snap)) {
-            if (!enqueueEvent(buildEvent(syncUser, accountId, accountName, item, 'watch_progress', mtime))) break
+            if (!enqueueEvent(buildEvent(syncUser, scopeAccountId, accountName, item, 'watch_progress', mtime))) break
         }
 
-        if (!enqueueSnapshot(buildSnapshot(syncUser, accountId, itemId, item, mtime), snap)) break
+        if (!enqueueSnapshot(buildSnapshot(syncUser, scopeAccountId, itemId, item, mtime), snap)) break
     }
 
     if (complete) {
         for (const [itemId] of snapMap) {
-            if (!seenItemIds.has(itemId)) snapshotsToDelete.push({ syncUser, accountId, itemId })
+            if (!seenItemIds.has(itemId)) snapshotsToDelete.push({ syncUser, accountId: scopeAccountId, itemId })
         }
     }
 
@@ -611,7 +633,7 @@ async function scanAccount(syncUser, accountId, accountName, authKey, limits, lo
 
     if (complete) setCachedLibraryHash(hashKey, libraryHash)
 
-    trace('activity', 'scanAccount.complete', { accountId, libraryItems: library.length, eventsWritten, snapshotWrites, snapshotDeletes, complete, timing: Date.now() - scanStart })
+    trace('activity', 'scanAccount.complete', { accountId, connectionId, libraryItems: library.length, eventsWritten, snapshotWrites, snapshotDeletes, complete, timing: Date.now() - scanStart })
     return { eventsWritten, snapshotWrites, snapshotDeletes, skippedByHash: false, complete }
 }
 
@@ -656,14 +678,16 @@ async function runActivityCycle(fastify) {
             }
         }
 
-        // Skip accounts with repeated fetch failures until their backoff expires.
+        // Skip accounts with repeated fetch failures until their backoff expires. The
+        // breaker key carries the connection id: a failing secondary login backs off
+        // itself without silencing the canonical login's scans (and vice versa).
         const eligibleCreds = []
         for (const cred of cycleCredentials) {
-            const breakerKey = JSON.stringify([cred.sync_user, cred.account_id])
+            const breakerKey = JSON.stringify([cred.sync_user, cred.account_id, cred.connection_id ?? null])
             const breakerState = fetchBreaker.shouldSkip(breakerKey)
             if (breakerState?.skip) {
                 summary.accountsSkippedByBreaker++
-                trace('activity', 'cycle.breaker-skip', { accountId: cred.account_id, failures: breakerState.failures })
+                trace('activity', 'cycle.breaker-skip', { accountId: cred.account_id, connectionId: cred.connection_id ?? null, failures: breakerState.failures })
                 continue
             }
             eligibleCreds.push(cred)
@@ -683,15 +707,15 @@ async function runActivityCycle(fastify) {
                         deadline: limits.deadline,
                         maxEvents: limits.maxEvents,
                         maxSnapshots: limits.maxSnapshots,
-                    }, fastify.log)
-                    const breakerKey = JSON.stringify([cred.sync_user, cred.account_id])
+                    }, fastify.log, cred.connection_id ?? null)
+                    const breakerKey = JSON.stringify([cred.sync_user, cred.account_id, cred.connection_id ?? null])
                     if (result.failed) fetchBreaker.recordFailure(breakerKey)
                     else if (result.failed !== false) fetchBreaker.recordSuccess(breakerKey)
                     if (result.skippedByHash) summary.accountsSkippedByHash++
                     return result
                 } catch (err) {
                     // Only platform fetch failures affect the breaker.
-                    fastify.log.warn({ category: 'Activity' }, `Scan failed for account ${cred.account_id}: ${err.message}`)
+                    fastify.log.warn({ category: 'Activity' }, `Scan failed for account ${cred.account_id}${cred.connection_id ? ` (connection ${cred.connection_id})` : ''}: ${err.message}`)
                     return null
                 }
             },

@@ -11,12 +11,18 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Upload } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Upload, ChevronDown, ChevronRight, Check, Minus } from 'lucide-react'
 import { AddonIcon } from '@/components/ui/addon-icon'
 import { AddonDescriptor } from '@/types/addon'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
+import { isAddonConnection } from '@/types/connection'
+import { getPlatformEntry } from '@/lib/platform-registry'
+import { normalizeDestinations } from '@/lib/addon-destinations'
+import { maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
+import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
 import { SourceUrlBox } from './SourceUrlBox'
 import { ManifestJSONEditor } from './ManifestJSONEditor'
 
@@ -25,7 +31,7 @@ interface AddonMetadataDialogProps {
     onOpenChange: (open: boolean) => void
     addon: AddonDescriptor
     accountId: string
-    onSave: (metadata: { customName?: string; customLogo?: string; customDescription?: string }) => Promise<void>
+    onSave: (metadata: { customName?: string; customLogo?: string; customDescription?: string }, destinations?: AddonDescriptor['destinations'] | null) => Promise<void>
     onReplaceUrl?: (newUrl: string, descriptor?: AddonDescriptor) => Promise<{ failedAccounts?: string[] } | void>
 }
 
@@ -40,14 +46,49 @@ export function AddonMetadataDialog({
     const [customName, setCustomName] = useState('')
     const [customLogo, setCustomLogo] = useState('')
     const [customDescription, setCustomDescription] = useState('')
+    const [draftExcludedPlatforms, setDraftExcludedPlatforms] = useState<Set<string>>(new Set())
+    const [draftExcludedConnections, setDraftExcludedConnections] = useState<Set<string>>(new Set())
+    const [expandedPlatform, setExpandedPlatform] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const isPrivacyModeEnabled = useUIStore((state) => state.isPrivacyModeEnabled)
+    const privacyLevelNames = useUIStore(state => state.privacyLevelNames)
+    const privacyLevelEmail = useUIStore(state => state.privacyLevelEmail)
+    const privacyLevelProfiles = useUIStore(state => state.privacyLevelProfiles)
+
+    const account = useAccountStore((state) => state.accounts.find(a => a.id === accountId))
+    // Addon destinations: every addon-capable connection of the owning account
+    // (Stremio logins included — they are fan-out targets even though their pushes
+    // bypass the connection reconcile batch).
+    const destinationConnections = useMemo(
+        () => (account?.connections || []).filter(isAddonConnection),
+        [account],
+    )
+    const platforms = useMemo(() => {
+        const seen: string[] = []
+        for (const conn of destinationConnections) {
+            if (!seen.includes(conn.platform)) seen.push(conn.platform)
+        }
+        return seen
+    }, [destinationConnections])
+
+    const savedExcludedPlatforms = useMemo(
+        () => [...(addon.destinations?.excludedPlatforms || [])].sort().join(','),
+        [addon],
+    )
+    const savedExcludedConnections = useMemo(
+        () => [...(addon.destinations?.excludedConnections || [])].sort().join(','),
+        [addon],
+    )
+    const destinationsDirty =
+        [...draftExcludedPlatforms].sort().join(',') !== savedExcludedPlatforms ||
+        [...draftExcludedConnections].sort().join(',') !== savedExcludedConnections
 
     const hasChanges =
         customName !== (addon.metadata?.customName || '') ||
         customLogo !== (addon.metadata?.customLogo || '') ||
-        customDescription !== (addon.metadata?.customDescription || '')
+        customDescription !== (addon.metadata?.customDescription || '') ||
+        destinationsDirty
 
 
     useEffect(() => {
@@ -55,19 +96,91 @@ export function AddonMetadataDialog({
             setCustomName(addon.metadata?.customName || '')
             setCustomLogo(addon.metadata?.customLogo || '')
             setCustomDescription(addon.metadata?.customDescription || '')
+            setDraftExcludedPlatforms(new Set(addon.destinations?.excludedPlatforms || []))
+            setDraftExcludedConnections(new Set(addon.destinations?.excludedConnections || []))
+            setExpandedPlatform(null)
             setError(null)
         }
     }, [open, addon])
+
+    const togglePlatform = (platform: string, kept: boolean) => {
+        setDraftExcludedPlatforms(prev => {
+            const next = new Set(prev)
+            if (kept) next.delete(platform)
+            else next.add(platform)
+            return next
+        })
+        if (!kept) {
+            // Platform exclusion supersedes per-login entries for that platform.
+            setDraftExcludedConnections(prev => {
+                const next = new Set(prev)
+                for (const conn of destinationConnections) {
+                    if (conn.platform === platform) next.delete(conn.id)
+                }
+                return next
+            })
+        }
+    }
+
+    const toggleConnection = (platform: string, connectionId: string, kept: boolean) => {
+        const wasPlatformExcluded = draftExcludedPlatforms.has(platform)
+        setDraftExcludedPlatforms(prev => {
+            if (!kept || !prev.has(platform)) return prev
+            const next = new Set(prev)
+            // Re-including ONE login of an excluded platform re-includes only it:
+            // drop the platform-wide rule and pin every OTHER login as excluded,
+            // so the other logins' state is exactly preserved.
+            next.delete(platform)
+            return next
+        })
+        setDraftExcludedConnections(prev => {
+            const next = new Set(prev)
+            if (kept) {
+                next.delete(connectionId)
+                if (wasPlatformExcluded) {
+                    for (const conn of destinationConnections) {
+                        if (conn.platform === platform && conn.id !== connectionId) next.add(conn.id)
+                    }
+                }
+            } else {
+                next.add(connectionId)
+            }
+            return next
+        })
+    }
+
+    const platformExcluded = (platform: string) => draftExcludedPlatforms.has(platform)
+    const connectionExcluded = (platform: string, connectionId: string) =>
+        platformExcluded(platform) || draftExcludedConnections.has(connectionId)
+    const platformPartiallyExcluded = (platform: string) => {
+        if (platformExcluded(platform)) return false
+        return destinationConnections.some(c => c.platform === platform && draftExcludedConnections.has(c.id))
+    }
+
+    const catalogCount = addon.manifest?.catalogs?.length ?? 0
+    const connectionIdentity = (conn: typeof destinationConnections[number]) => {
+        const personalName = conn.displayName || conn.credentials?.email
+        if (personalName) return personalName.includes('@')
+            ? maskEmailLevel(personalName, isPrivacyModeEnabled ? privacyLevelEmail : 0)
+            : maskNameLevel(personalName, isPrivacyModeEnabled ? privacyLevelNames : 0)
+        return conn.credentials?.userId
+            ? maskProfileLevel(conn.credentials.userId, isPrivacyModeEnabled ? privacyLevelProfiles : 0)
+            : ''
+    }
 
     const handleSave = async () => {
         setSaving(true)
         setError(null)
         try {
+            const nextDestinations = destinationsDirty ? normalizeDestinations({
+                excludedPlatforms: [...draftExcludedPlatforms],
+                excludedConnections: [...draftExcludedConnections],
+            }) ?? null : undefined
             await onSave({
                 customName: customName.trim() || undefined,
                 customLogo: customLogo.trim() || undefined,
                 customDescription: customDescription.trim() || undefined,
-            })
+            }, nextDestinations)
             onOpenChange(false)
         } catch (err) {
             if (import.meta.env.DEV) console.error(err)
@@ -115,11 +228,11 @@ export function AddonMetadataDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-3xl">
+            <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-4xl">
                 <DialogHeader>
                     <DialogTitle>Edit Addon Details</DialogTitle>
                     <DialogDescription>
-                        Customize how this addon appears in your Stremio dashboard.
+                        Customize this addon and choose where it syncs.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -235,6 +348,117 @@ export function AddonMetadataDialog({
                 </div>
 
 
+                {platforms.length > 0 && (
+                    <div data-theme-part="panel" className="mt-2 rounded-md border border-border/40 bg-muted/10 p-4">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sync to…</span>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Unchecking a destination removes its copy on the next sync. Your AIOManager library keeps the addon.
+                            Changes apply when you save.
+                        </p>
+                        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div className="space-y-1.5" data-testid="destinations-picker">
+                                {platforms.map(platform => {
+                                    const platformConns = destinationConnections.filter(c => c.platform === platform)
+                                    const multi = platformConns.length > 1
+                                    const excluded = platformExcluded(platform)
+                                    const partial = platformPartiallyExcluded(platform)
+                                    const expanded = expandedPlatform === platform
+                                    return (
+                                        <div key={platform} className="rounded-md border border-border/30 bg-background/40 px-3 py-2">
+                                            <div className="flex items-center gap-2">
+                                                <Checkbox
+                                                    id={`dest-platform-${platform}`}
+                                                    checked={!excluded}
+                                                    onCheckedChange={(v) => togglePlatform(platform, v === true)}
+                                                    aria-label={`Sync to ${getPlatformEntry(platform)?.name || platform}`}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium"
+                                                    onClick={() => multi && setExpandedPlatform(expanded ? null : platform)}
+                                                    aria-expanded={multi ? expanded : undefined}
+                                                >
+                                                    <PlatformLogo platform={platform} className="h-5 w-5 shrink-0" />
+                                                    <span className="truncate">{getPlatformEntry(platform)?.name || platform}</span>
+                                                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                                                        {multi ? `(${platformConns.length} logins)` : ''}
+                                                    </span>
+                                                    {multi && (expanded
+                                                        ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                                        : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />)}
+                                                </button>
+                                            </div>
+                                            {!excluded && (
+                                                <p className="pl-6 text-[10px] text-muted-foreground">
+                                                    {partial ? 'Some logins excluded below' : 'Every login, present and future'}
+                                                </p>
+                                            )}
+                                            {excluded && (
+                                                <p className="pl-6 text-[10px] text-muted-foreground">No login of this platform, including future ones</p>
+                                            )}
+                                            {multi && expanded && (
+                                                <div className="mt-1.5 space-y-1 border-l border-border/40 pl-2">
+                                                    {platformConns.map(conn => {
+                                                        const connExcluded = connectionExcluded(platform, conn.id)
+                                                        const who = [connectionIdentity(conn), `Connection ${platformConns.indexOf(conn) + 1}`].filter(Boolean).join(' · ')
+                                                        return (
+                                                            <label key={conn.id} className="flex items-center gap-2 text-xs" htmlFor={`dest-conn-${conn.id}`}>
+                                                                <Checkbox
+                                                                    id={`dest-conn-${conn.id}`}
+                                                                    className="h-3.5 w-3.5"
+                                                                    checked={!connExcluded}
+                                                                    onCheckedChange={(v) => toggleConnection(platform, conn.id, v === true)}
+                                                                />
+                                                                <span className="min-w-0 flex-1 truncate text-muted-foreground">{who}</span>
+                                                                <span className={`shrink-0 text-[10px] font-medium ${connExcluded ? 'text-destructive' : 'text-muted-foreground'}`}>
+                                                                    {connExcluded ? 'Removed on next sync' : 'Kept'}
+                                                                </span>
+                                                            </label>
+                                                        )
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                            <div className="space-y-2" data-testid="destinations-draft-preview">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Draft preview</span>
+                                <div data-testid="destination-tree" className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)] items-center gap-8 py-2">
+                                    <div className="relative flex min-w-0 flex-col items-center gap-2 rounded-xl border border-border/40 bg-background/40 p-3 text-center after:absolute after:-right-4 after:top-1/2 after:w-4 after:border-t after:border-border/70">
+                                        <AddonIcon name={customName || addon.manifest.name} logo={customLogo || addon.manifest.logo} alt="" className="h-10 w-10" textClassName="text-sm" />
+                                        <p className="w-full break-words text-xs font-medium">{customName || addon.manifest.name}</p>
+                                        <span className="text-[10px] text-muted-foreground">{catalogCount} catalog{catalogCount === 1 ? '' : 's'}</span>
+                                    </div>
+                                    <ul className="min-w-0" aria-label="Draft destinations">
+                                {destinationConnections.map((conn, index) => {
+                                    const kept = !connectionExcluded(conn.platform, conn.id)
+                                    const platformName = getPlatformEntry(conn.platform)?.name || conn.platform
+                                    const who = connectionIdentity(conn)
+                                    const status = kept ? (conn.enabled ? 'Will sync' : 'Sync paused') : 'Excluded'
+                                    return (
+                                        <li key={conn.id} data-destination-id={conn.id} data-destination-kept={kept} className="relative min-w-0 py-1.5 before:absolute before:-left-4 before:top-1/2 before:w-4 before:border-t before:border-border/70">
+                                            {destinationConnections.length > 1 && <span aria-hidden="true" className={`absolute -left-4 border-l border-border/70 ${index === 0 ? 'top-1/2 bottom-0' : index === destinationConnections.length - 1 ? 'top-0 bottom-1/2' : 'inset-y-0'}`} />}
+                                            <div className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-2 ${kept ? 'border-border/40 bg-background/40' : 'border-border/30 bg-muted/20'}`}>
+                                            <PlatformLogo platform={conn.platform} className="h-7 w-7 shrink-0" />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-xs font-medium">{platformName}{destinationConnections.filter(peer => peer.platform === conn.platform).length > 1 ? ` · ${destinationConnections.filter(peer => peer.platform === conn.platform).indexOf(conn) + 1}` : ''}</p>
+                                                {who && <p className="break-all text-[10px] leading-snug text-muted-foreground">{who}</p>}
+                                                <p className="mt-0.5 text-[10px] text-muted-foreground">{status}</p>
+                                            </div>
+                                            {kept ? <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" /> : <Minus aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                                            </div>
+                                        </li>
+                                    )
+                                })}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+
                 <div data-theme-part="panel" className="bg-muted/50 -mx-6 px-6 py-4 mt-2 border-t text-xs text-muted-foreground grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <span className="font-semibold block mb-1">Developer Info</span>
@@ -254,7 +478,7 @@ export function AddonMetadataDialog({
                                 className="mt-1 bg-background/45"
                             />
                         ) : (
-                            <Tooltip content={addon.transportUrl}>
+                            <Tooltip content={isPrivacyModeEnabled ? 'Private addon URL' : addon.transportUrl}>
                                 <p className="break-all line-clamp-2">URL: {isPrivacyModeEnabled ? '********' : addon.transportUrl}</p>
                             </Tooltip>
                         )}

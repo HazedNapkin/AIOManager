@@ -239,7 +239,7 @@ export const SavedAddonListRow = memo(function SavedAddonListRow({
                                 <span className="hidden shrink-0 sm:inline">·</span>
                                 {/* Platforms the accounts that contain this addon sync it
                                     to — derived only from matching configured URLs. */}
-                                <PlatformSourceChip accounts={deployedAccounts} scope="addon" className="hidden sm:inline-flex" />
+                                <PlatformSourceChip accounts={deployedAccounts} addon={{ transportUrl: savedAddon.installUrl }} scope="addon" className="hidden sm:inline-flex" />
                                 <span className="hidden shrink-0 sm:inline">·</span>
                                 <SavedAddonDeploymentBadge accounts={deployedAccounts} className="hidden sm:inline-flex" />
                             </>

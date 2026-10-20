@@ -24,12 +24,14 @@ import type { ReplaceTransportUrlResult } from '@/store/accountStore'
 import { getEffectiveManifest } from '@/lib/addon-utils'
 import { getCachedManifest, setCachedManifest } from '@/lib/manifest-cache'
 import { mapConcurrent } from '@/lib/concurrency'
-import { getStremioAuthKey } from '@/lib/account-compat'
+import { getStremioAuthKey, getStremioConnection } from '@/lib/account-compat'
+import { effectiveAddonsFor, excludedUrlsFor } from '@/lib/addon-destinations'
 import { getOfficialFlag } from '@/lib/addon-official'
 
 function isStremioPushEnabled(account: Account | undefined | null): boolean {
     if (!account) return true
-    const conn = account.connections?.find(c => c.platform === 'stremio')
+    // The gate follows the CANONICAL Stremio login, matching where addon pushes route.
+    const conn = getStremioConnection(account)
     return !conn || conn.enabled !== false
 }
 
@@ -38,7 +40,37 @@ async function shouldPushToStremio(accountId: string): Promise<boolean> {
     const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
     return isStremioPushEnabled(account)
 }
-import { reconcileTombstones } from '@/lib/addon-tombstones'
+
+/**
+ * Destination-policy projection for deployment writes. These paths write the
+ * CANONICAL Stremio login directly with its sealed key, so the write list must drop
+ * rows that login's policy excludes (platform-wide stremio entries and the exact
+ * canonical connection id), and the anti-wipe guard must see those removals as
+ * authorized (R2). Deploy lists merge platform reads / library rows that carry no
+ * policy — the HUB row is the policy home, so its destinations are grafted onto
+ * matching URLs before filtering: a deploy must never re-install a row the canonical
+ * login excludes. Secondary Stremio logins are covered by the server reconcile that
+ * the follow-up pushToConnections schedules.
+ */
+async function canonicalStremioDeployProjection(accountId: string, addons: AddonDescriptor[]): Promise<{ list: AddonDescriptor[]; authorizedRemovals: Set<string> }> {
+    const { useAccountStore } = await import('../accountStore')
+    const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
+    const target = { platform: 'stremio', connectionId: account ? getStremioConnection(account)?.id : undefined }
+    const policyByUrl = new Map<string, AddonDescriptor['destinations']>()
+    for (const row of account?.addons || []) {
+        const url = normalizeAddonUrl(row.transportUrl)
+        if (url && row.destinations) policyByUrl.set(url, row.destinations)
+    }
+    const withPolicy = addons.map(a => {
+        const url = normalizeAddonUrl(a.transportUrl)
+        return url && policyByUrl.has(url) && !a.destinations ? { ...a, destinations: policyByUrl.get(url) } : a
+    })
+    return {
+        list: effectiveAddonsFor(withPolicy, target),
+        authorizedRemovals: excludedUrlsFor(withPolicy, target),
+    }
+}
+import { restoreAddonDeletions } from '@/lib/addon-tombstones'
 import { trace, briefAddons } from '@/lib/trace'
 import { cloneAddonsWithMode } from '@/lib/clone-mode'
 import type { CloneMode } from '@/lib/clone-mode'
@@ -64,6 +96,26 @@ function updateActiveProfile(account: Account, updatedAddons: AddonDescriptor[])
       p.id === account.activeProfileId ? { ...p, addons: updatedAddons } : p
     ),
   }
+}
+
+function explicitMergeAddons(result: MergeResult, appliedAddons: AddonDescriptor[]): Array<{ transportUrl: string }> {
+  const appliedUrls = new Set(appliedAddons.map(addon => getAddonUrlKey(addon.transportUrl)))
+  return [
+    ...result.added.map(addon => ({ transportUrl: addon.installUrl })),
+    ...result.updated.map(addon => ({ transportUrl: addon.newUrl })),
+  ].filter(addon => appliedUrls.has(getAddonUrlKey(addon.transportUrl)))
+}
+
+async function acknowledgeExplicitInstall(accountId: string, result: MergeResult, appliedAddons: AddonDescriptor[]): Promise<void> {
+  const installed = explicitMergeAddons(result, appliedAddons)
+  if (installed.length === 0) return
+  const { useAccountStore } = await import('../accountStore')
+  const state = useAccountStore.getState()
+  const account = state.accounts.find(a => a.id === accountId)
+  if (!account) return
+  const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, installed)
+  useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, ...deletionState } : a) })
+  persistAccounts(useAccountStore.getState().accounts)
 }
 
 export const SAVED_ADDON_ACCOUNT_CONCURRENCY = 5
@@ -251,7 +303,11 @@ export async function applySavedAddonToAccount(
       true
     )
 
-    if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
+    if (await shouldPushToStremio(accountId)) {
+      const stremioProjection = await canonicalStremioDeployProjection(accountId, updatedAddons)
+      await updateAddons(authKey, stremioProjection.list, accountId, { authorizedRemovals: stremioProjection.authorizedRemovals })
+      await acknowledgeExplicitInstall(accountId, result, updatedAddons)
+    }
     trace('deploy.apply', 'pushed', { savedAddonId, accountId, count: updatedAddons.length })
     const { pushToConnections } = await import('../account/accountAddonOps')
     pushToConnections(accountId).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
@@ -310,7 +366,11 @@ export async function applyTagToAccount(
       true
     )
 
-    if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
+    if (await shouldPushToStremio(accountId)) {
+      const stremioProjection = await canonicalStremioDeployProjection(accountId, updatedAddons)
+      await updateAddons(authKey, stremioProjection.list, accountId, { authorizedRemovals: stremioProjection.authorizedRemovals })
+      await acknowledgeExplicitInstall(accountId, result, updatedAddons)
+    }
     const { pushToConnections } = await import('../account/accountAddonOps')
     pushToConnections(accountId).catch(() => { toast({ variant: 'destructive', title: 'Cross-platform sync failed', description: 'Addon changes saved locally but not pushed to connected platforms.' }) })
 
@@ -404,12 +464,14 @@ export async function bulkApplySavedAddons(
             lastUpdated: Date.now()
           }
         }))
+        const installed = explicitMergeAddons(mergeResult, updatedAddons)
 
         if (isLocalAccount) {
           const state = useAccountStore.getState()
           const localAccount = state.accounts.find(a => a.id === accountId)
           if (localAccount) {
-            let updatedAccount: Account = { ...localAccount, addons: updatedAddons, deletedAddons: reconcileTombstones(localAccount.deletedAddons, updatedAddons), lastSync: new Date() }
+            const deletionState = restoreAddonDeletions(localAccount.deletedAddons, localAccount.restoredAddons, installed)
+            let updatedAccount: Account = { ...localAccount, addons: updatedAddons, ...deletionState, lastSync: new Date() }
             updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
             useAccountStore.setState({
               accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
@@ -422,12 +484,15 @@ export async function bulkApplySavedAddons(
           }
         } else {
           trace('deploy', 'stremio-push', { accountId, pushing: updatedAddons.length, addons: briefAddons(updatedAddons) })
-          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, accountId)
+          if (await shouldPushToStremio(accountId)) {
+            const stremioProjection = await canonicalStremioDeployProjection(accountId, updatedAddons)
+            await updateAddons(authKey, stremioProjection.list, accountId, { authorizedRemovals: stremioProjection.authorizedRemovals })
+          }
           const state = useAccountStore.getState()
           const stremioAccount = state.accounts.find(a => a.id === accountId)
           if (stremioAccount) {
-            const clearedTombstones = reconcileTombstones(stremioAccount.deletedAddons, updatedAddons)
-            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, deletedAddons: clearedTombstones } : a) })
+            const deletionState = restoreAddonDeletions(stremioAccount.deletedAddons, stremioAccount.restoredAddons, installed)
+            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, ...deletionState } : a) })
             persistAccounts(useAccountStore.getState().accounts)
           }
           const { pushToConnections } = await import('../account/accountAddonOps')
@@ -618,7 +683,10 @@ export async function bulkRemoveAddons(
         }
 
         if (hasRemoteRemoval) {
-            if (await shouldPushToStremio(accountId)) await updateAddons(authKey, updatedAddons, ACCOUNT_CONTEXT_BULK_OP, { previousCollection: currentAddons, allowCollectionShrink: true })
+            if (await shouldPushToStremio(accountId)) {
+                const stremioProjection = await canonicalStremioDeployProjection(accountId, updatedAddons)
+                await updateAddons(authKey, stremioProjection.list, ACCOUNT_CONTEXT_BULK_OP, { previousCollection: currentAddons, allowCollectionShrink: true, authorizedRemovals: stremioProjection.authorizedRemovals })
+            }
         }
 
         if (hasLocalRemoval || hasRemoteRemoval) {
@@ -934,7 +1002,10 @@ export async function bulkReinstallAddons(
 
         if (needsRemotePush && accountAuthKey) {
           if (import.meta.env.DEV) console.log(`[Bulk] Pushing batched updates for account ${accountId} (${updateResults.length} addons)`)
-          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, targetCollection, accountId)
+          if (await shouldPushToStremio(accountId)) {
+            const stremioProjection = await canonicalStremioDeployProjection(accountId, targetCollection)
+            await updateAddons(authKey, stremioProjection.list, accountId, { authorizedRemovals: stremioProjection.authorizedRemovals })
+          }
         }
 
         const { pushToConnections } = await import('../account/accountAddonOps')
@@ -1168,12 +1239,14 @@ export async function bulkInstallFromUrls(
         }
 
         const dedupedAddons = dedupeAddonsByTransportUrl(updatedAddons)
+        const installed = explicitMergeAddons(mergeResultDetails, dedupedAddons)
 
         if (isLocalAccount) {
           const state = useAccountStore.getState()
           const localAccount = state.accounts.find(a => a.id === accountId)
           if (localAccount) {
-            let updatedAccount: Account = { ...localAccount, addons: dedupedAddons, deletedAddons: reconcileTombstones(localAccount.deletedAddons, dedupedAddons), lastSync: new Date() }
+            const deletionState = restoreAddonDeletions(localAccount.deletedAddons, localAccount.restoredAddons, installed)
+            let updatedAccount: Account = { ...localAccount, addons: dedupedAddons, ...deletionState, lastSync: new Date() }
             updatedAccount = updateActiveProfile(updatedAccount, dedupedAddons)
             useAccountStore.setState({
               accounts: state.accounts.map(a => a.id === accountId ? updatedAccount : a)
@@ -1185,12 +1258,15 @@ export async function bulkInstallFromUrls(
             pushToConnections(accountId).catch(err => { if (import.meta.env.DEV) console.error('Failed to push to connections:', err) })
           }
         } else {
-          if (await shouldPushToStremio(accountId)) await updateAddons(authKey, dedupedAddons, accountId)
+          if (await shouldPushToStremio(accountId)) {
+            const stremioProjection = await canonicalStremioDeployProjection(accountId, dedupedAddons)
+            await updateAddons(authKey, stremioProjection.list, accountId, { authorizedRemovals: stremioProjection.authorizedRemovals })
+          }
           const state = useAccountStore.getState()
           const stremioAccount = state.accounts.find(a => a.id === accountId)
           if (stremioAccount) {
-            const clearedTombstones = reconcileTombstones(stremioAccount.deletedAddons, dedupedAddons)
-            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, deletedAddons: clearedTombstones } : a) })
+            const deletionState = restoreAddonDeletions(stremioAccount.deletedAddons, stremioAccount.restoredAddons, installed)
+            useAccountStore.setState({ accounts: state.accounts.map(a => a.id === accountId ? { ...a, ...deletionState } : a) })
             persistAccounts(useAccountStore.getState().accounts)
           }
           const { pushToConnections } = await import('../account/accountAddonOps')
@@ -1272,8 +1348,11 @@ export async function bulkCloneAccount(
         const newAddons = cloneAddonsWithMode(sourceAddons, targetAddons, { mode: cloneMode, overwrite })
 
         const addonListChanged = !haveSameAddonCollection(targetAddons, newAddons)
-        if (addonListChanged) {
-          await useAccountStore.getState().reorderAddons(accountId, newAddons)
+        const sourceUrls = new Set(sourceAddons.map(addon => getAddonUrlKey(addon.transportUrl)))
+        const explicitInstallUrls = newAddons.filter(addon => sourceUrls.has(getAddonUrlKey(addon.transportUrl))).map(addon => addon.transportUrl)
+        const restoresDeletedAddon = explicitInstallUrls.some(url => localTargetAccount?.deletedAddons?.[normalizeAddonUrl(url)] !== undefined)
+        if (addonListChanged || restoresDeletedAddon) {
+          await useAccountStore.getState().reorderAddons(accountId, newAddons, { explicitInstallUrls })
         }
 
         if (addonListChanged) {

@@ -350,7 +350,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
               <div className="flex max-w-full flex-wrap items-center gap-1.5">
                 {/* Platforms the accounts that contain this addon sync it to — derived
                     only from the deployment summary's matching configured URLs. */}
-                <PlatformSourceChip accounts={deployedAccounts} scope="addon" />
+                <PlatformSourceChip accounts={deployedAccounts} addon={{ transportUrl: savedAddon.installUrl }} scope="addon" />
                 <SavedAddonDeploymentBadge accounts={deployedAccounts} />
                 {savedAddon.createdAt && (
                   <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">

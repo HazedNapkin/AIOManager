@@ -1,11 +1,11 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import {
     getAddons,
-    updateAddons,
     fetchAddonManifest as apiFetchAddonManifest,
 } from '@/api/addons'
 import { mergeAddons, normalizeAddonUrl, hasFallbackAddonName } from '@/lib/utils'
-import { filterResurrectedAuto, loadResurrectionSightings, saveResurrectionSightings, reconcileTombstones } from '@/lib/addon-tombstones'
+import { filterResurrected, mergeAddonDeletionState } from '@/lib/addon-tombstones'
+import { excludedUrlsFor } from '@/lib/addon-destinations'
 import { trace } from '@/lib/trace'
 import { fingerprintAddonList } from '@/lib/addon-fingerprint'
 import { mapConcurrent } from '@/lib/concurrency'
@@ -33,6 +33,7 @@ import {
     persistAccounts,
     syncMutexes,
     getStremioAuthKey,
+    getStremioConnection,
     setAccountLoading,
     clearAccountLoading,
     setAccountsLoading,
@@ -82,10 +83,10 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
             }
         })
 
-    const adoption = filterResurrectedAuto(normalizedAddons, account.addons, account.deletedAddons, loadResurrectionSightings())
-    saveResurrectionSightings(adoption.nextSightings)
-    const survivingRemote = adoption.kept
-    trace('sync.merge', 'post-tombstone', { accountId: account.id, survived: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length, autoAdopted: adoption.adopted.length })
+    const deletionState = mergeAddonDeletionState(account.deletedAddons, undefined, account.restoredAddons, undefined)
+    const survivingRemote = filterResurrected(normalizedAddons, [], deletionState.deletedAddons)
+    const survivingLocal = filterResurrected(account.addons, [], deletionState.deletedAddons)
+    trace('sync.merge', 'post-tombstone', { accountId: account.id, survived: survivingRemote.length, stripped: normalizedAddons.length - survivingRemote.length })
     const survivingUrls = new Set(survivingRemote.map(a => normalizeAddonUrl(a.transportUrl)))
     const strippedByTombstone = normalizedAddons
         .filter(a => !survivingUrls.has(normalizeAddonUrl(a.transportUrl)))
@@ -102,7 +103,13 @@ export function mergeRemoteIntoHub(account: Account, remoteAddons: AddonDescript
     // Hub-canonical: passive read is additive; only an explicit forceRefresh adopts platform removals.
     // instanceMatch keep-local-url: the local post-fold state is authoritative, so a stale
     // platform entry with an older config URL folds into the local entry instead of duplicating.
-    const out = mergeAddons(account.addons, survivingRemote, { keepMissingLocal: !forceRefresh, instanceMatch: 'keep-local-url' })
+    // E4: a row deliberately excluded from the platform being read (here: the canonical
+    // Stremio login) is EXPECTED to be absent there — its absence must never drop it
+    // from the hub, even on forceRefresh. The hub stays the superset; policy survives.
+    const readSource = getStremioConnection(account)
+    const policyProtectedUrls = excludedUrlsFor(survivingLocal, { platform: 'stremio', connectionId: readSource?.id })
+    if (policyProtectedUrls.size > 0) trace('sync.merge', 'e4-policy-protected', { accountId: account.id, protected: policyProtectedUrls.size, source: readSource?.id || 'account-level' })
+    const out = mergeAddons(survivingLocal, survivingRemote, { keepMissingLocal: !forceRefresh, keepMissingLocalUrls: policyProtectedUrls, instanceMatch: 'keep-local-url' })
     trace('sync.merge', 'result', { accountId: account.id, out: out.length, keepMissingLocal: !forceRefresh })
     return out
 }
@@ -247,7 +254,9 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     const account = getAccountById(store.getState().accounts, id)
     if (!account) throw new Error('Account not found')
 
-    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    // The canonical Stremio login drives the read/merge pipeline; secondary Stremio
+    // logins bound to the same account are write targets only (fan-out below).
+    const stremioConn = getStremioConnection(account)
     const stremioEnabled = !account.connections?.length || stremioConn?.enabled !== false
     const accountAuthKey = getStremioAuthKey(account)
     const useStremio = !!accountAuthKey && stremioEnabled
@@ -304,6 +313,8 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
 
     trace('sync.core', 'discovery', { accountId: id, changed: discoveryChanged, final: finalAddons.length, propagateDeletions })
 
+    const deletionState = mergeAddonDeletionState(currentAccount.deletedAddons, undefined, currentAccount.restoredAddons, undefined)
+    finalAddons = filterResurrected(finalAddons, [], deletionState.deletedAddons)
     const prevAddons = currentAccount.addons
     const addonsChanged = fingerprintAddonList(prevAddons) !== fingerprintAddonList(finalAddons)
     trace('sync.core', 'flags', { accountId: id, addonsChanged, discoveryChanged, forceRefresh })
@@ -319,7 +330,7 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
         ...currentAccount,
         addons: finalAddons,
         profiles: updatedProfiles,
-        deletedAddons: reconcileTombstones(currentAccount.deletedAddons, finalAddons),
+        ...deletionState,
         lastSync: new Date(),
         status: 'active' as const,
     }
@@ -347,15 +358,25 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
     trace('sync.core', 'writeback-gate', { accountId: id, willPushStremio: !!(useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)), reason: forceRefresh ? 'forceRefresh' : discoveryChanged ? 'discoveryChanged' : 'passive-skip' })
     // A dead connection is reported on the connection, never allowed to abort the
     // cycle - an abort here skips triggerSync() below and starves the cloud push.
-    let stremioWriteError: unknown = null
+    // Stremio writes fan out to EVERY enabled login bound to the account (canonical
+    // first); each login uses its own sealed key so a secondary is never written
+    // through the canonical account's session.
+    const stremioWriteErrors = new Map<string, unknown>()
     if (useStremio && stremioAuthKey && (forceRefresh || discoveryChanged)) {
         pushPromises.push(
-            updateAddons(stremioAuthKey, finalAddons, currentAccount.id, { previousCollection: currentAccount.addons })
-                .catch(err => {
-                    if (isTransientSyncError(err)) return
-                    if (isAuthError(err)) throw err
-                    stremioWriteError = err
-                })
+            (async () => {
+                const { pushAddonsToStremioConnections } = await import('@/lib/account-compat')
+                const result = await pushAddonsToStremioConnections(currentAccount, finalAddons, { previousCollection: currentAccount.addons })
+                for (const failure of result.failed) {
+                    const err = failure.error
+                    if (failure.isPrimary) {
+                        // Canonical login keeps the single-connection contract.
+                        if (isTransientSyncError(err)) continue
+                        if (isAuthError(err)) throw err
+                    }
+                    stremioWriteErrors.set(failure.connectionId, err)
+                }
+            })()
         )
     }
 
@@ -390,15 +411,18 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
 
     // Correct the optimistic per-connection stamps with the real write outcomes, so a
     // failing Nuvio/Stremio connection shows its error instead of a false 'active'.
-    if (stremioWriteError || reconcileStates) {
+    // Stremio errors are per login: only the connection whose own write failed is
+    // marked, never every Stremio login on the account.
+    if (stremioWriteErrors.size > 0 || reconcileStates) {
         const statusFor = (err: unknown): ConnectionStatus => (isAuthError(err) ? 'expired' : 'error')
         const correctedConnections = (updatedAccount.connections ?? []).map(c => {
             if (!c.enabled) return c
-            if (stremioWriteError && c.platform === 'stremio') {
+            const stremioError = c.platform === 'stremio' ? stremioWriteErrors.get(c.id) : undefined
+            if (stremioError) {
                 return {
                     ...c,
-                    status: statusFor(stremioWriteError),
-                    lastError: stremioWriteError instanceof Error ? stremioWriteError.message : String(stremioWriteError),
+                    status: statusFor(stremioError),
+                    lastError: stremioError instanceof Error ? stremioError.message : String(stremioError),
                     lastErrorAt: Date.now(),
                 }
             }

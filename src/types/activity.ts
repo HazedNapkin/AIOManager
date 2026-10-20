@@ -47,6 +47,7 @@ export interface ActivityItem {
     overallTimeWatched?: number
     genres?: string[]
     source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = unknown)
+    sourceConnectionId?: string // exact remote login this item came from (same-platform multiplicity); absent = canonical/legacy route
     backfill?: boolean // recovered from Stremio's watched-bitfield; no real per-episode time, so excluded from time-based Replay stats
     readOnly?: boolean
     mediaObservation?: { connectionId: string; productName: string; kind: 'resume' | 'played' | 'live'; checkedAt: number; reportedAt?: number; hasPlayedDate: boolean; positionMs: number; isPaused?: boolean }
@@ -74,6 +75,9 @@ export interface WatchEvent {
     season?: number
     episode?: number
     source?: string
+    sourceConnectionId?: string // exact remote login that produced this event; absent = canonical/legacy account scope
+    /** Frozen identity scope (canonical events carry attribution but keep the bare scope). */
+    scopeKey?: string
     timesWatched?: number
     backfill?: boolean // recovered from Stremio's watched-bitfield (no real per-episode timestamp)
 }

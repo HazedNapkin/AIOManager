@@ -5,6 +5,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { useRelativeTime } from '@/hooks/use-relative-time'
 import {
+    accountForAddonTargets,
     aggregateAccountPlatforms,
     aggregatePlatformSources,
     platformShortName,
@@ -12,6 +13,7 @@ import {
     type PlatformSourceAccount,
     type PlatformSyncTarget,
 } from './platform-source'
+import type { AddonDescriptor } from '@/types/addon'
 
 export function platformName(id: string): string {
     return getPlatformEntry(id)?.name || id
@@ -116,6 +118,7 @@ interface PlatformSourceChipProps {
     // 'addon' explains a saved addon's recorded homes (addon platforms only, never media).
     // Defaults to 'account'.
     scope?: 'account' | 'addon'
+    addon?: Pick<AddonDescriptor, 'transportUrl' | 'destinations'>
     className?: string
 }
 
@@ -128,10 +131,12 @@ interface PlatformSourceChipProps {
 // platforms still show for either kind: pausing never removes anything. Focus/tap opens
 // an accessible "Sync targets" popover grouped into "Addon sync" and "Playback & library"
 // (account scope), with honest last synced / last verified / paused / error states.
-export function PlatformSourceChip({ account, accounts, scope = 'account', className }: PlatformSourceChipProps) {
+export function PlatformSourceChip({ account, accounts, scope = 'account', addon, className }: PlatformSourceChipProps) {
     const list = useMemo(
-        () => (accounts ?? (account ? [account] : [])).filter((a): a is PlatformSourceAccount => !!a),
-        [account, accounts]
+        () => (accounts ?? (account ? [account] : []))
+            .filter((a): a is PlatformSourceAccount => !!a)
+            .map(a => scope === 'addon' && addon ? accountForAddonTargets(a, addon) : a),
+        [account, accounts, scope, addon]
     )
     // Account scope layers media platforms on top of the untouched addon-only summary;
     // addon scope must stay addon-only, so it keeps aggregatePlatformSources verbatim.
@@ -148,7 +153,7 @@ export function PlatformSourceChip({ account, accounts, scope = 'account', class
 
     const isAccountScope = scope === 'account'
     const names = platforms.map(chipPlatformName)
-    const hoverText = isAccountScope ? `Connected to ${names.join(', ')}` : `Lives on ${names.join(', ')}`
+    const hoverText = isAccountScope ? `Connected to ${names.join(', ')}` : `Syncs to ${names.join(', ')}`
 
     // A single media-only platform may name its actual product when exactly one
     // connection makes it unambiguous; otherwise keep the plain platform name.
@@ -165,7 +170,7 @@ export function PlatformSourceChip({ account, accounts, scope = 'account', class
     const hasAddonPlatforms = targets.length > 0 || paused.length > 0
     const intro =
         scope === 'addon'
-            ? 'These platforms are connected to accounts that have this addon in their recorded lists. Installation on each platform has not been verified.'
+            ? 'These platforms receive this addon under its saved destination rules. Changes apply on sync. Installation on each platform has not been verified.'
             : hasAddonPlatforms
               ? "Addon platforms receive this account's addon collection. Jellyfin-compatible platforms provide playback and library for the signed-in remote user; they do not receive addons."
               : 'This Jellyfin-compatible platform provides playback and library for the signed-in remote user. It does not receive addons.'

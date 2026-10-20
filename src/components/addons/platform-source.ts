@@ -2,9 +2,12 @@
 // platform the account is connected to, so the source set is derived from its connections.
 // This says nothing about any individual addon being verified as installed: the details
 // surface describes sync targets and their last synced state, never confirmed presence.
-// Kept dependency-free (no runtime imports) so node --test can run it directly.
+// Pure helpers also run directly in the node:test suite.
 // The account-scope section at the bottom additionally counts media platforms
 // (Jellyfin) for the overall account chip; it never feeds addon sync.
+import { isExcludedFromDestinations } from '../../lib/addon-destinations.ts'
+import { normalizeAddonUrl } from '../../lib/addon-url.ts'
+import type { AddonDescriptor } from '../../types/addon.ts'
 
 // Display-safe subset of the media-server identity (src/types/connection.ts
 // MediaServerIdentity): only names and timestamps. Credentials, user IDs, auth methods,
@@ -21,6 +24,7 @@ export interface PlatformMediaServerIdentity {
 }
 
 export interface PlatformSourceConnection {
+    id?: string
     platform: string
     connectionType?: string
     driverType?: string
@@ -34,10 +38,26 @@ export interface PlatformSourceConnection {
 export type PlatformSyncStatus = 'active' | 'expired' | 'error' | 'degraded' | 'pending'
 
 export interface PlatformSourceAccount {
+    id?: string
+    addons?: Array<Pick<AddonDescriptor, 'transportUrl' | 'destinations'>>
     authKey?: string
     status?: 'active' | 'error' | 'expired'
     lastSync?: number | Date | string
     connections?: PlatformSourceConnection[]
+}
+
+// Saved-addon badges aggregate each account's OWN saved policy. Filtering out
+// explicit Stremio rows must never revive their top-level legacy authKey mirror.
+export function accountForAddonTargets(account: PlatformSourceAccount, addon: Pick<AddonDescriptor, 'transportUrl' | 'destinations'>): PlatformSourceAccount {
+    const ownAddon = account.addons?.find(row => normalizeAddonUrl(row.transportUrl) === normalizeAddonUrl(addon.transportUrl)) ?? addon
+    const connections = (account.connections || []).filter(connection => !isExcludedFromDestinations(ownAddon.destinations, {
+        platform: connectionPlatform(connection), connectionId: connection.id,
+    }))
+    const hadExplicitStremio = (account.connections || []).some(connection => connectionPlatform(connection) === 'stremio')
+    const implicitExcluded = isExcludedFromDestinations(ownAddon.destinations, {
+        platform: 'stremio', connectionId: account.id ? `${account.id}:stremio` : undefined,
+    })
+    return { ...account, connections, authKey: hadExplicitStremio || implicitExcluded ? undefined : account.authKey }
 }
 
 // Hydra connections key on an app-specific platform slug; the source is Hydra itself, so

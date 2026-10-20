@@ -1,6 +1,11 @@
 import { useSyncStore, learnServerCredentialedAccounts } from '@/store/syncStore'
 import { getDeviceAwareAuthHeaders } from '@/lib/device-session'
 import { useWatchEventStore, type ServerActivityEvent } from '@/store/watchEventStore'
+import { takePendingStremioRepoints, clearPendingStremioRepoint, convertPendingLoginsRemovedToRepoint } from '@/lib/stremio-repoint'
+import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
+import { useAuthStore } from '@/store/authStore'
+import { useAccountStore } from '@/store/accountStore'
+import type { Account } from '@/types/account'
 
 const DEFAULT_SERVER = '/api'
 const STATUS_CACHE_MS = 60_000
@@ -128,52 +133,174 @@ export async function fetchAndMergeServerEvents(): Promise<number> {
     return totalMerged
 }
 
+// Ownership fingerprint of everything the credential upload asserts about: the vault key
+// OBJECT (rotation/lock swaps the reference), and every stremio-relevant account fact
+// (canonical mirror, primary pointer, each native login's id/enabled/sealed key/userId).
+// A byte change means the decrypts below are reasoning about a world that no longer
+// exists, and the upload must not fire.
+function stremioIdentityStamp(accounts: Account[]): string {
+    return JSON.stringify(accounts.map(a => [
+        a.id,
+        a.primaryConnectionId ?? null,
+        a.authKey ?? '',
+        (a.connections || [])
+            .filter(c => c.platform === 'stremio' && (c.connectionType == null || c.connectionType === 'native'))
+            .map(c => [c.id, c.enabled !== false, c.credentials?.authKey ?? '', c.credentials?.userId ?? '']),
+    ]))
+}
+
 // Credential-upload core, deliberately NOT gated on the activity engine: server-side
 // Stremio credentials are what external Hydra writes use to reach the Stremio collection
 // directly, so persisting them is an identity concern, not activity telemetry. Gating
 // this on the engine left engine-off defaults (the self-hosted default) with no writer.
+//
+// Multiplicity: the canonical login keeps the legacy account-level row (the shape every
+// existing server reader pins), and every enabled SECONDARY login registers its own
+// per-connection row so the server can poll its history under an isolated scope. The
+// reported live connection set lets the server prune exactly the logins that were
+// unlinked — never a sibling's, never the canonical row.
 export async function syncCredentialsToServer(): Promise<number> {
-    const { auth, serverUrl } = useSyncStore.getState()
-    if (!auth.isAuthenticated) return 0
+    // ---- Synchronous ownership capture, BEFORE any await: auth headers, workspace,
+    // vault key reference and the stremio identity stamp must all describe the same
+    // instant, or a mid-await switch could upload one owner's data under another's
+    // session (root's paused-decrypt repro). ----
+    const startSyncState = useSyncStore.getState()
+    const startAuth = startSyncState.auth
+    const startServerUrl = startSyncState.serverUrl
+    if (!startAuth.isAuthenticated) return 0
+    const startEncryptionKey = useAuthStore.getState().encryptionKey
+    if (!startEncryptionKey) return 0
+    const startAccounts = useAccountStore.getState().accounts
+    if (startAccounts.length === 0) return 0
+    const startStamp = stremioIdentityStamp(startAccounts)
+    const sessionStamp = () =>
+        `${getActiveWorkspaceId()}|${useSyncStore.getState().auth.id}|${useSyncStore.getState().auth.isAuthenticated}|${useSyncStore.getState().serverUrl}`
+    const startSession = sessionStamp()
+    const ownershipValid = () =>
+        sessionStamp() === startSession
+        && useAuthStore.getState().encryptionKey === startEncryptionKey
+        && stremioIdentityStamp(useAccountStore.getState().accounts) === startStamp
+
     let authHeaders: Record<string, string>
     try {
         authHeaders = await getDeviceAwareAuthHeaders()
     } catch { return 0 }
+    if (!ownershipValid()) return 0
 
-    const { useAuthStore } = await import('@/store/authStore')
-    const encryptionKey = useAuthStore.getState().encryptionKey
-    if (!encryptionKey) return 0
+    const encryptionKey = startEncryptionKey
+    const apiPath = getApiBase(startServerUrl)
+    const accounts = startAccounts
 
-    const apiPath = getApiBase(serverUrl)
+    const { getCachedAuthKey, getStremioAuthKey, getStremioConnection, getStremioConnections } = await import('@/store/accountStore')
 
-    const { useAccountStore, getCachedAuthKey, getStremioAuthKey } = await import('@/store/accountStore')
-    const accounts = useAccountStore.getState().accounts
-
-    const authKeyResults = await Promise.all(accounts.map(async a => {
+    const authKeyResults = await Promise.all(accounts.map(async (a): Promise<{ accountId: string; accountName?: string; authKey?: string; connectionId?: string; disabled?: true } | null> => {
+        const nativeLogins = getStremioConnections(a)
+        const canonicalConn = nativeLogins.find(c => c.id === a.primaryConnectionId) ?? nativeLogins[0]
+        // A DISABLED canonical login must not keep the legacy account-level key
+        // actionable server-side: report it disabled (the server drops the credential row
+        // and keeps the history). A legacy authKey-only account has no enabled notion and
+        // stays registered exactly as before.
+        if (canonicalConn && canonicalConn.enabled === false) {
+            return { accountId: a.id, disabled: true, connectionId: canonicalConn.id }
+        }
         const stremioKey = getStremioAuthKey(a)
         if (!stremioKey) return null
         try {
             const plainKey = await getCachedAuthKey(stremioKey, encryptionKey)
-            if (plainKey) return { accountId: a.id, accountName: a.name, authKey: plainKey }
+            if (plainKey) {
+                return {
+                    accountId: a.id,
+                    accountName: a.name,
+                    authKey: plainKey,
+                    // The canonical's real connection id: promoted-login scope adoption on
+                    // re-points, and the account-level/secondary row handover.
+                    ...(canonicalConn ? { connectionId: canonicalConn.id } : {}),
+                }
+            }
         } catch { return null }
         return null
     }))
-    const authKeys = authKeyResults.filter((r): r is { accountId: string; accountName: string; authKey: string } => r !== null)
+    interface CanonicalAccountEntry {
+        accountId: string
+        accountName?: string
+        authKey?: string
+        connectionId?: string
+        disabled?: true
+        supersededConnectionId?: string
+    }
+    const authKeys = authKeyResults.filter((r): r is CanonicalAccountEntry => r !== null)
 
-    if (authKeys.length === 0) return 0
+    // Live membership by EXISTENCE with enabled state: a paused or vault-unreadable login
+    // still exists (never pruned as unlinked); a deliberately disabled login keeps its
+    // history but loses its server credential row until re-enabled.
+    const liveConnectionIds = accounts.flatMap(a => {
+        const canonicalId = getStremioConnection(a)?.id
+        return getStremioConnections(a)
+            .filter(c => c.id !== canonicalId)
+            .map(c => ({ accountId: a.id, connectionId: c.id, enabled: c.enabled !== false }))
+    })
+
+    const connectionResults = await Promise.all(accounts.map(async a => {
+        const canonicalId = getStremioConnection(a)?.id
+        const secondaries = getStremioConnections(a).filter(c => c.id !== canonicalId && c.enabled !== false && !!c.credentials?.authKey)
+        return Promise.all(secondaries.map(async c => {
+            try {
+                const plainKey = await getCachedAuthKey(c.credentials.authKey, encryptionKey)
+                if (plainKey) return { accountId: a.id, connectionId: c.id, authKey: plainKey }
+            } catch { /* unreadable secondary key: not registered this round, still live */ }
+            return null
+        }))
+    }))
+    const connectionKeys = connectionResults.flat().filter((r): r is { accountId: string; connectionId: string; authKey: string } => r !== null)
+
+    // Deliberate canonical transitions recorded by connectionStore (re-point migration,
+    // last-login removal). Attached to this one sync; a failed post leaves them armed,
+    // and they are only cleared when still equal to what this post captured.
+    if (!ownershipValid()) return 0
+    const beforePending = takePendingStremioRepoints()
+    for (const account of accounts) {
+        if (beforePending[account.id]?.loginsRemoved
+            && (getStremioConnections(account).length > 0 || getStremioAuthKey(account))) {
+            convertPendingLoginsRemovedToRepoint(account.id)
+        }
+    }
+    const pending = takePendingStremioRepoints()
+    const removedStremioLogins = Object.entries(pending)
+        .filter(([, note]) => note.loginsRemoved)
+        .map(([accountId]) => accountId)
+    for (const acc of authKeys) {
+        const note = pending[acc.accountId]
+        if (note?.supersededConnectionId) acc.supersededConnectionId = note.supersededConnectionId
+    }
 
     try {
+        // Ownership guard: abort before the upload if the workspace, sync owner, target
+        // server, vault key or any stremio identity fact changed during the decrypts —
+        // posting stale keys under a moved context could clobber fresher state.
+        if (!ownershipValid()) return 0
         const res = await fetchWithTimeout(`${apiPath}/credentials/sync`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 ...authHeaders,
             },
-            body: JSON.stringify({ accounts: authKeys, allAccountIds: accounts.map(a => a.id) }),
+            body: JSON.stringify({
+                accounts: authKeys,
+                connections: connectionKeys,
+                liveConnectionIds,
+                removedStremioLogins,
+                allAccountIds: accounts.map(a => a.id),
+            }),
         })
         if (!res.ok) return 0
         const data = await res.json()
+        // Publish side effects (learned accounts, consumed transition notes) only while
+        // STILL on the exact ownership that captured them.
+        if (!ownershipValid()) return data.synced || 0
         learnServerCredentialedAccounts(data.serverStremioCredentialedAccounts)
+        for (const [accountId, note] of Object.entries(pending)) {
+            clearPendingStremioRepoint(accountId, note)
+        }
         return data.synced || 0
     } catch {
         return 0

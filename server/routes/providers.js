@@ -87,6 +87,14 @@ export function registerProviderRoutes(fastify, reconciler) {
             for (const url of rule.chain) chainUrlSet.add(normalizeAddonUrl(url))
         }
         const base = (clientAddons || []).filter(a => a && !chainUrlSet.has(normalizeAddonUrl(a.transportUrl)))
+        // Destination policy home is the CLIENT's canonical row: stored rule lists may
+        // predate a policy edit, so the overlay grafts the client row's destinations
+        // onto every chain member it re-derives — the per-connection projection in
+        // reconcileAccount then reads the intended policy (overlay-then-filter, R3).
+        const clientDestinationsByUrl = new Map()
+        for (const a of (clientAddons || [])) {
+            if (a?.destinations) clientDestinationsByUrl.set(normalizeAddonUrl(a.transportUrl), a.destinations)
+        }
         // Union of chains across ALL matched rules; the first rule (stable id order)
         // to claim a URL wins a multi-rule overlap.
         const claimed = new Map()
@@ -97,7 +105,10 @@ export function registerProviderRoutes(fastify, reconciler) {
                 const norm = normalizeAddonUrl(url)
                 if (claimed.has(norm)) continue
                 const member = derived.list.find(a => normalizeAddonUrl(a.transportUrl) === norm)
-                claimed.set(norm, member ?? { transportUrl: url, flags: { enabled: norm === normalizedActive } })
+                const destinations = clientDestinationsByUrl.get(norm)
+                claimed.set(norm, member
+                    ? (destinations ? { ...member, destinations } : member)
+                    : { transportUrl: url, ...(destinations ? { destinations } : {}), flags: { enabled: norm === normalizedActive } })
             }
         }
         return [...base, ...claimed.values()]
@@ -252,7 +263,11 @@ export function registerProviderRoutes(fastify, reconciler) {
         const { accountId, credential, credentialType } = request.body || {}
         if (!accountId || !credential) { reply.code(400); return { error: 'Missing accountId or credential' } }
 
-        if (credentialType != null && !['nuvio', 'realstream', 'hydra'].includes(credentialType)) {
+        // 'stremio' registers a SECONDARY login's raw auth key as a per-connection row
+        // (`stremio:${accountId}:${connectionId}`) — the same id shape /api/credentials/sync
+        // writes, one row per login, never collapsing and never touching the canonical
+        // account-level row (the canonical login keeps the legacy account-level shape).
+        if (credentialType != null && !['nuvio', 'realstream', 'hydra', 'stremio'].includes(credentialType)) {
             reply.code(400); return { error: 'Unsupported credential type' }
         }
 

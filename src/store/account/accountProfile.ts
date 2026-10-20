@@ -5,10 +5,13 @@ import { loadSessionKey } from '@/lib/crypto'
 import { toast } from '@/hooks/use-toast'
 import { ACCOUNT_CONTEXT_PROFILE_SWAP } from '@/lib/account-contexts'
 import { buildAddonCollectionDiff } from '@/lib/addon-collection-diff'
+import { restoreAddonDeletions } from '@/lib/addon-tombstones'
+import { effectiveAddonsFor } from '@/lib/addon-destinations'
 import {
     safeUUID,
     getAccountById,
     getStremioAuthKey,
+    getStremioConnection,
     persistAccounts,
     acquireSyncMutex,
     setAccountLoading,
@@ -172,7 +175,7 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
                 }
                 updatedProfiles.unshift(defaultProfile)
             }
-            newAddons = defaultProfile.addons?.length ? defaultProfile.addons : account.addons
+            newAddons = defaultProfile.addons ?? account.addons
         } else {
             newAddons = targetProfile?.addons ?? []
         }
@@ -183,18 +186,32 @@ export async function switchProfile(accountId: string, targetProfileId: string) 
             if (!sessionKey) throw new Error('Session expired. Sign in again before switching setups.')
             const authKey = await decrypt(getStremioAuthKey(account), sessionKey)
             if (authKey) {
-                await updateAddons(authKey, newAddons, ACCOUNT_CONTEXT_PROFILE_SWAP, {
+                // The setup-switch Stremio write goes to the canonical login: rows the
+                // new setup's own destination policy excludes from that login (or from
+                // stremio entirely) must not be installed by the switch itself.
+                const canonicalStremio = getStremioConnection(account)
+                const stremioWriteList = effectiveAddonsFor(newAddons, { platform: 'stremio', connectionId: canonicalStremio?.id })
+                await updateAddons(authKey, stremioWriteList, ACCOUNT_CONTEXT_PROFILE_SWAP, {
                     allowCollectionShrink: true,
                     previousCollection: account.addons,
                 })
             }
         }
 
+        const savedTargetExists = isTargetDefault
+            ? !!account.profiles?.some(p => p.id === 'default')
+            : !!targetProfile
+        const deletionState = restoreAddonDeletions(
+            account.deletedAddons,
+            account.restoredAddons,
+            savedTargetExists ? newAddons : []
+        )
         const updatedAccount = {
             ...account,
             addons: newAddons,
             profiles: updatedProfiles,
-            activeProfileId: isTargetDefault ? undefined : targetProfileId
+            activeProfileId: isTargetDefault ? undefined : targetProfileId,
+            ...deletionState,
         }
 
         store.setState({ accounts: store.getState().accounts.map((a) => (a.id === accountId ? updatedAccount : a)) })

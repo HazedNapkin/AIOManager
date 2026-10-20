@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useUIStore } from '@/store/uiStore'
-import { useAccountStore, hasPlatformConnection, getStremioAuthKey } from '@/store/accountStore'
+import { useAccountStore, hasPlatformConnection, getStremioAuthKey, getStremioConnection } from '@/store/accountStore'
 import {
   AlertCircle,
   Check,
@@ -137,7 +137,10 @@ export function AccountForm() {
       setName(editingAccount.name)
       setAuthKey('')
       setPassword('')
-      const stremioConn = editingAccount.connections?.find(c => c.platform === 'stremio')
+      // Canonical resolution (primary-pointed Stremio login, else first stored, else the
+      // legacy authKey synth): with several logins bound, the edit dialog's defaults must
+      // describe the CANONICAL one, not whichever login happens to be stored first.
+      const stremioConn = getStremioConnection(editingAccount)
       const connEmail = stremioConn?.credentials?.email
       const connAuthKey = stremioConn?.credentials?.authKey
       if (connEmail) {

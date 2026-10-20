@@ -1,12 +1,11 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { ACCOUNT_CONTEXT_BULK_OP } from '@/lib/account-contexts'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
-    updateAddons,
     getAddons,
 } from '@/api/addons'
 import { getAddonVersionKey, normalizeAddonUrl, mergeAddons } from '@/lib/utils'
-import { addTombstones, reconcileTombstones } from '@/lib/addon-tombstones'
+import { addTombstones, restoreAddonDeletions, filterResurrected } from '@/lib/addon-tombstones'
+import { effectiveAddonsFor, normalizeDestinations, stripDestinationsForWire } from '@/lib/addon-destinations'
 import { AddonDescriptor } from '@/types/addon'
 import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
 import { mapConcurrent } from '@/lib/concurrency'
@@ -25,6 +24,7 @@ import {
     acquireSyncMutex,
     isAuthError,
     getStremioAuthKey,
+    getStremioConnection,
     setAccountLoading,
     clearAccountLoading,
     hasPlatformConnection,
@@ -73,7 +73,10 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
     const { resolveNuvioPushProfile } = await import('@/lib/nuvio-profile-resolve')
     ownership?.assert()
     const profileId = resolveNuvioPushProfile(conn, activeProfileId, token.profileId ?? creds.profileIndex ?? creds.profileId)
-    await driver.writeAddons(token.accessToken, addons, profileId)
+    // R9: the provider wire carries projected provider data only — internal
+    // destination policy is stripped before the driver. The plugin mirror below is
+    // a separate per-connection list and never carries addon policy.
+    await driver.writeAddons(token.accessToken, stripDestinationsForWire(addons), profileId)
     ownership?.assert()
 
     const canonicalPlugins = conn.pluginList || []
@@ -105,7 +108,8 @@ async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accou
     const userId = conn.credentials?.userId || ''
     if (!userId) throw Object.assign(new Error('RealStream user ID missing; re-authenticate this connection'), { isAuthError: true })
 
-    await realStreamDriverFor(conn).writeAddons(token.accessToken, addons, userId)
+    // R9: strip internal destination policy before the provider wire.
+    await realStreamDriverFor(conn).writeAddons(token.accessToken, stripDestinationsForWire(addons), userId)
 }
 
 // Hydra (CORS-fragile against arbitrary servers) + any client-side failure fall back to the server.
@@ -146,6 +150,14 @@ export async function pushToConnections(accountId: string, options: { addons?: A
 
     const sourceAddons = options.addons ?? account.addons ?? []
     const enabledAddons = sourceAddons.filter(a => a?.flags?.enabled !== false)
+    // Per-connection destination projection: each eligible connection receives its
+    // own effective list (hub minus that login's exclusions). The hub stays the
+    // superset; a row excluded for one target is simply absent from that target's
+    // write — including an EMPTY write when every row is excluded there (policy-
+    // authorized clear, R2). The global empty-guard below still applies to the
+    // whole hub: a fully-empty canonical list is only pushed with explicit
+    // allowCollectionShrink, never because of policy.
+    const effectiveFor = (conn: Connection) => effectiveAddonsFor(enabledAddons, { platform: conn.platform, connectionId: conn.id })
     trace('push', 'connections-start', { accountId, eligible: eligible.map(c => c.platform), source: sourceAddons.length, enabled: enabledAddons.length, allowCollectionShrink: !!options.allowCollectionShrink })
     if (enabledAddons.length === 0 && !options.allowCollectionShrink) {
         trace('push', 'connections-skip-empty', { accountId })
@@ -195,8 +207,8 @@ export async function pushToConnections(accountId: string, options: { addons?: A
             continue
         }
         try {
-            if (conn.platform === 'nuvio') await pushNuvio(conn, enabledAddons, accountId, account.activeProfileId, ownership)
-            else await pushRealStream(conn, enabledAddons, accountId, ownership)
+            if (conn.platform === 'nuvio') await pushNuvio(conn, effectiveFor(conn), accountId, account.activeProfileId, ownership)
+            else await pushRealStream(conn, effectiveFor(conn), accountId, ownership)
             setStatus(conn.id, 'active')
         } catch (err) {
             if (ownership && !ownership.current()) return
@@ -233,21 +245,35 @@ function backgroundSync(accountId: string, account: Account, updatedAddons: Addo
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)
-    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    const stremioConn = getStremioConnection(account)
     const stremioPushEnabled = !stremioConn || stremioConn.enabled !== false
     trace('backgroundSync', 'enter', { accountId, hasAuthKey: !!authKey, stremioPushEnabled, count: updatedAddons.length, allowCollectionShrink: !!options?.allowCollectionShrink, trigger, addons: briefAddons(updatedAddons) })
     if (authKey && stremioPushEnabled) {
-        const context = options?.allowCollectionShrink ? ACCOUNT_CONTEXT_BULK_OP : accountId
         promises.push(
-            getCachedAuthKey(authKey, getEncryptionKey())
-                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, context, { previousCollection: account.addons, allowCollectionShrink: options?.allowCollectionShrink }))
-                .catch(err => {
-                    if (isAuthError(err)) {
-                        toast({ title: 'Session expired', description: 'Session expired. Re-authenticate your connection.', variant: 'destructive' })
+            (async () => {
+                // Fan out to every enabled Stremio login (canonical first); each login
+                // writes with its own sealed key so secondaries never ride the
+                // canonical session.
+                const { pushAddonsToStremioConnections } = await import('@/lib/account-compat')
+                const result = await pushAddonsToStremioConnections(account, updatedAddons, { allowCollectionShrink: options?.allowCollectionShrink, previousCollection: account.addons })
+                for (const failure of result.failed) {
+                    if (isAuthError(failure.error)) {
+                        toast({
+                            title: 'Session expired',
+                            description: failure.isPrimary
+                                ? 'Session expired. Re-authenticate your connection.'
+                                : 'A secondary Stremio login expired. Re-authenticate it from its connection card.',
+                            variant: 'destructive',
+                        })
                     } else {
-                        toast({ title: 'Sync failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' })
+                        toast({
+                            title: failure.isPrimary ? 'Sync failed' : 'Secondary Stremio sync failed',
+                            description: failure.error instanceof Error ? failure.error.message : 'Unknown error',
+                            variant: 'destructive',
+                        })
                     }
-                })
+                }
+            })()
         )
     }
 
@@ -301,7 +327,8 @@ export async function installAddonToAccount(accountId: string, addonUrl: string,
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: addonUrl }])
+        let updatedAccount: Account = { ...account, addons: finalAddons, ...deletionState, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -380,6 +407,9 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
                     flags: { ...existing.flags, ...normalized.flags },
                     metadata: { ...existing.metadata, ...normalized.metadata },
                     catalogOverrides: existing.catalogOverrides,
+                    // A fresh manifest fetch carries no destination policy; the
+                    // hub row's stored policy survives every reinstall (R1).
+                    destinations: existing.destinations ?? normalized.destinations,
                 }
             } else {
                 updatedAddons.push(normalized)
@@ -391,7 +421,8 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, fetchedAddons)
+        let updatedAccount: Account = { ...account, addons: finalAddons, ...deletionState, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (
             acc.id === accountId ? updatedAccount : acc
@@ -451,7 +482,7 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
             (a) => normalizeAddonUrl(a.transportUrl) !== normalizeAddonUrl(transportUrl)
         )
 
-        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl], Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -514,7 +545,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
         const updatedAddons = [...account.addons]
         updatedAddons.splice(index, 1)
 
-        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl], Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -541,7 +572,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
     }
 }
 
-export async function reorderAddons(accountId: string, newOrder: AddonDescriptor[]) {
+export async function reorderAddons(accountId: string, newOrder: AddonDescriptor[], options: { explicitInstallUrls?: string[] } = {}) {
     const store = await getStore()
     const timestampedOrder = newOrder.map(addon => ({
         ...addon,
@@ -558,13 +589,24 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         const account = getAccountById(store.getState().accounts, accountId)
         if (!account) throw new Error('Account not found')
 
-        let updatedAccount: Account = { ...account, addons: timestampedOrder, lastSync: new Date() }
-        updatedAccount = updateActiveProfile(updatedAccount, timestampedOrder)
+        // Collection clones explicitly install their source URLs. Ordinary reorders
+        // pass no install intent, so stale list membership cannot cancel a deletion.
+        const explicitUrls = new Set((options.explicitInstallUrls || []).map(normalizeAddonUrl))
+        const explicitAddons = timestampedOrder.filter(addon => explicitUrls.has(normalizeAddonUrl(addon.transportUrl)))
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, explicitAddons)
+        const finalOrder = filterResurrected(timestampedOrder, [], deletionState.deletedAddons)
+        if (options.explicitInstallUrls !== undefined) {
+            const keptUrls = new Set(finalOrder.map(addon => normalizeAddonUrl(addon.transportUrl)))
+            const removedUrls = account.addons.filter(addon => !keptUrls.has(normalizeAddonUrl(addon.transportUrl))).map(addon => addon.transportUrl)
+            deletionState.deletedAddons = addTombstones(deletionState.deletedAddons, removedUrls, Date.now(), deletionState.restoredAddons)
+        }
+        let updatedAccount: Account = { ...account, addons: finalOrder, ...deletionState, lastSync: new Date() }
+        updatedAccount = updateActiveProfile(updatedAccount, finalOrder)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, timestampedOrder, { allowCollectionShrink: true }, 'reorder')
+        backgroundSync(accountId, account, finalOrder, { allowCollectionShrink: true }, 'reorder')
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to reorder addons'
         store.setState({ error: message })
@@ -585,7 +627,7 @@ export async function bulkDeleteAddons(accountId: string, keptAddons: AddonDescr
         if (!account) throw new Error('Account not found')
 
         const timestamped = keptAddons.map(addon => ({ ...addon, metadata: { ...addon.metadata, lastUpdated: Date.now() } }))
-        let updatedAccount: Account = { ...account, addons: timestamped, deletedAddons: addTombstones(account.deletedAddons, removedUrls), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: timestamped, deletedAddons: addTombstones(account.deletedAddons, removedUrls, Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, timestamped)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -926,6 +968,7 @@ export async function updateAddonSettings(
         catalogOverrides?: AddonDescriptor['catalogOverrides'],
         manifest?: AddonDescriptor['manifest'],
         note?: string,
+        destinations?: AddonDescriptor['destinations'] | null,
     },
     targetIndex?: number
 ) {
@@ -940,6 +983,14 @@ export async function updateAddonSettings(
 
                 if ('note' in settings) {
                     newAddon.note = settings.note || undefined
+                }
+
+                if ('destinations' in settings) {
+                    // Absent/empty/cleared policy collapses to "sync everywhere" —
+                    // the field disappears rather than lingering as an empty object.
+                    const normalized = normalizeDestinations(settings.destinations)
+                    if (normalized) newAddon.destinations = normalized
+                    else delete newAddon.destinations
                 }
 
                 const clearedFields: string[] = []
@@ -1105,7 +1156,7 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
             return !shouldRemove
         })
 
-        const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, removedUrls) }, updatedAddons)
+        const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, removedUrls, Date.now(), account.restoredAddons) }, updatedAddons)
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updatedAccount : acc
         )
@@ -1155,7 +1206,10 @@ export async function replaceTransportUrl(oldUrl: string, newUrl: string, accoun
             return addon
         })
 
-        return updateActiveProfile({ ...account, addons: updatedAddons, lastSync: new Date() }, updatedAddons)
+        const deletionState = normOld !== normNew
+            ? restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: newUrl }])
+            : {}
+        return updateActiveProfile({ ...account, addons: updatedAddons, ...deletionState, lastSync: new Date() }, updatedAddons)
     })
 
     store.setState({ accounts: updatedAccounts })

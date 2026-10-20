@@ -10,7 +10,8 @@ import { resilientFetch } from '../utils/api-resilience.js'
 import { writeEncryptedIfChanged } from '../db-guards.js'
 import { normalizeAddonUrl } from '../utils/addon-url.js'
 import { normalizeHydraAddonInput } from '../utils/addon-shape.js'
-import { getLatestStremioCredential } from '../lib/stremio-credentials.js'
+import { isExcludedFromDestinations } from '../utils/addon-destinations.js'
+import { getLatestStremioCredential, resolveStremioConnectionIdentity } from '../lib/stremio-credentials.js'
 
 const HYDRA_SPEC_VERSION = '1.0.0'
 const MAX_ADDON_URL_LENGTH = 2048
@@ -190,6 +191,35 @@ function toHydraAddon(raw) {
 
 const CANONICAL_ONLY_WARNING = 'Written to the AIOManager store only; changes propagate to your Stremio when a logged-in AIOManager client syncs.'
 
+// Destination rules must be current for every external write. A TTL here could
+// re-install an addon immediately after its owner excluded a destination.
+async function loadCanonicalDestinations(accountId, syncUser) {
+    const row = await db.get(
+        'SELECT addon_list FROM account_canonical_addons WHERE account_id = $1 AND sync_user = $2',
+        [accountId, syncUser]
+    )
+    const byUrl = new Map()
+    if (!row?.addon_list) return byUrl
+    const decrypted = decrypt(row.addon_list, FALLBACK_KEYS)
+    if (!decrypted) throw new Error('Could not read the stored destination rules')
+    const parsed = JSON.parse(decrypted)
+    if (!Array.isArray(parsed)) throw new Error('Invalid stored addon collection')
+    for (const addon of parsed) {
+        const url = normalizeAddonUrl(addon?.transportUrl || '').toLowerCase()
+        if (url && addon?.destinations) byUrl.set(url, addon.destinations)
+    }
+    return byUrl
+}
+
+function graftStoredDestinations(addons, policyByUrl) {
+    if (!policyByUrl || policyByUrl.size === 0) return addons
+    return (addons || []).map(a => {
+        const url = normalizeAddonUrl(a?.transportUrl || a?.url || '').toLowerCase()
+        if (!url || !policyByUrl.has(url)) return a
+        return a?.destinations ? a : { ...a, destinations: policyByUrl.get(url) }
+    })
+}
+
 async function stremioCredentialMode(accountId, syncUser) {
     const cred = await getLatestStremioCredential(accountId, syncUser)
     return cred?.auth_key ? 'stremio' : 'canonical'
@@ -210,6 +240,7 @@ async function writeCanonicalAddons(account, addons) {
     // credential so a Nuvio/Hydra cred isn't mis-used as a Stremio authKey. The same
     // bug class fixed on the read side in getCanonicalAddons. Scoped to sync_user so a
     // poisoned api-key mapping can't push to another user's Stremio collection.
+    let stremioWriteThrough = false
     if (cred?.auth_key) {
         const mixed = await db.get(
             "SELECT 1 FROM server_credentials WHERE account_id = $1 AND sync_user = $2 AND credential_type IN ('nuvio', 'realstream', 'hydra') LIMIT 1",
@@ -220,12 +251,46 @@ async function writeCanonicalAddons(account, addons) {
         }
         const authKey = decrypt(cred.auth_key, FALLBACK_KEYS)
         if (!authKey) throw new Error('Failed to decrypt credentials')
-        const { createStremioDriver } = await import('../providers/stremio-driver.js')
-        const driver = createStremioDriver()
-        await driver.writeAddons(authKey, addons)
-        invalidateCanonicalAddons(accountId, syncUser)
-        return 'stremio'
+        // R8: NO Hydra bypass — the write-through enforces the canonical login's own
+        // destination policy (platform-wide stremio entries AND the exact canonical
+        // connection id resolved from the credential). Ambiguous identity fails
+        // closed: fall through to the canonical-store path below rather than guess a
+        // login or ship an unfiltered list.
+        const identity = await resolveStremioConnectionIdentity(accountId, syncUser, authKey)
+        const policyByUrl = await loadCanonicalDestinations(accountId, syncUser)
+        const needsExactIdentity = [...policyByUrl.values()].some(policy => policy?.excludedConnections?.length > 0)
+        if (identity.ambiguous || (identity.legacy && needsExactIdentity)) {
+            logger.warn({ category: 'Hydra' }, `[${accountId}] Ambiguous canonical Stremio identity (several connection ids claim the account-level key); failing closed to the canonical store instead of a policy-blind Stremio write.`)
+        } else {
+            const target = { platform: 'stremio', connectionId: identity.connectionId }
+            const excludedUrls = new Set()
+            for (const [url, destinations] of policyByUrl) {
+                if (isExcludedFromDestinations(destinations, target)) excludedUrls.add(url)
+            }
+            const kept = []
+            for (const a of addons) {
+                const url = normalizeAddonUrl(a?.transportUrl || a?.url || '').toLowerCase()
+                if (url && excludedUrls.has(url)) continue
+                kept.push(a)
+            }
+            if (kept.length === 0 && (addons || []).length > 0) {
+                logger.info({ category: 'Hydra' }, `[${accountId}] Empty Stremio write-through authorized: every inbound addon is deliberately excluded by destination policy.`)
+            }
+            const { createStremioDriver } = await import('../providers/stremio-driver.js')
+            const driver = createStremioDriver()
+            // R9: the provider wire carries projected provider data only — strip the
+            // internal destination policy before the driver.
+            const wireRows = kept.map(a => {
+                if (!a?.destinations) return a
+                const { destinations, ...rest } = a
+                return rest
+            })
+            await driver.writeAddons(authKey, wireRows)
+            invalidateCanonicalAddons(accountId, syncUser)
+            stremioWriteThrough = true
+        }
     }
+    if (stremioWriteThrough) return 'stremio'
 
     // Non-Stremio Hub (Nuvio-only / local-only): the inbound write lands in the
     // server-readable canonical store. The client folds it into the Hub on its next
@@ -458,7 +523,11 @@ export function registerHydraRoutes(fastify, reconciler = null) {
 
             // Tolerant of both wire shapes: spec-flat ({transportUrl, name, ...}) and the
             // AIOManager descriptor shape ({transportUrl, manifest: {...}, flags: {...}}).
-            const normalized = addons.map(normalizeHydraAddonInput)
+            // normalizeHydraAddonInput strips destinations (no policy injection via the
+            // API); graft the STORED policy back onto matching rows so an external
+            // payload that omits it cannot erase it (R8).
+            const storedPolicyByUrl = await loadCanonicalDestinations(account.account_id, account.sync_user)
+            const normalized = graftStoredDestinations(addons.map(normalizeHydraAddonInput), storedPolicyByUrl)
             const mode = await writeCanonicalAddons(account, normalized)
             return { addons: normalized.map(toHydraAddon).filter(Boolean), ...propagationFields(mode) }
         } catch {
@@ -554,7 +623,12 @@ export function registerHydraRoutes(fastify, reconciler = null) {
                     const connections = await reconciler.resolveConnections(account.account_id, account.sync_user)
                     const targets = connections.filter(c => c.enabled)
                     if (targets.length > 0) {
-                        await reconciler.enforceAccount(account.account_id, targets, updated)
+                        // `updated` derives from getCanonicalAddonsCached — for Stremio-
+                        // credentialed accounts that is a LIVE platform read carrying no
+                        // destinations. Graft the stored policy so the per-connection
+                        // projection in enforceAccount sees it (R8: no bypass on fan-out).
+                        const enforced = graftStoredDestinations(updated, await loadCanonicalDestinations(account.account_id, account.sync_user))
+                        await reconciler.enforceAccount(account.account_id, targets, enforced)
                     }
                 } catch (e) {
                     logger.warn({ category: 'Hydra' }, `[${account.account_id}] Cross-platform propagation after reinstall failed: ${e.message}`)
