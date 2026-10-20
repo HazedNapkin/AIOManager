@@ -1,10 +1,16 @@
 import type { ActivityItem } from '../../types/activity'
 
 // Pure row-model helpers for the ActivityFeed long-history windowing.
-// Kept DOM-free so they run under `node --test` (see feed-rows.test.ts).
 // The component layers @tanstack/react-virtual on top of this model.
 
 export type FeedViewMode = 'grid' | 'list'
+
+/**
+ * Presentation bucket for imported saved watch state (rows with `importedSavedState`):
+ * they carry no watch date, so they never join a calendar-day group. The bucket sorts
+ * after every dated group and exposes no `activity-date-*` anchor.
+ */
+export const SAVED_GROUP_DATE = 'Saved watch history'
 
 export interface DateGroup {
     date: string
@@ -46,6 +52,11 @@ export interface FeedRowsResult {
 }
 
 function compareNewestFirst(a: ActivityItem, b: ActivityItem): number {
+    // Undated saved state always sorts after dated rows (including invalid
+    // timestamps) so it can only ever form the trailing group.
+    const savedA = a.importedSavedState === true
+    const savedB = b.importedSavedState === true
+    if (savedA !== savedB) return savedA ? 1 : -1
     const ta = new Date(a.timestamp).getTime()
     const tb = new Date(b.timestamp).getTime()
     return (isNaN(tb) ? -Infinity : tb) - (isNaN(ta) ? -Infinity : ta)
@@ -56,20 +67,25 @@ export function sortFeedItems(items: ActivityItem[]): ActivityItem[] {
 }
 
 function toDateId(dateStr: string): string {
-    if (dateStr === 'Unknown Date') return ''
+    if (dateStr === 'Unknown Date' || dateStr === SAVED_GROUP_DATE) return ''
     const d = new Date(dateStr)
     if (isNaN(d.getTime())) return ''
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Same grouping semantics the feed always had: newest-first, one bucket per calendar day, invalid timestamps last. */
+/** Same grouping semantics the feed always had: newest-first, one bucket per calendar day, invalid timestamps last; undated saved state gets its own explicit trailing bucket instead of borrowing the observation-time day. */
 export function groupByDate(items: ActivityItem[]): DateGroup[] {
     const dates: string[] = []
     const itemsByDate: Record<string, ActivityItem[]> = {}
 
     for (const item of sortFeedItems(items)) {
-        const date = new Date(item.timestamp)
-        const dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
+        let dateStr: string
+        if (item.importedSavedState === true) {
+            dateStr = SAVED_GROUP_DATE
+        } else {
+            const date = new Date(item.timestamp)
+            dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
+        }
         if (!itemsByDate[dateStr]) {
             itemsByDate[dateStr] = []
             dates.push(dateStr)

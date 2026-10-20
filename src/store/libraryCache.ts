@@ -13,8 +13,14 @@ import { trace } from '@/lib/trace'
 import { metaIsUnchanged } from '@/lib/stremio-meta-diff'
 import { reuseActivityItems, reuseDeletedItemIds } from '@/lib/activity-structural-sharing'
 
-const CACHE_KEY = 'aio_library_cache_v3'
-const OLD_CACHE_KEY = 'aio_library_cache'
+// v4: v3-era blobs persist transformed ActivityItems from before imported-saved-state
+// tagging; the fresh-TTL restore and identical-meta skip would keep serving that old
+// projection forever. Bumping the version discards the derived cache exactly once —
+// deleted-item markers, watch-event history and credentials live in separate stores
+// and survive. The legacy keys are cleared too so a pre-rename blob can never
+// resurrect an old projection through the migration path (removed below).
+const CACHE_KEY = 'aio_library_cache_v4'
+const LEGACY_CACHE_KEYS = ['aio_library_cache_v3', 'aio_library_cache']
 
 let _lastPersistedLibraryContent: string | null = null
 function invalidatePersistedLibraryFingerprint() {
@@ -24,7 +30,7 @@ const seriesRowsForBackfill = new Map<string, LibraryItem[]>()
 const DELETED_ITEMS_KEY = 'aio_library_deleted'
 const CACHE_TTL = 5 * 60 * 1000
 const LIBRARY_FETCH_CONCURRENCY = 5
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 
 let loadPromise: Promise<void> | null = null
 let loadPromiseGeneration = 0
@@ -220,7 +226,11 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
         const storedVersion = localStorage.getItem('aio-cache-version')
         if (storedVersion !== String(CACHE_VERSION)) {
-            await localforage.removeItem(CACHE_KEY); invalidatePersistedLibraryFingerprint()
+            await localforage.removeItem(CACHE_KEY)
+            for (const legacyKey of LEGACY_CACHE_KEYS) {
+                await localforage.removeItem(legacyKey)
+            }
+            invalidatePersistedLibraryFingerprint()
             localStorage.setItem('aio-cache-version', String(CACHE_VERSION))
             set({ items: [], lastMtimeByAccount: {}, metaMtimesByAccount: {} })
         }
@@ -272,11 +282,6 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
 
                 try {
                 if (state.items.length === 0) {
-                    const oldCache = await localforage.getItem<string>(OLD_CACHE_KEY)
-                    if (oldCache && !(await localforage.getItem<string>(CACHE_KEY))) {
-                        await localforage.setItem(CACHE_KEY, oldCache)
-                        await localforage.removeItem(OLD_CACHE_KEY)
-                    }
                     const encrypted = await localforage.getItem<string>(CACHE_KEY)
                     const { encryptionKey } = useAuthStore.getState()
 

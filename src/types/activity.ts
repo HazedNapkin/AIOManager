@@ -24,6 +24,23 @@ export interface LibraryItem {
     _mtime?: string
 }
 
+export interface SavedEpisodeRange {
+    start: number
+    end: number
+}
+
+export interface SavedSeasonSummary {
+    season: number
+    count: number
+    ranges: SavedEpisodeRange[]
+}
+
+/** Verified per-episode watch state recovered from Stremio's watched bitfield (no real watch dates). */
+export interface SavedEpisodesSummary {
+    episodeCount: number
+    seasons: SavedSeasonSummary[]
+}
+
 export interface ActivityItem {
     id: string // Unique ID: accountId:uniqueItemId (episode-aware)
     accountId: string
@@ -49,6 +66,10 @@ export interface ActivityItem {
     source?: string // platform the watch came from: 'stremio' | 'nuvio' | ... (absent = unknown)
     sourceConnectionId?: string // exact remote login this item came from (same-platform multiplicity); absent = canonical/legacy route
     backfill?: boolean // recovered from Stremio's watched-bitfield; no real per-episode time, so excluded from time-based Replay stats
+    /** Imported saved watch state (bitfield aggregate series / flagged-only movie): no real watch dates, presented as saved state. */
+    importedSavedState?: boolean
+    /** Verified episode count/ranges recovered from the watched bitfield (series saved state only). */
+    savedEpisodes?: SavedEpisodesSummary
     readOnly?: boolean
     mediaObservation?: { connectionId: string; productName: string; kind: 'resume' | 'played' | 'live'; checkedAt: number; reportedAt?: number; hasPlayedDate: boolean; positionMs: number; isPaused?: boolean }
     mediaSources?: string[]
@@ -80,6 +101,13 @@ export interface WatchEvent {
     scopeKey?: string
     timesWatched?: number
     backfill?: boolean // recovered from Stremio's watched-bitfield (no real per-episode timestamp)
+    /**
+     * Positive per-episode completion confirmation stamped by recordBackfillEpisodes when
+     * the checksum-verified watched bitfield covers an episode that already has real
+     * historic events: their dates/times stay untouched, the flag is the only change.
+     * Mirrors Stremio's own state.flaggedWatched marker (1 = watched).
+     */
+    flaggedWatched?: number
 }
 
 export interface SnapshotItem {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Tv, Play, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
+import { Tv, Play, Check, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -11,6 +11,8 @@ interface SeasonBrowserProps {
     activeItem: DetailItem | null
     isLight: boolean
     loading: boolean
+    /** Actual watched episodes (real events + verified bitfield recoveries) to mark in the browser. */
+    watchedEpisodes?: ReadonlyArray<{ season: number; episode: number }>
     onEpisodeClick?: (data: {
         episodeNumber: number
         episodeName: string
@@ -22,7 +24,7 @@ interface SeasonBrowserProps {
     }) => void
 }
 
-export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEpisodeClick }: SeasonBrowserProps) {
+export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watchedEpisodes, onEpisodeClick }: SeasonBrowserProps) {
     const [seasons, setSeasons] = useState<SeasonInfo[]>([])
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null)
     const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
@@ -34,6 +36,18 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
     const absoluteSeasonRedirectRef = useRef<string | null>(null)
 
     const effectiveTmdbId = seriesTmdbId ?? cinemetaTmdbId
+
+    // Watched episodes by season (real watch events + verified bitfield recoveries), used to
+    // mark every actually-watched episode and to pick a sensible starting season when the
+    // active item itself has no episode anchor (imported saved series).
+    const watchedBySeason = new Map<number, Set<number>>()
+    for (const ep of watchedEpisodes ?? []) {
+        if (ep?.season == null || ep?.episode == null) continue
+        const set = watchedBySeason.get(ep.season) ?? new Set<number>()
+        if (set.size === 0) watchedBySeason.set(ep.season, set)
+        set.add(ep.episode)
+    }
+    const latestWatchedSeason = watchedBySeason.size > 0 ? Math.max(...watchedBySeason.keys()) : null
 
     useEffect(() => {
         setSeasons([])
@@ -53,7 +67,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                 const filtered = list.filter(s => s.seasonNumber > 0)
                 if (filtered.length === 0) { setTmdbSeasonsFailed(true); return }
                 setSeasons(filtered)
-                const watched = activeItem?.season
+                const watched = activeItem?.season ?? latestWatchedSeason
                 const target = watched != null && filtered.some(s => s.seasonNumber === watched)
                     ? watched
                     : filtered[0].seasonNumber
@@ -61,7 +75,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
             })
             .catch(() => { if (active) setTmdbSeasonsFailed(true) })
         return () => { active = false }
-    }, [seriesTmdbId, activeItem?.season])
+    }, [seriesTmdbId, activeItem?.season, latestWatchedSeason])
 
     useEffect(() => {
         if (!seriesTmdbId || selectedSeason === null) return
@@ -174,12 +188,12 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
 
     useEffect(() => {
         if ((seriesTmdbId && !tmdbSeasonsFailed) || cinemetaSeasons.length === 0 || selectedSeason !== null) return
-        const watched = activeItem?.season
+        const watched = activeItem?.season ?? latestWatchedSeason
         const target = watched != null && cinemetaSeasons.some(s => s.seasonNumber === watched)
             ? watched
             : cinemetaSeasons[0].seasonNumber
         setSelectedSeason(target)
-    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed])
+    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed, latestWatchedSeason])
 
     if (loading || (seasons.length === 0 && cinemetaSeasons.length === 0)) return null
 
@@ -298,7 +312,13 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                     </p>
                 ) : (
                     activeEpisodes.map(ep => {
-                        const isWatched = highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber
+                        // Selection keeps the union (highlighted episode OR actually watched):
+                        // the active/played row stays visually selected, while the watched
+                        // marker (`data-watched`, Check icon) is reserved for episodes with
+                        // real completion evidence — partial history never gets it.
+                        const actuallyWatched = selectedSeason !== null && watchedBySeason.get(selectedSeason)?.has(ep.episodeNumber) === true
+                        const isWatched = (highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber)
+                            || actuallyWatched
                         return (
                             <Tooltip content="View episode details" side="top">
                             <button
@@ -306,6 +326,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                                 type="button"
                                 data-theme-part="nav-item"
                                 data-state={isWatched ? 'active' : 'inactive'}
+                                data-watched={actuallyWatched ? 'true' : 'false'}
                                 onClick={() => handleEpisodeClick(ep)}
                                 className={cn(
                                     'group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',
@@ -327,8 +348,13 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                                         E{ep.episodeNumber}
                                     </span>
                                     {isWatched && (
-                                        <span className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                                            <Play className="h-2.5 w-2.5 fill-current" />
+                                        <span className={cn(
+                                            'absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-primary-foreground',
+                                            actuallyWatched ? 'bg-primary' : 'bg-primary/70',
+                                        )}>
+                                            {actuallyWatched
+                                                ? <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                                                : <Play className="h-2.5 w-2.5 fill-current" />}
                                         </span>
                                     )}
                                 </div>

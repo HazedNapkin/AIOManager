@@ -271,10 +271,13 @@ export function ActivityPage() {
 
     // Convert to ActivityItem[] for existing feed components. Backfilled episodes (recovered from the
     // watched-bitfield) have no real per-episode time, so they are kept out of the chronological feed
-    // -- they still power Replay totals/discoveries and the per-show "seen" state.
+    // -- they still power Replay totals/discoveries and the per-show "seen" state. The one exception
+    // is imported SAVED state (bitfield-aggregate series, flagged-only movies): those rows carry no
+    // watch dates at all, so they are kept for the dedicated imported group below instead of leaking
+    // into the dated chronology as a phantom watch on the import date.
     const sourceHistory: ActivityItem[] = useMemo(
         () => {
-            const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill)
+            const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill || item.importedSavedState)
 
             const bestByItemId = new Map<string, { name: string; poster?: string; genres?: string[] }>()
             for (const item of items) {
@@ -308,6 +311,12 @@ export function ActivityPage() {
         [watchHistory]
     )
     const history = useActivityMetadata(sourceHistory)
+
+    // Split for presentation only: the dated chronology and day metrics see genuinely dated
+    // watches, while imported saved state (no watch dates) renders in its own group. Deletion,
+    // deep links and bulk flows keep operating on the full `history` list with unchanged ids.
+    const datedHistory = useMemo(() => history.filter(item => !item.importedSavedState), [history])
+    const importedSummaries = useMemo(() => history.filter(item => item.importedSavedState), [history])
 
     // Map useLibraryCache functions to original names for UI compatibility
     const fetchActivity = useCallback(async (silent = false) => {
@@ -459,16 +468,28 @@ export function ActivityPage() {
         avatar: account.avatar,
     })), [accounts])
 
+    const matchesAccountAndSearch = useCallback((item: ActivityItem) => {
+        if (userFilter !== 'all' && item.accountId !== userFilter) return false
+        if (!searchTerm.trim()) return true
+        const haystack = [
+            item.name || '',
+            item.itemId || '',
+            item.source || '',
+            getCachedCinemetaName(item.itemId) || '',
+            item.season !== undefined ? `S${item.season}` : '',
+            item.episode !== undefined ? `E${item.episode}` : '',
+        ].join(' ').toLowerCase()
+        return haystack.includes(searchTerm.toLowerCase())
+    }, [userFilter, searchTerm])
+
     const filteredHistory = useMemo(() => {
         const now = new Date().getTime()
         const oneDay = 24 * 60 * 60 * 1000
         const sevenDays = 7 * oneDay
         const thirtyDays = 30 * oneDay
 
-        return history.filter(item => {
-            if (userFilter !== 'all' && item.accountId !== userFilter) {
-                return false
-            }
+        return datedHistory.filter(item => {
+            if (!matchesAccountAndSearch(item)) return false
             const itemTime = new Date(item.timestamp).getTime()
             if (timeFilter === '24h' && now - itemTime > oneDay) return false
             if (timeFilter === '7d' && now - itemTime > sevenDays) return false
@@ -478,21 +499,16 @@ export function ActivityPage() {
                 if (itemTime < sinceTime) return false
             }
 
-            if (searchTerm.trim()) {
-                const searchLower = searchTerm.toLowerCase()
-                const haystack = [
-                    item.name || '',
-                    item.itemId || '',
-                    item.source || '',
-                    getCachedCinemetaName(item.itemId) || '',
-                    item.season !== undefined ? `S${item.season}` : '',
-                    item.episode !== undefined ? `E${item.episode}` : '',
-                ].join(' ').toLowerCase()
-                return haystack.includes(searchLower)
-            }
             return true
         })
-    }, [history, userFilter, searchTerm, timeFilter, customStartDate])
+    }, [datedHistory, matchesAccountAndSearch, timeFilter, customStartDate])
+
+    // The imported group follows the same account/search filters, but never the time filters:
+    // those describe watch dates, and saved state deliberately has none.
+    const importedSummaryItems = useMemo(() => {
+        if (timeFilter !== 'all') return []
+        return importedSummaries.filter(matchesAccountAndSearch)
+    }, [importedSummaries, matchesAccountAndSearch, timeFilter])
 
     const handleUserFilterChange = useCallback((id: string) => {
         setUserFilter(id)
@@ -509,11 +525,11 @@ export function ActivityPage() {
         const now = new Date().getTime()
         const oneDay = 24 * 60 * 60 * 1000
 
-        const watchedToday = history
+        const watchedToday = datedHistory
             .filter(item => now - new Date(item.timestamp).getTime() < oneDay)
             .reduce((acc, item) => acc + (item.watched || 0), 0)
 
-        const watchedYesterday = history
+        const watchedYesterday = datedHistory
             .filter(item => {
                 const diff = now - new Date(item.timestamp).getTime()
                 return diff > oneDay && diff < 2 * oneDay
@@ -524,7 +540,7 @@ export function ActivityPage() {
             todayHrs: Math.round(watchedToday / 3600000 * 10) / 10,
             isUp: watchedToday >= watchedYesterday,
         }
-    }, [history])
+    }, [datedHistory])
 
     const handleViewModeChange = useCallback((mode: 'grid' | 'list') => {
         setViewMode(mode)
@@ -1310,6 +1326,7 @@ export function ActivityPage() {
                 <ActivityFeed
                     history={filteredHistory}
                     allHistory={history}
+                    importedSummaries={importedSummaryItems}
                     currentActivity={inProgress}
                     viewMode={viewMode}
                     todayHours={sessionComparison.todayHrs}

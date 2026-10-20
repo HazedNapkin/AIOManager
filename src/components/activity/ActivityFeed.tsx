@@ -15,6 +15,7 @@ import {
     detectGridColumns,
     GRID_BREAKPOINT_COLUMNS,
     resolveFocusTarget,
+    SAVED_GROUP_DATE,
 } from './feed-rows'
 import { ActivityDateHeader, ActivityItemSlot, VirtualActivityList } from './VirtualActivityList'
 
@@ -35,6 +36,10 @@ interface ActivityFeedProps {
     onOpenDetail?: (item: ActivityItem) => void
     selectedItems?: Set<string>
     isBulkMode?: boolean
+    /** Imported saved watch state (no watch dates): joined into the same bounded row
+     *  model as an undated trailing group, so it reveals, keyboard-navigates and
+     *  selects through the exact same windowing as dated rows. */
+    importedSummaries?: ActivityItem[]
 }
 
 export function ActivityFeed({
@@ -49,6 +54,7 @@ export function ActivityFeed({
     onOpenDetail,
     selectedItems,
     isBulkMode = false,
+    importedSummaries = [],
 }: ActivityFeedProps) {
     const safeSelectedItems = selectedItems ?? EMPTY_SELECTED_ITEMS
     const [activeTab, setActiveTab] = useState("all")
@@ -98,8 +104,16 @@ export function ActivityFeed({
         window.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
+    // Undated saved state joins the SAME row model: it sorts after every dated row,
+    // forms its own trailing group, and is revealed through the same visibleCount
+    // window, keyboard order and selection set as dated rows.
+    const combinedHistory = useMemo(
+        () => (importedSummaries.length > 0 ? [...history, ...importedSummaries] : history),
+        [history, importedSummaries],
+    )
+
     const filteredHistory = useMemo(() => {
-        let filtered = history
+        let filtered = combinedHistory
 
         if (activeTab === 'movies') filtered = filtered.filter(h => h.type === 'movie')
         else if (activeTab === 'series') filtered = filtered.filter(h => h.type === 'series' || h.type === 'anime' || h.type === 'episode')
@@ -108,7 +122,7 @@ export function ActivityFeed({
         }
 
         return filtered
-    }, [history, activeTab, nowStatuses])
+    }, [combinedHistory, activeTab, nowStatuses])
 
     // Long-history windowing model: exactly `visibleCount` items revealed (cut at
     // item boundaries, never whole date groups), decomposed into rows the
@@ -124,6 +138,8 @@ export function ActivityFeed({
         const seriesWithOverall = new Map<string, number>()
         let totalMs = 0
         for (const item of filteredHistory) {
+            // Undated saved state accounts no watch time; it must never inflate hours.
+            if (item.importedSavedState) continue
             const isSeries = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
             if (isSeries && item.overallTimeWatched) {
                 const prev = seriesWithOverall.get(item.itemId) || 0
@@ -142,22 +158,22 @@ export function ActivityFeed({
         let movies = 0
         let series = 0
 
-        for (const item of history) {
+        for (const item of combinedHistory) {
             if (nowStatuses.has(item.id)) now++
             if (item.type === 'movie') movies++
             if (item.type === 'series' || item.type === 'anime' || item.type === 'episode') series++
         }
 
         return {
-            all: history.length,
+            all: combinedHistory.length,
             now,
             movies,
             series,
         }
-    }, [history, nowStatuses])
+    }, [combinedHistory, nowStatuses])
 
     const formatDateHeader = useCallback((dateStr: string) => {
-        if (dateStr === 'Unknown Date') return dateStr
+        if (dateStr === 'Unknown Date' || dateStr === SAVED_GROUP_DATE) return dateStr
         const date = new Date(dateStr)
         if (isToday(date)) return 'Today'
         if (isYesterday(date)) return 'Yesterday'

@@ -4,8 +4,17 @@ import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 import { sanitizePosterUrl } from '@/lib/utils'
 import { parseCinemetaGenres, fetchCinemetaDetail } from './cinemeta-cache.ts'
+import {
+    isSavedOnlySeriesRow,
+    isFlaggedOnlyMovieRow,
+    isDatelessSavedWatchState,
+    resolveWatchBadgePct,
+    summarizeSavedEpisodes,
+    formatSavedEpisodeRanges,
+} from './imported-watch-state.ts'
 
 export { sanitizePosterUrl }
+export { isSavedOnlySeriesRow, isFlaggedOnlyMovieRow, isDatelessSavedWatchState, resolveWatchBadgePct, summarizeSavedEpisodes, formatSavedEpisodeRanges }
 
 /**
  * Stable per-connection scope key for watch attribution: a secondary Stremio login's
@@ -78,6 +87,9 @@ export {
 export function isActuallyWatched(item: LibraryItem): boolean {
     const s = item.state || {}
     if ((s.timesWatched ?? 0) > 0) return true
+    // Stremio's watched flag is a positive watch marker on its own (marked-watched movies,
+    // imported saved state); it must admit the row even when nothing else is accounted.
+    if ((s.flaggedWatched ?? 0) > 0) return true
     if (s.video_id && s.video_id.trim() !== '') return true
     if ((s.timeOffset ?? 0) > 0) return true
     if ((s.timeWatched ?? 0) > 0 || (s.overallTimeWatched ?? 0) > 0) return true
@@ -218,6 +230,11 @@ export function transformLibraryItemToActivityItem(
     const overallTimeWatched = item.state?.overallTimeWatched
     const timesWatched = item.state?.timesWatched
     const flaggedWatched = item.state?.flaggedWatched
+    // Imported saved watch state (bitfield-aggregate series / flagged-only movie) carries no
+    // watch dates and no resume: presentation layers must treat it as saved state, never as
+    // a dated, percent-complete watch. Detection is conservative — any real anchor, resume,
+    // accounted time or watch date opts the row out.
+    const importedSavedState = isDatelessSavedWatchState(item)
 
     const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
@@ -254,6 +271,7 @@ export function transformLibraryItemToActivityItem(
         progress,
         timesWatched,
         flaggedWatched,
+        importedSavedState,
         isInProgress,
         season,
         episode,
@@ -418,6 +436,7 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         watched: entry.isFromEventLog ? entry.watched : (entry.liveWatched ?? entry.watched),
         progress: Math.min(entry.isFromEventLog ? entry.progress : (entry.liveProgress ?? entry.progress), 100),
         timesWatched: entry.timesWatched,
+        flaggedWatched: entry.flaggedWatched,
         isInProgress: entry.isInProgress,
         season: entry.season,
         episode: entry.episode,
@@ -425,6 +444,8 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         source: entry.source,
         sourceConnectionId: entry.sourceConnectionId,
         backfill: entry.backfill,
+        importedSavedState: entry.importedSavedState,
+        savedEpisodes: entry.savedEpisodes,
         genres: entry.genres,
         readOnly: entry.readOnly,
         mediaObservation: entry.mediaObservation,
@@ -433,10 +454,4 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
     }
 }
 
-export function resolveWatchBadgePct(item: ActivityItem): number | undefined {
-    if (item.progress > 0) return Math.round(item.progress)
-    if ((item.timesWatched ?? 0) > 0 || (item.flaggedWatched ?? 0) > 0) return 100
-    const isSeries = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
-    if (!isSeries && (item.overallTimeWatched ?? 0) > 0) return 100
-    return 0
-}
+// Saved-only imported series resolve no watch badge at all (see imported-watch-state.ts).

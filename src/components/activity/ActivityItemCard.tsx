@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Tooltip } from '@/components/ui/tooltip'
 
 import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
-import { resolveWatchBadgePct } from '@/lib/activity-utils'
+import { resolveWatchBadgePct, formatSavedEpisodeRanges } from '@/lib/activity-utils'
 import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { Poster } from '@/components/common/Poster'
@@ -58,6 +58,11 @@ export const ActivityItemCard = memo(({
     const isEpisodeLike = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
     const episodeLabel = isEpisodeLike && item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
     const badgePct = resolveWatchBadgePct(item)
+    // Imported saved watch state: bitfield-aggregate series carry a verified episode summary
+    // (no watch dates, no resume); flagged-only movies keep their positive watched badge.
+    const savedState = item.importedSavedState === true
+    const savedRanges = savedState && isEpisodeLike ? formatSavedEpisodeRanges(item.savedEpisodes) : []
+    const savedCount = savedState ? item.savedEpisodes?.episodeCount : undefined
 
     const rawName = item.accountName || 'Unknown User'
     const userName = rawName.includes('@')
@@ -86,6 +91,12 @@ export const ActivityItemCard = memo(({
         // instead of "December 31, 2000" / "over 2025 years ago".
         return isNaN(d.getTime()) || d.getTime() < Date.UTC(1995, 0, 1) ? null : d
     }, [item.timestamp])
+
+    // Saved watch state has no watch date to claim: the slot labels the state itself,
+    // never a fabricated watch or import date.
+    const dateLabel = savedState
+        ? 'Saved watch history'
+        : (itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date')
 
     const readOnly = isReadOnlyMediaActivity(item)
     const isLive = !!nowStatus
@@ -193,6 +204,14 @@ export const ActivityItemCard = memo(({
                         </div>
                     )}
 
+                    {savedState && isEpisodeLike && !episodeLabel && (
+                        <div className="absolute bottom-2 left-2 z-10 max-w-[85%]">
+                            <span className="inline-block truncate text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75 text-white/95">
+                                {savedCount ? `${savedCount} episodes saved` : 'Saved episodes'}
+                            </span>
+                        </div>
+                    )}
+
 
                     {badgePct !== undefined && !isLive && (
                         <div className="absolute bottom-2 right-2 z-10">
@@ -251,7 +270,7 @@ export const ActivityItemCard = memo(({
                         <span className="min-w-0 text-xs text-muted-foreground font-medium"><span className="block truncate">{userName}</span>{connectionLabel && <span className="block truncate text-[10px] font-normal" title={connectionLabel}>{connectionLabel}</span>}</span>
                         {!isLive && (
                             <span className="text-xs text-muted-foreground/60 font-mono ml-auto shrink-0">
-                                {itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
+                                {dateLabel}
                             </span>
                         )}
                     </div>
@@ -369,7 +388,7 @@ export const ActivityItemCard = memo(({
                         <span className="min-w-0 text-xs font-semibold text-muted-foreground"><span className="block truncate">{userName}</span>{connectionLabel && <span className="block truncate text-[10px] font-normal" title={connectionLabel}>{connectionLabel}</span>}</span>
                     </div>
                     <span className="text-xs text-muted-foreground/60 font-mono">
-                        {nowStatus === 'playing' ? 'Watching now' : nowStatus === 'recent' ? 'Recently updated' : itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
+                        {nowStatus === 'playing' ? 'Watching now' : nowStatus === 'recent' ? 'Recently updated' : dateLabel}
                     </span>
                 </div>
 
@@ -387,6 +406,20 @@ export const ActivityItemCard = memo(({
                                 {badgePct}%{item.progress > 0 && remainingMinutes > 0 && ` · ${remainingMinutes}m`}
                             </span>
                         )}
+                    </div>
+                )}
+
+                {savedState && isEpisodeLike && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                        <span className="font-semibold text-foreground/80">
+                            {savedCount ? `${savedCount} episodes saved` : 'Saved episode history'}
+                        </span>
+                        {savedRanges.length > 0 && (
+                            <span className="font-mono font-bold text-muted-foreground/70">
+                                {savedRanges.join(' · ')}
+                            </span>
+                        )}
+                        <span className="text-muted-foreground/60">watch dates unavailable</span>
                     </div>
                 )}
 

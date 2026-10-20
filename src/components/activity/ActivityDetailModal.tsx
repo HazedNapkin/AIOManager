@@ -6,7 +6,7 @@ import { useTheme } from '@/contexts/ThemeContext'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
-import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
+import { fetchCinemetaDetail, formatSavedEpisodeRanges, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
 import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
@@ -797,6 +797,39 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         }
         return map
     }, [allWatchHistory, accounts])
+
+    // Actually-watched episodes for the rendered series, scoped to the same account/login so
+    // other logins' flags never bleed in. An episode only counts with positive completion
+    // evidence: a verified bitfield recovery (backfill), the per-episode confirmation flag
+    // stamped from the checksum-verified bitfield, or a measured completion of a known
+    // duration (>= 95%). A partial watch — even 20% of a known duration — is NOT a
+    // completion, and watch-time/aggregate counts never qualify (no duration, no count).
+    // Powers the season browser's watched markers — per-episode chronology stays
+    // deliberately unavailable for recovered episodes.
+    const seriesWatchedEpisodes = useMemo(() => {
+        const seriesLike = renderItem?.type === 'series' || renderItem?.type === 'anime' || renderItem?.type === 'episode'
+        if (!renderItem?.itemId || !seriesLike) return undefined
+        const wantedConnection = renderItem.sourceConnectionId ?? undefined
+        const episodes: Array<{ season: number; episode: number }> = []
+        for (const h of allWatchHistory) {
+            if (h.itemId !== renderItem.itemId) continue
+            if (h.season == null || h.episode == null) continue
+            if (!Number.isInteger(h.season) || !Number.isInteger(h.episode) || h.episode < 1) continue
+            if (renderItem.accountId && h.accountId !== renderItem.accountId) continue
+            if ((h.sourceConnectionId ?? undefined) !== wantedConnection) continue
+            const confirmed = h.backfill === true
+                || (h.flaggedWatched ?? 0) > 0
+                || (h.duration > 0 && h.progress >= 95)
+            if (!confirmed) continue
+            episodes.push({ season: h.season, episode: h.episode })
+        }
+        return episodes.length > 0 ? episodes : undefined
+    }, [allWatchHistory, renderItem?.itemId, renderItem?.type, renderItem?.accountId, renderItem?.sourceConnectionId])
+
+    const savedEpisodeRanges = useMemo(
+        () => renderItem?.importedSavedState ? formatSavedEpisodeRanges(renderItem.savedEpisodes) : [],
+        [renderItem?.importedSavedState, renderItem?.savedEpisodes],
+    )
 
     const accountFilms = useMemo(() => {
         if (currentEntry?.kind !== 'account') return null
@@ -1970,9 +2003,25 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 )}
 
                                 {/* ── SEASON / EPISODE BROWSER ─────────────────────────────────── */}
+                                {!loading && renderItem.importedSavedState && (renderItem.type === 'series' || renderItem.type === 'anime' || renderItem.type === 'episode') && (
+                                    <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+                                        <span className="font-semibold text-foreground/80">
+                                            {renderItem.savedEpisodes
+                                                ? `${renderItem.savedEpisodes.episodeCount} episodes saved`
+                                                : 'Saved episode history'}
+                                        </span>
+                                        {savedEpisodeRanges.length > 0 && (
+                                            <span className="ml-2 font-mono font-bold text-muted-foreground/70">
+                                                {savedEpisodeRanges.join(' · ')}
+                                            </span>
+                                        )}
+                                        <span className="ml-2 opacity-70">watch dates unavailable (imported saved state)</span>
+                                    </div>
+                                )}
                                 <SeasonBrowser
                                     seriesTmdbId={seriesTmdbId}
                                     activeItem={activeItem}
+                                    watchedEpisodes={seriesWatchedEpisodes}
                                     isLight={isLight}
                                     loading={loading}
                                     onEpisodeClick={handleEpisodeClick}

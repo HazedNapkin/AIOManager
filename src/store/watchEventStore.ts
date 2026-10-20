@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import localforage from 'localforage'
 import { WatchEvent, SnapshotItem, LibraryItem } from '@/types/activity'
 import { Account } from '@/types/account'
-import { getSeasonEpisode, parseStremioDate, isActuallyWatched, getLocalDayKey, getEpisodeIdentity, watchContextKey, parseScopedAccountId } from '@/lib/activity-utils'
+import { getSeasonEpisode, parseStremioDate, isActuallyWatched, isDatelessSavedWatchState, getLocalDayKey, getEpisodeIdentity, watchContextKey, parseScopedAccountId } from '@/lib/activity-utils'
 import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
 import { evictLegacyExternalEvents } from '@/lib/external-watch-events'
@@ -530,9 +530,15 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                     setSnapshotItem(item._id, { mtime, video_id, overallTimeWatched: 0, timeWatched: 0, timeOffset: 0 })
                     continue
                 }
+                // Imported saved watch state (bitfield aggregates, flagged-only movies) has no
+                // watch dates: seeding from the import mtime would fabricate a dated watch.
+                // Skip the seed; the shared snapshot below still lands so the row stays
+                // live-only (imported-saved surfaces) and normal diffing resumes the moment
+                // it gains real anchors. Per-episode history comes from recordBackfillEpisodes.
+                const datelessSaved = isDatelessSavedWatchState(item)
                 const isSeries = isSeriesItem(item)
                 const hasVideoId = !!(item.state?.video_id && item.state.video_id.trim() !== '')
-                if (!isSeries || hasVideoId) {
+                if (!datelessSaved && (!isSeries || hasVideoId)) {
                     const ctimeDate = parseStremioDate(item._ctime)
                     const lastWatchedDate = parseStremioDate(item.state?.lastWatched)
                     const seedTs = Math.max(
@@ -586,11 +592,19 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 currentSeason !== prior.season ||
                 currentEpisode !== prior.episode
 
-            if (isActuallyWatched(item) && (episodeAdvanced || !mtimeChanged)) {
+            // Imported saved watch state (bitfield aggregates, flagged-only movies) never
+            // produces diff events: preserve/mtime paths would fabricate dated watches from
+            // the import mtime (and a bare-identity event would displace the live-only saved
+            // summary). Per-episode history for these rows comes exclusively from
+            // recordBackfillEpisodes; the moment a row gains real anchors (resume, dates) it
+            // stops being dateless and normal diffing resumes against this snapshot.
+            const datelessSaved = isDatelessSavedWatchState(item)
+
+            if (!datelessSaved && isActuallyWatched(item) && (episodeAdvanced || !mtimeChanged)) {
                 preserveSnapshotEvent(item, prior)
             }
 
-            if ((mtimeChanged || episodeAdvanced) && isActuallyWatched(item)) {
+            if (!datelessSaved && (mtimeChanged || episodeAdvanced) && isActuallyWatched(item)) {
                 const currentOverall = item.state?.overallTimeWatched || 0
                 const priorOverall = prior.overallTimeWatched || 0
                 const delta = Math.max(0, currentOverall - priorOverall)
@@ -695,6 +709,11 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
     // gaps the live video_id sampling misses (binges / batched device syncs). Events are marked
     // backfill (synthetic timestamp -> excluded from time-based Replay stats) and deduped against
     // any existing event for the same episode, so real watch data always wins and nothing double-counts.
+    // When the checksum-verified bitfield covers an episode that already has real events, those
+    // events are kept verbatim (dates, times, progress, ids, scope) and only receive the positive
+    // per-episode confirmation flag: the bitfield is authoritative "watched to the end" evidence,
+    // so an old partial stop the bitfield confirms counts as watched, while partials outside the
+    // bitfield stay partial. No duplicate backfill event and no fabricated chronology.
     recordBackfillEpisodes: async (accountId, items, options) => {
         const state = get()
         const ctx = options?.contextKey ?? accountId
@@ -709,6 +728,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const existingIds = new Set(state.events.map(e => e.id))
         const now = Date.now()
         const newEvents: WatchEvent[] = []
+        // Bitfield-confirmed identities already covered by real events in this exact scope:
+        // their events get flaggedWatched stamped below instead of a duplicate recovery.
+        const confirmedExistingIdentities = new Set<string>()
 
         for (const item of items) {
             const seriesId = item._id
@@ -722,7 +744,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             const videos = await fetchSeriesVideos(seriesId)
             if (!videos) continue // transient (meta fetch failed) -> retry on a later refresh
             const episodes = resolveWatchedEpisodes(decoded, videos)
-            if (!episodes) continue // fail-closed checksum did not pass -> retry on a later refresh
+            if (!episodes) continue // fail-closed checksum did not pass -> retry on a later refresh, NO marks
             backfillProcessed.add(guardKey)
             if (backfillProcessed.size > 2000) backfillProcessed.clear()
 
@@ -734,7 +756,13 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 const season = ep.season ?? undefined
                 const episode = ep.episode ?? undefined
                 const identity = getEpisodeIdentity(seriesId, ep.videoId, season, episode, item.type || 'series')
-                if (existingIdentities.has(identity)) continue // real event already covers this episode
+                if (existingIdentities.has(identity)) {
+                    // Real event(s) already cover this episode: collect the identity so the
+                    // merge below stamps the confirmation flag on the events that exist NOW
+                    // (concurrent updates are re-read there and never overwritten).
+                    confirmedExistingIdentities.add(identity)
+                    continue
+                }
                 // A fabricated ts would bypass the tombstone gate; tombstoned identities backfill from real dates only.
                 if (lastWatchedTs === undefined && isIdentityDeleted(`${ctx}:${identity}`, get().deletedEventKeys)) continue
                 const id = `bf:${ctx}:${ep.videoId}`
@@ -762,10 +790,24 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             }
         }
 
-        if (newEvents.length === 0) return 0
-
+        // Stamp the positive confirmation on the covering events as they exist NOW (post-await
+        // re-read, so concurrent field updates always win theirs). Only the exact scope is
+        // touched, backfill recoveries are skipped (already counted as watched), and every
+        // other field — including detected_ts — is preserved: the flag is the only change.
         const cur = get()
-        const merged = [...cur.events, ...newEvents]
+        let flaggedCount = 0
+        const baseEvents = confirmedExistingIdentities.size > 0 ? cur.events.map(e => {
+            if (e.backfill || (e.flaggedWatched ?? 0) > 0) return e
+            if (eventScopeKey(e) !== ctx) return e
+            const identity = getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type)
+            if (!confirmedExistingIdentities.has(identity)) return e
+            flaggedCount++
+            return { ...e, flaggedWatched: 1 }
+        }) : cur.events
+
+        if (newEvents.length === 0 && flaggedCount === 0) return 0
+
+        const merged = [...baseEvents, ...newEvents]
         const deduped = Array.from(new Map(merged.map(e => [e.id, e])).values())
         const sorted = deduped.sort((a, b) => b.event_ts - a.event_ts)
         const { kept: capped, rollups } = capWatchEventsWithRollups(
@@ -774,7 +816,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         )
         set({ events: capped, rollups })
         persistWatchEvents()
-        return newEvents.length
+        // Callers treat >0 as "state changed": annotations alone must still persist,
+        // so the count includes stamped flags, not just new recoveries.
+        return newEvents.length + flaggedCount
     },
 
     export: () => ({

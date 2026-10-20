@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { defaultRangeExtractor, useWindowVirtualizer, type Range } from '@tanstack/react-virtual'
-import { Activity } from 'lucide-react'
+import { Activity, Bookmark } from 'lucide-react'
 import { StatusChip } from '@/components/ui/status-chip'
 import { cn } from '@/lib/utils'
 import { ActivityItemCard } from './ActivityItemCard'
 import type { ActivityNowStatus } from '@/lib/jellyfin/activity'
 import type { ActivityItem } from '@/types/activity'
-import { estimateRowHeight, type FeedRow, type FeedViewMode } from './feed-rows'
+import { estimateRowHeight, SAVED_GROUP_DATE, type FeedRow, type FeedViewMode } from './feed-rows'
 
 // Windowed rendering for the ActivityFeed long-history tail (T3-inspired):
 // bounded mounted rows with overscan, the focused row stays mounted while it
@@ -34,14 +34,26 @@ export function ActivityDateHeader({ date, watchCount, formatDateHeader }: {
     watchCount: number
     formatDateHeader: (dateStr: string) => string
 }) {
+    // The saved-state group has no watch date to format: it is titled by what it
+    // is, counts titles instead of watches, and says the dates are unavailable.
+    const isSavedGroup = date === SAVED_GROUP_DATE
     return (
         <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-                <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                {isSavedGroup ? (
+                    <Bookmark className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                    <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
                 <span className="truncate text-sm font-semibold">{formatDateHeader(date)}</span>
+                {isSavedGroup && (
+                    <span className="min-w-0 truncate text-xs text-muted-foreground/70">Watch dates unavailable</span>
+                )}
             </div>
-            <StatusChip variant="muted" className="rounded-lg bg-background/70 px-2 tabular-nums">
-                {watchCount} {watchCount === 1 ? 'watch' : 'watches'}
+            <StatusChip variant="muted" className="shrink-0 rounded-lg bg-background/70 px-2 tabular-nums">
+                {isSavedGroup
+                    ? `${watchCount} ${watchCount === 1 ? 'title' : 'titles'}`
+                    : `${watchCount} ${watchCount === 1 ? 'watch' : 'watches'}`}
             </StatusChip>
         </div>
     )

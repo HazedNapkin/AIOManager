@@ -2,8 +2,9 @@ import { useMemo, useState, useEffect, useDeferredValue, useCallback, useRef } f
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
-import { ActivityItem } from '@/types/activity'
+import { ActivityItem, SavedEpisodesSummary } from '@/types/activity'
 import { getLocalDayKey, getEpisodeIdentity, fetchCinemetaDetail, historyEntryToActivityItem } from '@/lib/activity-utils'
+import { summarizeSavedEpisodes } from '@/lib/imported-watch-state'
 import { useJellyfinActivity, type MediaReadIssue } from '@/hooks/useJellyfinActivity'
 import { mergeMediaHistory, mergeMediaItems } from '@/lib/jellyfin/activity'
 import { reconcileRailProgress } from '@/lib/rail-progress'
@@ -74,6 +75,7 @@ export interface HistoryEntry {
     progress: number
     overallTimeWatched?: number
     timesWatched?: number
+    flaggedWatched?: number
 
     isInProgress: boolean
     isFromEventLog: boolean
@@ -85,6 +87,10 @@ export interface HistoryEntry {
     mediaSources?: string[]
     mediaTargets?: ActivityItem['mediaTargets']
     backfill?: boolean     // recovered from the watched-bitfield (synthetic timestamp)
+    /** Imported saved watch state: no real watch dates; presented as saved state, never a dated watch. */
+    importedSavedState?: boolean
+    /** Verified saved-episode summary recovered from the watched bitfield (series aggregates). */
+    savedEpisodes?: SavedEpisodesSummary
     genres?: string[]
 
     // Live overlay (only set when this item is also in current library)
@@ -142,6 +148,56 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     }, [canonicalStremioByAccount])
 
     const baseDerivationRef = useRef<{ deps: unknown[]; value: { history: HistoryEntry[]; inProgress: ActivityItem[]; hasEventLog: boolean } } | null>(null)
+
+    // Verified saved-episode recoveries per series scope. Derived from the RAW event stream
+    // (not the paced/deferred input): the aggregate live items arrive as soon as the library
+    // loads, while the paced events snapshot can lag a beat — deriving the index from the
+    // paced input would blank the counts on every load. The cache is keyed by backfill
+    // content, so publications that don't touch backfill events reuse the same Map and never
+    // re-run the big derivation below.
+    // An episode counts as confirmed-watched when it is a bitfield recovery, carries the
+    // positive per-episode flag (recordBackfillEpisodes stamps it onto real events the
+    // verified bitfield covers), or measurably completed a known duration (>= 95%). Mere
+    // watch time or aggregate counts never qualify — a 20% partial is not a completion.
+    const isConfirmedSavedEpisode = (e: typeof rawEvents[number]): boolean => {
+        if (e.backfill) return true
+        if ((e.flaggedWatched ?? 0) > 0) return true
+        return e.duration > 0 && (e.time_watched || 0) >= 0.95 * e.duration
+    }
+    const hasValidEpisodeAnchor = (e: { season?: number; episode?: number }): boolean =>
+        e.season != null && e.episode != null
+        && Number.isInteger(e.season) && Number.isInteger(e.episode)
+        && e.episode > 0
+    const buildSavedEpisodeIndex = (evs: typeof rawEvents) => {
+        const index = new Map<string, Array<{ season?: number; episode?: number }>>()
+        for (const e of evs) {
+            if (!hasValidEpisodeAnchor(e) || !isConfirmedSavedEpisode(e)) continue
+            const key = `${ctxOf(e.accountId, e.sourceConnectionId)}:${e.itemId}`
+            const arr = index.get(key)
+            if (arr) arr.push({ season: e.season, episode: e.episode })
+            else index.set(key, [{ season: e.season, episode: e.episode }])
+        }
+        return index
+    }
+    // Content key over every field the index derives from: identity plus WHY an event
+    // counts (backfill detection, stamped flag, measured completion). Annotations land
+    // without touching detected_ts, so the flag token is what forces the rebuild; plain
+    // progress wiggle below the completion threshold never churns the key.
+    const savedEpisodeContentKey = useMemo(() => {
+        let k = ''
+        for (const e of rawEvents) {
+            if (!hasValidEpisodeAnchor(e)) continue
+            if (e.backfill) { k += `${e.id}:b:${e.detected_ts};`; continue }
+            if ((e.flaggedWatched ?? 0) > 0) { k += `${e.id}:f;`; continue }
+            if (e.duration > 0 && (e.time_watched || 0) >= 0.95 * e.duration) k += `${e.id}:m;`
+        }
+        return k
+    }, [rawEvents])
+    const savedIndexCacheRef = useRef<{ key: string; ctx: typeof ctxOf; value: Map<string, Array<{ season?: number; episode?: number }>> } | null>(null)
+    if (!savedIndexCacheRef.current || savedIndexCacheRef.current.key !== savedEpisodeContentKey || savedIndexCacheRef.current.ctx !== ctxOf) {
+        savedIndexCacheRef.current = { key: savedEpisodeContentKey, ctx: ctxOf, value: buildSavedEpisodeIndex(rawEvents) }
+    }
+    const savedEpisodeEvents = savedIndexCacheRef.current.value
     const { history, inProgress, hasEventLog } = useMemo(() => {
         // Interrupted-render cache: concurrent React restarts in-progress deferred
         // renders when higher-priority store publications arrive mid-derivation,
@@ -150,7 +206,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         // reference comparison instead of a second O(events + live items) derivation.
         // The body is a pure derivation of the deps, so an abandoned attempt's value
         // is exactly what the committed attempt produces for the same inputs.
-        const deps = [events, liveItems, accounts, accountId, genreMap, deletedEventKeys]
+        const deps = [events, liveItems, accounts, accountId, genreMap, deletedEventKeys, savedEpisodeEvents]
         const cached = baseDerivationRef.current
         if (cached && depsEqual(cached.deps, deps)) return cached.value
         const normalizeName = (s: string) => s.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -299,6 +355,10 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
                 progress,
                 overallTimeWatched: seriesOverallTime.get(`${ctx}:${event.itemId}`),
                 timesWatched: live?.timesWatched ?? event.timesWatched,
+                // Per-episode confirmation stamped on the event wins; the live overlay
+                // (Stremio's own flaggedWatched marker, e.g. marked-watched movies) stays
+                // the fallback when the event itself carries no flag.
+                flaggedWatched: event.flaggedWatched ?? live?.flaggedWatched,
                 isInProgress: live?.isInProgress ?? false,
                 isFromEventLog: true,
                 source: event.source || live?.source || 'stremio',
@@ -362,6 +422,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             progress: Math.min(item.progress, 100),
             overallTimeWatched: item.overallTimeWatched,
             timesWatched: item.timesWatched,
+            flaggedWatched: item.flaggedWatched,
             isInProgress: item.isInProgress,
             isFromEventLog: false,
             source: item.source,
@@ -369,6 +430,17 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             liveProgress: item.progress,
             liveWatched: item.watched,
             liveEpisode: item.uniqueItemId,
+            // Imported saved watch state (bitfield-aggregate series / flagged-only movie):
+            // no real watch dates, so it is excluded from the dated chronology and time-based
+            // stats exactly like the per-episode backfill recoveries it summarizes. The
+            // timestamp stays the honest import/observation time for ordering and labels only.
+            ...(item.importedSavedState ? {
+                importedSavedState: true,
+                backfill: true,
+                savedEpisodes: summarizeSavedEpisodes(
+                    savedEpisodeEvents.get(`${ctxOf(item.accountId, item.sourceConnectionId)}:${item.itemId}`) ?? [],
+                ),
+            } : {}),
         }))
 
         // Merge: event log entries first (richer history), then live-only
@@ -446,7 +518,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         baseDerivationRef.current = { deps, value }
         return value
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [events, liveItems, accounts, accountId, genreMap, deletedEventKeys])
+    }, [events, liveItems, accounts, accountId, genreMap, deletedEventKeys, savedEpisodeEvents])
 
     useEffect(() => {
         if (!events || events.length === 0) return
