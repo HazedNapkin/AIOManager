@@ -20,6 +20,7 @@ import {
 import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
+import { activityForAccount } from '@/lib/account-activity-index'
 import { Account } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
 import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ArrowUpRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Play } from 'lucide-react'
@@ -234,7 +235,7 @@ export const AccountCard = memo(function AccountCard({
   }, [])
 
   const cachedAccountItems = useLibraryCache(
-    useShallow((state) => state.items.filter(i => i.accountId === account.id))
+    useShallow((state) => activityForAccount(state.items, account.id))
   )
   const libraryLoading = useLibraryCache((state) => state.loading)
   const media = useJellyfinActivity(account.id)
@@ -243,6 +244,9 @@ export const AccountCard = memo(function AccountCard({
   const prevLastWatchedRef = useRef<ActivityItem | null>(null)
 
   const lastWatched = useMemo(() => {
+    // Wait for this account's media history (or its encrypted snapshot) before
+    // choosing a native-platform fallback during the first read after reload.
+    if (media.initialLoading && media.history.length === 0) return null
     if (accountItems.length === 0 && libraryLoading) return prevLastWatchedRef.current
 
     if (accountItems.length === 0) {
@@ -257,7 +261,7 @@ export const AccountCard = memo(function AccountCard({
     )
     prevLastWatchedRef.current = latest
     return latest
-  }, [accountItems, libraryLoading])
+  }, [accountItems, libraryLoading, media.initialLoading, media.history.length])
   const mediaPlayback = accountMediaPlayback(media.playback, lastWatched)
 
   const handleEdit = () => {
@@ -611,7 +615,9 @@ export const AccountCard = memo(function AccountCard({
               {mediaPlayback ? <AccountMediaPlayback playback={mediaPlayback} /> : lastWatched && (
                 <div className="flex min-h-5 min-w-0 items-center gap-1.5 text-xs">
                   <Play className="h-3.5 w-3.5 shrink-0 text-muted-foreground/65" aria-hidden="true" />
-                  <span className="truncate font-medium text-foreground/80" title={lastWatched.name}>{lastWatched.name}</span>
+                  <Tooltip content={lastWatched.name} side="top">
+                    <span className="truncate font-medium text-foreground/80">{lastWatched.name}</span>
+                  </Tooltip>
                   <time className="ml-0.5 shrink-0 text-[11px] text-muted-foreground">{getTimeAgo(new Date(lastWatched.timestamp))}</time>
                 </div>
               )}

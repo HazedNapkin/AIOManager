@@ -6,6 +6,7 @@ import { PlayCircle, Trash2, Check } from 'lucide-react'
 import { memo, useMemo, useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { Tooltip } from '@/components/ui/tooltip'
 
 import { cn, openStremioDetail, maskNameLevel, maskEmailLevel } from '@/lib/utils'
 import { resolveWatchBadgePct } from '@/lib/activity-utils'
@@ -50,6 +51,7 @@ export const ActivityItemCard = memo(({
     const { isLight } = useTheme()
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
     const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
 
     const item = entry
@@ -63,6 +65,17 @@ export const ActivityItemCard = memo(({
         : maskNameLevel(rawName, privacyLevel)
 
     const account = useAccountStore(s => s.accounts.find(a => a.id === item.accountId))
+    const originId = item.sourceConnectionId || item.mediaObservation?.connectionId
+    const origin = account?.connections?.find(connection => connection.id === originId)
+    const peers = (account?.connections || []).filter(connection => connection.platform === (item.source || 'stremio') && connection.connectionType !== 'hydra-outbound')
+    const originName = origin?.displayName || origin?.mediaServer?.userName || origin?.credentials?.email
+    const maskedOrigin = originName?.includes('@')
+        ? maskEmailLevel(originName, isPrivacyModeEnabled ? privacyLevelEmail : 0)
+        : originName ? maskNameLevel(originName, privacyLevel) : ''
+    let connectionLabel = ''
+    if (origin && peers.length > 1) connectionLabel = `${maskedOrigin ? `${maskedOrigin} · ` : ''}Connection ${peers.findIndex(peer => peer.id === origin.id) + 1}`
+    else if (originId && !origin) connectionLabel = 'Unlinked connection'
+    else if (peers.length > 1) connectionLabel = 'Legacy history · connection unknown'
     const [avatarFailed, setAvatarFailed] = useState(false)
     useEffect(() => { setAvatarFailed(false) }, [account?.avatar])
     const showAvatar = !!account?.avatar && !avatarFailed
@@ -160,9 +173,11 @@ export const ActivityItemCard = memo(({
 
                     {isLive && (
                         <div className="absolute top-2 right-2 z-20">
-                            <span title={nowDescription} className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white shadow-xl">
-                                <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
-                            </span>
+                            <Tooltip content={nowDescription} side="top">
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/65 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white shadow-xl">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
+                                </span>
+                            </Tooltip>
                         </div>
                     )}
 
@@ -233,7 +248,7 @@ export const ActivityItemCard = memo(({
                                 </span>
                             )}
                         </div>
-                        <span className="text-xs text-muted-foreground truncate font-medium">{userName}</span>
+                        <span className="min-w-0 text-xs text-muted-foreground font-medium"><span className="block truncate">{userName}</span>{connectionLabel && <span className="block truncate text-[10px] font-normal" title={connectionLabel}>{connectionLabel}</span>}</span>
                         {!isLive && (
                             <span className="text-xs text-muted-foreground/60 font-mono ml-auto shrink-0">
                                 {itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}
@@ -296,9 +311,11 @@ export const ActivityItemCard = memo(({
                 <div className="flex items-start justify-between gap-2">
                     <h4 className="truncate text-base font-bold leading-tight tracking-tight md:text-lg">{item.name}</h4>
                     {isLive && (
-                        <span title={nowDescription} className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 text-xs font-semibold uppercase text-success">
-                            <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
-                        </span>
+                        <Tooltip content={nowDescription} side="top">
+                            <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 text-xs font-semibold uppercase text-success">
+                                <span className="h-1.5 w-1.5 rounded-full bg-success" /> Now
+                            </span>
+                        </Tooltip>
                     )}
                 </div>
 
@@ -349,7 +366,7 @@ export const ActivityItemCard = memo(({
                                 </span>
                             )}
                         </div>
-                        <span className="text-xs font-semibold text-muted-foreground">{userName}</span>
+                        <span className="min-w-0 text-xs font-semibold text-muted-foreground"><span className="block truncate">{userName}</span>{connectionLabel && <span className="block truncate text-[10px] font-normal" title={connectionLabel}>{connectionLabel}</span>}</span>
                     </div>
                     <span className="text-xs text-muted-foreground/60 font-mono">
                         {nowStatus === 'playing' ? 'Watching now' : nowStatus === 'recent' ? 'Recently updated' : itemDate ? formatDistanceToNow(itemDate, { addSuffix: true }) : 'Unknown date'}

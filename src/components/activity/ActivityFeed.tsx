@@ -4,16 +4,24 @@ import { isToday, isYesterday, format } from 'date-fns'
 import { Activity, ArrowUp } from 'lucide-react'
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ActivityItemCard } from './ActivityItemCard'
+import { TabsTrigger } from '@/components/ui/tabs'
+import { WorkspaceTabs } from '@/components/ui/workspace-tabs'
 import { ActivityEmptyState } from '@/components/common/PageEmptyStates'
 import { NumberTicker } from '@/components/ui/number-ticker'
-import { StatusChip } from '@/components/ui/status-chip'
 import { activityNowStatuses } from '@/lib/jellyfin/activity'
+import {
+    buildFeedRows,
+    buildItemOrder,
+    detectGridColumns,
+    GRID_BREAKPOINT_COLUMNS,
+    resolveFocusTarget,
+} from './feed-rows'
+import { ActivityDateHeader, ActivityItemSlot, VirtualActivityList } from './VirtualActivityList'
 
 const INITIAL_VISIBLE_COUNT = 60
 const VISIBLE_COUNT_INCREMENT = 40
 const EMPTY_SELECTED_ITEMS = new Set<string>()
+const GRID_CLASSES = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4'
 
 interface ActivityFeedProps {
     history: ActivityItem[]
@@ -47,6 +55,8 @@ export function ActivityFeed({
     const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
     const [showScrollTop, setShowScrollTop] = useState(false)
     const [now, setNow] = useState(Date.now)
+    const [columns, setColumns] = useState(2)
+    const [focusedId, setFocusedId] = useState<string | null>(null)
     useEffect(() => {
         const update = () => { if (!document.hidden) setNow(Date.now()) }
         const timer = setInterval(update, 30_000)
@@ -58,6 +68,16 @@ export function ActivityFeed({
     useEffect(() => {
         setVisibleCount(INITIAL_VISIBLE_COUNT)
     }, [activeTab])
+
+    // Grid column count mirrors the Tailwind viewport breakpoints used by the
+    // card grid, so row chunking follows the responsive layout exactly.
+    useEffect(() => {
+        const update = () => setColumns(detectGridColumns(query => window.matchMedia(query).matches))
+        update()
+        const watchers = GRID_BREAKPOINT_COLUMNS.map(bp => window.matchMedia(`(min-width: ${bp.minWidth}px)`))
+        watchers.forEach(w => w.addEventListener('change', update))
+        return () => watchers.forEach(w => w.removeEventListener('change', update))
+    }, [])
 
     useEffect(() => {
         let ticking = false
@@ -90,41 +110,15 @@ export function ActivityFeed({
         return filtered
     }, [history, activeTab, nowStatuses])
 
-    const groupedHistory = useMemo(() => {
-        const dates: string[] = []
-        const itemsByDate: Record<string, ActivityItem[]> = {}
-
-        const sortedHistory = [...filteredHistory].sort((a, b) => {
-            const ta = new Date(a.timestamp).getTime()
-            const tb = new Date(b.timestamp).getTime()
-            return (isNaN(tb) ? -Infinity : tb) - (isNaN(ta) ? -Infinity : ta)
-        })
-
-        sortedHistory.forEach(item => {
-            const date = new Date(item.timestamp)
-            const dateStr = isNaN(date.getTime()) ? 'Unknown Date' : date.toDateString()
-
-            if (!itemsByDate[dateStr]) {
-                itemsByDate[dateStr] = []
-                dates.push(dateStr)
-            }
-
-            itemsByDate[dateStr].push(item)
-        })
-
-        return dates.map(date => {
-            let dateId = ''
-            if (date !== 'Unknown Date') {
-                const d = new Date(date)
-                if (!isNaN(d.getTime())) {
-                    dateId = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-                }
-            }
-            const items = itemsByDate[date]
-            const watchCount = items.length
-            return { date, dateId, items, watchCount }
-        })
-    }, [filteredHistory])
+    // Long-history windowing model: exactly `visibleCount` items revealed (cut at
+    // item boundaries, never whole date groups), decomposed into rows the
+    // virtualizer can window when the feed grows long.
+    const feedModel = useMemo(
+        () => buildFeedRows(filteredHistory, visibleCount, { viewMode, columns }),
+        [filteredHistory, visibleCount, viewMode, columns],
+    )
+    const hasMore = feedModel.visibleItemCount < filteredHistory.length
+    const itemOrder = useMemo(() => buildItemOrder(feedModel.rows), [feedModel])
 
     const filteredWatchHours = useMemo(() => {
         const seriesWithOverall = new Map<string, number>()
@@ -170,27 +164,6 @@ export function ActivityFeed({
         return format(date, 'MMMM d, yyyy')
     }, [])
 
-    const { visibleGroups, hasMore } = useMemo(() => {
-        let count = 0
-        const visible: typeof groupedHistory = []
-        let moreAvailable = false
-
-        for (const group of groupedHistory) {
-            if (count >= visibleCount) {
-                moreAvailable = true
-                break
-            }
-
-            visible.push(group)
-            count += group.watchCount
-        }
-
-        return {
-            visibleGroups: visible,
-            hasMore: moreAvailable
-        }
-    }, [groupedHistory, visibleCount])
-
     const sentinelRef = useRef<HTMLDivElement | null>(null)
 
     useEffect(() => {
@@ -205,49 +178,120 @@ export function ActivityFeed({
         )
         observer.observe(sentinelRef.current)
         return () => observer.disconnect()
-    }, [hasMore, visibleGroups.length])
+    }, [hasMore, feedModel.visibleItemCount])
+
+    // ---- keyboard / focus ------------------------------------------------------
+
+    // The virtualizer lives in VirtualActivityList; the shell routes keyboard
+    // jumps into it so arrow navigation works the same in plain and windowed mode.
+    const scrollToRowRef = useRef<((rowIndex: number) => void) | null>(null)
+    const bindScrollToRow = useCallback((fn: ((rowIndex: number) => void) | null) => { scrollToRowRef.current = fn }, [])
+
+    const focusItem = useCallback((id: string) => {
+        const escaped = window.CSS?.escape?.(id) ?? id
+        const mount = document.querySelector(`[data-activity-item="${escaped}"]`)
+        const focusMounted = (holder: Element) => {
+            (holder.querySelector('[role="button"]') as HTMLElement | null)?.focus()
+        }
+        if (mount) {
+            focusMounted(mount)
+            return
+        }
+        const rowIndex = feedModel.itemIdToRowIndex.get(id)
+        if (rowIndex == null) return
+        scrollToRowRef.current?.(rowIndex)
+        let tries = 0
+        const poll = () => {
+            const holder = document.querySelector(`[data-activity-item="${escaped}"]`)
+            if (holder) {
+                focusMounted(holder)
+                return
+            }
+            if (++tries < 12) requestAnimationFrame(poll)
+        }
+        requestAnimationFrame(poll)
+    }, [feedModel])
+
+    const handleFocusCapture = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+        const holder = (event.target as HTMLElement).closest?.('[data-activity-item]')
+        setFocusedId(holder ? holder.getAttribute('data-activity-item') : null)
+    }, [])
+
+    const handleBlurCapture = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+        const next = event.relatedTarget as HTMLElement | null
+        if (!next?.closest?.('[data-activity-item]')) setFocusedId(null)
+    }, [])
+
+    const handleKeyDownCapture = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+        const holder = (event.target as HTMLElement).closest?.('[data-activity-item]')
+        if (!holder) return
+        const id = holder.getAttribute('data-activity-item')
+        if (!id) return
+        event.preventDefault()
+        const step = viewMode === 'list' ? 1 : columns
+        const delta = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowDown' ? step : -step
+        const nextId = resolveFocusTarget(itemOrder, id, delta)
+        if (nextId) focusItem(nextId)
+    }, [columns, viewMode, itemOrder, focusItem])
+
+    // ---- rendering -------------------------------------------------------------
+
+    const cardSlot = {
+        nowStatuses,
+        viewMode: viewMode as 'grid' | 'list',
+        safeSelectedItems,
+        isBulkMode,
+        onToggleSelect,
+        onDelete,
+        onOpenDetail,
+    }
 
     const renderEmptyState = () => <ActivityEmptyState />
 
     const renderFeedContent = () => {
         if (filteredHistory.length === 0) return renderEmptyState()
 
-        return (
-            <div className="space-y-4 pb-20">
-                {visibleGroups.map(({ date, dateId, items, watchCount }) => (
-                    <section
-                        key={date}
-                        id={dateId ? `activity-date-${dateId}` : undefined}
-                        data-theme-part="card"
-                        className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm"
-                    >
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="flex min-w-0 items-center gap-2">
-                                <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                <span className="truncate text-sm font-semibold">{formatDateHeader(date)}</span>
+        const body = feedModel.shouldVirtualize
+            ? (
+                <VirtualActivityList
+                    rows={feedModel.rows}
+                    groupAnchors={feedModel.groupAnchors}
+                    columns={viewMode === 'list' ? 1 : columns}
+                    focusedId={focusedId}
+                    itemIdToRowIndex={feedModel.itemIdToRowIndex}
+                    formatDateHeader={formatDateHeader}
+                    bindScrollToRow={bindScrollToRow}
+                    {...cardSlot}
+                />
+            )
+            : (
+                <div className="space-y-4">
+                    {feedModel.visibleGroups.map(({ date, dateId, items, watchCount }) => (
+                        <section
+                            key={date}
+                            id={dateId ? `activity-date-${dateId}` : undefined}
+                            data-theme-part="card"
+                            className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm"
+                        >
+                            <ActivityDateHeader date={date} watchCount={watchCount} formatDateHeader={formatDateHeader} />
+                            <div className={viewMode === 'grid' ? GRID_CLASSES : 'space-y-3'}>
+                                {items.map((item) => (
+                                    <ActivityItemSlot key={item.id} entry={item} slot={cardSlot} />
+                                ))}
                             </div>
-                            <StatusChip variant="muted" className="rounded-lg bg-background/70 px-2 tabular-nums">
-                                {watchCount} {watchCount === 1 ? 'watch' : 'watches'}
-                            </StatusChip>
-                        </div>
+                        </section>
+                    ))}
+                </div>
+            )
 
-                        <div className={viewMode === 'grid' ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" : "space-y-3"}>
-                            {items.map((item) => (
-                                <ActivityItemCard
-                                    key={item.id}
-                                    entry={item}
-                                    nowStatus={nowStatuses.get(item.id)}
-                                    viewMode={viewMode}
-                                    isSelected={safeSelectedItems.has(item.id)}
-                                    isBulkMode={isBulkMode}
-                                    onToggleSelect={onToggleSelect}
-                                    onDelete={onDelete}
-                                    onOpenDetail={onOpenDetail}
-                                />
-                            ))}
-                        </div>
-                    </section>
-                ))}
+        return (
+            <div className="space-y-4 pb-20"
+                onFocusCapture={handleFocusCapture}
+                onBlurCapture={handleBlurCapture}
+                onKeyDownCapture={handleKeyDownCapture}
+            >
+                {body}
 
                 {hasMore && (
                     <div ref={sentinelRef} className="py-12 flex justify-center w-full">
@@ -269,21 +313,18 @@ export function ActivityFeed({
 
     return (
         <div className="space-y-6">
-            <Tabs defaultValue="all" onValueChange={setActiveTab} className="w-full">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                    <TabsList>
+            <WorkspaceTabs label="Activity history filters" value={activeTab} panelValue={activeTab} onValueChange={setActiveTab} className="w-full" tabs={<>
                         <TabsTrigger value="all">All Activity {renderTabCount(tabCounts.all)}</TabsTrigger>
                         <TabsTrigger value="now">Recent {renderTabCount(tabCounts.now)}</TabsTrigger>
                         <TabsTrigger value="movies">Movies {renderTabCount(tabCounts.movies)}</TabsTrigger>
                         <TabsTrigger value="series">Series {renderTabCount(tabCounts.series)}</TabsTrigger>
-                    </TabsList>
-
+            </>} actions={
                     <div data-theme-part="badge" className="flex max-w-full flex-nowrap items-center gap-x-1.5 gap-y-1 overflow-x-auto rounded-xl border border-border/40 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm">
                         <span className="opacity-70">Showing</span>
                         <span className="font-semibold tabular-nums text-foreground">
                             {filteredHistory.length === 0
                                 ? '0'
-                                : <NumberTicker value={Math.min(visibleCount, filteredHistory.length)} />
+                                : <NumberTicker value={feedModel.visibleItemCount} />
                             }
                         </span>
                         <span className="opacity-50">of</span>
@@ -304,13 +345,9 @@ export function ActivityFeed({
                             </>
                         )}
                     </div>
-                </div>
-
-                <TabsContent value="all" className="mt-0">{renderFeedContent()}</TabsContent>
-                <TabsContent value="movies" className="mt-0">{renderFeedContent()}</TabsContent>
-                <TabsContent value="series" className="mt-0">{renderFeedContent()}</TabsContent>
-                <TabsContent value="now" className="mt-0">{renderFeedContent()}</TabsContent>
-            </Tabs>
+            }>
+                {renderFeedContent()}
+            </WorkspaceTabs>
 
             <div className={`fixed bottom-24 right-5 md:bottom-8 md:right-8 z-40 transition-[transform,opacity,box-shadow] duration-300 ${showScrollTop ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}>
                 <Button

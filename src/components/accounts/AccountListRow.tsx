@@ -21,6 +21,7 @@ import { AlertTriangle, ShieldCheck, ArrowUpCircle, Pencil, RefreshCw, ChevronRi
 import { useAddonStore } from '@/store/addonStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
+import { activityForAccount } from '@/lib/account-activity-index'
 import { useAccountStore, getAccountEmail, getStremioAuthKey, hasPlatformConnection } from '@/store/accountStore'
 import { useShallow } from 'zustand/react/shallow'
 import { useUIStore } from '@/store/uiStore'
@@ -90,7 +91,7 @@ export const AccountListRow = memo(function AccountListRow({
 
     const media = useJellyfinActivity(account.id)
     const cachedAccountItems = useLibraryCache(
-        useShallow((state) => state.items.filter(i => i.accountId === account.id))
+        useShallow((state) => activityForAccount(state.items, account.id))
     )
     const accountItems = useMemo(() => mergeMediaItems(cachedAccountItems, media.history), [cachedAccountItems, media.history])
     const lastWatched = useMemo(() => {
