@@ -24,7 +24,9 @@ import { useSyncStore } from '@/store/syncStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
-import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getCachedCinemetaName, watchContextKey, peerLoginLabel } from '@/lib/activity-utils'
+import { historyEntryToActivityItem, nuvioProgressKey, getCachedCinemetaName, watchContextKey, peerLoginLabel } from '@/lib/activity-utils'
+import { isUnresolvedActivityName } from '@/lib/activity-metadata-overlay'
+import { useActivityMetadata } from '@/hooks/useActivityMetadata'
 import { planEpisodeBitfieldDelete } from '@/lib/episode-bitfield-delete'
 import { isEpisodeScopedDelete, isBareAnchoredEpisode } from '@/lib/activity-delete-routing'
 import { fetchSeriesVideos } from '@/lib/watched-episodes'
@@ -267,21 +269,16 @@ export function ActivityPage() {
     const [activeView, setActiveView] = useState<'feed' | 'foryou'>('feed')
     const [forYouAccountId, setForYouAccountId] = useState<string | null>(null)
 
-    const [resolvedNames, setResolvedNames] = useState<Map<string, { name: string; poster?: string; genres?: string[] }>>(new Map())
-
     // Convert to ActivityItem[] for existing feed components. Backfilled episodes (recovered from the
     // watched-bitfield) have no real per-episode time, so they are kept out of the chronological feed
     // -- they still power Replay totals/discoveries and the per-show "seen" state.
-    const history: ActivityItem[] = useMemo(
+    const sourceHistory: ActivityItem[] = useMemo(
         () => {
             const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill)
 
-            const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
-            const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
-
             const bestByItemId = new Map<string, { name: string; poster?: string; genres?: string[] }>()
             for (const item of items) {
-                if (isBadName(item.name)) continue
+                if (isUnresolvedActivityName(item.name)) continue
                 const existing = bestByItemId.get(item.itemId)
                 if (!existing || item.name.length > existing.name.length) {
                     bestByItemId.set(item.itemId, { name: item.name, poster: item.poster || undefined, genres: item.genres })
@@ -291,14 +288,14 @@ export function ActivityPage() {
             if (bestByItemId.size > 0) {
                 let enriched = 0
                 for (let i = 0; i < items.length; i++) {
-                    if (!isBadName(items[i].name)) continue
+                    if (!isUnresolvedActivityName(items[i].name)) continue
                     const best = bestByItemId.get(items[i].itemId)
                     if (best) {
                         items[i] = {
                             ...items[i],
                             name: best.name,
                             poster: items[i].poster || best.poster || items[i].poster,
-                            genres: items[i].genres || best.genres,
+                            genres: items[i].genres?.length ? items[i].genres : best.genres,
                         }
                         enriched++
                     }
@@ -306,57 +303,11 @@ export function ActivityPage() {
                 if (import.meta.env.DEV && enriched > 0) console.log('[ActivityPage] Cross-source name enrichment:', enriched, 'items')
             }
 
-            if (resolvedNames.size > 0) {
-                for (let i = 0; i < items.length; i++) {
-                    if (!isBadName(items[i].name)) continue
-                    const resolved = resolvedNames.get(items[i].itemId)
-                    if (resolved) {
-                        items[i] = {
-                            ...items[i],
-                            name: resolved.name,
-                            poster: items[i].poster || resolved.poster || items[i].poster,
-                            genres: items[i].genres || resolved.genres,
-                        }
-                    }
-                }
-            }
-
             return items
         },
-        [watchHistory, resolvedNames]
+        [watchHistory]
     )
-
-    useEffect(() => {
-        const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
-        const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
-        const badIds = new Set<string>()
-        for (const item of history) {
-            if (isBadName(item.name) && item.itemId.startsWith('tt') && !resolvedNames.has(item.itemId)) {
-                badIds.add(item.itemId)
-            }
-        }
-        if (badIds.size === 0) return
-        let active = true
-        const resolutions = new Map<string, { name: string; poster?: string; genres?: string[] }>()
-        Promise.all(Array.from(badIds).slice(0, 10).map(async (itemId) => {
-            const meta = await fetchCinemetaDetail(itemId)
-            if (!meta?.name) return
-            const genres = meta.genre ? meta.genre.split(',').map((g: string) => g.trim()).filter(Boolean) : undefined
-            resolutions.set(itemId, {
-                name: meta.name,
-                poster: meta.poster || undefined,
-                genres: genres && genres.length > 0 ? genres : undefined,
-            })
-        })).then(() => {
-            if (!active || resolutions.size === 0) return
-            setResolvedNames(prev => {
-                const next = new Map(prev)
-                for (const [k, v] of resolutions) next.set(k, v)
-                return next
-            })
-        })
-        return () => { active = false }
-    }, [history, resolvedNames])
+    const history = useActivityMetadata(sourceHistory)
 
     // Map useLibraryCache functions to original names for UI compatibility
     const fetchActivity = useCallback(async (silent = false) => {
