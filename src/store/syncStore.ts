@@ -19,7 +19,7 @@ import { serverHasStremioCredential, canonicalMembershipChanged } from '@/lib/ca
 import { needsCredentialHeal } from '@/lib/credential-heal'
 import { mergeDeletedEventMaps } from '@/lib/event-tombstones'
 import { mergeNotesTrash, filterNotesByTrash } from '@/lib/notes-tombstones'
-import { shouldSendPullEtag } from '@/lib/pull-restore'
+import { shouldSendPullEtag, readServerSyncTimestamp, shouldMirrorAccountPull } from '@/lib/pull-restore'
 import { setActiveWorkspace, getActiveWorkspaceId, ANON_WORKSPACE_ID } from '@/lib/workspace-persistence'
 import {
     bindRepublishHost,
@@ -62,8 +62,6 @@ import {
 // Suppress toasts during initial boot to prevent React "state update on unmounted component" warnings
 setTimeout(() => { syncRuntime.appReady = true }, 3000)
 
-// tombstones into this map (max-wins) instead of replacing the cloud blob wholesale, so a
-
 // Identity profile lives outside the churnable auth object: session resets, 401 wipes and
 // expiry paths must never erase the user's chosen name or avatar. The id stamp scopes the
 // local fallback to the owning account so identities never bleed across accounts.
@@ -86,6 +84,7 @@ interface SyncState {
     }
     serverUrl: string
     lastSyncedAt: string | null
+    pendingConflictAccountId: string | null
     lastSyncCheckedAt: string | null
     isSyncing: boolean
     isRefreshingFromCloud: boolean  // true only during the post-unlock pull - separate from write syncs
@@ -134,6 +133,7 @@ export const useSyncStore = create<SyncState>()(
             },
             serverUrl: '',
             lastSyncedAt: null,
+            pendingConflictAccountId: null,
             lastSyncCheckedAt: null,
             isSyncing: false,
             isRefreshingFromCloud: false,
@@ -277,6 +277,7 @@ export const useSyncStore = create<SyncState>()(
                     })
 
                     if (!res.ok) throw new Error("Failed to register account on server.")
+                    const registration = await res.json() as { syncedAt?: unknown; contentHash?: unknown }
 
                     // Parity Fix: Also initialize the local Master Password using the same password.
                     // If this fails, do not continue into an authenticated-but-unusable session.
@@ -302,7 +303,9 @@ export const useSyncStore = create<SyncState>()(
                     writeIdentityProfile(newId, name, null)
                     set({
                         auth: { id: newId, password, name, avatar: null, isAuthenticated: true },
-                        lastSyncedAt: new Date().toISOString(),
+                        lastSyncedAt: readServerSyncTimestamp(registration.syncedAt),
+                        lastSyncedCloudEtag: typeof registration.contentHash === 'string' ? registration.contentHash : null,
+                        pendingConflictAccountId: null,
                         isInitialSyncCompleted: true,
                         syncSaltB64,
                         needsReauth: false,
@@ -385,7 +388,7 @@ export const useSyncStore = create<SyncState>()(
                             localNotesEmpty = await isLocalNotesStoreEmpty()
                         } catch { localNotesEmpty = false }
                     }
-                    const sendPullEtag = shouldSendPullEtag({
+                    const sendPullEtag = get().pendingConflictAccountId !== id && shouldSendPullEtag({
                         storedEtag,
                         sessionUnlocked,
                         lastSyncedNotesCount: get().lastSyncedNotesCount,
@@ -518,11 +521,13 @@ export const useSyncStore = create<SyncState>()(
                     syncRuntime.hydration = { seq: pullToken, id, status: 'pending', kind: 'pull' }
 
                     let data: unknown
+                    let responseSyncedAt: string | null = null
                     // The salt this response was sealed under, hoisted so the blob
                     // decode and salt adoption below share one value.
                     let remoteSyncSalt: Uint8Array | undefined
                     try {
                         const raw = JSON.parse(text) as Record<string, unknown>
+                        responseSyncedAt = readServerSyncTimestamp(raw.syncedAt)
                         avatarBlobWire = typeof raw.avatarBlob === 'string' ? raw.avatarBlob : undefined
                         watchBlobWire = typeof raw.watchBlob === 'string' ? raw.watchBlob : undefined
                         if (raw.isEncrypted && raw.data) {
@@ -719,7 +724,7 @@ export const useSyncStore = create<SyncState>()(
                     // Prime before any import runs: a mid-import failure must not leave the post-login push free to erase the cloud avatar.
                     syncRuntime.lastPulledCloudAvatar = (typeof syncData.avatar === 'string' && syncData.avatar) ? syncData.avatar : null
                     const localLastSync = get().lastSyncedAt
-                    const remoteLastSync = syncData.syncedAt as string | undefined
+                    const remoteLastSync = responseSyncedAt ?? readServerSyncTimestamp(syncData.syncedAt)
 
                     const remoteTime = remoteLastSync ? new Date(remoteLastSync).getTime() : 0
                     const localTime = localLastSync ? new Date(localLastSync).getTime() : 0
@@ -729,6 +734,7 @@ export const useSyncStore = create<SyncState>()(
                     const isEqual = remoteTime === localTime
 
                     let decision = 'passive merge'
+                    const postConflictPull = get().pendingConflictAccountId === id
 
                     if (syncData.accounts) {
                         const localAccounts = useAccountStore.getState().accounts
@@ -744,11 +750,13 @@ export const useSyncStore = create<SyncState>()(
                             await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
                             requestFollowUpPush()
                         } else if (hasRemoteData) {
-                            if (isRemoteNewer) {
+                            if (shouldMirrorAccountPull({ isRemoteNewer, hasRemoteData, postConflict: postConflictPull })) {
                                 decision = 'Adopt Remote (cloud is newer, replace local)'
                                 await useAccountStore.getState().importAccounts(syncData, true, 'mirror', preUnlockEncryptionKey, ownership)
                             } else {
-                                decision = 'Merge (equal or local-newer timestamps)'
+                                decision = postConflictPull
+                                    ? 'Merge (preserve unsaved changes after conflict)'
+                                    : 'Merge (equal or local-newer timestamps)'
                                 await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
                             }
                         }
@@ -782,6 +790,11 @@ export const useSyncStore = create<SyncState>()(
                             lastAppliedAccountCount: useAccountStore.getState().accounts.length,
                             lastAppliedAddonCount: Object.keys(useAddonStore.getState().library).length,
                         })
+                        if (postConflictPull) {
+                            // Keep recovery durable until the merged work is confirmed
+                            // pushed, including reloads between hydration and republish.
+                            pendingFollowUpPush = true
+                        }
                         // A deferred follow-up push fires only now that the session is certified.
                         if (pendingFollowUpPush) {
                             pendingFollowUpPush = false
@@ -838,7 +851,7 @@ export const useSyncStore = create<SyncState>()(
                             if (import.meta.env.DEV) console.log("[Sync] Addons synchronized. Passive import.")
                             await useAddonStore.getState().importLibrary(syncData, true, true, true, ownership)
                         } else {
-                            await useAddonStore.getState().importLibrary(syncData, false, true, true, ownership)
+                            await useAddonStore.getState().importLibrary(syncData, postConflictPull, true, true, ownership)
                         }
                         await useAddonStore.getState().initialize(ownership)
                     }
@@ -994,7 +1007,7 @@ export const useSyncStore = create<SyncState>()(
                             avatar: restoredAvatar,
                             isAuthenticated: true
                         },
-                        lastSyncedAt: new Date().toISOString(),
+                        lastSyncedAt: responseSyncedAt ?? get().lastSyncedAt,
                         lastSyncCheckedAt: new Date().toISOString(),
                         lastSeenVersion: (syncData.lastSeenVersion as string | null) || get().lastSeenVersion,
                         // Push trust requires completed hydration and a readable avatar blob.
@@ -1142,6 +1155,7 @@ export const useSyncStore = create<SyncState>()(
                 syncRuntime.pullSeq++
                 syncRuntime.adoptedSeq = null
                 syncRuntime.hydration = null
+                set({ pendingConflictAccountId: null })
                 if (syncRuntime.syncDebounceTimer) { clearTimeout(syncRuntime.syncDebounceTimer); syncRuntime.syncDebounceTimer = null }
                 if (syncRuntime.onlineHandler) { window.removeEventListener('online', syncRuntime.onlineHandler); syncRuntime.onlineHandler = null }
                 if (syncRuntime.syncBC) { syncRuntime.syncBC.close(); syncRuntime.syncBC = null }
@@ -1400,7 +1414,7 @@ export const useSyncStore = create<SyncState>()(
                     forceCanonicalRepublish = consumeForceFlag()
                     const stateHash = await computeHash(stringifiedState)
                     ownership.assert()
-                    if (!forceCanonicalRepublish && !forceFull && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
+                    if (!forceCanonicalRepublish && !forceFull && get().pendingConflictAccountId !== auth.id && syncRuntime.lastPushedHash !== null && stateHash === syncRuntime.lastPushedHash) {
                         trace('sync', 'push.skip-unchanged', { accountId: auth.id, isAuto })
                         if (!isAuto && !isDebounced) {
                             get().addLogEntry({ type: 'push', status: 'success', message: 'No local changes to push - checking cloud.', isAuto: false })
@@ -1473,6 +1487,7 @@ export const useSyncStore = create<SyncState>()(
                             compressed: isCompressed,
                             syncSalt: syncSaltB64,
                             syncedAt: get().lastSyncedAt,
+                            baseContentHash: get().lastSyncedCloudEtag ?? undefined,
                             force: forcePush,
                             // Hash of the logical state (pre-syncedAt); lets the server skip the
                             // archive/rewrite/apiKeys churn when the content is byte-identical
@@ -1514,12 +1529,13 @@ export const useSyncStore = create<SyncState>()(
 
                     if (resData.conflict) {
                         if (import.meta.env.DEV) console.log('[Sync] Server reported conflict. Triggering pull.')
+                        set({ pendingConflictAccountId: auth.id })
                         import('@/hooks/use-toast').then(({ toast }) => {
                             if (!pushCurrent()) return
                             toast({
                                 variant: 'warning',
-                                title: 'Cloud was newer',
-                                description: 'Your changes were not pushed because another device synced more recently. Pulling the newer state now.',
+                                title: 'Cloud changed',
+                                description: 'The cloud copy changed before this save completed. Pulling the latest state and preserving your unsaved changes.',
                             })
                         }).catch(() => {})
                         // Release this push's lock before starting its conflict refresh.
@@ -1569,7 +1585,8 @@ export const useSyncStore = create<SyncState>()(
                     // mistake a just-deleted addon for an inbound add and resurrect it.
                     canonicalBase?.setCanonicalBases(canonicalPayload)
 
-                    set({ lastSyncedAt: new Date().toISOString(), needsReauth: false, lastAppliedAccountCount: accountCount, lastAppliedAddonCount: addonCount, lastSyncedNotesCount: notesToPush.length })
+                    if (get().pendingConflictAccountId === auth.id) set({ pendingConflictAccountId: null })
+                    set({ lastSyncedAt: readServerSyncTimestamp(resData.syncedAt) ?? get().lastSyncedAt, needsReauth: false, lastAppliedAccountCount: accountCount, lastAppliedAddonCount: addonCount, lastSyncedNotesCount: notesToPush.length })
 
                     get().addLogEntry({
                         type: 'push',
@@ -1655,6 +1672,7 @@ export const useSyncStore = create<SyncState>()(
                 const mirrorToken = ++syncRuntime.pullSeq
                 const ownership = captureSyncOwnership(mirrorToken)
                 const fence = ownership.assert
+                if (get().pendingConflictAccountId === auth.id) set({ pendingConflictAccountId: null })
                 set({ isSyncing: true })
 
                 const apiPath = getSyncApiPath(serverUrl)
@@ -1676,6 +1694,7 @@ export const useSyncStore = create<SyncState>()(
                     const responseEtag = res.headers.get('etag')
                     let data: Record<string, unknown>
                     const raw = JSON.parse(text) as Record<string, unknown>
+                    const responseSyncedAt = readServerSyncTimestamp(raw.syncedAt)
                     fence()
                     const avatarBlobWire = typeof raw.avatarBlob === 'string' ? raw.avatarBlob : undefined
                     const watchBlobWire = typeof raw.watchBlob === 'string' ? raw.watchBlob : undefined
@@ -1861,7 +1880,7 @@ export const useSyncStore = create<SyncState>()(
                     }
                     syncRuntime.lastPulledCloudAvatar = (typeof mirroredAvatar === 'string' && mirroredAvatar) ? mirroredAvatar : null
 
-                    set({ lastSyncedAt: new Date().toISOString() })
+                    set({ lastSyncedAt: responseSyncedAt ?? get().lastSyncedAt })
 
                     // Incomplete mirrors keep pushes disabled and require a full refresh.
                     const recordOurs = syncRuntime.hydration?.seq === mirrorToken
@@ -1885,7 +1904,7 @@ export const useSyncStore = create<SyncState>()(
                         get().addLogEntry({
                             type: 'force-mirror',
                             status: 'success',
-                            message: 'Cloud state mirrored verbatim (bypassed merge)',
+                            message: 'Cloud state applied with addon deletion protection',
                             isAuto: false
                         })
 
@@ -1939,6 +1958,7 @@ export const useSyncStore = create<SyncState>()(
                 syncRuntime.pullSeq++
                 syncRuntime.adoptedSeq = null
                 syncRuntime.hydration = null
+                set({ pendingConflictAccountId: null })
                 setActiveWorkspace(ANON_WORKSPACE_ID)
                 set({
                     auth: { id: '', password: '', name: '', avatar: null, isAuthenticated: false },
@@ -1971,6 +1991,8 @@ export const useSyncStore = create<SyncState>()(
                     password: '',
                 },
                 lastSyncedAt: state.lastSyncedAt,
+                // Survives a reload while conflict recovery is offline or incomplete.
+                pendingConflictAccountId: state.pendingConflictAccountId,
                 serverUrl: state.serverUrl,
                 lastActionTimestamp: state.lastActionTimestamp,
                 lastSeenVersion: state.lastSeenVersion,
