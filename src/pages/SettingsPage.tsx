@@ -9,6 +9,7 @@ import { useAddonStore } from '@/store/addonStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/hooks/use-toast'
@@ -582,24 +583,25 @@ export function SettingsPage() {
                                             <p className="text-xs text-muted-foreground">Version</p>
                                             <p className="mt-1 font-medium">{__BUILD_VERSION__}</p>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={async () => {
-                                                try {
-                                                    await navigator.clipboard.writeText(__BUILD_COMMIT__)
-                                                    toast({ title: 'Copied', description: 'Build identifier copied to clipboard.' })
-                                                } catch {
-                                                    toast({ variant: 'destructive', title: 'Could not copy build identifier' })
-                                                }
-                                            }}
-                                            className="rounded-md text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
-                                            data-theme-part="inline-action"
-                                            aria-label="Copy build identifier"
-                                            title="Click to copy the build identifier"
-                                        >
-                                            <span className="block text-xs text-muted-foreground">Build</span>
-                                            <span className="mt-1 block font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
-                                        </button>
+                                        <Tooltip content="Click to copy the build identifier" side="top">
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    try {
+                                                        await navigator.clipboard.writeText(__BUILD_COMMIT__)
+                                                        toast({ title: 'Copied', description: 'Build identifier copied to clipboard.' })
+                                                    } catch {
+                                                        toast({ variant: 'destructive', title: 'Could not copy build identifier' })
+                                                    }
+                                                }}
+                                                className="rounded-md text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
+                                                data-theme-part="inline-action"
+                                                aria-label="Copy build identifier"
+                                            >
+                                                <span className="block text-xs text-muted-foreground">Build</span>
+                                                <span className="mt-1 block font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
+                                            </button>
+                                        </Tooltip>
                                     </div>
                                 </div>
                             </div>

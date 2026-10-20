@@ -4,6 +4,7 @@ import { Link, Mail, Puzzle, Shield, User, Users, type LucideIcon } from 'lucide
 import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { Tooltip } from '@/components/ui/tooltip'
 import { cn, maskEmailLevel, maskNameLevel, maskProfileLevel, maskUrlLevel } from '@/lib/utils'
 
 export type PrivacyControlKey =
@@ -113,13 +114,14 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                 <div className="flex flex-col gap-2.5">
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-medium text-muted-foreground">Live Preview</p>
-                        <span
-                            data-theme-part="badge"
-                            className="rounded-full border border-border/30 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-                            title="Synthetic sample data, not real account information"
-                        >
-                            Sample Data
-                        </span>
+                        <Tooltip content="Synthetic sample data, not real account information" side="top">
+                            <span
+                                data-theme-part="badge"
+                                className="rounded-full border border-border/30 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                            >
+                                Sample Data
+                            </span>
+                        </Tooltip>
                     </div>
 
                     <div data-theme-part="card" className="rounded-[1.35rem] border border-border/45 bg-card/80 p-4 shadow-sm">
@@ -128,8 +130,12 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                                 <span className="relative z-10 text-sm font-bold leading-none text-muted-foreground">S</span>
                             </div>
                             <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-semibold tracking-tight" title={shownName}>{shownName}</p>
-                                <p className="mt-0.5 truncate text-xs text-muted-foreground" title={shownEmail}>{shownEmail}</p>
+                                <Tooltip content={shownName} side="top">
+                                    <p className="truncate text-sm font-semibold tracking-tight">{shownName}</p>
+                                </Tooltip>
+                                <Tooltip content={shownEmail} side="top">
+                                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{shownEmail}</p>
+                                </Tooltip>
                             </div>
                             <span data-theme-part="badge" className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
                                 <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
@@ -140,7 +146,9 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                         <div className="mt-3 flex flex-wrap items-center gap-1.5">
                             <span data-theme-part="badge" className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/30 bg-muted/30 px-2.5 py-0.5 text-[11px] text-muted-foreground">
                                 <Users className="h-3 w-3 shrink-0" aria-hidden="true" />
-                                <span className="truncate" title={shownProfile}>{shownProfile}</span>
+                                <Tooltip content={shownProfile} side="top">
+                                    <span className="truncate">{shownProfile}</span>
+                                </Tooltip>
                             </span>
                         </div>
 
@@ -150,9 +158,11 @@ export function PrivacyControls({ namesLevel, urlsLevel, profilesLevel, emailLev
                             </div>
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-xs font-medium">{SAMPLE_ADDON_NAME}</p>
-                                <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-muted-foreground" title={shownAddonUrl}>
-                                    {shownAddonUrl}
-                                </p>
+                                <Tooltip content={shownAddonUrl} side="top">
+                                    <p className="mt-0.5 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">
+                                        {shownAddonUrl}
+                                    </p>
+                                </Tooltip>
                             </div>
                         </div>
                     </div>

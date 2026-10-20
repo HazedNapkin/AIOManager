@@ -111,6 +111,10 @@ export default defineConfig(({ mode }) => {
                 '@': path.resolve(__dirname, './src'),
             },
         },
+        // Local mockups and validation pages are not application entry points.
+        optimizeDeps: {
+            entries: ['index.html'],
+        },
         esbuild: {
             drop: ['console'],
         },
