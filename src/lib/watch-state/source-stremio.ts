@@ -220,6 +220,7 @@ async function seriesRecords(scope: string, item: LibraryItem, videos: StremioSe
             identities: [episodeIdentity],
             season: accumulator.season,
             episode: accumulator.episode,
+            seriesTitle: item.name,
             watched: accumulator.watched,
             playedAt: null,
             fingerprint: await itemFingerprint(scope, item.raw, episodeIdentity),
@@ -232,6 +233,11 @@ async function seriesRecords(scope: string, item: LibraryItem, videos: StremioSe
 }
 
 async function recordsForItem(scope: string, item: LibraryItem, videos: StremioSeriesVideo[] | null): Promise<WatchStateRecord[]> {
+    if (item.raw.removed === true) {
+        return hasAnyState(item.state)
+            ? [await unmappedRecord(scope, item, ['This item was removed from the Stremio library. Its retained watch state is listed for review and will not be imported.'])]
+            : []
+    }
     if (item.kind === null || !PROVIDER_ITEM_ID.test(item.id)) {
         return hasAnyState(item.state)
             ? [await unmappedRecord(scope, item, ['This Stremio item has no recognizable movie or series identifier, so it is listed as unmatched.'])]
@@ -245,6 +251,17 @@ async function orderedSeriesVideos(loader: StremioWatchSourceOptions['seriesVide
     if (!loader) return null
     const list = await Promise.resolve(loader(id)).catch(() => null)
     if (!Array.isArray(list) || list.length === 0) return null
+    const ids = new Set<string>()
+    const coordinates = new Set<string>()
+    for (const video of list) {
+        if (!isRecord(video) || typeof video.id !== 'string' || !video.id
+            || !Number.isSafeInteger(video.season) || Number(video.season) < 0
+            || !Number.isSafeInteger(video.episode) || Number(video.episode) < 1) return null
+        const key = `${video.season}:${video.episode}`
+        if (ids.has(video.id) || coordinates.has(key)) return null
+        ids.add(video.id)
+        coordinates.add(key)
+    }
     const videos = list.filter((video): video is StremioSeriesVideo => isRecord(video) && typeof video.id === 'string')
     videos.sort((a, b) => {
         const seasonA = typeof a.season === 'number' ? a.season : Number.MAX_SAFE_INTEGER
@@ -294,7 +311,7 @@ export function createStremioWatchSource(options: StremioWatchSourceOptions): Wa
             while (queue.length) {
                 signal.throwIfAborted()
                 const item = queue.shift() as LibraryItem
-                const needsVideos = item.kind === 'series'
+                const needsVideos = item.raw.removed !== true && item.kind === 'series'
                     && ((typeof item.state.watched === 'string' && item.state.watched !== '')
                         || (positiveDuration(item.state.timeOffset) !== null && intOrUndefined(item.state.season) !== undefined && intOrUndefined(item.state.episode) !== undefined))
                 const videos = needsVideos ? await seriesVideos(item.id) : null

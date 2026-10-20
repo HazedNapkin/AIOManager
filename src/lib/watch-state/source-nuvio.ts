@@ -204,7 +204,8 @@ export function createNuvioWatchSource(options: NuvioWatchSourceOptions): WatchS
                 type: target.target.type,
                 identities: [identity],
                 watched: hasHistory,
-                playedAt: watchedAt ?? lastWatched,
+                playedAt: hasHistory ? watchedAt : lastWatched,
+                ...(progressRow ? { resumePlayedAt: lastWatched } : {}),
                 fingerprint: await watchFingerprint({ scope, identity, watched: hasHistory, positionMs, durationMs: duration, watchedAt, lastWatched, videoId }),
             }
             if (target.target.type === 'episode') {

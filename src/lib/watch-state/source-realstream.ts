@@ -118,6 +118,22 @@ export function createRealStreamWatchSource(options: RealStreamWatchSourceOption
                 })
                 continue
             }
+            // Official Windows client 1.0.1+2 (burner playback, 2026-10-19) exports
+            // provider-prefixed ids with progress normalized to a 10,000-point
+            // scale. That duration is not a 10,000-second runtime. Keep these
+            // rows visible, but never turn the percentage into elapsed time.
+            if (typeof entry.uniqueId === 'string' && /^(tmdb|imdb|tvdb):/.test(entry.uniqueId) && Number(entry.duration) === 10_000) {
+                records.push({
+                    id: `realstream:${uniqueKey(entry, key)}`,
+                    title: firstNonEmpty(entry.title, entry.name) ?? 'RealStream entry',
+                    type: 'unknown',
+                    identities: [],
+                    playedAt: sourceTime(entry.lastWatched ?? entry.last_watched ?? entry.timestamp),
+                    notes: ['RealStream saved a playback percentage without the actual runtime. An elapsed resume position cannot be verified for this entry.'],
+                    fingerprint: await watchFingerprint({ scope, entry }),
+                })
+                continue
+            }
             const positionMs = secondsToMs(entry.currentTime ?? entry.current_time ?? entry.progress ?? entry.position)
             if (positionMs === null) continue
             const posterPath = typeof entry.posterPath === 'string' ? entry.posterPath : typeof entry.poster_path === 'string' ? entry.poster_path : ''

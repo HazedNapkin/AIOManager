@@ -1,4 +1,5 @@
 import { hasSavedWatchState, matchesWatchPatch, sameWatchTitle } from './records.ts'
+import { migrationFailure, migrationFailureMessage, WatchMigrationError } from './failures.ts'
 import type { MigrationOptions, MigrationProgress, MigrationResult, MigrationRow, WatchMigrationPlan, WatchStateDestination, WatchStateSnapshot, WatchStateSource } from './types.ts'
 
 export async function planWatchMigration(source: WatchStateSnapshot, destination: WatchStateDestination, options: MigrationOptions, signal: AbortSignal, progress?: MigrationProgress): Promise<WatchMigrationPlan> {
@@ -34,13 +35,20 @@ export async function planWatchMigration(source: WatchStateSnapshot, destination
                 continue
             }
             const patch: NonNullable<MigrationRow['patch']> = {}
+            const resumeDate = record.resumePlayedAt !== undefined ? record.resumePlayedAt : record.playedAt
             if (options.watched && record.watched === true) {
-                if (destination.capabilities.watched) patch.watched = true
+                if (destination.capabilities.requiresDates && record.playedAt === null) row.notes.push('This destination requires an original completion date. The undated watched flag cannot be copied.')
+                else if (destination.capabilities.watched) patch.watched = true
                 else row.notes.push('The destination cannot import watched flags.')
             }
             if (options.resume && typeof record.positionMs === 'number' && Number.isSafeInteger(record.positionMs) && record.positionMs > 0) {
-                if (patch.watched && !destination.capabilities.combined) row.notes.push('Resume points on a watched title cannot be combined with its watched flag on this destination. Only the watched flag is selected.')
-                else if (destination.capabilities.resume) patch.positionMs = record.positionMs
+                if (destination.capabilities.requiresDates && resumeDate === null) row.notes.push('This destination requires an original resume date. The undated resume point cannot be copied.')
+                else if (destination.capabilities.requiresDuration && (!Number.isSafeInteger(record.durationMs) || record.durationMs! < record.positionMs)) row.notes.push('This destination requires a verified runtime for the resume point. No position will be copied without it.')
+                else if (patch.watched && !destination.capabilities.combined) row.notes.push('Resume points on a watched title cannot be combined with its watched flag on this destination. Only the watched flag is selected.')
+                else if (destination.capabilities.resume) {
+                    patch.positionMs = record.positionMs
+                    if (Number.isSafeInteger(record.durationMs) && record.durationMs! >= record.positionMs) patch.durationMs = record.durationMs
+                }
                 else row.notes.push('The destination cannot import resume points without reporting playback.')
             }
             if (!Object.keys(patch).length) {
@@ -49,7 +57,9 @@ export async function planWatchMigration(source: WatchStateSnapshot, destination
                 finish()
                 continue
             }
-            if (record.playedAt !== null && destination.capabilities.dates) patch.playedAt = record.playedAt
+            const selectedDate = patch.watched ? record.playedAt : resumeDate
+            if (selectedDate !== null && destination.capabilities.dates) patch.playedAt = selectedDate
+            if (patch.positionMs !== undefined && destination.capabilities.dates && record.resumePlayedAt !== undefined) patch.resumePlayedAt = record.resumePlayedAt
             if (!destination.capabilities.dates) row.notes.push('Original watch dates cannot be preserved by this destination.')
             else if (record.playedAt === null) row.notes.push('The source has no reliable watch date. No original date can be copied.')
             if (patch.watched && record.playCount !== undefined && record.playCount > 0) {
@@ -61,7 +71,9 @@ export async function planWatchMigration(source: WatchStateSnapshot, destination
             const verified = matches.filter(item => sameWatchTitle(record, item))
             if (verified.length !== 1 || matches.length !== 1) {
                 row.status = matches.length ? 'conflict' : 'skipped'
-                row.reason = matches.length ? 'The destination match is ambiguous or its identifiers disagree.' : 'No matching title is available to this destination user.'
+                const explanation = matches.length === 1 && matches[0].type === 'unknown' ? matches[0].notes?.[0] : undefined
+                row.reason = explanation || (matches.length ? 'The destination match is ambiguous or its identifiers disagree.' : 'No matching title is available to this destination user.')
+                row.notes.push(...matches.flatMap(match => match.notes || []))
                 finish()
                 continue
             }
@@ -133,10 +145,11 @@ export async function executeWatchMigration(plan: WatchMigrationPlan, source: Wa
                     onResult({ rowId: row.id, status: 'failed', message: 'Stopped before readback completed. Preview again to check whether this item was saved.', completedAt: Date.now() })
                     signal.throwIfAborted()
                 }
-                result = { rowId: row.id, status: 'failed', message: 'The write could not be verified. Preview again before retrying; the destination may already have saved it.', completedAt: Date.now() }
+                const failure = migrationFailure(error)
+                result = { rowId: row.id, status: 'failed', message: migrationFailureMessage(failure), failure, completedAt: Date.now() }
                 onResult(result)
                 if (error && typeof error === 'object' && 'kind' in error && error.kind === 'auth') throw new Error('The destination sign-in expired. Reconnect and preview again.')
-                throw new Error('The write could not be verified. Preview again before continuing.')
+                throw new WatchMigrationError(failure)
             }
         }
         onResult(result)
@@ -150,7 +163,7 @@ export function migrationReport(plan: WatchMigrationPlan, results: MigrationResu
         source: { label: plan.source.label, subject: plan.source.subject, complete: plan.source.complete, count: plan.source.records.length },
         destination: { label: plan.destination.label, subject: plan.destination.subject }, options: plan.options, notes: plan.notes,
         rows: plan.rows.map(row => ({
-            title: row.source.title, type: row.source.type, season: row.source.season, episode: row.source.episode, identities: row.source.identities,
+            title: row.source.title, seriesTitle: row.source.seriesTitle, episodeTitle: row.source.episodeTitle, type: row.source.type, season: row.source.season, episode: row.source.episode, identities: row.source.identities,
             sourceItemId: row.source.id, destinationItemId: row.target?.id, sourceWatchDate: row.source.playedAt === null ? null : new Date(row.source.playedAt).toISOString(),
             before: row.target ? { watched: row.target.watched, positionMs: row.target.positionMs, playedAt: row.target.playedAt, playCount: row.target.playCount } : null,
             requested: row.patch, previewStatus: row.status, reason: row.reason, notes: row.notes, result: byId.get(row.id),

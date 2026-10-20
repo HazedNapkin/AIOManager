@@ -99,6 +99,18 @@ export interface JellyfinItemResult {
     total: number | null
     /** True only when nothing suggests truncation, duplicate inflation or contradiction. */
     complete: boolean
+    /** All-history paging reached its natural end; raw totals may still include filtered rows. */
+    paginationComplete?: true
+    /** Only the requested history bound prevented completeness; no paging anomaly was observed. */
+    limited?: true
+    /**
+     * Present ONLY on partial snapshots published while a paged read is still
+     * walking (onProgress publishers). Lets consumers distinguish
+     * actively-loading progress from a settled incomplete listing so
+     * in-flight pages do not each raise a "could not be verified" warning.
+     * Never set on final client results and never persisted.
+     */
+    inProgress?: true
     /** The bound this read applied: 50 for resume, 500 for played. */
     limit: number
 }
@@ -106,12 +118,20 @@ export interface JellyfinItemResult {
 export interface JellyfinPagedReadOptions {
     maxItems?: number
     pageSize?: number
+    /**
+     * Called after every page that added items, with an honest partial
+     * snapshot of the walk so far (`complete` is always false: a partial
+     * listing is never provably complete). May be async; the walk awaits it
+     * between pages. The snapshot's items array is a fresh copy.
+     */
+    onProgress?: (snapshot: JellyfinItemResult) => void | Promise<void>
 }
 
 export interface JellyfinItemQuery {
     ids?: string[]
     parentId?: string
     includeItemTypes?: string
+    recursive?: boolean
     startIndex?: number
     limit?: number
 }

@@ -76,6 +76,12 @@ export function setWorkspaceStoreFactory(factory: StoreFactory): void {
 
 let activeWorkspaceId = ANON_WORKSPACE_ID
 const workspaceStores = new Map<string, AsyncKV>()
+const workspaceListeners = new Set<() => void>()
+
+export function subscribeWorkspaceChanges(listener: () => void): () => void {
+    workspaceListeners.add(listener)
+    return () => { workspaceListeners.delete(listener) }
+}
 
 export function getActiveWorkspaceId(): string {
     return activeWorkspaceId
@@ -101,6 +107,7 @@ export function setActiveWorkspace(id: string): void {
     if (next === activeWorkspaceId) return
     activeWorkspaceId = next
     workspaceStoreFor(next)
+    workspaceListeners.forEach(listener => listener())
 }
 
 const FORWARDED_METHODS = ['getItem', 'setItem', 'removeItem', 'clear', 'keys'] as const

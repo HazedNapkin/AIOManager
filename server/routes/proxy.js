@@ -816,16 +816,22 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 properties: {
                     baseUrl: { type: 'string' },
                     uuid: { type: 'string' },
-                    password: { type: 'string' }
+                    password: { type: 'string' },
+                    // Raw view = the stored child config, so edits do not bake
+                    // inherited parent values into the child. Default stays the
+                    // merged (effective) view used for display.
+                    raw: { type: 'boolean' }
                 }
             }
         }
     }, async (request, reply) => {
-        const { baseUrl, uuid, password } = request.body
+        const { baseUrl, uuid, password, raw } = request.body
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
-        const url = `${baseUrl}/api/v1/user`
+        const url = raw === true
+            ? `${baseUrl}/api/v1/user?raw=true`
+            : `${baseUrl}/api/v1/user`
         if (!(await isSafeUrlResolved(url))) {
             reply.status(403); return { error: 'Access Denied: Unsafe URL' }
         }
@@ -1182,12 +1188,17 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                     uuid: { type: 'string' },
                     password: { type: 'string' },
                     config: { type: 'object', additionalProperties: true },
-                    addonPassword: { type: 'string' }
+                    addonPassword: { type: 'string' },
+                    // Loaded-config version: the instance replies 409
+                    // CONFIG_CHANGED when its stored config is newer. The 409
+                    // body passes through untouched so the client can surface
+                    // a typed conflict. `force` is deliberately not accepted.
+                    baseVersion: { type: 'number' }
                 }
             }
         }
     }, async (request, reply) => {
-        const { baseUrl, uuid, password, config, addonPassword } = request.body
+        const { baseUrl, uuid, password, config, addonPassword, baseVersion } = request.body
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
@@ -1195,11 +1206,15 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         if (!(await isSafeUrlResolved(url))) {
             reply.status(403); return { error: 'Access Denied: Unsafe URL' }
         }
+        const upstreamBody = { config, password, addonPassword }
+        if (typeof baseVersion === 'number' && Number.isFinite(baseVersion)) {
+            upstreamBody.baseVersion = baseVersion
+        }
         try {
             const { response, json } = await fetchAIOStreamsJson(url, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ config, password, addonPassword }),
+                body: JSON.stringify(upstreamBody),
             })
             if (response.status >= 300 && response.status < 400) {
                 reply.status(403); return { error: 'Access Denied: Redirect not allowed' }

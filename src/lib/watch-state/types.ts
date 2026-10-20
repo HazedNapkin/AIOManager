@@ -3,6 +3,8 @@ export type WatchMediaType = 'movie' | 'episode'
 export interface WatchStateRecord {
     id: string
     title: string
+    seriesTitle?: string
+    episodeTitle?: string
     type: WatchMediaType | 'unknown'
     identities: string[]
     season?: number
@@ -11,6 +13,7 @@ export interface WatchStateRecord {
     positionMs?: number
     durationMs?: number
     playedAt: number | null
+    resumePlayedAt?: number | null
     playCount?: number
     unmodified?: boolean
     notes?: string[]
@@ -39,7 +42,9 @@ export interface WatchStateSource {
 export interface WatchStatePatch {
     watched?: true
     positionMs?: number
+    durationMs?: number
     playedAt?: number
+    resumePlayedAt?: number | null
     playCount?: number
 }
 
@@ -50,7 +55,7 @@ export interface MigrationWriteResult {
 }
 
 export interface WatchStateDestination extends WatchStateEndpoint {
-    capabilities: { watched: boolean; resume: boolean; dates: boolean; counts?: boolean; combined?: boolean; notes: string[] }
+    capabilities: { watched: boolean; resume: boolean; dates: boolean; counts?: boolean; combined?: boolean; requiresDates?: boolean; requiresDuration?: boolean; notes: string[] }
     resolve(record: WatchStateRecord, signal: AbortSignal): Promise<WatchStateRecord[]>
     apply(expected: WatchStateRecord, patch: WatchStatePatch, signal: AbortSignal): Promise<MigrationWriteResult>
 }
@@ -79,10 +84,18 @@ export interface WatchMigrationPlan {
     rows: MigrationRow[]
 }
 
+export interface MigrationFailure {
+    stage: 'identity' | 'prewrite' | 'write' | 'readback' | 'verification'
+    reason: 'rate_limited' | 'timeout' | 'network' | 'http' | 'invalid_response' | 'remote_declined' | 'acknowledgement' | 'state_mismatch' | 'unknown'
+    httpStatus?: number
+    attempts?: number
+}
+
 export interface MigrationResult {
     rowId: string
     status: 'applied' | 'unchanged' | 'conflict' | 'failed'
     message: string
     completedAt: number
+    failure?: MigrationFailure
     verified?: Pick<WatchStateRecord, 'watched' | 'positionMs' | 'playedAt' | 'playCount'>
 }

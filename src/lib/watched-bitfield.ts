@@ -25,11 +25,8 @@ function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
 }
 
 async function inflate(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
-    const ds = new DecompressionStream('deflate')
-    const writer = ds.writable.getWriter()
-    void writer.write(bytes)
-    void writer.close()
-    const ab = await new Response(ds.readable).arrayBuffer()
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'))
+    const ab = await new Response(stream).arrayBuffer()
     return new Uint8Array(ab)
 }
 
@@ -66,11 +63,8 @@ function bytesToBase64(bytes: Uint8Array<ArrayBuffer>): string {
 }
 
 async function deflateRaw(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-    const cs = new CompressionStream('deflate')
-    const writer = cs.writable.getWriter()
-    void writer.write(bytes)
-    void writer.close()
-    const ab = await new Response(cs.readable).arrayBuffer()
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'))
+    const ab = await new Response(stream).arrayBuffer()
     return new Uint8Array(ab)
 }
 

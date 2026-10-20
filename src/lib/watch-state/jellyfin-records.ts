@@ -142,6 +142,8 @@ export async function watchRecordFromItem(item: JellyfinItem, seriesProviders?: 
     const record: Omit<WatchStateRecord, 'fingerprint'> = {
         id: item.Id,
         title: typeof item.Name === 'string' && item.Name !== '' ? item.Name : typeof item.SeriesName === 'string' && item.SeriesName !== '' ? item.SeriesName : item.Id,
+        seriesTitle: type === 'episode' && item.SeriesName ? item.SeriesName : undefined,
+        episodeTitle: type === 'episode' && item.Name ? item.Name : undefined,
         type,
         identities,
         season: type === 'episode' && Number.isSafeInteger(item.ParentIndexNumber) ? item.ParentIndexNumber : undefined,

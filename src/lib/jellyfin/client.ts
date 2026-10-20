@@ -525,17 +525,32 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         if (truncatedByCap) items.length = RESUME_PAGE_LIMIT
         const reached = total !== null ? items.length === total : items.length < RESUME_PAGE_LIMIT
         const complete = !sawDuplicates && !truncatedByCap && !limitIgnored && reached
-        return { items, total, complete, limit: RESUME_PAGE_LIMIT }
+        const limited = !sawDuplicates && !truncatedByCap && !limitIgnored && items.length === RESUME_PAGE_LIMIT && (total === null || total > items.length)
+        return { items, total, complete, limit: RESUME_PAGE_LIMIT, ...(limited ? { limited: true as const } : {}) }
     }
 
     /**
-     * Bounded played-history read (up to 500 items, 250 per page). Pages are
-     * deduplicated by Id so duplicates never count toward the upstream total,
-     * and any anomaly — a repeated page, a duplicate id, a moving total, an
-     * ignored Limit, a short page contradicting its own total, or truncation by
-     * the 500-item cap — keeps the result incomplete. `total` is the upstream
-     * TotalRecordCount when it is a finite nonnegative integer, null otherwise;
-     * an unknown total is judged only by natural exhaustion (short/empty page).
+     * Bounded played-history head read (up to 500 items, 250 per page). This
+     * is the fresh HEAD the activity poll refreshes quickly; the full history
+     * comes from readAllPlayed's archive walk, and callers merge the two (see
+     * mergePlayedReads). Pages are deduplicated by Id so duplicates never
+     * count toward the upstream total, and any anomaly — a repeated page, a
+     * duplicate id, a moving total, an ignored Limit, a short page
+     * contradicting its own total, or truncation by the bound — keeps the
+     * result incomplete. `total` is the upstream TotalRecordCount when it is a
+     * finite nonnegative integer, null otherwise; an unknown total is judged
+     * only by natural exhaustion (short/empty page).
+     *
+     * Windows are requested at raw offsets: StartIndex advances by the
+     * requested window size, never by the deduplicated item count. Facades such
+     * as AIOMetadata slice their raw entry array by StartIndex/Limit and then
+     * silently drop entries inside the page (unresolvable metadata, profile
+     * caps, duplicate ids), so a page can be shorter than its Limit while many
+     * raw entries remain; a short page therefore only ends the walk when a
+     * usable total says the raw space is (or cannot be proven not to be)
+     * exhausted. Hitting the 500-item bound without any paging anomaly is
+     * reported as `limited`, the intentional head bound — distinct from
+     * malformed or unverifiable listings, which stay plain incomplete.
      *
      * Pages are requested with SortBy=DatePlayed&SortOrder=Descending (the
      * standard query ordering by last-played date) when the upstream accepts
@@ -564,6 +579,19 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         )
     }
 
+    /**
+     * Full-history played read for the archive walk: pages the ENTIRE raw
+     * space (default bound 50,000 items — a deterministic sanity bound, never
+     * a visible product cutoff) at raw offsets with fail-closed semantics: it
+     * never stops on the total, so a lying small TotalRecordCount cannot
+     * truncate it, and it is only `complete` when natural exhaustion yields
+     * exactly the claimed total with no anomaly. Sparse pages, interior empty
+     * windows and duplicates keep it honestly incomplete.
+     *
+     * `options.onProgress` is awaited after every page that added items with
+     * a copied partial snapshot (`complete` always false), so callers can
+     * publish progressive history while the walk continues.
+     */
     async function readAllPlayed(
         accessToken: string,
         userId: string,
@@ -579,6 +607,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 maxItems: options?.maxItems ?? PLAYED_ALL_MAX_ITEMS,
                 sorted: true,
                 stopOnTotal: false,
+                onProgress: options?.onProgress,
                 params: {
                     IsPlayed: 'true',
                     IncludeItemTypes: 'Movie,Episode',
@@ -617,6 +646,36 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         )
     }
 
+    /**
+     * Shared raw-offset paging walk for /Users/{userId}/Items listing reads.
+     *
+     * StartIndex always advances by the REQUESTED window size, never by the
+     * deduplicated item count: servers page this endpoint over their own raw
+     * entry space (the AIOMetadata facade literally slices a raw array with
+     * StartIndex/Limit before filtering inside the page), so the only offsets
+     * that tile the space without gaps or repeats are multiples of the
+     * requested window. Deduplication stays client-side and never moves the
+     * cursor.
+     *
+     * A page shorter than its requested Limit is NOT proof of exhaustion: the
+     * facade may have filtered entries out of a full window. The walk ends on
+     * a short page only when the total is unknown (the bare-array contract) or
+     * — for `stopOnTotal` reads only — the raw space is provably covered
+     * (rawStart >= total). Otherwise it continues at the next raw offset until
+     * an empty page beyond the claimed raw space, the item cap, the page bound
+     * or raw coverage of a trusted total. An EMPTY page inside the claimed raw
+     * space (a window the facade filtered entirely) is not exhaustion either:
+     * the walk continues while the total says more raw entries exist, bounded
+     * by the page bound. Such an interior empty window marks the offsets as
+     * unreliable and can never again prove completeness. `stopOnTotal: false`
+     * (migration all-history reads) never stops on a non-empty signal from the
+     * total, so a lying small TotalRecordCount cannot truncate it; those reads
+     * stay fail-closed and are only complete when natural exhaustion yields
+     * exactly the claimed total with no anomaly.
+     *
+     * When `onProgress` is provided it is awaited after every page that added
+     * items, with a copied honest partial snapshot (`complete` always false).
+     */
     async function readItemPages(
         accessToken: string,
         spec: {
@@ -627,6 +686,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
             params: Record<string, string>
             sorted: boolean
             stopOnTotal: boolean
+            onProgress?: (snapshot: JellyfinItemResult) => void | Promise<void>
         },
         signal?: AbortSignal
     ): Promise<JellyfinItemResult> {
@@ -636,19 +696,28 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         let totalMoved = false
         let sawDuplicates = false
         let sawRepeatedPage = false
+        let sawInteriorEmptyPage = false
         let limitIgnored = false
         let truncatedByCap = false
         let stoppedByCap = false
+        let stoppedByPageBound = false
         let exhaustedNaturally = false
         let allowSort = spec.sorted
+        let rawStart = 0
+        let pages = 0
+        const maxPages = Math.ceil(spec.maxItems / spec.pageSize) * 2 + 4
         for (;;) {
             const remaining = spec.maxItems - items.length
             if (remaining <= 0) {
                 stoppedByCap = true
                 break
             }
+            if (pages >= maxPages) {
+                stoppedByPageBound = true
+                break
+            }
             const limit = Math.min(spec.pageSize, remaining)
-            const query = new URLSearchParams({ ...spec.params, StartIndex: String(items.length), Limit: String(limit) })
+            const query = new URLSearchParams({ ...spec.params, StartIndex: String(rawStart), Limit: String(limit) })
             if (allowSort) {
                 query.set('SortBy', 'DatePlayed')
                 query.set('SortOrder', 'Descending')
@@ -702,23 +771,56 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 truncatedByCap = true
             }
             items.push(...fresh)
-            if (fresh.length === 0) {
-                if (page.length > 0) sawRepeatedPage = true
-                else exhaustedNaturally = true
-                break
+            pages++
+            // The cursor follows the requested window, not the items kept.
+            rawStart += limit
+            if (spec.onProgress && fresh.length > 0) {
+                // Partials are never provably complete; the snapshot is a copy
+                // so consumers cannot mutate the walk's live arrays.
+                await spec.onProgress({ items: items.slice(), total, complete: false, inProgress: true as const, limit: spec.maxItems })
             }
-            if (page.length < limit) {
+            if (fresh.length === 0) {
+                if (page.length > 0) {
+                    sawRepeatedPage = true
+                    break
+                }
+                if (total !== null && rawStart < total) {
+                    // Empty page INSIDE the claimed raw space: the whole window
+                    // was filtered upstream while more raw entries remain. Keep
+                    // walking the raw offsets (bounded by the page bound); the
+                    // listing can never be proven complete after this.
+                    sawInteriorEmptyPage = true
+                    continue
+                }
                 exhaustedNaturally = true
                 break
             }
-            if (spec.stopOnTotal && total !== null && items.length >= total) break
+            if (page.length < limit) {
+                // A short page proves exhaustion only when nothing claims more
+                // raw entries: no usable total, or (bounded reads only) the
+                // raw space is already covered. Fail-closed all-history reads
+                // never trust a total to stop, so they confirm via empty page.
+                if (total === null || (spec.stopOnTotal && rawStart >= total)) {
+                    exhaustedNaturally = true
+                    break
+                }
+                // Sparse facade window: keep walking the raw offsets.
+                continue
+            }
+            if (spec.stopOnTotal && total !== null && rawStart >= total) {
+                exhaustedNaturally = true
+                break
+            }
         }
         const contradicted =
-            stoppedByCap || truncatedByCap || sawRepeatedPage || sawDuplicates || totalMoved || limitIgnored
+            stoppedByCap || stoppedByPageBound || truncatedByCap || sawRepeatedPage || sawInteriorEmptyPage || sawDuplicates || totalMoved || limitIgnored
         const reached = spec.stopOnTotal
             ? total !== null ? items.length === total : exhaustedNaturally
             : exhaustedNaturally && (total === null || items.length === total)
-        return { items, total, complete: !contradicted && reached, limit: spec.maxItems }
+        const limited = stoppedByCap && !stoppedByPageBound && !truncatedByCap && !sawRepeatedPage && !sawInteriorEmptyPage && !sawDuplicates && !totalMoved && !limitIgnored && (total === null || total > items.length)
+        const paginationComplete = !spec.stopOnTotal && exhaustedNaturally && !stoppedByCap && !stoppedByPageBound
+            && !truncatedByCap && !sawRepeatedPage && !totalMoved && !limitIgnored
+        return { items, total, complete: !contradicted && reached, limit: spec.maxItems, ...(limited ? { limited: true as const } : {}), ...(paginationComplete ? { paginationComplete: true as const } : {}) }
     }
 
     async function readAllResume(
@@ -843,6 +945,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         if (query.ids?.length) params.set('Ids', query.ids.join(','))
         if (query.parentId !== undefined) params.set('ParentId', query.parentId)
         if (query.includeItemTypes !== undefined) params.set('IncludeItemTypes', query.includeItemTypes)
+        if (query.recursive !== undefined) params.set('Recursive', String(query.recursive))
         if (query.startIndex !== undefined) params.set('StartIndex', String(query.startIndex))
         if (query.limit !== undefined) params.set('Limit', String(query.limit))
         const res = await request({

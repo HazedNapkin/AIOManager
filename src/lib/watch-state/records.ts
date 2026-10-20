@@ -61,3 +61,14 @@ export function formatWatchPosition(value: number): string {
     const rest = String(seconds % 60).padStart(2, '0')
     return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`
 }
+
+export function watchRecordTitle(record: WatchStateRecord): string {
+    return record.type === 'episode' && record.seriesTitle ? record.seriesTitle : record.title
+}
+
+export function watchRecordSubtitle(record: WatchStateRecord): string {
+    if (record.type !== 'episode') return record.type === 'movie' ? 'Movie' : 'Unidentified title'
+    const episodeTitle = record.episodeTitle || (record.seriesTitle && record.title !== record.seriesTitle ? record.title : '')
+    const coordinates = `Season ${record.season ?? '?'} · Episode ${record.episode ?? '?'}`
+    return episodeTitle && episodeTitle !== watchRecordTitle(record) ? `${episodeTitle} · ${coordinates}` : coordinates
+}

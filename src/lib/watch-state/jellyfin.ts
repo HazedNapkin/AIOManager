@@ -101,10 +101,12 @@ function isWatchableLeaf(item: JellyfinItem): boolean {
     return item.Type === 'Movie' || item.Type === 'Episode'
 }
 
-async function readVerifiedSeriesProviders(binding: JellyfinBinding, seriesId: string, signal: AbortSignal): Promise<unknown> {
+async function readVerifiedSeriesProviders(binding: JellyfinBinding, seriesId: string, signal: AbortSignal, onSeries?: (item: JellyfinItem) => void): Promise<unknown> {
     try {
         const parent = await binding.client.readWatchItem(binding.secret.accessToken, binding.secret.userId, seriesId, signal)
-        return parent.Type === 'Series' ? parent.ProviderIds : undefined
+        if (parent.Type !== 'Series') return undefined
+        onSeries?.(parent)
+        return parent.ProviderIds
     } catch {
         signal.throwIfAborted()
         return undefined
@@ -136,10 +138,13 @@ export async function createJellyfinWatchSource(connection: Connection, open: (v
                 missing.push(key)
             }
             const seriesProviders = new Map<string, unknown>()
+            const seriesNames = new Map<string, string>()
             for (let start = 0; start < missing.length; start += SERIES_READ_WORKERS) {
                 readSignal.throwIfAborted()
                 await Promise.all(missing.slice(start, start + SERIES_READ_WORKERS).map(async key => {
-                    const providers = await readVerifiedSeriesProviders(binding, key, readSignal)
+                    const providers = await readVerifiedSeriesProviders(binding, key, readSignal, parent => {
+                        if (parent.Name) seriesNames.set(key, parent.Name)
+                    })
                     if (providers !== undefined) seriesProviders.set(key, providers)
                 }))
             }
@@ -147,11 +152,12 @@ export async function createJellyfinWatchSource(connection: Connection, open: (v
             const records: WatchStateRecord[] = []
             for (const item of byId.values()) {
                 const key = seriesKeyOf(item)
-                records.push(await watchRecordFromItem(item, key !== undefined ? seriesProviders.get(key) : undefined))
+                const displayItem = item.Type === 'Episode' && !item.SeriesName && key !== undefined ? { ...item, SeriesName: seriesNames.get(key) } : item
+                records.push(await watchRecordFromItem(displayItem, key !== undefined ? seriesProviders.get(key) : undefined))
             }
             const positive = records.filter(record => record.watched === true || (record.positionMs ?? 0) > 0)
             const notes: string[] = []
-            if (!played.complete) notes.push('The watched-history read is partial; more watched titles may exist.')
+            if (!played.complete) notes.push(`Watched history: ${played.items.length.toLocaleString()} ${played.total === null ? 'entries returned; the source did not provide a verifiable total' : `of ${played.total.toLocaleString()} reported entries returned`}. The source listing could not be verified as complete.`)
             if (!resume.complete) notes.push('The resume read is partial; more resume points may exist.')
             const unmatched = positive.filter(record => record.identities.length === 0).length
             if (unmatched > 0) notes.push(`${unmatched.toLocaleString()} titles have no verifiable identifier and will be skipped.`)
@@ -196,7 +202,7 @@ async function buildJellyfinLibraryIndex(binding: JellyfinBinding, signal: Abort
     return { byIdentity, seriesProviders, complete: read.complete }
 }
 
-export async function createJellyfinWatchDestination(connection: Connection, open: (value: string) => Promise<string>, signal: AbortSignal): Promise<WatchStateDestination> {
+export async function createJellyfinWatchDestination(connection: Connection, open: (value: string) => Promise<string>, signal: AbortSignal, assertCurrent: () => void = () => {}): Promise<WatchStateDestination> {
     const binding = await verifyJellyfinBinding(connection, open, signal)
     signal.throwIfAborted()
     const capabilities = capabilitiesForProduct(binding.details.product)
@@ -235,7 +241,7 @@ export async function createJellyfinWatchDestination(connection: Connection, ope
             const page = await binding.client.queryUserItems(
                 binding.secret.accessToken,
                 binding.secret.userId,
-                { parentId: seriesId, includeItemTypes: 'Episode', limit: EPISODE_CHILDREN_PAGE, startIndex: cursor },
+                { parentId: seriesId, includeItemTypes: 'Episode', recursive: true, limit: EPISODE_CHILDREN_PAGE, startIndex: cursor },
                 listSignal
             )
             if (page.length > EPISODE_CHILDREN_PAGE) {
@@ -346,6 +352,7 @@ export async function createJellyfinWatchDestination(connection: Connection, ope
         return [...verified.values()]
     }
     const apply = async (expected: WatchStateRecord, patch: WatchStatePatch, applySignal: AbortSignal): Promise<MigrationWriteResult> => {
+        assertCurrent()
         await reverifyJellyfinScope(binding, applySignal)
         applySignal.throwIfAborted()
         const fresh = await binding.client.readWatchItem(binding.secret.accessToken, binding.secret.userId, expected.id, applySignal)
@@ -392,6 +399,8 @@ export async function createJellyfinWatchDestination(connection: Connection, ope
         if (Object.keys(body).length === 0) {
             return { status: 'unchanged', message: 'Nothing was selected to import for this title.', record: freshRecord }
         }
+        assertCurrent()
+        applySignal.throwIfAborted()
         await binding.client.writeUserData(binding.secret.accessToken, binding.secret.userId, expected.id, body, applySignal)
         const check = await binding.client.readWatchItem(binding.secret.accessToken, binding.secret.userId, expected.id, applySignal)
         if (!isWatchableLeaf(check)) throw new Error(READBACK_FAILED)
