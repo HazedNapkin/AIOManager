@@ -380,7 +380,7 @@ export function WatchMigrationDialog({ open, onOpenChange, accountId, connection
         </>}
         <MigrationEndpoint label="Destination" connection={connection}
             name={migrationSourceLabel(connection, displayName)}
-            user={displayName(plan?.destination.subject || connection.mediaServer?.userName || 'Sign-in required')}
+            user={displayName(plan?.destination.subject || connection.mediaServer?.userName || connection.credentials?.email || 'Identity checked during preview')}
             userId={showingResults || !connection.mediaServer?.userId ? undefined : identifier(connection.mediaServer.userId)} compact={showingResults} />
     </div>
 
