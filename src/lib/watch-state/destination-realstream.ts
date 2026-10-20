@@ -2,7 +2,7 @@
 // Do not expose this adapter as a product destination. Official Windows client
 // 1.0.1+2 testing on 2026-10-19 found a different provider-prefixed identity and
 // normalized-progress format. Even a native-format import appeared in Continue
-// Watching but did not resume reliably. See scratch-validation/realstream-live-20261019/report.md.
+// Watching but did not resume reliably.
 //
 // Interface for runtime integration (the parent owns factories/session wrappers):
 //   createRealStreamWatchDestination(options) -> WatchStateDestination
@@ -13,8 +13,7 @@
 //       writeRecord(recordId | null, entries, signal) }   // PATCH when recordId, POST when null
 //   This module owns entry matching, array-preserving write decisions and readback verification.
 //
-// Verified RealStream contracts behind this adapter (evidence in
-// scratch-validation/watch-destinations-20261019/nuvio-realstream.md):
+// RealStream contracts used by this adapter:
 //   - PocketBase `progress` collection: paged reads with honest totalItems; each record is
 //     { id, user, data } where data is the FULL ARRAY of progress entries, and writes replace
 //     that array wholesale. There is no atomic compare-and-swap and no timestamp sort/filter.

@@ -11,8 +11,7 @@
 //   reads are request({ collection: 'libraryItem', all: true } or { ids: [id] }).
 //   This module owns matching, write decisions and readback verification; it never authenticates.
 //
-// Verified Stremio contracts behind this adapter (evidence in
-// scratch-validation/watch-destinations-20261019/contracts-review.md and stremio.md):
+// Stremio contracts used by this adapter:
 //   - DatastorePut libraryItem changes are FULL-ROW replacements, not patches: preserving
 //     existing metadata means echoing the entire row back with only `state` modified.
 //   - state.timeOffset/duration are MILLISECONDS; flaggedWatched > 0 marks movies watched;

@@ -1,11 +1,9 @@
 // AIOMetadata config roundtrip-safety primitives.
 //
 // Pure leaf module (no store/UI imports) so it stays importable under the
-// node:test runner and reusable outside the React tree
-// (scratch-validation/config-roundtrip-safety-20261019).
+// node:test runner and reusable outside the React tree.
 //
-// Contracts verified against upstream AIOMetadata dev@1b9c6ce (clone of the
-// parent-reviewed pin 661ba9da, see the report for the revision note):
+// Contracts verified against upstream AIOMetadata dev@1b9c6ce:
 //   - POST /api/config/load/:uuid returns { success, userUUID, installUrl,
 //     config } where config carries the stored `configVersion`/`lastModified`.
 //   - PUT /api/config/update/:uuid accepts a top-level `baseVersion`; when the

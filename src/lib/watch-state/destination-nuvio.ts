@@ -8,8 +8,7 @@
 //   'sync_pull_watched_items' | 'sync_pull_watch_progress' | 'sync_push_watched_items' | 'sync_push_watch_progress'.
 //   This module owns matching, write decisions and readback verification; it never authenticates.
 //
-// Verified Nuvio contracts behind this adapter (evidence in
-// scratch-validation/watch-destinations-20261019/nuvio-realstream.md):
+// Nuvio contracts used by this adapter:
 //   - sync_push_watched_items { p_profile_id, p_items: [{ content_id, content_type 'movie'|'series',
 //     title, watched_at epoch ms, season?, episode? }] } upserts on
 //     (user_id, content_id, season, episode, profile_id), dedups by max watched_at and only

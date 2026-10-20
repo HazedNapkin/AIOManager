@@ -2,10 +2,9 @@
 //
 // Pure leaf module (no store/UI imports, relative .ts imports only) so it stays
 // importable under the node:test runner and reusable by callers that do not
-// live inside the React tree (scratch-validation/config-roundtrip-safety-20261019).
+// live inside the React tree.
 //
-// Contracts verified against upstream AIOStreams main@fbb961d (clone of the
-// parent-reviewed pin 6ca32ed2, see the report for the revision note):
+// Contracts verified against upstream AIOStreams main@fbb961d:
 //   - GET /api/v1/user?raw=true returns the stored child config; the default
 //     response merges the parent. Writers must base edits on the raw view or
 //     inherited values get baked into the child.

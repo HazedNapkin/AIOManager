@@ -1,7 +1,7 @@
 // AIOStreams variant install-URL helpers.
 //
 // Pure leaf module (relative .ts imports only) so it stays importable under the
-// node:test runner (scratch-validation/config-roundtrip-safety-20261019).
+// node:test runner.
 //
 // AIOStreams selects variants either with a path segment (`/v/<ids>`) or a
 // query parameter (`?v=<ids>`). AIOManager identifies addons by URL with the
