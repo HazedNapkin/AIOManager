@@ -32,6 +32,13 @@ export interface AddonManifest {
 export interface AddonDestinations {
   excludedPlatforms?: string[]
   excludedConnections?: string[]
+  // LWW clock for cross-device convergence (see lib/addon-destinations.ts). Assigned on
+  // every deliberate policy WRITE from the picker (set or clear) via nextPolicyRevision,
+  // so it never regresses even under clock skew; imports/merges never bump it. A policy
+  // cleared of every exclusion survives as the tombstone { revision } so the clear
+  // itself can propagate — behaviorally identical to an absent policy. Absent on rows
+  // written by pre-revision clients (treated as 0).
+  revision?: number
 }
 
 export interface AddonDescriptor {

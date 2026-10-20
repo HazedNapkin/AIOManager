@@ -6,6 +6,7 @@ import type { AddonDescriptor } from '@/types/addon'
 // resolvable under the node:test runner, which does not map path aliases.
 import { getHostnameIdentifier } from './addon-identifier.ts'
 import { normalizeAddonUrl as _normalizeAddonUrl } from './addon-url.ts'
+import { mergeDestinationsPolicy } from './addon-destinations.ts'
 import { trace } from './trace.ts'
 import { claimInstanceRemotes } from './addon-instance-identity.ts'
 
@@ -273,12 +274,13 @@ export function hasFallbackAddonIdentity(addon: Pick<AddonDescriptor, 'transport
  * Helper: Merge remote addons with local addons, preserving order and flags.
  * Source of Truth: Remote presence determines "enabled" status, but local flags and metadata are preserved.
  *
- * Destination policy (R1): the merged row keeps `local.destinations` when set — local
- * policy always wins — and only adopts the remote's when local has none (platform
- * reads never carry destinations, so this is strictly preserving; import/cloud
- * inbound rows may). `keepMissingLocalUrls` is the E4 read-side protection: URLs
- * listed there survive even when `keepMissingLocal` is false (their absence from the
- * source is EXPECTED — the row is deliberately excluded from that source).
+ * Destination policy: both rows' policies combine via `mergeDestinationsPolicy` — LWW
+ * on the policy revision with a deterministic content tie — so a deliberate clear on
+ * one device propagates, while an absent remote side (platform reads, pre-revision
+ * rows) still has no authority to touch local policy. `keepMissingLocalUrls` is the E4
+ * read-side protection: URLs listed there survive even when `keepMissingLocal` is false
+ * (their absence from the source is EXPECTED — the row is deliberately excluded from
+ * that source).
  */
 
 export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean; keepMissingLocalUrls?: Set<string>; instanceMatch?: 'adopt-remote-url' | 'keep-local-url' } = {}) {
@@ -367,8 +369,9 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         metadata: mergedMetadata,
         catalogOverrides: localAddon.catalogOverrides,
         note: localAddon.note,
-        // Destination policy: local wins, remote adopted only when local has none (R1).
-        destinations: localAddon.destinations ?? matchedRemote.destinations,
+        // Destination policy: LWW merge on the policy revision (see
+        // mergeDestinationsPolicy) — stale sides lose, deliberate clears propagate.
+        destinations: mergeDestinationsPolicy(localAddon.destinations, matchedRemote.destinations),
       })
 
       processedRemoteNormUrls.add(normalizeAddonUrl(matchedRemote.transportUrl))

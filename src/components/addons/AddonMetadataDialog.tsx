@@ -20,7 +20,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAccountStore } from '@/store/accountStore'
 import { isAddonConnection } from '@/types/connection'
 import { getPlatformEntry } from '@/lib/platform-registry'
-import { normalizeDestinations } from '@/lib/addon-destinations'
+import { normalizeDestinations, nextPolicyRevision } from '@/lib/addon-destinations'
 import { maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
 import { PlatformLogo } from '@/components/providers/ConnectionPrimitives'
 import { SourceUrlBox } from './SourceUrlBox'
@@ -96,6 +96,13 @@ export function AddonMetadataDialog({
             setCustomName(addon.metadata?.customName || '')
             setCustomLogo(addon.metadata?.customLogo || '')
             setCustomDescription(addon.metadata?.customDescription || '')
+            // Drafts seed from the FULL saved policy, including ids whose login no
+            // longer exists: the picker below renders live connections only, so those
+            // ids are invisible yet ride through a Save verbatim as retained intent —
+            // a deliberate exclusion must outlive the login's removal, so a restore
+            // resurrecting the same id lands excluded. A metadata-only Save (no
+            // destinations key) never touches the policy at all; only an explicit
+            // toggle of a LIVE row adds or drops an id.
             setDraftExcludedPlatforms(new Set(addon.destinations?.excludedPlatforms || []))
             setDraftExcludedConnections(new Set(addon.destinations?.excludedConnections || []))
             setExpandedPlatform(null)
@@ -175,6 +182,11 @@ export function AddonMetadataDialog({
             const nextDestinations = destinationsDirty ? normalizeDestinations({
                 excludedPlatforms: [...draftExcludedPlatforms],
                 excludedConnections: [...draftExcludedConnections],
+                // Every deliberate policy write bumps the LWW clock (never below the
+                // current value + 1), so this edit — including a full CLEAR, which
+                // survives as the { revision } tombstone — outranks any stale cloud
+                // copy of the policy.
+                revision: nextPolicyRevision(addon.destinations?.revision),
             }) ?? null : undefined
             await onSave({
                 customName: customName.trim() || undefined,
