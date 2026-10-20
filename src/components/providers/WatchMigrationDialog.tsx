@@ -435,10 +435,10 @@ export function WatchMigrationDialog({ open, onOpenChange, accountId, connection
                                 <Label htmlFor="migration-source-connection">Source connection</Label>
                                 <Select value={sourceId} onValueChange={setSourceId} disabled={!!busy || !sources.length}>
                                     <SelectTrigger id="migration-source-connection"><SelectValue placeholder={sources.length ? 'Choose a connection' : 'No enabled source connections'} /></SelectTrigger>
-                                    <SelectContent>{sources.map(source => <SelectItem key={source.id} value={source.id} textValue={migrationConnectionLabel(source, watchMigrationSources(sourceAccount!), displayName)} className="py-2">
+                                    <SelectContent>{sources.map(source => <SelectItem key={source.id} value={source.id} textValue={migrationConnectionLabel(source, watchMigrationSources(sourceAccount!), displayName, identifier)} className="py-2">
                                         <span className="flex min-w-0 items-center gap-2">
                                             <span aria-hidden="true"><PlatformLogo platform={source.platform} isHydra={source.connectionType === 'hydra-outbound'} className="h-6 w-6 shrink-0" /></span>
-                                            <span className="min-w-0 truncate">{migrationConnectionLabel(source, watchMigrationSources(sourceAccount!), displayName)}</span>
+                                            <span className="min-w-0 truncate">{migrationConnectionLabel(source, watchMigrationSources(sourceAccount!), displayName, identifier)}</span>
                                         </span>
                                     </SelectItem>)}</SelectContent>
                                 </Select>

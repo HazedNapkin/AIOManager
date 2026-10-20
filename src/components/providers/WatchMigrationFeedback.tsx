@@ -92,11 +92,11 @@ export function MigrationResultsPanel({ plan, results, outcome, connections, not
     return <section aria-label="Import results" className="space-y-4">
         <div className="space-y-2">
             <h3 ref={heading} tabIndex={-1} className={cn('flex items-center gap-2 text-lg font-semibold leading-tight tracking-tight outline-none', tone === 'destructive' ? 'text-destructive' : tone === 'warning' && 'text-warning')}><OutcomeIcon aria-hidden="true" className={cn('h-5 w-5 shrink-0', tone === 'success' ? 'text-success' : tone === 'warning' && 'text-warning')} />{title}</h3>
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
-                <span className="inline-flex min-w-0 items-center gap-1.5 [overflow-wrap:anywhere]">{connections.source.logo}<span className="min-w-0">{connections.source.name} · {connections.source.user}</span></span>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
+                <div className="inline-flex min-w-0 items-center gap-1.5 [overflow-wrap:anywhere]">{connections.source.logo}<span className="min-w-0">{connections.source.name} · {connections.source.user}</span></div>
                 <ArrowRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                <span className="inline-flex min-w-0 items-center gap-1.5 [overflow-wrap:anywhere]">{connections.destination.logo}<span className="min-w-0">{connections.destination.name} · {connections.destination.user}</span></span>
-            </p>
+                <div className="inline-flex min-w-0 items-center gap-1.5 [overflow-wrap:anywhere]">{connections.destination.logo}<span className="min-w-0">{connections.destination.name} · {connections.destination.user}</span></div>
+            </div>
             <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-relaxed"><span className="sr-only">Outcome counts: </span>
                 {(imported > 0 || review > 0 || unattempted > 0 || kept === 0) && <span><span className="font-semibold tabular-nums text-success">{imported.toLocaleString()}</span> <span className="text-muted-foreground">{imported > 0 ? 'imported and confirmed' : 'imported'}</span></span>}
                 {kept > 0 && <span><span className="font-semibold tabular-nums">{kept.toLocaleString()}</span> <span className="text-muted-foreground">kept as is</span></span>}

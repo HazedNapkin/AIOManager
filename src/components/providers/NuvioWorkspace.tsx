@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toast } from '@/hooks/use-toast'
-import { cn } from '@/lib/utils'
+import { cn, maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
 import { Poster } from '@/components/common/Poster'
 import { EmptyState } from '@/components/common/EmptyState'
 import { NuvioPluginsPanel } from './NuvioPluginsTab'
@@ -259,6 +259,15 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
     reload: () => Promise<void>
 }) {
     const accounts = useAccountStore(s => s.accounts)
+    const privacyEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelProfiles = useUIStore(s => s.privacyLevelProfiles)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
+    const profilePrivacyLevel = privacyEnabled ? privacyLevelProfiles : 0
+    const profileLabel = useCallback((name?: string) => maskProfileLevel(name || 'Profile', profilePrivacyLevel), [profilePrivacyLevel])
+    const accountLabel = (name: string) => name.includes('@')
+        ? maskEmailLevel(name, privacyEnabled ? privacyLevelEmail : 0)
+        : maskNameLevel(name, privacyEnabled ? privacyLevelNames : 0)
     const [busy, setBusy] = useState(false)
     const [editId, setEditId] = useState<string | null>(null)
     const [editName, setEditName] = useState('')
@@ -351,7 +360,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
                     profileIndex: p.index > 0 ? String(p.index) : '',
                 },
             })
-            toast({ title: `Switched to ${p.name}` })
+            toast({ title: `Switched to ${profileLabel(p.name)}` })
             syncConnections(accountId).catch((err) => {
                 toast({ title: 'Profile switched, but sync did not finish', description: err instanceof Error ? err.message : 'Addons may not have pushed to the new profile yet.', variant: 'destructive' })
             })
@@ -361,7 +370,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
             setSwitching(false)
             setPending(null)
         }
-    }, [accountId, connection.id, connection.credentials, connection.profileMapping, activeProfileId, switchDisabled])
+    }, [accountId, connection.id, connection.credentials, connection.profileMapping, activeProfileId, switchDisabled, profileLabel])
 
     const doRename = async (p: NuvioProfileRow) => {
         // Keyboard (Enter) path must respect the same gate as the buttons.
@@ -394,7 +403,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
         if (!confirm) return
         if (actionsDisabled) return
         if (isTargetProfile(confirm)) {
-            toast({ title: 'Switch the sync target first', description: `${confirm.name} is this account's active sync target.`, variant: 'destructive' })
+            toast({ title: 'Switch the sync target first', description: `${profileLabel(confirm.name)} is this account's active sync target.`, variant: 'destructive' })
             return
         }
         setBusy(true)
@@ -413,7 +422,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
     return (
         <div>
             <TabToolbar label="Profiles" count={loading ? undefined : profiles.length} loading={loading} onReload={reload} icon={<Users className="h-3.5 w-3.5" />} />
-            <p className="-mt-2.5 mb-1 text-xs text-muted-foreground">One Nuvio profile receives this account's addons — pick it below. Each profile can also run as its own AIOManager account.</p>
+            <p className="-mt-2.5 mb-1 text-xs text-muted-foreground">Choose the Nuvio profile that receives this account's addons. Each profile can also have its own AIOManager account.</p>
             <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground/80">
                 Adding a profile as an account makes it a full account, just like the ones you already manage: its own addons, its own watch history. It stays on the same Nuvio login and nothing changes on Nuvio. You can delete the account anytime.
             </p>
@@ -433,7 +442,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
                         <div data-theme-tone="status" data-theme-part="panel" data-nuvio="dangling-banner" className="mb-1.5 flex items-start gap-2 rounded-xl border border-warning/20 bg-warning/10 px-3 py-2 text-xs text-warning">
                             <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                             <span>
-                                Sync target profile {target.danglingId} no longer exists on Nuvio. Pick a new target in the roster; pushes to the missing profile are refused until you switch.
+                                Sync target profile {profileLabel(target.danglingId)} no longer exists on Nuvio. Pick a new target in the roster; pushes to the missing profile are refused until you switch.
                             </span>
                         </div>
                     )}
@@ -500,7 +509,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
                                         ) : (
                                             <>
                                                 <div className="min-w-0 flex-1">
-                                                    <p className="truncate text-sm font-medium">{p.name}</p>
+                                                    <p className="truncate text-sm font-medium">{profileLabel(p.name)}</p>
                                                     <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground/80">
                                                         <span className="font-mono">slot {p.profile_index}</span>
                                                         {isTarget && (
@@ -538,25 +547,25 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
                                                     </span>
                                                 )}
                                                 {state === 'claimed' && claim && (
-                                                    <Tooltip content={`Open ${claim.accountName}`} side="top">
+                                                    <Tooltip content={`Open ${accountLabel(claim.accountName)}`} side="top">
                                                         <button
                                                             type="button"
                                                             data-theme-part="badge"
                                                             onClick={() => openClaimedAccount(claim.accountId)}
-                                                            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:text-foreground"
+                                                            className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 py-0.5 pl-0.5 pr-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-border/70 hover:text-foreground"
                                                         >
                                                             <AccountAvatar
                                                                 size="sm"
                                                                 showStatus={false}
                                                                 account={{
-                                                                    name: claim.accountName,
-                                                                    email: claim.accountEmail,
+                                                                    name: accountLabel(claim.accountName),
+                                                                    email: maskEmailLevel(claim.accountEmail || '', privacyEnabled ? privacyLevelEmail : 0),
                                                                     emoji: claim.emoji,
                                                                     avatar: claim.avatar,
                                                                     status: claim.status ?? 'active',
                                                                 }}
                                                             />
-                                                            Managed separately · {claim.accountName}
+                                                            <span className="truncate">Managed separately · {accountLabel(claim.accountName)}</span>
                                                         </button>
                                                     </Tooltip>
                                                 )}
@@ -568,7 +577,7 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger
                                                         className="h-7 w-7 shrink-0 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                                        aria-label={`Actions for ${p.name}`}
+                                                        aria-label={`Actions for ${profileLabel(p.name)}`}
                                                         data-nuvio="row-menu"
                                                     >
                                                         <MoreHorizontal className="h-4 w-4" />
@@ -616,10 +625,10 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
 
                     {pending && (
                         <div data-theme-tone="status" data-theme-part="panel" data-nuvio="switch-confirm" className="rounded-2xl border border-warning/30 bg-warning/8 p-4 space-y-3 shadow-sm">
-                            <p className="text-sm font-medium text-warning">Send this account's addons to <strong>{pending.name}</strong>?</p>
+                            <p className="text-sm font-medium text-warning">Send this account's addons to <strong>{profileLabel(pending.name)}</strong>?</p>
                             <p className="text-xs text-muted-foreground">
                                 This replaces that profile's current addons on Nuvio and can't be undone.
-                                {target.active && target.active.id !== pending.id && <> Currently <strong>{target.active.name}</strong> receives them.</>}
+                                {target.active && target.active.id !== pending.id && <> Currently <strong>{profileLabel(target.active.name)}</strong> receives them.</>}
                             </p>
                             <div className="flex gap-2">
                                 <Button size="sm" variant="subtle" className="h-8 flex-1 text-xs" onClick={() => setPending(null)} disabled={switching}>Cancel</Button>
@@ -632,11 +641,11 @@ function NuvioProfilesRoster({ accountId, connection, status, activeProfileId, p
 
                     {confirm && (
                         <div data-theme-tone="status" data-theme-part="panel" data-nuvio="delete-confirm" className="rounded-2xl border border-destructive/30 bg-destructive/8 p-4 space-y-3 shadow-sm">
-                            <p className="text-sm font-medium text-destructive">Delete <strong>{confirm.name}</strong>?</p>
+                            <p className="text-sm font-medium text-destructive">Delete <strong>{profileLabel(confirm.name)}</strong>?</p>
                             <p className="text-xs text-muted-foreground">This removes the profile and all its data on Nuvio (addons, plugins, collections, library and watch history) and can't be undone.</p>
                             {isTargetProfile(confirm) && (
                                 <p data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning">
-                                    {confirm.name} is this account's {target.isDefault ? 'default push profile (no explicit target is set, so Nuvio pushes land on the primary profile)' : 'active sync target'}. Switch the sync target to another profile above first, then delete.
+                                    {profileLabel(confirm.name)} is this account's {target.isDefault ? 'default push profile (no explicit target is set, so Nuvio pushes land on the primary profile)' : 'active sync target'}. Switch the sync target to another profile above first, then delete.
                                 </p>
                             )}
                             <div className="flex gap-2">

@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAccountStore } from '@/store/accountStore'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
-import { maskEmailLevel, maskNameLevel } from '@/lib/utils'
+import { maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
 import { migrationConnectionLabel, watchMigrationSources } from '@/lib/watch-state/sources'
 import { watchMigrationDestinations } from '@/lib/watch-state/destinations'
 import { PlatformLogo } from './ConnectionPrimitives'
@@ -20,6 +20,7 @@ export function WatchMigrationPicker({ accountId, embedded = false }: { accountI
     const privacy = useUIStore(state => state.isPrivacyModeEnabled)
     const names = useUIStore(state => state.privacyLevelNames)
     const emails = useUIStore(state => state.privacyLevelEmail)
+    const profiles = useUIStore(state => state.privacyLevelProfiles)
     const [open, setOpen] = useState(false)
     const [destinationId, setDestinationId] = useState('')
     const [importId, setImportId] = useState('')
@@ -28,6 +29,7 @@ export function WatchMigrationPicker({ accountId, embedded = false }: { accountI
     const selected = destinations.find(connection => connection.id === destinationId)
     const destination = destinations.find(connection => connection.id === importId)
     const mask = (name: string) => name.includes('@') ? maskEmailLevel(name, privacy ? emails : 0) : maskNameLevel(name, privacy ? names : 0)
+    const maskProfile = (name: string) => maskProfileLevel(name, privacy ? profiles : 0)
 
     if (!connections.length) return embedded ? <div className="rounded-2xl border border-border/40 bg-card/50 p-5"><h3 className="text-base font-semibold">Watch history</h3><p className="mt-2 text-sm text-muted-foreground">Add an enabled media connection in Linked accounts to import watched titles and playback positions.</p></div> : null
     const destinationPicker = <div className="space-y-4">
@@ -36,10 +38,10 @@ export function WatchMigrationPicker({ accountId, embedded = false }: { accountI
             <Select value={destinationId} onValueChange={setDestinationId}>
                 <SelectTrigger id="watch-import-destination"><SelectValue placeholder="Choose a destination connection" /></SelectTrigger>
                 <SelectContent>{destinations.map(connection => <SelectItem key={connection.id} value={connection.id}>
-                    <span className="flex min-w-0 items-center gap-2"><PlatformLogo platform={connection.platform} className="h-6 w-6 shrink-0" /><span className="min-w-0 break-words">{migrationConnectionLabel(connection, connections, mask)}</span></span>
+                    <span className="flex min-w-0 items-center gap-2"><PlatformLogo platform={connection.platform} className="h-6 w-6 shrink-0" /><span className="min-w-0 break-words">{migrationConnectionLabel(connection, connections, mask, maskProfile)}</span></span>
                 </SelectItem>)}</SelectContent>
             </Select>
-            {selected && <p className="text-xs leading-relaxed text-muted-foreground">Selected: {migrationConnectionLabel(selected, connections, mask)}. This connection receives the changes you approve.</p>}
+            {selected && <p className="text-xs leading-relaxed text-muted-foreground">Selected: {migrationConnectionLabel(selected, connections, mask, maskProfile)}. This connection receives the changes you approve.</p>}
         </div>
         {connections.some(connection => connection.platform === 'realstream') && <p className="text-xs leading-relaxed text-muted-foreground">RealStream can supply history. Imports into RealStream are not enabled yet.</p>}
         {!destinations.length && <p className="text-sm text-muted-foreground">Add a Jellyfin, Stremio or Nuvio connection as a destination to continue.</p>}

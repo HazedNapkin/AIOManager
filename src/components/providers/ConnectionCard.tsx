@@ -23,6 +23,7 @@ interface ConnectionCardProps {
     onEdit: () => void
     onToggle: () => void
     email?: string
+    contextLabel?: string
     badge?: React.ReactNode
     addonCount?: number
     /** Which truth the count represents: the account's recorded collection or the count recorded at the connection's last sync. */
@@ -37,6 +38,7 @@ export const ConnectionCard = memo(function ConnectionCard({
     onEdit,
     onToggle,
     email,
+    contextLabel,
     badge,
     addonCount,
 }: ConnectionCardProps) {
@@ -93,6 +95,7 @@ export const ConnectionCard = memo(function ConnectionCard({
                     {email && (
                         <p className="text-xs text-muted-foreground truncate">{email}</p>
                     )}
+                    {contextLabel && <p className="truncate text-xs text-muted-foreground">{contextLabel}</p>}
                     <p className="line-clamp-1 text-xs text-muted-foreground">
                         {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}
                         {addonCount !== undefined ? `${addonCount} account addon${addonCount === 1 ? '' : 's'} \u00b7 ` : ''}

@@ -53,10 +53,17 @@ export function migrationSourceLabel(connection: Connection, formatPrivate: (val
         ? `${platform} · ${formatPrivate(customLabel)}` : platform
 }
 
-export function migrationConnectionLabel(connection: Connection, peers: readonly Connection[], formatPrivate: (value: string) => string = value => value): string {
+export function migrationConnectionLabel(connection: Connection, peers: readonly Connection[], formatPrivate: (value: string) => string = value => value, formatProfile = formatPrivate): string {
     const siblings = peers.filter(item => item.platform === connection.platform)
     const index = siblings.findIndex(item => item.id === connection.id)
-    return `${migrationSourceLabel(connection, formatPrivate)}${connection.mediaServer?.userName ? ` · ${formatPrivate(connection.mediaServer.userName)}` : ''}${siblings.length > 1 && index >= 0 ? ` · Connection ${index + 1}` : ''}`
+    const identity = connection.mediaServer?.userName || connection.credentials?.email
+    const profile = connection.platform === 'nuvio'
+        ? connection.credentials?.profileIndex || connection.credentials?.profileId
+        : connection.credentials?.stremioProfileName
+    const context = connection.platform === 'nuvio'
+        ? profile ? `Profile ${formatProfile(profile)}` : 'Primary profile'
+        : profile ? formatProfile(profile) : ''
+    return `${migrationSourceLabel(connection, formatPrivate)}${identity && identity !== connection.displayName ? ` · ${formatPrivate(identity)}` : ''}${context ? ` · ${context}` : ''}${siblings.length > 1 && index >= 0 ? ` · Connection ${index + 1}` : ''}`
 }
 
 function normalizedBaseUrl(value: string): string {

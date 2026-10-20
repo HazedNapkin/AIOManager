@@ -22,7 +22,8 @@ import { useConnectionStore } from '@/store/connectionStore'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { getAccountEmail, getAccountById, getStremioAuthKey, getStremioConnection, getCachedAuthKey, useAccountStore } from '@/store/accountStore'
-import { maskEmailLevel, maskNameLevel } from '@/lib/utils'
+import { maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
+import { storedNuvioTargetId } from './nuvio-sync-target'
 import { parsePremiumExpire, type PremiumStatus } from '@/lib/stremio-premium'
 import { parseNuvioMemberAccess, type NuvioMemberStatus } from '@/lib/nuvio-tier'
 import { trace } from '@/lib/trace'
@@ -79,6 +80,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelProfiles = useUIStore(s => s.privacyLevelProfiles)
     const emailPrivacyLevel = isPrivacyModeEnabled ? privacyLevelEmail : 0
     const namePrivacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
     const storeAccount = useAccountStore(s => getAccountById(s.accounts, accountId))
@@ -468,6 +470,16 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                 ? (connIsEmail ? maskEmailLevel(connIdentityRaw, emailPrivacyLevel) : maskNameLevel(connIdentityRaw, namePrivacyLevel))
                                 : undefined
                             const connEmail = maskedConnIdentity
+                            const customLabel = conn.displayName && conn.displayName !== connIdentityRaw
+                                && conn.displayName.toLowerCase() !== conn.platform.toLowerCase()
+                                ? maskNameLevel(conn.displayName, namePrivacyLevel) : undefined
+                            const nuvioTarget = conn.platform === 'nuvio'
+                                ? storedNuvioTargetId({ ...conn, activeProfileId: statusAccount?.activeProfileId }) : undefined
+                            const profileLabel = conn.platform === 'nuvio'
+                                ? nuvioTarget ? `Profile ${maskProfileLevel(nuvioTarget, isPrivacyModeEnabled ? privacyLevelProfiles : 0)}` : 'Primary profile'
+                                : conn.credentials?.stremioProfileName
+                                    ? maskProfileLevel(conn.credentials.stremioProfileName, isPrivacyModeEnabled ? privacyLevelProfiles : 0) : undefined
+                            const contextLabel = [customLabel, profileLabel].filter(Boolean).join(' · ') || undefined
                             const premium = isPrimaryStremio ? premiumByAccount.get(accountId) : undefined
                             const nuvioMember = conn.platform === 'nuvio' ? nuvioMemberByConnection.get(conn.id) : undefined
                             // lastKnownAddonCount is not maintained after connection creation.
@@ -487,6 +499,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                                     onEdit={() => setEditingId(conn.id)}
                                     onToggle={() => useConnectionStore.getState().toggleConnection(accountId, conn.id)}
                                     email={connEmail}
+                                    contextLabel={contextLabel}
                                     addonCount={conn.platform === 'jellyfin' ? undefined : accountAddonCount}
                                     badge={
                                         <>
@@ -556,7 +569,7 @@ export function ConnectionManager({ accountId, account, connections = [], onSubD
                     <TabsContent value="connections">{connectionsList}</TabsContent>
                     <TabsContent value="history"><WatchMigrationPicker accountId={accountId} embedded /></TabsContent>
                     <TabsContent value="person">
-                        {statusAccount?.addons.some(isAIOStreamsAddon) ? <HouseholdSetupDialog accountId={accountId} open embedded onSavingChange={setPersonSaving} onOpenChange={value => { if (!value) setSubTab('connections') }} /> : <div data-theme-part="panel" className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-5"><h3 className="text-base font-semibold">Set up a person with AIOS / AIOM</h3><p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Set up their Jellyfin playback here without switching between AIOStreams and AIOMetadata. Create their AIOStreams variant and user, optionally use that variant in their AIOMetadata configuration, then attach their verified sign-in to a local account you manage.</p><p className="text-xs leading-relaxed text-muted-foreground">Start by adding an AIOStreams configuration to this account’s addons. To connect an existing Jellyfin, AIOS or AIOM user, use Add Connection in Linked accounts.</p></div>}
+                        {statusAccount?.addons.some(isAIOStreamsAddon) ? <HouseholdSetupDialog accountId={accountId} open embedded onSavingChange={setPersonSaving} onOpenChange={value => { if (!value) setSubTab('connections') }} /> : <div data-theme-part="panel" className="space-y-3 rounded-2xl border border-border/40 bg-card/50 p-5"><h3 className="text-base font-semibold">Set up a person with AIOS / AIOM</h3><p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">Set up their Jellyfin playback here without switching between AIOStreams and AIOMetadata. Create or choose their AIOStreams user, optionally connect AIOMetadata, then attach their verified sign-in to a local account you manage. Advanced setup can also add a variant.</p><p className="text-xs leading-relaxed text-muted-foreground">Start by adding an AIOStreams configuration to this account’s addons. To connect an existing Jellyfin, AIOS or AIOM user, use Add Connection in Linked accounts.</p></div>}
                     </TabsContent>
                     {hasApiKeyTab && <TabsContent value="apikey">{statusAccount && <ApiKeyManager account={statusAccount} />}</TabsContent>}
                 </WorkspaceTabs>
