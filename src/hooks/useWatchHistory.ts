@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useDeferredValue, useCallback } from 'react'
+import { useMemo, useState, useEffect, useDeferredValue, useCallback, useRef } from 'react'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useAccountStore } from '@/store/accountStore'
@@ -8,9 +8,27 @@ import { useJellyfinActivity, type MediaReadIssue } from '@/hooks/useJellyfinAct
 import { mergeMediaHistory, mergeMediaItems } from '@/lib/jellyfin/activity'
 import { reconcileRailProgress } from '@/lib/rail-progress'
 import { trace } from '@/lib/trace'
+import { usePacedValue } from '@/hooks/usePacedValue'
+import { isUnresolvedActivityName } from '@/lib/activity-metadata-overlay'
 
 const GENRE_CACHE_STORAGE_KEY = 'aio-genre-map-v1'
 let _genreCache: Map<string, string[]> | null = null
+
+// Cold-load derivation pacing: per-account watch-event diffs publish in a burst
+// while the library loads, and every intermediate publication used to trigger a
+// full history derivation. While a library load is active the
+// events input to the big derivation is re-derived at most this often; the
+// trailing edge always carries the newest events and the load ending delivers
+// the final state immediately, so partial results stay usable and incremental
+// single-change publications outside a load are unaffected.
+const HISTORY_LOAD_PACE_MS = 1200
+
+/** Reference equality over a deps tuple (for the interrupted-render caches below). */
+function depsEqual(a: unknown[], b: unknown[]): boolean {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+    return true
+}
 
 function loadGenreCache(): Map<string, string[]> {
     if (_genreCache) return _genreCache
@@ -89,11 +107,18 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
     const media = useJellyfinActivity(accountId)
     const rawEvents = useWatchEventStore(s => s.events)
     const rawLiveItems = useLibraryCache(s => s.items)
-    const events = useDeferredValue(rawEvents)
-    const liveItems = useDeferredValue(rawLiveItems)
     const loading = useLibraryCache(s => s.loading)
     const accounts = useAccountStore(s => s.accounts)
     const deletedEventKeys = useWatchEventStore(s => s.deletedEventKeys)
+    // Ownership, canonical-login changes and deletions invalidate a paced snapshot
+    // immediately. A delayed event array must never outlive its identity context.
+    const pacingScope = useMemo(() => [accounts, accountId, deletedEventKeys], [accounts, accountId, deletedEventKeys])
+    const pacedEvents = usePacedValue(rawEvents, HISTORY_LOAD_PACE_MS, loading, pacingScope)
+    const historyInput = useMemo(() => ({ events: pacedEvents, liveItems: rawLiveItems, scope: pacingScope }), [pacedEvents, rawLiveItems, pacingScope])
+    const deferredInput = useDeferredValue(historyInput)
+    const { events, liveItems } = deferredInput.scope === pacingScope
+        ? deferredInput
+        : { events: rawEvents, liveItems: rawLiveItems }
     const [genreMap, setGenreMap] = useState<Map<string, string[]>>(loadGenreCache)
 
     // Canonical-aware origin context: the CURRENT canonical login's items/events share the
@@ -116,7 +141,18 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             : accountId
     }, [canonicalStremioByAccount])
 
+    const baseDerivationRef = useRef<{ deps: unknown[]; value: { history: HistoryEntry[]; inProgress: ActivityItem[]; hasEventLog: boolean } } | null>(null)
     const { history, inProgress, hasEventLog } = useMemo(() => {
+        // Interrupted-render cache: concurrent React restarts in-progress deferred
+        // renders when higher-priority store publications arrive mid-derivation,
+        // discarding the memoized result and re-executing this full-history pass.
+        // Keying the result by its input references in a ref makes every restart a
+        // reference comparison instead of a second O(events + live items) derivation.
+        // The body is a pure derivation of the deps, so an abandoned attempt's value
+        // is exactly what the committed attempt produces for the same inputs.
+        const deps = [events, liveItems, accounts, accountId, genreMap, deletedEventKeys]
+        const cached = baseDerivationRef.current
+        if (cached && depsEqual(cached.deps, deps)) return cached.value
         const normalizeName = (s: string) => s.normalize('NFC').toLowerCase().replace(/[^a-z0-9]/g, '')
 
         const liveByAccountItem = new Map<string, ActivityItem>()
@@ -363,12 +399,9 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         }
         const dedupedList = Array.from(finalDedup.values())
 
-        const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
-        const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
-
         const bestNamesByItemId = new Map<string, { name: string; poster?: string }>()
         for (const entry of dedupedList) {
-            if (isBadName((entry.name || '').trim())) continue
+            if (isUnresolvedActivityName(entry.name)) continue
             const existing = bestNamesByItemId.get(entry.itemId)
             if (!existing || entry.name.length > existing.name.length) {
                 bestNamesByItemId.set(entry.itemId, { name: entry.name, poster: entry.poster || undefined })
@@ -377,7 +410,7 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
 
         const enrichedHistory = bestNamesByItemId.size > 0
             ? dedupedList.map(entry => {
-                if (!isBadName((entry.name || '').trim())) return entry
+                if (!isUnresolvedActivityName(entry.name)) return entry
                 const best = bestNamesByItemId.get(entry.itemId)
                 if (!best) return entry
                 return { ...entry, name: best.name, poster: entry.poster || best.poster || entry.poster }
@@ -405,11 +438,13 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             railEvents
         ).map(({ key: _key, ...item }) => item)
 
-        return {
+        const value = {
             history: enrichedHistory,
             inProgress,
             hasEventLog: events.length > 0,
         }
+        baseDerivationRef.current = { deps, value }
+        return value
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [events, liveItems, accounts, accountId, genreMap, deletedEventKeys])
 
@@ -461,7 +496,13 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         return () => { cancelled = true }
     }, [events, genreMap])
 
+    const combinedCacheRef = useRef<{ deps: unknown[]; value: { history: HistoryEntry[]; inProgress: ActivityItem[] } } | null>(null)
     const combined = useMemo(() => {
+        // Same interrupted-render cache as the base derivation: the merge below walks
+        // every history + media row and restarts pay full price without it.
+        const deps = [history, inProgress, media.history, media.inProgress, deletedEventKeys, ctxOf]
+        const cached = combinedCacheRef.current
+        if (cached && depsEqual(cached.deps, deps)) return cached.value
         const byId = new Map(history.map(entry => [entry.id, entry]))
         const notDeleted = (item: ActivityItem) => {
             const deletedAt = deletedEventKeys[`${ctxOf(item.accountId, item.sourceConnectionId)}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
@@ -475,7 +516,9 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             }
         })
         entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        return { history: entries, inProgress: mergeMediaItems(inProgress, media.inProgress.filter(notDeleted)) }
+        const value = { history: entries, inProgress: mergeMediaItems(inProgress, media.inProgress.filter(notDeleted)) }
+        combinedCacheRef.current = { deps, value }
+        return value
     }, [history, inProgress, media.history, media.inProgress, deletedEventKeys, ctxOf])
     return { ...combined, hasEventLog, loading: loading || media.initialLoading, refreshMedia: media.refresh, mediaIssues: media.readIssues }
 }
