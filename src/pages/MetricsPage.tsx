@@ -408,7 +408,7 @@ export function MetricsPage() {
                     <Card className="rounded-2xl border-border/40 bg-card/50 shadow-sm">
                         <CardHeader className="pb-3">
                             <CardTitle className="flex items-center gap-2 text-sm">
-                                <Tooltip content="Daily watching activity over the past year" side="top">
+                                <Tooltip content="Daily watching activity for the selected period" side="top">
                                     <span className="cursor-help">Activity Calendar</span>
                                 </Tooltip>
                             </CardTitle>

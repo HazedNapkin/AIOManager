@@ -104,7 +104,7 @@ export function ContributionGraph({ dailyActivity, loading }: ContributionGraphP
     return (
         <div ref={ref} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">{total} plays in the last year</span>
+                <span className="text-xs font-medium text-muted-foreground">{total} plays in this period</span>
             </div>
             <div
                 ref={scrollRef}
