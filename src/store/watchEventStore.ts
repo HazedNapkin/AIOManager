@@ -3,7 +3,7 @@ import localforage from 'localforage'
 import { WatchEvent, SnapshotItem, LibraryItem } from '@/types/activity'
 import { Account } from '@/types/account'
 import { getSeasonEpisode, isActuallyWatched, isDatelessSavedWatchState, getLocalDayKey, getEpisodeIdentity, watchContextKey, parseScopedAccountId } from '@/lib/activity-utils'
-import { scopeIndexesFor, scopePartitionsFor, stremioTimeOf } from '@/lib/watch-event-indexes'
+import { scopeIndexesFor, reuseScopePartitionedIndexes, stremioTimeOf } from '@/lib/watch-event-indexes'
 import { MIN_EVENTS_GLOBAL } from '@/lib/watch-event-cap'
 import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
@@ -692,6 +692,8 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             [ctx]: { ...accountSnapshot, ...updatedSnapshot },
         }
 
+        // Populate before publishing so synchronous subscribers share this index too.
+        reuseScopePartitionedIndexes(state.events, capped)
         set({
             events: capped,
             snapshot: nextSnapshot,
@@ -703,9 +705,6 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             rollups,
         })
 
-        // Warm the shared index cache for the array just stored: the next diff or
-        // backfill under any scope reuses its partition instead of a full-array rebuild.
-        scopePartitionsFor(capped)
         persistWatchEvents()
         return newEvents
     },
@@ -820,6 +819,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             filterTombstonedEvents(sorted, get().deletedEventKeys),
             cur.rollups
         )
+        reuseScopePartitionedIndexes(cur.events, capped)
         set({ events: capped, rollups })
         persistWatchEvents()
         // Callers treat >0 as "state changed": annotations alone must still persist,

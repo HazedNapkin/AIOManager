@@ -23,8 +23,9 @@ import { getEpisodeIdentity, getLocalDayKey, watchContextKey, parseStremioDate }
  *     the historical row. Ids therefore live in one GLOBAL per-array set that
  *     diff/backfill seeds always receive in full.
  *
- * Indexes are built in one fused pass per distinct events-array reference and
- * cached in a WeakMap keyed by that exact array:
+ * Indexes are cached in a WeakMap keyed by the exact events-array reference.
+ * Producer publications reuse a scope's fold only when its ordered event
+ * references are identical; other arrays use a complete fused build:
  *   - any store path that assigns a new events array without warming the cache
  *     simply causes a rebuild on the next lookup — a miss is slower, never stale
  *     (the store never mutates an events array in place);
@@ -88,6 +89,8 @@ interface ScopeIndexEntry {
     /** All event ids in the array regardless of scope — O(1) lookup, cloned into seeds. */
     globalIds: Set<string>
     scopes: Map<string, WatchEventScopePartition>
+    /** Ordered immutable event references used to prove a scope's fold is unchanged. */
+    eventsByScope: Map<string, WatchEvent[]>
 }
 
 // The local day of a timestamp is a pure function of (timestamp, timezone):
@@ -179,7 +182,7 @@ export function stremioTimeOf(dateStr: string | undefined): number | undefined {
 }
 
 // Canonical index entries are keyed by the exact array reference and are only ever
-// written by the builder; consumers get clones of the sets/maps they need.
+// written by the builders; producers get clones of the sets/maps they need.
 const indexesByArray = new WeakMap<WatchEvent[], ScopeIndexEntry>()
 
 /**
@@ -199,10 +202,26 @@ function timezoneStamp(): string {
     return `${zone}|${new Date().getTimezoneOffset()}`
 }
 
+/** Fold in array order so exact timestamp ties keep the original first winner. */
+function addToPartition(partition: WatchEventScopePartition, scope: string, event: WatchEvent): void {
+    const identity = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
+    partition.identities.add(identity)
+    const key = `${scope}:${identity}:${dayKeyOf(event.event_ts)}`
+    const existing = partition.sessions.get(key)
+    if (
+        !existing ||
+        event.event_ts > existing.event_ts ||
+        (event.event_ts === existing.event_ts && event.detected_ts > existing.detected_ts)
+    ) {
+        partition.sessions.set(key, event)
+    }
+}
+
 /** One fused pass over the array: global ids, per-scope session winners and identities. */
 function buildIndexEntry(events: WatchEvent[], tz: string): ScopeIndexEntry {
     const globalIds = new Set<string>()
     const scopes = new Map<string, WatchEventScopePartition>()
+    const eventsByScope = new Map<string, WatchEvent[]>()
     for (const event of events) {
         globalIds.add(event.id)
         const scope = event.scopeKey ?? watchContextKey(event.accountId, event.sourceConnectionId)
@@ -210,20 +229,60 @@ function buildIndexEntry(events: WatchEvent[], tz: string): ScopeIndexEntry {
         if (!partition) {
             partition = { sessions: new Map(), identities: new Set() }
             scopes.set(scope, partition)
+            eventsByScope.set(scope, [])
         }
-        const identity = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
-        partition.identities.add(identity)
-        const key = `${scope}:${identity}:${dayKeyOf(event.event_ts)}`
-        const existing = partition.sessions.get(key)
-        if (
-            !existing ||
-            event.event_ts > existing.event_ts ||
-            (event.event_ts === existing.event_ts && event.detected_ts > existing.detected_ts)
-        ) {
-            partition.sessions.set(key, event)
+        eventsByScope.get(scope)!.push(event)
+        addToPartition(partition, scope, event)
+    }
+    return { tz, globalIds, scopes, eventsByScope }
+}
+
+/**
+ * Prepare a producer's next array before publishing it. Unchanged scopes reuse
+ * their immutable fold; changed scopes rebuild from the actual final array,
+ * after deduplication, tombstones and caps. Ordered reference equality also
+ * detects annotations, scope migrations and winner removal without guessing
+ * which producer delta survived. IDs always come from the entire final array.
+ *
+ * Neither the previous entry nor its partitions are mutated: async backfills
+ * and readers retaining an earlier array continue to see that array's index.
+ * Missing entries and timezone changes use the ordinary complete rebuild.
+ */
+export function reuseScopePartitionedIndexes(previous: WatchEvent[], events: WatchEvent[]): void {
+    const tz = timezoneStamp()
+    const cached = indexesByArray.get(previous)
+    if (!cached || cached.tz !== tz) {
+        buildScopePartitionedIndexes(events)
+        return
+    }
+    if (previous === events) return
+    if (dayMemoTz !== tz) {
+        dayKeyByTs.clear()
+        dayMemoTz = tz
+    }
+
+    const globalIds = new Set<string>()
+    const eventsByScope = new Map<string, WatchEvent[]>()
+    for (const event of events) {
+        globalIds.add(event.id)
+        const scope = event.scopeKey ?? watchContextKey(event.accountId, event.sourceConnectionId)
+        const members = eventsByScope.get(scope)
+        if (members) members.push(event)
+        else eventsByScope.set(scope, [event])
+    }
+    const scopes = new Map<string, WatchEventScopePartition>()
+    for (const [scope, members] of eventsByScope) {
+        const prior = cached.eventsByScope.get(scope)
+        if (prior && prior.length === members.length && members.every((event, i) => event === prior[i])) {
+            scopes.set(scope, cached.scopes.get(scope)!)
+            eventsByScope.set(scope, prior)
+        } else {
+            const partition = { sessions: new Map<string, WatchEvent>(), identities: new Set<string>() }
+            for (const event of members) addToPartition(partition, scope, event)
+            scopes.set(scope, partition)
         }
     }
-    return { tz, globalIds, scopes }
+    indexesByArray.set(events, { tz, globalIds, scopes, eventsByScope })
 }
 
 /** Rebuild and cache the indexes for exactly this array, under the CURRENT timezone. */
