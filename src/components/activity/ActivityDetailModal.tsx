@@ -1612,6 +1612,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                         hasNextSeason={episodeSeasonBounds?.hasNext ?? false}
                         onPersonClick={handlePersonClick}
                         onAccountClick={handleAccountClick}
+                        episodeWatchers={seriesEpisodeWatchers}
                         onGoBack={handleGoBack}
                         onClose={() => onOpenChange(false)}
                         onNavigateEpisode={(season, episode) => {

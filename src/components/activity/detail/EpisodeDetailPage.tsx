@@ -14,6 +14,7 @@ import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { Tooltip } from '@/components/ui/tooltip'
+import type { EpisodeWatcherIndex } from '@/lib/episode-watchers'
 
 export interface EpisodeDetailPageProps {
     seriesName: string
@@ -32,6 +33,8 @@ export interface EpisodeDetailPageProps {
     hasNextSeason?: boolean
     onPersonClick: (person: { name: string; photo?: string }, role: string) => void
     onAccountClick?: (accountId: string, accountName: string) => void
+    /** Household completion evidence shared with the series episode list. */
+    episodeWatchers?: EpisodeWatcherIndex
     onGoBack: () => void
     onClose: () => void
     onNavigateEpisode?: (seasonNumber: number, episodeNumber: number) => void
@@ -54,6 +57,7 @@ export function EpisodeDetailPage({
     hasNextSeason,
     onPersonClick,
     onAccountClick,
+    episodeWatchers,
     onGoBack,
     onClose,
     onNavigateEpisode,
@@ -153,12 +157,15 @@ export function EpisodeDetailPage({
 
     const events = useWatchEventStore(s => s.events)
     const accounts = useAccountStore(s => s.accounts)
+    const visibleAccounts = useMemo(() => new Map(accounts.filter(account => !account.hideLastWatched).map(account => [account.id, account])), [accounts])
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
 
     const episodeWatchStats = useMemo(() => {
-        if (!seriesImdbId) return null
+        const sharedWatchers = (episodeWatchers?.get(seasonNumber)?.get(episodeNumber) ?? [])
+            .filter(watcher => visibleAccounts.has(watcher.id))
         const exact = events.filter(e =>
+            !!seriesImdbId && visibleAccounts.has(e.accountId) &&
             e.itemId === seriesImdbId &&
             e.season === seasonNumber &&
             e.episode === episodeNumber
@@ -168,18 +175,23 @@ export function EpisodeDetailPage({
         // fall back to matching the episode number across seasons.
         const matches = exact.length > 0 || !isAnime
             ? exact
-            : events.filter(e => e.itemId === seriesImdbId && e.episode === episodeNumber)
-        if (matches.length === 0) return null
-        const accountIds = new Set(matches.map(e => e.accountId))
-        const totalTime = matches.reduce((sum, e) => sum + (e.time_watched || 0), 0)
-        const latest = matches.reduce((max, e) => Math.max(max, e.detected_ts || e.event_ts || 0), 0)
+            : events.filter(e => !!seriesImdbId && visibleAccounts.has(e.accountId) && e.itemId === seriesImdbId && e.episode === episodeNumber)
+        if (matches.length === 0 && sharedWatchers.length === 0) return null
+        const accountIds = new Set([
+            ...sharedWatchers.map(watcher => watcher.id),
+            ...matches.map(e => e.accountId),
+        ])
+        const totalTime = matches.reduce((sum, e) => sum + (e.backfill ? 0 : e.time_watched || 0), 0)
+        // Recovered watches and the shared avatar ordering carry observation times,
+        // not watch dates. Only dated events can populate the date label.
+        const latest = matches.reduce((max, e) => e.backfill ? max : Math.max(max, e.event_ts || 0), 0)
         return {
             count: matches.length,
             accountIds: Array.from(accountIds),
             totalTimeMs: totalTime,
             latestTs: latest > 0 ? new Date(latest) : null,
         }
-    }, [events, seriesImdbId, seasonNumber, episodeNumber, isAnime])
+    }, [events, episodeWatchers, visibleAccounts, seriesImdbId, seasonNumber, episodeNumber, isAnime])
 
     return (
         <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-card text-card-foreground">
@@ -343,7 +355,7 @@ export function EpisodeDetailPage({
                 {episodeWatchStats && (() => {
                     const totalMin = Math.round(episodeWatchStats.totalTimeMs / 60000)
                     const watcherAccounts = episodeWatchStats.accountIds
-                        .map(id => accounts.find(a => a.id === id))
+                        .map(id => visibleAccounts.get(id))
                         .filter(Boolean)
                     return (
                         <div>
@@ -360,6 +372,7 @@ export function EpisodeDetailPage({
                                                 <Tooltip key={acc!.id} content={maskedName}>
                                                     <button
                                                         type="button"
+                                                        aria-label={maskedName}
                                                         onClick={onAccountClick ? () => onAccountClick(acc!.id, acc!.name || 'Account') : undefined}
                                                         className={cn(
                                                             'relative flex h-9 w-9 items-center justify-center rounded-full border-2 border-background bg-card overflow-hidden transition-transform',
@@ -384,7 +397,9 @@ export function EpisodeDetailPage({
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                     <span className="inline-flex items-center gap-1">
                                         <Eye className="h-3 w-3" />
-                                        {episodeWatchStats.count} watch{episodeWatchStats.count === 1 ? '' : 'es'}
+                                        {episodeWatchStats.count > 0
+                                            ? `${episodeWatchStats.count} watch${episodeWatchStats.count === 1 ? '' : 'es'}`
+                                            : 'Watched'}
                                     </span>
                                     {totalMin > 0 && (
                                         <span className="inline-flex items-center gap-1">
