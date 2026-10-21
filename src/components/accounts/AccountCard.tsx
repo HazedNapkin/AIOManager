@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Textarea } from '@/components/ui/textarea'
 import { AccountAvatar } from './AccountAvatar'
 import { AccountMediaPlayback } from './AccountMedia'
+import { AccountSyncIndicator } from './AccountSyncIndicator'
 import { useJellyfinActivity } from '@/hooks/useJellyfinActivity'
 import { accountMediaPlayback, mergeMediaItems } from '@/lib/jellyfin/activity'
 import { PlatformSourceChip, platformName } from '@/components/addons/PlatformSourceChip'
@@ -21,9 +22,9 @@ import { useUIStore } from '@/store/uiStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { activityForAccount } from '@/lib/account-activity-index'
-import { Account } from '@/types/account'
+import { Account, type AddonChangelogEntry } from '@/types/account'
 import type { ActivityItem } from '@/types/activity'
-import { AlertCircle, AlertTriangle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ArrowUpRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Play } from 'lucide-react'
+import { AlertCircle, MoreVertical, Pencil, RefreshCw, Trash, GripVertical, ArrowUpRight, ArrowUpCircle, RotateCw, StickyNote, Undo2, Redo2, Bold, Italic, List, ListOrdered, Link2, Check, Trash2, Activity, ArrowRightLeft, CheckCircle2, Play } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { cn, getLatestAddonVersion, maskEmailLevel, maskNameLevel, getTimeAgo, isNewerVersion } from '@/lib/utils'
 import { STICKY_NOTE_MAX_LENGTH } from '@/lib/constants'
@@ -60,6 +61,30 @@ function HideableImage({ src, alt, className, fallback, style, dataThemePart }: 
       style={style}
     />
   )
+}
+
+// Module-level memo for the "changes today" chip: the changelog is scanned once per
+// changelog publication (with a 60s TTL for the sliding 24h window), not once per card
+// on every store write. In a 100-card grid that turns N x M work per sync into N O(1)
+// map lookups. The shared 60s relative-time ticker still refreshes the rendered count.
+// Semantics match the previous inline filter (entries strictly newer than 24h,
+// invalid timestamps dropped); only the 24h boundary can lag by up to the 60s TTL.
+// A new changelog array (sync append, clearChangelog) always rebuilds immediately.
+let recentChangeCountsCache: { changelog: AddonChangelogEntry[]; builtAt: number; counts: Map<string, number> } | null = null
+const RECENT_CHANGE_TTL_MS = 60_000
+function recentChangeCountsFor(changelog: AddonChangelogEntry[], now: number): Map<string, number> {
+  if (recentChangeCountsCache && recentChangeCountsCache.changelog === changelog && now - recentChangeCountsCache.builtAt < RECENT_CHANGE_TTL_MS) {
+    return recentChangeCountsCache.counts
+  }
+  const cutoff = now - 24 * 60 * 60 * 1000
+  const counts = new Map<string, number>()
+  for (const entry of changelog) {
+    const ts = new Date(entry.timestamp).getTime()
+    if (!Number.isFinite(ts) || ts <= cutoff) continue
+    counts.set(entry.accountId, (counts.get(entry.accountId) || 0) + 1)
+  }
+  recentChangeCountsCache = { changelog, builtAt: now, counts }
+  return counts
 }
 
 interface AccountCardProps {
@@ -210,10 +235,7 @@ export const AccountCard = memo(function AccountCard({
     [account.addons, latestVersions]
   )
   const recentChanges = useAccountStore(
-    useShallow((state) => state.changelog.filter(
-      e => e.accountId === account.id &&
-        Date.now() - new Date(e.timestamp).getTime() < 24 * 60 * 60 * 1000
-    ).length)
+    (state) => recentChangeCountsFor(state.changelog, Date.now()).get(account.id) ?? 0
   )
 
   // Watch dialog state to prevent accidental navigation when it closes
@@ -277,7 +299,6 @@ export const AccountCard = memo(function AccountCard({
       ? maskEmailLevel(account.name, privacyLevel)
       : maskNameLevel(account.name || accountEmail || 'Unnamed Account', privacyLevel)
 
-  const timeStr = getTimeAgo(new Date(account.lastSync))
   const hasAccentColor = account.accentColor && account.accentColor !== 'none'
   const accentColor = hasAccentColor ? account.accentColor! : null
   const enabledAddons = account.addons.filter(a => a.flags?.enabled !== false)
@@ -624,14 +645,11 @@ export const AccountCard = memo(function AccountCard({
             </div>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <div className="flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground/65 md:text-[11px]">
-              {(Date.now() - new Date(account.lastSync).getTime()) > 24 * 60 * 60 * 1000 && (
-                <Tooltip content="Sync recommended (Last sync > 24h ago)" side="top">
-                  <AlertTriangle className="h-3 w-3 shrink-0 text-warning" aria-label="Sync recommended" />
-                </Tooltip>
-              )}
-              <span>Synced {timeStr}</span>
-            </div>
+            <AccountSyncIndicator
+              loading={loading}
+              lastSync={account.lastSync}
+              error={account.status === 'error' ? account.lastError || 'Last sync attempt failed' : null}
+            />
             <Tooltip content={account.note ? `Note: ${account.note.slice(0, 60)}${account.note.length > 60 ? '…' : ''}` : 'Add note'} side="top">
               <Button
                 variant="ghost"
