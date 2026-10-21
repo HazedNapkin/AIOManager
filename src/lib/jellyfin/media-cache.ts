@@ -336,17 +336,81 @@ export async function loadMediaObservation(storage: MediaCacheStorage, decrypt: 
         return null
     }
     if (typeof sealed !== 'string' || sealed === '') return null
-    let payload: string
-    try {
-        payload = await decrypt.decrypt(sealed)
-    } catch {
-        return null
-    }
-    return decodeMediaObservation(payload, scope)
+    return decodeStoredMediaObservation(sealed, decrypt, scope)
 }
 
 /** Keys of this cache's namespace that no live scope owns anymore. */
 export function orphanedMediaCacheKeys(storedKeys: string[], liveKeys: string[]): string[] {
     const live = new Set(liveKeys)
     return storedKeys.filter(key => key.startsWith(`${MEDIA_CACHE_PREFIX}:`) && !live.has(key))
+}
+
+
+// Each section is independently sealed with its exact subject scope. A head
+// refresh can retain the archive ciphertext instead of decrypting/resealing it.
+// Metadata is sealed too: no watch dates, identities or items are plaintext.
+const sectionNames = ['resume', 'played', 'archive'] as const
+interface SectionEnvelope {
+    v: 2
+    metadata: string
+    resume?: string
+    played?: string
+    archive?: string
+}
+function sectionEnvelope(value: string): SectionEnvelope | null {
+    try {
+        const parsed = JSON.parse(value)
+        return parsed?.v === 2 && typeof parsed.metadata === 'string' ? parsed as SectionEnvelope : null
+    } catch { return null }
+}
+async function envelopeMetadata(envelope: SectionEnvelope, cipher: MediaCacheDecryptor, scope: MediaCacheScope): Promise<{ savedAt: number } | null> {
+    try {
+        const metadata = JSON.parse(await cipher.decrypt(envelope.metadata))
+        if (metadata?.v !== 2 || !metadata.scope || !sameMediaCacheScope(metadata.scope, scope)
+            || typeof metadata.savedAt !== 'number' || !Number.isFinite(metadata.savedAt) || metadata.savedAt < 0) return null
+        return { savedAt: metadata.savedAt }
+    } catch { return null }
+}
+async function decodeStoredMediaObservation(sealed: string, cipher: MediaCacheDecryptor, scope: MediaCacheScope): Promise<MediaCacheObservation | null> {
+    const envelope = sectionEnvelope(sealed)
+    if (!envelope) {
+        try { return decodeMediaObservation(await cipher.decrypt(sealed), scope) } catch { return null }
+    }
+    const metadata = await envelopeMetadata(envelope, cipher, scope)
+    if (!metadata) return null
+    const observation: MediaCacheObservation = { savedAt: metadata.savedAt }
+    for (const section of sectionNames) {
+        const ciphertext = envelope[section]
+        if (typeof ciphertext !== 'string') continue
+        try {
+            const decoded = decodeMediaObservation(await cipher.decrypt(ciphertext), scope)
+            if (decoded?.[section]) observation[section] = decoded[section]
+        } catch { /* A damaged section cannot discard healthy siblings. */ }
+    }
+    return observation.resume || observation.played || observation.archive ? observation : null
+}
+
+/** Builds one atomic storage value, accepting old monolithic observations on first write. */
+export async function sealMediaObservationSections(
+    previous: string | null,
+    cipher: MediaCacheCrypto,
+    scope: MediaCacheScope,
+    next: MediaCacheObservationSections,
+): Promise<string | null> {
+    const parsedEnvelope = previous ? sectionEnvelope(previous) : null
+    let envelope = parsedEnvelope
+    if (envelope && !await envelopeMetadata(envelope, cipher, scope)) envelope = null
+    // Legacy migration is one-time. Foreign-key/scope payloads are cache misses.
+    const legacy = previous && !parsedEnvelope ? await decodeStoredMediaObservation(previous, cipher, scope) : null
+    const savedAt = next.savedAt ?? Date.now()
+    const result: SectionEnvelope = {
+        v: 2,
+        metadata: await cipher.encrypt(JSON.stringify({ v: 2, scope, savedAt })),
+    }
+    for (const section of sectionNames) {
+        const observation = next[section] ?? legacy?.[section]
+        if (observation) result[section] = await cipher.encrypt(encodeMediaObservation(scope, { [section]: observation, savedAt }))
+        else if (typeof envelope?.[section] === 'string') result[section] = envelope[section]
+    }
+    return result.resume || result.played || result.archive ? JSON.stringify(result) : null
 }

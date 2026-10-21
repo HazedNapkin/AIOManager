@@ -9,10 +9,9 @@ import { createJellyfinClient } from '@/lib/jellyfin/client'
 import { openJellyfinSecret } from '@/lib/jellyfin/connection-data'
 import {
     MEDIA_READ_WAITING_MESSAGE,
-    encodeMediaObservation,
     loadMediaObservation,
     mediaCacheStorageKey,
-    mergeMediaObservations,
+    sealMediaObservationSections,
     mergePlayedReads,
     observedArchiveRead,
     observedLibraryReads,
@@ -196,11 +195,13 @@ async function persistMediaSectionsNow(job: MediaCacheJob, scope: MediaCacheScop
         if (!cacheJobIsCurrent(job, scope)) return
         // Serialize read-modify-write for this subject: head and archive writes
         // must see the last committed sections instead of racing from one base.
-        const stored = await loadMediaObservation(job.storage, { decrypt: sealed => decrypt(sealed, key) }, scope) ?? undefined
+        const stored = await job.storage.getItem(mediaCacheStorageKey(scope))
         if (!cacheJobIsCurrent(job, scope) || generation !== hydrationGeneration) return
-        const merged = mergeMediaObservations(stored, sections)
-        if (!merged) return
-        const sealed = await encrypt(encodeMediaObservation(scope, merged), key)
+        const sealed = await sealMediaObservationSections(stored, {
+            encrypt: plain => encrypt(plain, key),
+            decrypt: encrypted => decrypt(encrypted, key),
+        }, scope, sections)
+        if (!sealed) return
         // Reject late writes: if the vault re-locked or the workspace switched
         // while sealing, this observation belongs to another owner's session
         // and must never land in the active workspace's storage.
@@ -370,7 +371,9 @@ export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
             return read
         },
     })), combine }, mediaQueries)
-    const results = useMemo(() => jobs.map((job, i) => {
+    // Session polls update live playback independently of the library/archive.
+    // Keep the played union stable until one of its own inputs changes.
+    const libraryResults = useMemo(() => jobs.map((job, i) => {
         // A restored observation only stands in for a read that is still on
         // its way: once the live result (success OR failure per read) or a
         // query-level error arrives, it replaces the placeholder, so API
@@ -402,11 +405,15 @@ export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
             reads: {
                 resume: library.data[i]?.resume || restored?.resume || waiting,
                 played,
-                sessions: sessions.data[i] || waiting,
-            } satisfies JellyfinMediaReads,
-            error: library.errors[i] || sessions.errors[i] ? 'Could not unlock this connection. Reconnect to this server and user to restore access.' : '',
+            } satisfies LibraryReads,
+            error: library.errors[i] ? 'Could not unlock this connection. Reconnect to this server and user to restore access.' : '',
         }
-    }), [jobs, library.data, library.errors, sessions.data, sessions.errors, archive.data, archive.errors, archive.fetching, hydration])
+    }), [jobs, library.data, library.errors, archive.data, archive.errors, archive.fetching, hydration])
+    const results = useMemo(() => libraryResults.map((result, i) => ({
+        ...result,
+        reads: { ...result.reads, sessions: sessions.data[i] || waiting } satisfies JellyfinMediaReads,
+        error: result.error || (sessions.errors[i] ? 'Could not unlock this connection. Reconnect to this server and user to restore access.' : ''),
+    })), [libraryResults, sessions.data, sessions.errors])
     useEffect(() => {
         for (const result of results) {
             const failure = jellyfinConnectionReadFailure(result.reads)
