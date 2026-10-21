@@ -26,7 +26,7 @@ import { useLibraryCache } from '@/store/libraryCache'
 import { PlatformLogo } from './ConnectionPrimitives'
 import { MigrationArtwork } from './MigrationArtwork'
 import { MigrationTitleDetails } from './MigrationTitleDetails'
-import { MigrationProgressPanel, MigrationResultsPanel, migrationStateLabel, type ImportProgress, type MigrationOutcome } from './WatchMigrationFeedback'
+import { MigrationProgressPanel, MigrationImportLog, MigrationResultsPanel, migrationStateLabel, type ImportProgress, type MigrationOutcome } from './WatchMigrationFeedback'
 import type { Account } from '@/types/account'
 import type { Connection } from '@/types/connection'
 
@@ -412,7 +412,7 @@ export function WatchMigrationDialog({ open, onOpenChange, accountId, connection
                 <div className="min-h-0 space-y-4 overflow-y-auto px-1 pb-1">
                     {!busy && !showingResults && connectionSummary}
                     {busy === 'import' && plan && selectedSource && <p className="break-words text-xs text-muted-foreground">{migrationSourceLabel(selectedSource, displayName)} → {migrationSourceLabel(connection, displayName)} · {displayName(plan.destination.subject)}</p>}
-                    {busy ? <MigrationProgressPanel mode={busy} message={progress} progress={busy === 'import' ? importProgress : null} /> : showingResults && plan && outcome && selectedSource ? <MigrationResultsPanel plan={plan} results={results} outcome={outcome} notice={error || undefined} unattempted={unattemptedCount} onExport={download} connections={{
+                    {busy ? <><MigrationProgressPanel mode={busy} message={progress} progress={busy === 'import' ? importProgress : null} />{busy === 'import' && plan && <MigrationImportLog plan={plan} results={results} />}</> : showingResults && plan && outcome && selectedSource ? <MigrationResultsPanel plan={plan} results={results} outcome={outcome} notice={error || undefined} unattempted={unattemptedCount} onExport={download} connections={{
                         source: { name: migrationSourceLabel(selectedSource, displayName), user: displayName(plan.source.subject), logo: <PlatformLogo platform={selectedSource.platform} isHydra={selectedSource.connectionType === 'hydra-outbound'} className="h-4 w-4" /> },
                         destination: { name: migrationSourceLabel(connection, displayName), user: displayName(plan.destination.subject), logo: <PlatformLogo platform={connection.platform} className="h-4 w-4" /> },
                     }} /> : !plan ? <div className="space-y-4">
@@ -452,12 +452,12 @@ export function WatchMigrationDialog({ open, onOpenChange, accountId, connection
                         <p className="text-sm leading-relaxed text-muted-foreground">Review the titles before copying. We’ll show what can be added and what’s already saved. Some services don’t share original watch dates or a full viewing history.</p>
                     </div> : <div className="space-y-4">
                         <h3 ref={previewHeading} tabIndex={-1} className="text-base font-semibold outline-none">Review your import</h3>
-                        <div className="grid grid-cols-3 gap-2">
-                            <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/20 px-3 py-3"><p className="text-xs text-muted-foreground"><span className="mr-1 text-lg font-semibold tabular-nums text-foreground">{plan.source.records.length.toLocaleString()}</span> titles found</p></div>
-                            <div data-theme-part="panel" className="rounded-xl border border-primary/25 bg-primary/5 px-3 py-3"><p className="text-xs text-muted-foreground"><span className="mr-1 text-lg font-semibold tabular-nums text-primary">{pendingReadyCount.toLocaleString()}</span> ready</p></div>
-                            <div data-theme-part="panel" className="rounded-xl border border-success/25 bg-success/5 px-3 py-3"><p className="text-xs text-muted-foreground"><span className="mr-1 text-lg font-semibold tabular-nums text-success">{verifiedCount.toLocaleString()}</span> confirmed</p></div>
+                        <div aria-label="Import preview counts" className="flex flex-wrap items-baseline gap-x-5 gap-y-2 rounded-xl border border-border/40 bg-card px-4 py-3 text-xs text-muted-foreground">
+                            <p><span className="mr-1 text-base font-semibold tabular-nums text-foreground">{plan.source.records.length.toLocaleString()}</span> titles found</p>
+                            <p><span className="mr-1 text-base font-semibold tabular-nums text-foreground">{pendingReadyCount.toLocaleString()}</span> ready to import</p>
+                            {verifiedCount > 0 && <p><span className="mr-1 text-base font-semibold tabular-nums text-foreground">{verifiedCount.toLocaleString()}</span> confirmed</p>}
                         </div>
-                        {alreadySavedCount > 0 && <p className="flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="h-4 w-4 shrink-0 text-success" />{alreadySavedCount.toLocaleString()} {alreadySavedCount === 1 ? 'title is' : 'titles are'} already saved here and won’t be copied again.</p>}
+                        {alreadySavedCount > 0 && <p className="flex items-start gap-2 text-xs text-muted-foreground"><ShieldCheck aria-hidden="true" className="h-4 w-4 shrink-0" />{alreadySavedCount.toLocaleString()} {alreadySavedCount === 1 ? 'title is' : 'titles are'} already saved here and won’t be copied again.</p>}
                         <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/20 p-3 space-y-2">
                             <p className="flex items-center gap-2 text-xs font-medium"><Info aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />Import details and limits</p>
                             {!plan.source.complete && <p className="text-xs leading-relaxed text-warning">Some source history could not be verified as complete. Only the titles in this preview can be copied; existing destination history is kept.</p>}

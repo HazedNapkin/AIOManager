@@ -36,6 +36,33 @@ export function MigrationProgressPanel({ mode, message, progress }: {
 }
 
 const resultLabels = { applied: 'Imported', unchanged: 'Already saved', conflict: 'Kept', failed: 'Unconfirmed' } as const
+
+export function MigrationImportLog({ plan, results }: { plan: WatchMigrationPlan; results: MigrationResult[] }) {
+    const rows = useMemo(() => new Map(plan.rows.map(row => [row.id, row])), [plan])
+    const recent = results.slice(-6)
+    return <section aria-label="Import log" className="overflow-hidden rounded-xl border border-border/50 bg-card">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-border/40 px-4 py-3">
+            <h4 className="text-sm font-semibold">Import log</h4>
+            <span className="text-xs tabular-nums text-muted-foreground">{results.length > 6 ? `Latest 6 of ${results.length.toLocaleString()} checked` : `${results.length.toLocaleString()} checked`}</span>
+        </div>
+        {recent.length === 0 && <p className="px-4 py-4 text-sm text-muted-foreground">Checking your titles. Results will appear here.</p>}
+        <ol role="log" aria-label="Recent import results" aria-live="polite" aria-relevant="additions" className="divide-y divide-border/40 px-4">
+            {recent.map(result => {
+                const row = rows.get(result.rowId)
+                const ResultIcon = result.status === 'applied' || result.status === 'unchanged' ? CheckCircle2 : result.status === 'failed' ? CircleAlert : Info
+                return <li key={result.rowId} className="flex items-start gap-2.5 py-3">
+                    <ResultIcon aria-hidden="true" className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', result.status === 'failed' ? 'text-warning' : 'text-muted-foreground')} />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium [overflow-wrap:anywhere]">{row ? watchRecordTitle(row.source) : 'Title'}</p>
+                        {row && <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{watchRecordSubtitle(row.source)}</p>}
+                    </div>
+                    <span className="max-w-[40%] text-right text-xs leading-5 text-muted-foreground">{result.status === 'applied' ? 'Saved and confirmed' : resultLabels[result.status]}</span>
+                </li>
+            })}
+        </ol>
+    </section>
+}
+
 const resultDescriptions = {
     applied: 'Saved and confirmed on this connection.',
     unchanged: 'Already saved here. No extra copy was needed.',
