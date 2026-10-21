@@ -157,21 +157,27 @@ async function hydrateMediaCache(jobs: MediaCacheJob[], vaultEpoch: number): Pro
     const generation = hydrationGeneration
     const reads = new Map<string, RestoredLibraryReads>()
     const completed = new Set<string>()
-    for (const job of jobs) {
-        const scope = mediaScopeFor(job)
-        if (!scope) continue
-        const jobKey = restorationKey(scope, vaultEpoch)
-        try {
-            const observation = await loadMediaObservation(job.storage, { decrypt: sealed => decrypt(sealed, job.encryptionKey) }, scope)
-            const restored = observation ? restoredLibraryReads(observation) : null
-            if (restored && cacheJobIsCurrent(job, scope)) reads.set(jobKey, restored)
-        } catch {
-            // Unreadable observation: this subject waits for its live read.
+    let nextJob = 0
+    async function hydrateNext(): Promise<void> {
+        while (nextJob < jobs.length && generation === hydrationGeneration) {
+            const job = jobs[nextJob++]
+            const scope = mediaScopeFor(job)
+            if (!scope) continue
+            const jobKey = restorationKey(scope, vaultEpoch)
+            try {
+                const observation = await loadMediaObservation(job.storage, { decrypt: sealed => decrypt(sealed, job.encryptionKey) }, scope)
+                const restored = observation ? restoredLibraryReads(observation) : null
+                if (restored && cacheJobIsCurrent(job, scope)) reads.set(jobKey, restored)
+            } catch {
+                // Unreadable observation: this subject waits for its live read.
+            }
+            if (generation !== hydrationGeneration) return
+            completed.add(jobKey)
+            pendingHydrations.delete(jobKey)
         }
-        if (generation !== hydrationGeneration) return
-        completed.add(jobKey)
-        pendingHydrations.delete(jobKey)
     }
+    // Overlap bounded storage/decryption work, then publish the batch once.
+    await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, hydrateNext))
     if (generation !== hydrationGeneration) return
     // Several cards can mount independently. Merge their hydration results so
     // the first card does not mark every other account as already hydrated.
