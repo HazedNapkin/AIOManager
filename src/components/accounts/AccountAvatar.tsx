@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 interface AccountAvatarProps {
-    account: Pick<Account, 'name' | 'email' | 'emoji' | 'avatar' | 'status'>
+    account: Pick<Account, 'name' | 'email' | 'emoji' | 'avatar'> & Partial<Pick<Account, 'status'>>
     size?: Size
     showStatus?: boolean
     pulse?: boolean

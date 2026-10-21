@@ -15,6 +15,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import type { Account } from '@/types/account'
 import { historyEntryToActivityItem } from '@/lib/activity-utils'
+import { crossLinkWatcherIndex, type WatcherItemIdentity } from '@/lib/watcher-identity'
 import {
     Activity,
     Flame,
@@ -164,6 +165,7 @@ export function MetricsPage() {
 
     const watchersByItemId = useMemo(() => {
         const map = new Map<string, Account[]>()
+        const identityByKey = new Map<string, WatcherItemIdentity>()
         for (const item of filteredHistory) {
             if (!item.itemId) continue
             const acc = accounts.find(a => a.id === item.accountId)
@@ -173,8 +175,12 @@ export function MetricsPage() {
                 if (!list.some(a => a.id === acc.id)) list.push(acc)
             } else {
                 map.set(item.itemId, [acc])
+                identityByKey.set(item.itemId, { itemId: item.itemId, name: item.name, type: item.type })
             }
         }
+        // Cross-source identities address the same show with different ids (tt vs
+        // platform-scoped); share watchers so shared titles stop showing "1 person".
+        crossLinkWatcherIndex(map, identityByKey)
         return map
     }, [filteredHistory, accounts])
 

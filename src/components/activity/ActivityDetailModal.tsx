@@ -7,6 +7,7 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
 import { fetchCinemetaDetail, formatSavedEpisodeRanges, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
+import { crossLinkWatcherIndex, watcherMatchesItem, type WatcherItemIdentity } from '@/lib/watcher-identity'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
 import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
@@ -20,6 +21,7 @@ import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
+import { buildEpisodeWatcherIndex } from '@/lib/episode-watchers'
 import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, Tv, Sparkles, Languages, Building2, Layers, Users } from 'lucide-react'
 import { RatingBadge, type ProviderRating } from '@/components/activity/detail/RatingBadge'
 import { fetchAdditionalRatings, mergeRatingsKeepExisting } from '@/lib/ratings'
@@ -760,16 +762,22 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     const renderItem: DetailItem | null = currentEntry?.kind === 'item' ? currentEntry.item : (activeItem ?? item)
 
     const accounts = useAccountStore(state => state.accounts)
-    const { history: allWatchHistory } = useWatchHistory()
+    // The closed shell still handles navigation and exit animation, but does not
+    // need another history derivation or another set of live query observers.
+    const { history: allWatchHistory } = useWatchHistory(undefined, open)
 
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
 
     const otherWatchers = useMemo(() => {
         if (!renderItem?.itemId) return []
+        const showIdentity: WatcherItemIdentity = { itemId: renderItem.itemId, name: renderItem.name, type: renderItem.type }
         const seen = new Map<string, { id: string; name: string; emoji?: string; avatar?: string; lastWatched: Date }>()
         for (const h of allWatchHistory) {
-            if (h.itemId !== renderItem.itemId) continue
+            // Cross-source identity: the same show can be addressed by tt ids on one
+            // account and a platform-scoped id on another, so exact itemId equality
+            // undercounts watchers. watcherMatchesItem falls back to tt and title.
+            if (!watcherMatchesItem({ itemId: h.itemId, name: h.name, type: h.type }, showIdentity)) continue
             if (h.accountId === renderItem?.accountId) continue
             const acc = accounts.find(a => a.id === h.accountId)
             if (!acc || acc.hideLastWatched) continue
@@ -779,10 +787,11 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             }
         }
         return [...seen.values()].sort((a, b) => b.lastWatched.getTime() - a.lastWatched.getTime())
-    }, [allWatchHistory, renderItem?.itemId, renderItem?.accountId, accounts])
+    }, [allWatchHistory, renderItem?.itemId, renderItem?.name, renderItem?.type, renderItem?.accountId, accounts])
 
     const watchersByItemId = useMemo(() => {
         const map = new Map<string, RailWatcher[]>()
+        const identityByKey = new Map<string, WatcherItemIdentity>()
         for (const h of allWatchHistory) {
             if (!h.itemId) continue
             const acc = accounts.find(a => a.id === h.accountId)
@@ -793,8 +802,11 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 if (!list.some(w => w.id === watcher.id)) list.push(watcher)
             } else {
                 map.set(h.itemId, [watcher])
+                identityByKey.set(h.itemId, { itemId: h.itemId, name: h.name, type: h.type })
             }
         }
+        // Same show, different source identities (tt vs platform-scoped ids): share watchers.
+        crossLinkWatcherIndex(map, identityByKey)
         return map
     }, [allWatchHistory, accounts])
 
@@ -825,6 +837,24 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
         }
         return episodes.length > 0 ? episodes : undefined
     }, [allWatchHistory, renderItem?.itemId, renderItem?.type, renderItem?.accountId, renderItem?.sourceConnectionId])
+
+    // Who actually watched each episode of the rendered series, household-wide
+    // (every account, every connection, deduped per managed account). Uses the same
+    // evidence bar as seriesWatchedEpisodes above, but answers a different question:
+    // not "is it marked for this login" but "which people completed it". Built in one
+    // history pass plus per-episode ordering; rows use direct lookups and cap their DOM.
+    // Deleted/unowned accounts and hideLastWatched opt-outs never leak in, and names
+    // carry the privacy name level.
+    const seriesEpisodeWatchers = useMemo(() => {
+        const seriesLike = renderItem?.type === 'series' || renderItem?.type === 'anime' || renderItem?.type === 'episode'
+        if (!renderItem?.itemId || !seriesLike) return undefined
+        return buildEpisodeWatcherIndex({
+            itemId: renderItem.itemId,
+            history: allWatchHistory,
+            accounts,
+            privacyLevelNames: isPrivacyModeEnabled ? privacyLevelNames : 0,
+        })
+    }, [allWatchHistory, accounts, renderItem?.itemId, renderItem?.type, isPrivacyModeEnabled, privacyLevelNames])
 
     const savedEpisodeRanges = useMemo(
         () => renderItem?.importedSavedState ? formatSavedEpisodeRanges(renderItem.savedEpisodes) : [],
@@ -2022,6 +2052,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     seriesTmdbId={seriesTmdbId}
                                     activeItem={activeItem}
                                     watchedEpisodes={seriesWatchedEpisodes}
+                                    episodeWatchers={seriesEpisodeWatchers}
                                     isLight={isLight}
                                     loading={loading}
                                     onEpisodeClick={handleEpisodeClick}

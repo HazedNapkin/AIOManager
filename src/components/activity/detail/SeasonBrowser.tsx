@@ -3,6 +3,8 @@ import { Tv, Play, Check, Calendar, Clock, Star, ChevronRight } from 'lucide-rea
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { EPISODE_WATCHER_AVATAR_CAP, episodeWatcherLabel, type EpisodeWatcherIndex } from '@/lib/episode-watchers'
 import { fetchSeasonEpisodes, fetchSeasonsList, proxyFetch, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
 import type { DetailItem } from '@/components/activity/detail/types'
 
@@ -13,6 +15,13 @@ interface SeasonBrowserProps {
     loading: boolean
     /** Actual watched episodes (real events + verified bitfield recoveries) to mark in the browser. */
     watchedEpisodes?: ReadonlyArray<{ season: number; episode: number }>
+    /**
+     * Which accounts actually watched each episode (household-wide, same evidence bar
+     * as watchedEpisodes). Built once by the caller; rows do O(1) lookups and render a
+     * capped, non-interactive avatar stack so the list shows who watched what without
+     * opening every episode.
+     */
+    episodeWatchers?: EpisodeWatcherIndex
     onEpisodeClick?: (data: {
         episodeNumber: number
         episodeName: string
@@ -24,7 +33,7 @@ interface SeasonBrowserProps {
     }) => void
 }
 
-export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watchedEpisodes, onEpisodeClick }: SeasonBrowserProps) {
+export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watchedEpisodes, episodeWatchers, onEpisodeClick }: SeasonBrowserProps) {
     const [seasons, setSeasons] = useState<SeasonInfo[]>([])
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null)
     const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
@@ -319,8 +328,15 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watc
                         const actuallyWatched = selectedSeason !== null && watchedBySeason.get(selectedSeason)?.has(ep.episodeNumber) === true
                         const isWatched = (highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber)
                             || actuallyWatched
+                        // Who actually watched this episode (any account in the household).
+                        // Informational only: the stack is plain spans with a shared
+                        // title/aria label, so nothing interactive nests inside the row
+                        // button and no per-avatar Tooltip portals exist to stack up.
+                        const watchers = selectedSeason !== null
+                            ? episodeWatchers?.get(selectedSeason)?.get(ep.episodeNumber)
+                            : undefined
                         return (
-                            <Tooltip content="View episode details" side="top">
+                            <Tooltip key={ep.episodeNumber} content="View episode details" side="top">
                             <button
                                 key={ep.episodeNumber}
                                 type="button"
@@ -386,6 +402,38 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watc
                                         )}
                                     </div>
                                 </div>
+                                {watchers && watchers.length > 0 && (
+                                    <span
+                                        role="img"
+                                        data-watcher-count={watchers.length}
+                                        title={episodeWatcherLabel(watchers)}
+                                        aria-label={episodeWatcherLabel(watchers)}
+                                        className="flex shrink-0 items-center -space-x-1.5"
+                                    >
+                                        {watchers.slice(0, EPISODE_WATCHER_AVATAR_CAP).map(w => (
+                                            <span
+                                                key={w.id}
+                                                data-watcher-avatar=""
+                                                className="relative flex h-5 w-5 items-center justify-center overflow-hidden rounded-full border border-background bg-card sm:h-6 sm:w-6"
+                                            >
+                                                <AccountAvatar
+                                                    account={{ name: w.name, emoji: w.emoji, avatar: w.avatar }}
+                                                    size="xs"
+                                                    showStatus={false}
+                                                    className="!h-full !w-full rounded-full"
+                                                />
+                                            </span>
+                                        ))}
+                                        {watchers.length > EPISODE_WATCHER_AVATAR_CAP && (
+                                            <span
+                                                data-watcher-overflow=""
+                                                className="pl-2.5 text-[10px] font-bold leading-none text-muted-foreground"
+                                            >
+                                                +{watchers.length - EPISODE_WATCHER_AVATAR_CAP}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
                                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
                             </button>
                             </Tooltip>
