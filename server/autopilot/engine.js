@@ -83,6 +83,76 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             ruleFetchCacheBytes -= o.bytes
         }
     }
+
+    // Steady-state rules re-decrypt the same version-immutable row fields on every
+    // recheck (auth_key, priority_chain, active_url, addon_list, custom_check_urls,
+    // webhook_url; the addon_list leg dominates). The row cache above already trusts
+    // (id, updated_at) as the version of exactly these fields — every writer bumps
+    // updated_at — so the decrypted STRINGS are memoized under that version key and
+    // re-validated against the exact ciphertext before reuse: a row edited without
+    // bumping updated_at still misses. Only immutable strings are stored; parse and
+    // every downstream derivation still run per cycle, so no shared mutable object
+    // is introduced. Stabilization is deliberately NOT memoized: heartbeats update
+    // it in autopilot_rule_stats without touching autopilot_rules.updated_at.
+    // TTL and byte bounds are memory hygiene only — freshness is the version key
+    // plus ciphertext identity, never the TTL.
+    const RULE_DECRYPT_CACHE_MAX_ENTRIES = 2048
+    const RULE_DECRYPT_CACHE_MAX_BYTES = 64 * 1024 * 1024
+    const ruleDecryptCache = new Map()
+    let ruleDecryptCacheBytes = 0
+    const ruleDecryptCacheStats = { hits: 0, misses: 0, bytesSaved: 0, evictions: 0, windowStart: Date.now() }
+
+    const evictOldestRuleDecryptEntry = () => {
+        const oldest = ruleDecryptCache.keys().next().value
+        if (oldest === undefined) return
+        ruleDecryptCacheBytes -= ruleDecryptCache.get(oldest).bytes
+        ruleDecryptCache.delete(oldest)
+        ruleDecryptCacheStats.evictions++
+    }
+
+    function decryptRuleField(row, field) {
+        const ciphertext = row[field]
+        // Legacy plaintext (no IV:cipher:tag shape) never enters the cache.
+        if (typeof ciphertext !== 'string' || !ciphertext.includes(':') || ciphertext.startsWith('http')) return decrypt(ciphertext, FALLBACK_KEYS)
+        const key = `${row.id}\u0000${row.updated_at ?? 'null'}\u0000${field}`
+        const hit = ruleDecryptCache.get(key)
+        if (hit) {
+            if (hit.cipher === ciphertext && Date.now() - hit.at <= RULE_CACHE_TTL_MS) {
+                ruleDecryptCache.delete(key)
+                ruleDecryptCache.set(key, hit)
+                ruleDecryptCacheStats.hits++
+                ruleDecryptCacheStats.bytesSaved += hit.plainBytes
+                return hit.plaintext
+            }
+            // Expired (hygiene) or the ciphertext drifted under the same version
+            // key: drop the entry and re-decrypt from the row's current value.
+            ruleDecryptCache.delete(key)
+            ruleDecryptCacheBytes -= hit.bytes
+        }
+        const plaintext = decrypt(ciphertext, FALLBACK_KEYS)
+        ruleDecryptCacheStats.misses++
+        // Failed decrypts (null) are never memoized: serving a cached failure
+        // until the row or the process changes could hide a recovery path.
+        // Corrupt rows simply re-attempt (and re-fail) every recheck, exactly
+        // like the uncached behavior; per-cycle failure recording at the call
+        // sites keys off this return value and is unaffected.
+        if (plaintext === null || plaintext === undefined) return plaintext
+        // Bound the encoded payload bytes. JavaScript strings and Map metadata
+        // also have heap overhead, separately limited by the entry count.
+        const plainBytes = Buffer.byteLength(plaintext, 'utf8')
+        const bytes = Buffer.byteLength(ciphertext, 'utf8') + plainBytes
+        // A single entry larger than the whole budget is never stored (storing
+        // it would either breach the cap or thrash insert/evict every call).
+        if (bytes > RULE_DECRYPT_CACHE_MAX_BYTES) return plaintext
+        ruleDecryptCache.set(key, { cipher: ciphertext, plaintext, plainBytes, bytes, at: Date.now() })
+        ruleDecryptCacheBytes += bytes
+        // Strict cumulative bound: evict oldest until within budget (size > 0
+        // so the loop can never strand a lone entry above the cap).
+        while (ruleDecryptCacheBytes > RULE_DECRYPT_CACHE_MAX_BYTES && ruleDecryptCache.size > 0) evictOldestRuleDecryptEntry()
+        while (ruleDecryptCache.size > RULE_DECRYPT_CACHE_MAX_ENTRIES) evictOldestRuleDecryptEntry()
+        return plaintext
+    }
+
     const pruneRuleRuntimeState = () => {
         if (ruleRuntimeState.size <= MAX_RULE_RUNTIME_ENTRIES) return
         const cutoff = Date.now() - RULE_RUNTIME_TTL_MS
@@ -575,8 +645,8 @@ export function createAutopilotEngine(fastify, reconciler = null) {
     // commit fails and therefore leaves the row version unchanged.
     const cycleTargets = new Map()
 
-    const parseChainValue = (raw) => {
-        const decrypted = decrypt(raw, FALLBACK_KEYS)
+    const parseChainValue = (raw, row = null) => {
+        const decrypted = row ? decryptRuleField(row, 'priority_chain') : decrypt(raw, FALLBACK_KEYS)
         let parsed = []
         try {
             if (Array.isArray(decrypted)) parsed = decrypted
@@ -599,13 +669,13 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const plans = []
         for (const row of (rows || [])) {
             const urls = []
-            for (const url of parseChainValue(row.priority_chain)) {
+            for (const url of parseChainValue(row.priority_chain, row)) {
                 const norm = normalizeAddonUrl(url).toLowerCase()
                 if (!norm || own.has(norm) || urls.includes(norm)) continue
                 urls.push(norm)
             }
             if (urls.length === 0) continue
-            const persisted = normalizeAddonUrl(decrypt(row.active_url, FALLBACK_KEYS) || row.active_url || '').toLowerCase()
+            const persisted = normalizeAddonUrl(decryptRuleField(row, 'active_url') || row.active_url || '').toLowerCase()
             // An uncommitted in-cycle decision outranks the row — but only while the row is
             // still untouched since that decision was recorded (same persisted value, same
             // updated_at). Our own batch commit and any manual writer both bump updated_at,
@@ -815,17 +885,20 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             // Skip automatic switching for manual-only rules
             return
         }
-        const decryptedAuthKey = decrypt(rule.auth_key, FALLBACK_KEYS)
-        const decryptedChainStr = decrypt(rule.priority_chain, FALLBACK_KEYS)
+        const decryptedAuthKey = decryptRuleField(rule, 'auth_key')
+        const decryptedChainStr = decryptRuleField(rule, 'priority_chain')
         const hasConnectionTarget = !!rule.connection_id && !!rule.platform && rule.platform !== 'stremio'
         if (!decryptedChainStr || (!decryptedAuthKey && !hasConnectionTarget)) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Failed to decrypt rule data. Skipping.`)
             await recordRuleDecryptFailure(rule)
             return
         }
-        const decryptedActiveUrl = decrypt(rule.active_url, FALLBACK_KEYS) || rule.active_url
+        const decryptedActiveUrl = decryptRuleField(rule, 'active_url') || rule.active_url
+        // Stabilization stays UNMEMOIZED: heartbeat writes update it in
+        // autopilot_rule_stats without bumping autopilot_rules.updated_at, so a
+        // version-keyed entry could serve a stale health picture.
         const decryptedStabilizationStr = rule.stabilization ? decrypt(rule.stabilization, FALLBACK_KEYS) : null
-        const decryptedAddonListStr = rule.addon_list ? decrypt(rule.addon_list, FALLBACK_KEYS) : null
+        const decryptedAddonListStr = rule.addon_list ? decryptRuleField(rule, 'addon_list') : null
         let shouldUpdateNotificationTime = false
 
         let chain = []
@@ -873,7 +946,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             const raw = rule.custom_check_urls
             let parsed = null
             if (typeof raw === 'string' && raw.length > 0) {
-                const decrypted = decrypt(raw, FALLBACK_KEYS)
+                const decrypted = decryptRuleField(rule, 'custom_check_urls')
                 if (decrypted && decrypted.startsWith('[')) {
                     parsed = JSON.parse(decrypted)
                 } else if (raw.startsWith('[')) {
@@ -1200,7 +1273,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (isRecovery || cooldownPassed) {
                         // Resolution order: decrypted per-rule webhook -> owner's global
                         // webhook (the UI's "Use global webhook" default) -> none.
-                        let webhookUrl = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
+                        let webhookUrl = rule.webhook_url ? decryptRuleField(rule, 'webhook_url') : null
                         let webhookSource = 'rule'
                         if (rule.webhook_url && !webhookUrl) {
                             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Per-rule webhook blob present but undecryptable; falling back to the global webhook.`)
@@ -1519,6 +1592,20 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 ruleCacheStats.bytesSaved = 0
                 ruleCacheStats.windowStart = Date.now()
             }
+
+            if (Date.now() - ruleDecryptCacheStats.windowStart >= 5 * 60 * 1000) {
+                const totalDecrypt = ruleDecryptCacheStats.hits + ruleDecryptCacheStats.misses
+                if (totalDecrypt > 0) {
+                    const hitPct = Math.round((ruleDecryptCacheStats.hits / totalDecrypt) * 100)
+                    fastify.log.info({ category: 'Autopilot' }, `Rule decrypt cache: ${ruleDecryptCacheStats.hits} hits / ${ruleDecryptCacheStats.misses} misses (${hitPct}% hit), ~${(ruleDecryptCacheStats.bytesSaved / 1048576).toFixed(1)}MB of repeated AES-GCM decrypts avoided on steady rules`)
+                }
+                ruleDecryptCacheStats.hits = 0
+                ruleDecryptCacheStats.misses = 0
+                ruleDecryptCacheStats.bytesSaved = 0
+                ruleDecryptCacheStats.evictions = 0
+                ruleDecryptCacheStats.windowStart = Date.now()
+            }
+
         } finally {
             cycleTargets.clear()
             serverState.isWorkerRunning = false
@@ -1559,6 +1646,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         clearAccountRuleRuntimeState,
         runAutopilot,
         startAutopilotWorker,
-        stopAutopilotWorker
+        stopAutopilotWorker,
+        getRuleDecryptCacheStats: () => ({
+            ...ruleDecryptCacheStats,
+            entries: ruleDecryptCache.size,
+            bytes: ruleDecryptCacheBytes,
+        }),
     }
 }
