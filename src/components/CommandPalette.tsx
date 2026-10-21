@@ -630,6 +630,10 @@ export function CommandPalette() {
             if (ordered.length === 0) return
             setSelectedIndex((prev) => Math.max(prev - 1, 0))
         } else if (e.key === 'Enter') {
+            if (needsVirtualResults && !VirtualCommandResults) {
+                e.preventDefault()
+                return
+            }
             const item = ordered[selectedIndex]
             if (item) {
                 e.preventDefault()
