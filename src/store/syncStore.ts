@@ -776,6 +776,7 @@ export const useSyncStore = create<SyncState>()(
                     // Open push trust only after both auth installation and hydration succeed.
                     let authInstalled = false
                     let hydrationOk = false
+                    let pullCompleted = false
                     // Avatar decode failure keeps push trust closed.
                     let avatarIncomplete: string | null = null
                     const setHydration = (status: 'ok' | 'failed') => {
@@ -783,6 +784,9 @@ export const useSyncStore = create<SyncState>()(
                         if (syncRuntime.hydration?.seq === pullToken) syncRuntime.hydration = { seq: pullToken, id, status, kind: 'pull' }
                     }
                     const completePull = () => {
+                        if (pullCompleted || !authInstalled || !hydrationOk || avatarIncomplete
+                            || !pullCurrent() || get().auth.id !== id || !get().auth.isAuthenticated) return
+                        pullCompleted = true
                         // Publish the ETag only after every response slice has applied.
                         set({
                             isInitialSyncCompleted: true,
@@ -800,6 +804,7 @@ export const useSyncStore = create<SyncState>()(
                             pendingFollowUpPush = false
                             fireFollowUpPush()
                         }
+                        if (!isSilent) toast({ title: "Login Successful", description: "Data loaded." })
                     }
 
                     const applySecondarySlices = async () => {
@@ -945,9 +950,8 @@ export const useSyncStore = create<SyncState>()(
                             if (avatarIncomplete) return
                             setHydration('ok')
                             hydrationOk = true
-                            // Auth installation opens trust if it finishes after hydration.
-                            if (!authInstalled) return
-                            if (!pullCurrent() || get().auth.id !== id || !get().auth.isAuthenticated) return
+                            // Either completion order is valid: auth installation also
+                            // calls this gate after the avatar has been decoded.
                             completePull()
                         })
                         .catch(err => {
@@ -957,6 +961,12 @@ export const useSyncStore = create<SyncState>()(
                             if (!pullCurrent()) return
                             console.warn('[Sync] deferred hydration failed:', err)
                             get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${(err as Error).message}`, isAuto: isSilent })
+                            // The eager path can no longer announce "Data loaded": the user
+                            // needs to know the load is partial and syncing is paused. The
+                            // push gate below stays closed until a pull fully succeeds.
+                            if (!isSilent) {
+                                toast({ variant: "destructive", title: "Data Load Incomplete", description: "Some cloud data failed to load and syncing is paused. Your cloud copy is safe — sign in again or press Sync to retry." })
+                            }
                         })
 
                     // Identity is upgrade-only on pull: an empty name/avatar in the cloud
@@ -994,6 +1004,11 @@ export const useSyncStore = create<SyncState>()(
                         if (pullCurrent()) {
                             console.warn('[Sync]', avatarIncomplete)
                             get().addLogEntry({ type: 'pull', status: 'error', message: `Deferred hydration failed: ${avatarIncomplete}`, isAuto: isSilent })
+                            // Same contract as a deferred slice failure: warn instead of
+                            // letting the earlier login flow imply the load completed.
+                            if (!isSilent) {
+                                toast({ variant: "destructive", title: "Data Load Incomplete", description: "Your avatar could not be loaded from the cloud and syncing is paused. Your cloud copy is safe — sign in again or press Sync to retry." })
+                            }
                         }
                     }
                     // Do not reinstall identity after a logout or superseding session.
@@ -1035,9 +1050,9 @@ export const useSyncStore = create<SyncState>()(
                     })
                     trace('sync', 'pull.success', { accountId: id, isSilent, decision, timing: Date.now() - pullStart })
 
-                    if (!isSilent) {
-                        toast({ title: "Login Successful", description: "Data loaded." })
-                    }
+                    // The success toast is deferred: it fires from the hydration
+                    // completion path above, only after every required slice has
+                    // applied, so a partial restore can never read as "Data loaded.".
 
                     setTimeout(() => {
                         import('@/lib/activity-server').then(async m => {

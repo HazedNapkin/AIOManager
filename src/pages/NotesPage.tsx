@@ -1710,7 +1710,13 @@ export function NotesPage() {
     }, [handleCreate])
 
     const handleExportZip = useCallback(async (ids?: string[]) => {
-        const allNotesWithContent = await useNotesStore.getState().getAllNotesWithContent()
+        let allNotesWithContent: Note[]
+        try {
+            allNotesWithContent = await useNotesStore.getState().getAllNotesWithContent()
+        } catch {
+            toast({ variant: 'destructive', title: 'Notes export paused', description: 'Some notes could not be read. No partial backup was created. Unlock your vault or restore its key, then retry.' })
+            return
+        }
         const files: Record<string, Uint8Array> = {}
         const notesToExport = ids ? allNotesWithContent.filter(n => ids.includes(n.id)) : allNotesWithContent
         if (notesToExport.length === 0) return

@@ -202,6 +202,8 @@ interface NotesStore {
     emptyTrash: () => Promise<void>
     importNotes: (notes: Note[], ownership?: SyncOwnership) => Promise<void>
     importTrash: (trash: Note[], ownership?: SyncOwnership) => Promise<void>
+    // Throws (fail-closed) when any indexed note is unreadable, so a full-array
+    // cloud push can never drop the cloud copy of a partially unreadable note.
     getAllNotesWithContent: () => Promise<Note[]>
     resetLocal: () => void
     saveFailed: boolean
@@ -638,6 +640,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
         await flushPendingPersist()
         const metas = get().notes
         const results: Note[] = []
+        const unreadableIds: string[] = []
         for (const meta of metas) {
             const cached = cacheGet(meta.id)
             if (cached) {
@@ -647,10 +650,16 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
             const note = await readNoteFromStorage(meta.id)
             if (note) {
                 results.push({ ...meta, content: note.content })
+            } else {
+                unreadableIds.push(meta.id)
             }
-            // An unreadable note (key rotated underneath it) must never push as empty
-            // content: the cloud keeps its last good copy instead of being overwritten
-            // with a blank.
+        }
+        // Fail closed: a full export replaces the whole cloud notes array, so an
+        // unreadable note (missing record or undecryptable after a key change) must
+        // abort here instead of silently dropping the note and deleting its cloud
+        // copy. Callers surface the error; nothing has been sent or exported.
+        if (unreadableIds.length > 0) {
+            throw new Error(`Notes could not be fully read (${unreadableIds.length} unreadable). Nothing was sent or exported; unlock the vault (or restore the encryption key) and retry.`)
         }
         return results
     },
