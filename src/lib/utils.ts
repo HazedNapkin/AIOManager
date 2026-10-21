@@ -549,6 +549,9 @@ export function saveUnresolvedImdbIds(unresolved: Record<string, number>): void 
 
 export function sanitizePosterUrl(url: string | undefined): string | undefined {
     if (!url || typeof url !== 'string') return url
+    // Direct poster hosts have no wrapper parameters to unwrap. Keep every
+    // other URL on the parser path, including queried URLs on these hosts.
+    if ((url.startsWith('https://images.metahub.space/') || url.startsWith('https://image.tmdb.org/')) && !url.includes('?')) return url
     try {
         const parsed = new URL(url)
         const fb = parsed.searchParams.get('fallback')
