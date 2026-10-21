@@ -29,7 +29,7 @@ import {
     Radar,
     Film,
 } from 'lucide-react'
-import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useUIStore } from '@/store/uiStore'
 import { useNotesStore } from '@/store/notesStore'
@@ -90,7 +90,7 @@ export interface CommandItem {
 const VIRTUAL_RESULTS_THRESHOLD = 100
 export interface CommandResultGroup { category: string; items: CommandItem[] }
 
-const VirtualCommandResults = lazy(() => import('./CommandPaletteResults').then(module => ({ default: module.VirtualCommandResults })))
+type VirtualResultsComponent = typeof import('./CommandPaletteResults').VirtualCommandResults
 
 // Settings tab destinations. The tab ids and hash routing mirror how
 // SettingsPage reads location.hash ('general' | 'appearance' | 'data' |
@@ -151,6 +151,9 @@ export function CommandPalette() {
     const [query, setQuery] = useState('')
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [bulkActions, setBulkActions] = useState<BulkActionDefinition[]>([])
+    const [VirtualCommandResults, setVirtualCommandResults] = useState<VirtualResultsComponent | null>(null)
+    const [resultsLoadFailed, setResultsLoadFailed] = useState(false)
+    const [resultsLoadAttempt, setResultsLoadAttempt] = useState(0)
     const inputRef = useRef<HTMLInputElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
     const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
@@ -569,6 +572,20 @@ export function CommandPalette() {
     // the keyboard navigates, so selection can never drift from the visual
     // grouping.
     const ordered = useMemo(() => groups.flatMap((g) => g.items), [groups])
+    const needsVirtualResults = indexActive && ordered.length > VIRTUAL_RESULTS_THRESHOLD
+    useEffect(() => {
+        if (!needsVirtualResults || VirtualCommandResults) return
+        let cancelled = false
+        setResultsLoadFailed(false)
+        // Keep the virtualizer out of the startup bundle without suspending the
+        // dialog's first reveal while the result module resolves.
+        import('./CommandPaletteResults').then(module => {
+            if (!cancelled) setVirtualCommandResults(() => module.VirtualCommandResults)
+        }).catch(() => {
+            if (!cancelled) setResultsLoadFailed(true)
+        })
+        return () => { cancelled = true }
+    }, [needsVirtualResults, VirtualCommandResults, resultsLoadAttempt])
 
     const indexById = useMemo(() => {
         const map = new Map<string, number>()
@@ -715,7 +732,11 @@ export function CommandPalette() {
                             </div>
                         )}
 
-                        {ordered.length > VIRTUAL_RESULTS_THRESHOLD ? <Suspense fallback={<div className="px-6 py-4 text-sm text-muted-foreground" role="status">Loading search results...</div>}><VirtualCommandResults groups={groups} selectedIndex={selectedIndex} query={query} scrollRoot={scrollRoot} renderItem={renderCommandItem} /></Suspense> : groups.map(({ category, items }) => (
+                        {ordered.length > VIRTUAL_RESULTS_THRESHOLD ? (VirtualCommandResults
+                            ? <VirtualCommandResults groups={groups} selectedIndex={selectedIndex} query={query} scrollRoot={scrollRoot} renderItem={renderCommandItem} />
+                            : <div className="px-6 py-4 text-sm text-muted-foreground" role="status">
+                                {resultsLoadFailed ? <>Could not load search results. <button type="button" className="underline" onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') event.stopPropagation() }} onClick={() => setResultsLoadAttempt(attempt => attempt + 1)}>Retry</button></> : 'Loading search results...'}
+                            </div>) : groups.map(({ category, items }) => (
                             <div key={category} className="space-y-1">
                                 <div className="px-6 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
                                     {category}

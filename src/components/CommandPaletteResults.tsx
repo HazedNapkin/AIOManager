@@ -25,11 +25,11 @@ export function VirtualCommandResults({ groups, selectedIndex, query, scrollRoot
         scrollPaddingEnd: 12,
         overscan: 6,
     })
-    const selectionScroll = useRef({ selectedIndex, query, scrollRoot })
+    const selectionScroll = useRef<{ selectedIndex: number; query: string; scrollRoot: HTMLDivElement | null } | null>(null)
     useEffect(() => {
         const previous = selectionScroll.current
         selectionScroll.current = { selectedIndex, query, scrollRoot }
-        if (previous.selectedIndex === selectedIndex && previous.query === query && previous.scrollRoot === scrollRoot) return
+        if (previous && previous.selectedIndex === selectedIndex && previous.query === query && previous.scrollRoot === scrollRoot) return
         const rowIndex = rows.findIndex(row => row.commandIndex === selectedIndex)
         if (rowIndex >= 0) virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
     }, [rows, selectedIndex, query, scrollRoot, virtualizer])
