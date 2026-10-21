@@ -715,7 +715,7 @@ export function CommandPalette() {
                             </div>
                         )}
 
-                        {ordered.length > VIRTUAL_RESULTS_THRESHOLD ? <Suspense fallback={<div className="px-6 py-4 text-sm text-muted-foreground" role="status">Loading search results…</div>}><VirtualCommandResults groups={groups} selectedIndex={selectedIndex} query={query} scrollRoot={scrollRoot} renderItem={renderCommandItem} /></Suspense> : groups.map(({ category, items }) => (
+                        {ordered.length > VIRTUAL_RESULTS_THRESHOLD ? <Suspense fallback={<div className="px-6 py-4 text-sm text-muted-foreground" role="status">Loading search results...</div>}><VirtualCommandResults groups={groups} selectedIndex={selectedIndex} query={query} scrollRoot={scrollRoot} renderItem={renderCommandItem} /></Suspense> : groups.map(({ category, items }) => (
                             <div key={category} className="space-y-1">
                                 <div className="px-6 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
                                     {category}

@@ -43,4 +43,3 @@ export function VirtualCommandResults({ groups, selectedIndex, query, scrollRoot
         })}
     </div>
 }
-
