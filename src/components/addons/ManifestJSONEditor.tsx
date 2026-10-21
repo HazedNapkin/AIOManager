@@ -9,9 +9,14 @@ import { toast } from '@/hooks/use-toast'
 interface ManifestJSONEditorProps {
     manifest: AddonManifest
     onSave: (manifest: AddonManifest) => Promise<void>
+    /** Embedded presentation: always-expanded editor under a static
+     * "Manifest JSON" heading, for surfaces that already provide the
+     * disclosure around it (e.g. a tab). Default keeps the collapsible
+     * "Advanced" card unchanged. */
+    embedded?: boolean
 }
 
-export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps) {
+export function ManifestJSONEditor({ manifest, onSave, embedded = false }: ManifestJSONEditorProps) {
     const [expanded, setExpanded] = useState(false)
     const [jsonText, setJsonText] = useState('')
     const [error, setError] = useState<string | null>(null)
@@ -34,12 +39,14 @@ export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps
         }
     }, [manifest])
 
+    const editorOpen = embedded || expanded
+
     useEffect(() => {
-        if (expanded && !dirty) {
+        if (editorOpen && !dirty) {
             setJsonText(originalJsonRef.current)
             setError(null)
         }
-    }, [expanded, dirty, manifest])
+    }, [editorOpen, dirty, manifest])
 
     const handleChange = (value: string) => {
         setJsonText(value)
@@ -91,26 +98,36 @@ export function ManifestJSONEditor({ manifest, onSave }: ManifestJSONEditorProps
 
     return (
         <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/20 overflow-hidden">
-            <button
-                type="button"
-                data-theme-part="button"
-                onClick={() => setExpanded(!expanded)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/40"
-            >
-                <div className="flex items-center gap-2">
+            {embedded ? (
+                <div className="flex items-center gap-2 px-4 py-3">
                     <Code2 className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-semibold">Advanced</span>
+                    <span className="text-sm font-semibold">Manifest JSON</span>
                     {dirty && (
                         <span className="h-2 w-2 rounded-full bg-primary" />
                     )}
                 </div>
-                <ChevronDown className={cn(
-                    'h-4 w-4 text-muted-foreground transition-transform',
-                    expanded && 'rotate-180'
-                )} />
-            </button>
+            ) : (
+                <button
+                    type="button"
+                    data-theme-part="button"
+                    onClick={() => setExpanded(!expanded)}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-muted/40"
+                >
+                    <div className="flex items-center gap-2">
+                        <Code2 className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-semibold">Advanced</span>
+                        {dirty && (
+                            <span className="h-2 w-2 rounded-full bg-primary" />
+                        )}
+                    </div>
+                    <ChevronDown className={cn(
+                        'h-4 w-4 text-muted-foreground transition-transform',
+                        expanded && 'rotate-180'
+                    )} />
+                </button>
+            )}
 
-            {expanded && (
+            {editorOpen && (
                 <div className="border-t border-border/40 p-4 space-y-3">
                     <textarea
                         data-theme-part="textarea"
