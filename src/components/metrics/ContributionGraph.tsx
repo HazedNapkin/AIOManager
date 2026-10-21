@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { Tooltip } from '@/components/ui/tooltip'
 import { CHART_PALETTE } from '@/lib/chart-colors'
@@ -78,6 +78,17 @@ export function ContributionGraph({ dailyActivity, loading }: ContributionGraphP
         }
     }, [dailyActivity])
 
+    // The current date is the right edge of the graph. Open the calendar there
+    // instead of at the oldest week, and re-pin when the range changes (period
+    // switch, new data), unless the user has scrolled it themselves.
+    const scrollRef = useRef<HTMLDivElement>(null)
+    const userScrolledRef = useRef(false)
+    useEffect(() => {
+        const el = scrollRef.current
+        if (!el || weeks.length === 0 || userScrolledRef.current) return
+        el.scrollLeft = el.scrollWidth
+    }, [weeks.length])
+
     if (loading) {
         return <div className="h-[200px] animate-pulse rounded-xl bg-muted/30" />
     }
@@ -95,7 +106,13 @@ export function ContributionGraph({ dailyActivity, loading }: ContributionGraphP
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">{total} plays in the last year</span>
             </div>
-            <div className="overflow-x-auto">
+            <div
+                ref={scrollRef}
+                className="overflow-x-auto"
+                onPointerDown={() => { userScrolledRef.current = true }}
+                onWheel={() => { userScrolledRef.current = true }}
+                onTouchStart={() => { userScrolledRef.current = true }}
+            >
                 <div style={{ minWidth: `${labelColWidth + gridWidth + 10}px` }}>
                     <div className="relative mb-1" style={{ height: '16px', marginLeft: `${labelColWidth}px` }}>
                         <svg width={gridWidth} height={16} style={{ overflow: 'visible' }}>
