@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/accountStore'
 import { useJellyfinMediaConnections } from '@/components/providers/useJellyfinMedia'
-import { compareMediaPlayback, jellyfinMediaActivity, mergeMediaItems, mergeMediaHistory, type MediaPlayback } from '@/lib/jellyfin/activity'
+import { compareMediaPlayback, createJellyfinActivityProjector, mergeMediaItems, mergeMediaHistory, type MediaPlayback } from '@/lib/jellyfin/activity'
 import type { ActivityItem } from '@/types/activity'
 import type { Account } from '@/types/account'
 import { useWatchEventStore } from '@/store/watchEventStore'
@@ -39,8 +39,11 @@ export function useJellyfinActivity(accountId?: string, enabled = true) {
     const { results, refresh, busy, initialLoading } = useJellyfinMediaConnections(scopes)
     const [playbackExpiry, setPlaybackExpiry] = useState(0)
     const previousHistory = useRef<ActivityItem[]>([])
+    const projectors = useRef(new Map<string, ReturnType<typeof createJellyfinActivityProjector>>())
+    const historyInputs = useRef<{ sources: ActivityItem[][]; deleted: typeof deletedEventKeys } | null>(null)
     const activity = useMemo(() => {
-    let history: ActivityItem[] = []
+    const sources: ActivityItem[][] = []
+    const activeProjectors = new Map<string, ReturnType<typeof createJellyfinActivityProjector>>()
     let inProgress: ActivityItem[] = []
     const playback: MediaPlayback[] = []
     for (const result of results) {
@@ -50,19 +53,32 @@ export function useJellyfinActivity(accountId?: string, enabled = true) {
             : accounts.findIndex(account => account.id === result.accountId)
         const account = accountId ? ownAccount : accounts[colorIndex]
         if (!account) continue
-        const media = jellyfinMediaActivity(account, colorIndex, result.connection, result.reads)
-        history = mergeMediaHistory(history, media.history)
+        const key = JSON.stringify([result.accountId, result.connection.id])
+        const project = projectors.current.get(key) ?? createJellyfinActivityProjector()
+        activeProjectors.set(key, project)
+        const media = project(account, colorIndex, result.connection, result.reads)
+        sources.push(media.history)
         inProgress = mergeMediaItems(inProgress, media.inProgress)
         playback.push(...media.playback)
     }
+    projectors.current = activeProjectors
     playback.sort(compareMediaPlayback)
     const notDeleted = (item: ActivityItem) => {
         const deletedAt = deletedEventKeys[`${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
         return deletedAt === undefined || item.timestamp.getTime() > deletedAt
     }
-    // Derive against the current clock first, then reuse only exactly equal history.
-    // Live playback and future-date gates still run on every relevant update.
-    const sharedHistory = reuseActivityItems(previousHistory.current, history.filter(notDeleted))
+    // Projectors check date eligibility before reusing a source. Session-only
+    // changes can then skip both the historical merge and deep comparison.
+    const previous = historyInputs.current
+    const unchanged = previous?.deleted === deletedEventKeys && previous.sources.length === sources.length
+        && sources.every((source, index) => source === previous.sources[index])
+    let sharedHistory = previousHistory.current
+    if (!unchanged) {
+        let history: ActivityItem[] = []
+        for (const source of sources) history = mergeMediaHistory(history, source)
+        sharedHistory = reuseActivityItems(previousHistory.current, history.filter(notDeleted))
+    }
+    historyInputs.current = { sources, deleted: deletedEventKeys }
     previousHistory.current = sharedHistory
     return { history: sharedHistory, inProgress: inProgress.filter(notDeleted), playback: playback.filter(entry => notDeleted(entry.item)) }
     // The expiry tick intentionally reruns the time-sensitive live-session gate.

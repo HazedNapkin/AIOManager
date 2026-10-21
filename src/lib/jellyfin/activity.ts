@@ -79,7 +79,7 @@ function fresh(session: JellyfinSession, userId: string, now: number) {
         && Number.isFinite(checked) && checked <= now + 5_000 && now - checked <= 120_000
 }
 
-export function jellyfinMediaActivity(account: MediaAccount, colorIndex: number, connection: Connection, reads: JellyfinMediaReads | null, now = Date.now()): MediaActivity {
+function libraryActivity(account: MediaAccount, colorIndex: number, connection: Connection, reads: JellyfinMediaReads | null, now: number): MediaActivity {
     const result: MediaActivity = { history: [], inProgress: [], playback: [] }
     if (!reads || !connection.enabled || !connection.mediaServer?.userId) return result
     for (const kind of ['played', 'resume'] as const) {
@@ -96,6 +96,11 @@ export function jellyfinMediaActivity(account: MediaAccount, colorIndex: number,
             }
         }
     }
+    return result
+}
+
+function appendSessions(result: MediaActivity, account: MediaAccount, colorIndex: number, connection: Connection, reads: JellyfinMediaReads, now: number): void {
+    if (!connection.mediaServer?.userId) return
     if (reads.sessions.status === 'success') {
         for (const session of reads.sessions.data) {
             if (!fresh(session, connection.mediaServer.userId, now)) continue
@@ -108,10 +113,71 @@ export function jellyfinMediaActivity(account: MediaAccount, colorIndex: number,
             result.playback.unshift({ item, state: session.PlayState?.IsPaused ? 'paused' : 'playing', checkedAt: reads.sessions.checkedAt, productName: item.mediaObservation!.productName })
         }
     }
+}
+
+export function jellyfinMediaActivity(account: MediaAccount, colorIndex: number, connection: Connection, reads: JellyfinMediaReads | null, now = Date.now()): MediaActivity {
+    const result = libraryActivity(account, colorIndex, connection, reads, now)
+    if (!reads || !connection.enabled || !connection.mediaServer?.userId) return result
+    appendSessions(result, account, colorIndex, connection, reads, now)
     result.history = mergeMediaItems([], result.history)
     result.inProgress = mergeMediaItems([], result.inProgress)
     result.playback.sort(compareMediaPlayback)
     return result
+}
+
+/** Per-consumer reuse of library projections; sessions always derive against the current clock. */
+export function createJellyfinActivityProjector() {
+    let cached: {
+        accountId: string; accountName: string; colorIndex: number; connection: Connection
+        played: JellyfinMediaReads['played']; resume: JellyfinMediaReads['resume']
+        at: number; validUntil: number; zone: string; library: MediaActivity; history: ActivityItem[]
+    } | undefined
+    return (account: MediaAccount, colorIndex: number, connection: Connection, reads: JellyfinMediaReads, now = Date.now()): MediaActivity => {
+        if (!connection.enabled || !connection.mediaServer?.userId || !Number.isFinite(now)) {
+            cached = undefined
+            return jellyfinMediaActivity(account, colorIndex, connection, reads, now)
+        }
+        // Offset-free provider dates depend on the runtime timezone. Its IANA
+        // identity is needed too: two zones can share today's UTC offset while
+        // disagreeing on the date of an older watch.
+        let zone: string
+        try {
+            zone = `${Intl.DateTimeFormat().resolvedOptions().timeZone}|${new Date(now).getTimezoneOffset()}`
+        } catch {
+            cached = undefined
+            return jellyfinMediaActivity(account, colorIndex, connection, reads, now)
+        }
+        if (!cached || cached.accountId !== account.id || cached.accountName !== account.name
+            || cached.colorIndex !== colorIndex || cached.connection !== connection
+            || cached.played !== reads.played || cached.resume !== reads.resume
+            || cached.zone !== zone || now < cached.at || now >= cached.validUntil) {
+            const library = libraryActivity(account, colorIndex, connection, reads, now)
+            // A future LastPlayedDate becomes eligible once it is within the
+            // existing one-minute tolerance. Never memoize across that boundary
+            // or a clock rollback, even when the provider data is unchanged.
+            let validUntil = Infinity
+            for (const kind of ['played', 'resume'] as const) {
+                const read = reads[kind]
+                if (read.status !== 'success') continue
+                for (const item of read.data.items) {
+                    const date = item.UserData?.LastPlayedDate
+                    if (typeof date !== 'string') continue
+                    const time = Date.parse(date)
+                    if (Number.isFinite(time) && time > now + 60_000) validUntil = Math.min(validUntil, time - 60_000)
+                }
+            }
+            const history = mergeMediaItems([], library.history)
+            library.history = []
+            cached = { accountId: account.id, accountName: account.name, colorIndex, connection,
+                played: reads.played, resume: reads.resume, at: now, validUntil, zone, library,
+                history }
+        }
+        const result = { history: cached.history, inProgress: [...cached.library.inProgress], playback: [...cached.library.playback] }
+        appendSessions(result, account, colorIndex, connection, reads, now)
+        result.inProgress = mergeMediaItems([], result.inProgress)
+        result.playback.sort(compareMediaPlayback)
+        return result
+    }
 }
 
 function identity(item: Pick<ActivityItem, 'accountId' | 'type' | 'itemId' | 'uniqueItemId' | 'season' | 'episode' | 'source' | 'sourceConnectionId'>) {
