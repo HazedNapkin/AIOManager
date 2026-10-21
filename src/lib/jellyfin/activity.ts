@@ -150,17 +150,38 @@ export function mergeMediaItems(existing: ActivityItem[], incoming: ActivityItem
 /** Preserve watch events on different days; snapshots can only augment the same reported watch day. */
 export function mergeMediaHistory(existing: ActivityItem[], incoming: ActivityItem[]): ActivityItem[] {
     const history = [...existing]
+    if (incoming.length === 0) return history
+    // Only an identical title/episode, owner and local watch day can merge.
+    // Index that candidate set once rather than rescanning the whole history
+    // for every media-server item on each live-session poll.
+    const candidates = new Map<string, Map<string, number[]>>()
+    const addCandidate = (key: string, day: string, index: number) => {
+        let days = candidates.get(key)
+        if (!days) { days = new Map(); candidates.set(key, days) }
+        const indices = days.get(day)
+        if (indices) indices.push(index)
+        else days.set(day, [index])
+    }
+    for (let index = 0; index < history.length; index++) {
+        const item = history[index]
+        addCandidate(identity(item), item.timestamp.toDateString(), index)
+    }
     for (const item of incoming) {
         const key = identity(item)
+        const day = item.timestamp.toDateString()
+        const time = item.timestamp.getTime()
         let match = -1
         let distance = Infinity
-        for (let index = 0; index < history.length; index++) {
+        for (const index of candidates.get(key)?.get(day) || []) {
             const prior = history[index]
-            if (identity(prior) !== key || prior.timestamp.toDateString() !== item.timestamp.toDateString()) continue
-            const difference = Math.abs(prior.timestamp.getTime() - item.timestamp.getTime())
+            const difference = Math.abs(prior.timestamp.getTime() - time)
             if (difference < distance) { match = index; distance = difference }
         }
-        if (match === -1) { history.push(item); continue }
+        if (match === -1) {
+            addCandidate(key, day, history.length)
+            history.push(item)
+            continue
+        }
         const prior = history[match]
         const merged = mergeCurrentState(prior, item)
         history[match] = prior.source !== 'jellyfin'
