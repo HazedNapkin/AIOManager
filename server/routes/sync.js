@@ -118,7 +118,12 @@ export function registerSyncRoutes(fastify) {
         }
 
         try {
-            const row = await db.get('SELECT value, password, content_hash FROM kv_store WHERE key = $1', [id])
+            // A conditional refresh only needs the encrypted blob when its revision changed.
+            // Keep password and revision in the same read; authentication still precedes 304.
+            const row = await db.get(
+                'SELECT CASE WHEN content_hash = $1 THEN NULL ELSE value END AS value, password, content_hash FROM kv_store WHERE key = $2',
+                [request.headers['if-none-match'] || null, id]
+            )
 
             if (!row) {
                 trace('syncRoute', 'pull.error', { accountId: id, error: 'not-found' })
