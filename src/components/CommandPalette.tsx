@@ -29,7 +29,7 @@ import {
     Radar,
     Film,
 } from 'lucide-react'
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useUIStore } from '@/store/uiStore'
 import { useNotesStore } from '@/store/notesStore'
@@ -67,7 +67,13 @@ const CATEGORY_ORDER: CommandCategory[] = [
     'Bulk Operations',
 ]
 
-interface CommandItem {
+const NO_ACCOUNTS: Account[] = []
+const NO_RULES: ReturnType<typeof useFailoverStore.getState>['rules'] = []
+const NO_NOTES: ReturnType<typeof useNotesStore.getState>['notes'] = []
+const NO_VAULT_KEYS: ReturnType<typeof useVaultStore.getState>['keys'] = []
+const NO_SAVED_ADDONS: ReturnType<typeof useAddonStore.getState>['library'] = {}
+
+export interface CommandItem {
     id: string
     /** Masked display label. Raw searchable text lives in searchText. */
     label: string
@@ -80,6 +86,11 @@ interface CommandItem {
     searchText?: string
     aliases?: string[]
 }
+
+const VIRTUAL_RESULTS_THRESHOLD = 100
+export interface CommandResultGroup { category: string; items: CommandItem[] }
+
+const VirtualCommandResults = lazy(() => import('./CommandPaletteResults').then(module => ({ default: module.VirtualCommandResults })))
 
 // Settings tab destinations. The tab ids and hash routing mirror how
 // SettingsPage reads location.hash ('general' | 'appearance' | 'data' |
@@ -128,19 +139,33 @@ const SETTINGS_TAB_ITEMS: Array<{
 
 export function CommandPalette() {
     const [open, setOpen] = useState(false)
+    const [exitPending, setExitPending] = useState(false)
+    // Dialog keeps its children for a 200ms exit. Keep the current list through
+    // that transition, then release its subscriptions and derived commands.
+    const indexActive = open || exitPending
+    useEffect(() => {
+        if (open) { setExitPending(true); return }
+        const timer = setTimeout(() => setExitPending(false), 220)
+        return () => clearTimeout(timer)
+    }, [open])
     const [query, setQuery] = useState('')
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [bulkActions, setBulkActions] = useState<BulkActionDefinition[]>([])
     const inputRef = useRef<HTMLInputElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
+    const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
+    const attachScrollRoot = useCallback((node: HTMLDivElement | null) => {
+        scrollRef.current = node
+        setScrollRoot(node)
+    }, [])
     const navigate = useNavigate()
-    const accounts = useAccountStore((s) => s.accounts)
+    const accounts = useAccountStore((s) => indexActive ? s.accounts : NO_ACCOUNTS)
     const syncAllAccounts = useAccountStore((s) => s.syncAllAccounts)
     const checkRules = useFailoverStore((s) => s.checkRules)
-    const autopilotRules = useFailoverStore((s) => s.rules)
-    const notes = useNotesStore((s) => s.notes)
-    const vaultKeys = useVaultStore((s) => s.keys)
-    const savedAddonLibrary = useAddonStore((s) => s.library)
+    const autopilotRules = useFailoverStore((s) => indexActive ? s.rules : NO_RULES)
+    const notes = useNotesStore((s) => indexActive ? s.notes : NO_NOTES)
+    const vaultKeys = useVaultStore((s) => indexActive ? s.keys : NO_VAULT_KEYS)
+    const savedAddonLibrary = useAddonStore((s) => indexActive ? s.library : NO_SAVED_ADDONS)
     const isPrivacyModeEnabled = useUIStore((s) => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore((s) => s.privacyLevelNames)
     const privacyLevelEmail = useUIStore((s) => s.privacyLevelEmail)
@@ -188,7 +213,23 @@ export function CommandPalette() {
     }, [])
 
     const allItems = useMemo<CommandItem[]>(() => {
+        if (!indexActive) return []
         const items: CommandItem[] = []
+        const rulesByAccount = new Map<string, typeof autopilotRules>()
+        for (const rule of autopilotRules) {
+            const rules = rulesByAccount.get(rule.accountId)
+            if (rules) rules.push(rule)
+            else rulesByAccount.set(rule.accountId, [rule])
+        }
+        // Preserve account order and count each account once per installed URL.
+        const accountsByAddonUrl = new Map<string, Account[]>()
+        for (const account of accounts) {
+            for (const url of new Set((account.addons ?? []).map(addon => addon.transportUrl))) {
+                const installed = accountsByAddonUrl.get(url)
+                if (installed) installed.push(account)
+                else accountsByAddonUrl.set(url, [account])
+            }
+        }
 
         items.push(
             {
@@ -349,7 +390,7 @@ export function CommandPalette() {
 
             // Per-account Autopilot tab destination, searchable by account
             // name, platform, and rule names.
-            const rules = autopilotRules.filter((r) => r.accountId === acc.id)
+            const rules = rulesByAccount.get(acc.id) ?? []
             if (rules.length > 0) {
                 const ruleNames = rules.map((r) => r.name).filter((n): n is string => Boolean(n))
                 const countLabel = `${rules.length} rule${rules.length !== 1 ? 's' : ''}`
@@ -454,7 +495,7 @@ export function CommandPalette() {
         for (const a of savedAddonList) {
             const tagStr = (a.tags ?? []).join(' ')
             const manifestName = a.manifest?.name ?? ''
-            const installedAccounts = accounts.filter(acc => acc.addons?.some(addon => addon.transportUrl === a.installUrl))
+            const installedAccounts = accountsByAddonUrl.get(a.installUrl) ?? []
             const installedLabels = installedAccounts.map(acc => accountLabel(acc))
             const accountStr = installedLabels.length > 0 ? installedLabels.join(', ') : 'Not installed'
             const firstAccountId = installedAccounts[0]?.id
@@ -518,7 +559,7 @@ export function CommandPalette() {
         }
 
         return items
-    }, [accounts, notes, vaultKeys, savedAddonLibrary, autopilotRules, go, syncAllAccounts, checkRules, navigate, bulkActions, accountLabel, accountSearchText, emailPrivacy])
+    }, [indexActive, accounts, notes, vaultKeys, savedAddonLibrary, autopilotRules, go, syncAllAccounts, checkRules, navigate, bulkActions, accountLabel, accountSearchText, emailPrivacy])
 
     const filtered = useMemo(() => filterCommandsByQuery(allItems, query), [allItems, query])
 
@@ -583,12 +624,62 @@ export function CommandPalette() {
     }
 
     useEffect(() => {
+        if (ordered.length > VIRTUAL_RESULTS_THRESHOLD) return
         const el = scrollRef.current?.querySelector(`[data-index="${selectedIndex}"]`)
         if (el) {
             el.scrollIntoView({ block: 'nearest' })
         }
-    }, [selectedIndex])
+    }, [selectedIndex, ordered.length])
 
+    const renderCommandItem = (item: CommandItem) => {
+        const flatIndex = indexById.get(item.id) ?? -1
+        const isSelected = flatIndex === selectedIndex
+
+        return (
+            <button data-theme-part="nav-item" data-state={isSelected ? "active" : "inactive"}
+                key={item.id}
+                data-index={flatIndex}
+                onClick={(e) => {
+                    e.preventDefault()
+                    item.action()
+                }}
+                className={`relative mx-3 flex w-[calc(100%-1.5rem)] items-center gap-3 rounded-2xl px-3 py-3 text-left transition-[background-color,box-shadow,color,transform] duration-150 ${isSelected
+                    ? 'bg-primary/10 text-foreground shadow-sm ring-1 ring-primary/20'
+                    : 'text-foreground hover:bg-muted/30'
+                    }`}
+            >
+                {isSelected && (
+                    <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" />
+                )}
+                    {item.avatarUrl ? (
+                        <span data-theme-part="avatar" className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden transition-colors">
+                            <img src={item.avatarUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        </span>
+                    ) : (
+                        <span data-theme-part="badge"
+                            className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted/45 text-muted-foreground'}`}
+                        >
+                            {item.icon}
+                        </span>
+                    )}
+                <div className="flex-1 min-w-0">
+                    <div className="truncate text-sm font-semibold tracking-tight">
+                        {item.emoji && <span className="mr-2">{item.emoji}</span>}
+                        {item.label}
+                    </div>
+                    {item.sublabel && (
+                        <div className="truncate text-xs font-medium text-muted-foreground">
+                            {item.sublabel}
+                        </div>
+                    )}
+                </div>
+                {isSelected && (
+                    <CornerDownLeft className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+                )}
+            </button>
+        )
+
+    }
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogContent
@@ -616,7 +707,7 @@ export function CommandPalette() {
                 </div>
 
 
-                <ScrollArea className="max-h-[min(54vh,440px)]" ref={scrollRef}>
+                <ScrollArea className={ordered.length > VIRTUAL_RESULTS_THRESHOLD ? "h-[min(54vh,440px)]" : "max-h-[min(54vh,440px)]"} ref={attachScrollRoot}>
                     <div className="py-3">
                         {filtered.length === 0 && (
                             <div data-theme-part="panel" className="mx-3 rounded-2xl border border-dashed border-border/40 bg-muted/15 px-4 py-10 text-center text-sm text-muted-foreground">
@@ -624,59 +715,12 @@ export function CommandPalette() {
                             </div>
                         )}
 
-                        {groups.map(({ category, items }) => (
+                        {ordered.length > VIRTUAL_RESULTS_THRESHOLD ? <Suspense fallback={<div className="px-6 py-4 text-sm text-muted-foreground" role="status">Loading search results…</div>}><VirtualCommandResults groups={groups} selectedIndex={selectedIndex} query={query} scrollRoot={scrollRoot} renderItem={renderCommandItem} /></Suspense> : groups.map(({ category, items }) => (
                             <div key={category} className="space-y-1">
                                 <div className="px-6 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
                                     {category}
                                 </div>
-                                {items.map((item) => {
-                                    const flatIndex = indexById.get(item.id) ?? -1
-                                    const isSelected = flatIndex === selectedIndex
-
-                                    return (
-                                        <button data-theme-part="nav-item" data-state={isSelected ? "active" : "inactive"}
-                                            key={item.id}
-                                            data-index={flatIndex}
-                                            onClick={(e) => {
-                                                e.preventDefault()
-                                                item.action()
-                                            }}
-                                            className={`relative mx-3 flex w-[calc(100%-1.5rem)] items-center gap-3 rounded-2xl px-3 py-3 text-left transition-[background-color,box-shadow,color,transform] duration-150 ${isSelected
-                                                ? 'bg-primary/10 text-foreground shadow-sm ring-1 ring-primary/20'
-                                                : 'text-foreground hover:bg-muted/30'
-                                                }`}
-                                        >
-                                            {isSelected && (
-                                                <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" />
-                                            )}
-                                                {item.avatarUrl ? (
-                                                    <span data-theme-part="avatar" className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl overflow-hidden transition-colors">
-                                                        <img src={item.avatarUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                                                    </span>
-                                                ) : (
-                                                    <span data-theme-part="badge"
-                                                        className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl transition-colors ${isSelected ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-muted/45 text-muted-foreground'}`}
-                                                    >
-                                                        {item.icon}
-                                                    </span>
-                                                )}
-                                            <div className="flex-1 min-w-0">
-                                                <div className="truncate text-sm font-semibold tracking-tight">
-                                                    {item.emoji && <span className="mr-2">{item.emoji}</span>}
-                                                    {item.label}
-                                                </div>
-                                                {item.sublabel && (
-                                                    <div className="truncate text-xs font-medium text-muted-foreground">
-                                                        {item.sublabel}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            {isSelected && (
-                                                <CornerDownLeft className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-                                            )}
-                                        </button>
-                                    )
-                                })}
+                                {items.map(item => renderCommandItem(item))}
                             </div>
                         ))}
                     </div>
