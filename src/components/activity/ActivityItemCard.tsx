@@ -56,11 +56,17 @@ export const ActivityItemCard = memo(({
 
     const item = entry
     const isEpisodeLike = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
-    const episodeLabel = isEpisodeLike && item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
-    const badgePct = resolveWatchBadgePct(item)
     // Imported saved watch state: bitfield-aggregate series carry a verified episode summary
     // (no watch dates, no resume); flagged-only movies keep their positive watched badge.
     const savedState = item.importedSavedState === true
+    const hasEpisode = Number.isInteger(item.episode) && (item.episode ?? 0) > 0
+    const episodeLabel = isEpisodeLike
+        ? hasEpisode ? `S${item.season ?? 1} E${item.episode}` : savedState ? null : 'Episode not recorded'
+        : null
+    // Legacy series aggregates can contain a zero episode and no measured playback.
+    // Keep the history visible without claiming a 0% or completed episode.
+    const badgePct = isEpisodeLike && !hasEpisode && !(item.duration > 0) && !(item.progress > 0)
+        ? undefined : resolveWatchBadgePct(item)
     const savedRanges = savedState && isEpisodeLike ? formatSavedEpisodeRanges(item.savedEpisodes) : []
     const savedCount = savedState ? item.savedEpisodes?.episodeCount : undefined
 

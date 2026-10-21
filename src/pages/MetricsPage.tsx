@@ -93,8 +93,8 @@ function formatMetricHour(hour: number) {
     return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).format(new Date(2024, 0, 1, normalizedHour))
 }
 
-function formatEpisodeLabel(item: { season?: number; episode?: number }) {
-    return item.episode !== undefined ? `S${item.season ?? 1} E${item.episode}` : null
+function formatEpisodeLabel(item: { season?: number | null; episode?: number | null }) {
+    return Number.isInteger(item.episode) && (item.episode ?? 0) > 0 ? `S${item.season ?? 1} E${item.episode}` : null
 }
 
 function WatcherBadges({ accounts: watchAccs, maskName }: { accounts: Account[]; maskName?: (name: string) => string }) {
