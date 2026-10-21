@@ -1,29 +1,9 @@
-// GATED RealStream destination prototype: pure, transport-injected, UI-free.
-// Do not expose this adapter as a product destination. Official Windows client
-// 1.0.1+2 testing on 2026-10-19 found a different provider-prefixed identity and
-// normalized-progress format. Even a native-format import appeared in Continue
-// Watching but did not resume reliably.
-//
-// Interface for runtime integration (the parent owns factories/session wrappers):
-//   createRealStreamWatchDestination(options) -> WatchStateDestination
-//   options: { connectionId, label, subject, scope, open(signal) }
-//   options.open(signal) resolves AFTER re-verifying the connection/user and returns a
-//   user-pinned transport:
-//     { fetchPage(page, perPage, signal) -> { items, totalItems },
-//       writeRecord(recordId | null, entries, signal) }   // PATCH when recordId, POST when null
-//   This module owns entry matching, array-preserving write decisions and readback verification.
-//
-// RealStream contracts used by this adapter:
-//   - PocketBase `progress` collection: paged reads with honest totalItems; each record is
-//     { id, user, data } where data is the FULL ARRAY of progress entries, and writes replace
-//     that array wholesale. There is no atomic compare-and-swap and no timestamp sort/filter.
-//   - Progress entries are client-authored JSON with the live-verified key set
-//     { uniqueId, mediaType 'tv'|'movie', seasonNumber, episodeNumber, currentTime seconds,
-//       duration seconds, lastWatched epoch ms, title, posterPath (embeds the IMDb id) }.
-//   - RealStream tracks current progress only: watched flags and play counts do not exist, and
-//     none are invented. Only resume points are imported, and only for IMDb-identifiable titles.
+// Native RealStream 1.0.1+2 movie progress: TMDB identity and a 10000-unit fraction.
+// Writes replace a whole progress array. Re-read before writing and verify identities,
+// the exact appended entry and all baseline siblings afterward. No atomic CAS exists.
+// Continue Watching hydration is verified; native playback may start from the beginning.
 import type { MigrationWriteResult, WatchStateDestination, WatchStatePatch, WatchStateRecord } from './types.ts'
-import { canonicalWatchIdentity, sourceTime, watchFingerprint } from './records.ts'
+import { sourceTime, watchFingerprint } from './records.ts'
 import type { RealStreamProgressPage } from './source-realstream.ts'
 
 export interface RealStreamWatchDestinationTransport {
@@ -44,30 +24,16 @@ export interface RealStreamWatchDestinationOptions {
 
 const PER_PAGE = 200
 const MAX_PAGES = 50
-const IMDb_IN_POSTER = /(tt\d{5,})/i
-const IMDB_IDENTITY = /^(movie|episode):imdb:(tt\d{5,})(?::(\d+):(\d+))?$/
+const TMDB_IDENTITY = /^movie:tmdb:([1-9]\d*)$/
+const NATIVE_DURATION = 10_000
 const READBACK_FAILED = 'The RealStream write could not be verified by reading the list back. Preview again to check whether it was saved.'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function intOrNull(value: unknown): number | null {
-    return Number.isSafeInteger(value) ? (value as number) : null
-}
-
-function finiteNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 function positiveDuration(value: unknown): number | null {
-    const number = finiteNumber(value)
-    return number !== null && number > 0 ? number : null
-}
-
-function secondsToMs(value: unknown): number | null {
-    const seconds = typeof value === 'number' ? value : typeof value === 'string' && value !== '' && Number.isFinite(Number(value)) ? Number(value) : NaN
-    return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : null
+    return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
 }
 
 function firstNonEmpty(...values: Array<unknown>): string | null {
@@ -90,40 +56,25 @@ function stableStringify(value: unknown): string {
 
 interface RealStreamEntryHit {
     identity: string
-    imdb: string
-    type: 'movie' | 'episode'
-    season: number | null
-    episode: number | null
     entry: Record<string, unknown>
+    valid: boolean
 }
 
-/** Derives an entry's identity exactly like source-realstream.ts: IMDb from the poster path. */
-function entryHit(entry: Record<string, unknown>): RealStreamEntryHit | null {
-    const posterPath = typeof entry.posterPath === 'string' ? entry.posterPath : typeof entry.poster_path === 'string' ? entry.poster_path : ''
-    const imdb = IMDb_IN_POSTER.exec(posterPath)?.[1] ?? null
-    if (imdb === null) return null
-    const rawType = entry.mediaType ?? entry.media_type ?? entry.type
-    const normalizedType = rawType != null ? String(rawType).toLowerCase() : ''
-    const season = intOrNull(entry.seasonNumber ?? entry.season_number ?? entry.season)
-    const episode = intOrNull(entry.episodeNumber ?? entry.episode_number ?? entry.episode)
-    let type: 'movie' | 'episode' | null = null
-    if (normalizedType === 'movie') type = 'movie'
-    else if (normalizedType === 'tv' || season !== null && episode !== null) type = 'episode'
-    if (type === null) return null
-    const identity = canonicalWatchIdentity(type, imdb, season ?? undefined, episode ?? undefined)
-    return identity === null ? null : { identity, imdb, type, season, episode, entry }
+function tmdbIdentity(identity: string): number | null {
+    const match = TMDB_IDENTITY.exec(identity)
+    return match ? positiveDuration(Number(match[1])) : null
 }
 
-/** Only IMDb identities can be written to a RealStream entry (the poster path carries the id). */
-function imdbIdentity(identity: string): { imdb: string; type: 'movie' | 'episode'; season?: number; episode?: number } | null {
-    const match = IMDB_IDENTITY.exec(identity)
-    if (!match) return null
-    if (match[1] === 'movie') return match[3] === undefined ? { imdb: match[2], type: 'movie' } : null
-    if (match[3] === undefined || match[4] === undefined) return null
-    const season = Number(match[3])
-    const episode = Number(match[4])
-    if (!Number.isSafeInteger(season) || !Number.isSafeInteger(episode)) return null
-    return { imdb: match[2], type: 'episode', season, episode }
+/** Also catches partial or contradictory native identities, so they cannot be overwritten. */
+function entryHit(entry: Record<string, unknown>, identities: string[]): RealStreamEntryHit | null {
+    for (const identity of identities) {
+        const tmdb = tmdbIdentity(identity)
+        if (tmdb === null) continue
+        const uniqueId = `tmdb:${tmdb}`
+        if (entry.uniqueId !== uniqueId && String(entry.tmdbId) !== String(tmdb)) continue
+        return { identity, entry, valid: entry.uniqueId === uniqueId && entry.tmdbId === tmdb && entry.mediaType === 'movie' }
+    }
+    return null
 }
 
 interface RealStreamContainer {
@@ -153,7 +104,7 @@ async function readAll(transport: RealStreamWatchDestinationTransport, signal: A
         signal.throwIfAborted()
         const result = await transport.fetchPage(page, PER_PAGE, signal)
         if (!isRecord(result) || !Array.isArray(result.items)) throw new Error('RealStream returned an unexpected response shape; nothing was interpreted as data.')
-        if (typeof result.totalItems === 'number' && Number.isFinite(result.totalItems) && result.totalItems >= 0) {
+        if (typeof result.totalItems === 'number' && Number.isSafeInteger(result.totalItems) && result.totalItems >= 0) {
             if (total === null) total = result.totalItems
             else if (result.totalItems !== total) { movingTotal = true; complete = false }
         } else {
@@ -184,64 +135,54 @@ async function readAll(transport: RealStreamWatchDestinationTransport, signal: A
         else broken.push(record)
     }
     if (broken.length > 0) complete = false
-    if (total !== null && total > raw.length) complete = false
+    if (total !== null && total !== raw.length) complete = false
+    if (new Set(raw.map(record => record.id)).size !== raw.length) complete = false
+    signal.throwIfAborted()
     return { containers, broken, complete: complete && !capped && !repeated && !totalsUnverified && !movingTotal, capped }
 }
 
 async function recordFromEntry(scope: string, hit: RealStreamEntryHit): Promise<WatchStateRecord> {
-    const positionMs = secondsToMs(hit.entry.currentTime ?? hit.entry.current_time ?? hit.entry.progress ?? hit.entry.position)
-    const durationMs = secondsToMs(hit.entry.duration ?? hit.entry.total_duration ?? hit.entry.runtime)
-    const playedAt = sourceTime(hit.entry.lastWatched ?? hit.entry.last_watched ?? hit.entry.timestamp)
-    const record: WatchStateRecord = {
-        id: hit.type === 'movie' ? `movie:${hit.imdb}` : `episode:${hit.imdb}:${hit.season}:${hit.episode}`,
+    // Native currentTime/duration is a fraction, never elapsed time or a runtime.
+    return {
+        id: hit.identity,
         title: firstNonEmpty(hit.entry.title, hit.entry.name) ?? 'RealStream entry',
-        type: hit.type,
+        type: hit.valid ? 'movie' : 'unknown',
         identities: [hit.identity],
-        playedAt,
+        playedAt: sourceTime(hit.entry.lastWatched),
+        notes: [hit.valid
+            ? 'RealStream already has progress for this movie. Its percentage cannot establish an exact playback position; the existing entry will be kept.'
+            : 'The existing RealStream entry has incomplete or conflicting native identifiers. It will be kept.'],
         fingerprint: await watchFingerprint({ scope, entry: hit.entry }),
     }
-    if (hit.type === 'episode') {
-        record.season = hit.season ?? undefined
-        record.episode = hit.episode ?? undefined
-    }
-    if (positionMs !== null) record.positionMs = positionMs
-    if (durationMs !== null) record.durationMs = durationMs
-    return record
 }
 
-async function placeholderRecord(scope: string, identity: string, type: 'movie' | 'episode', season: number | null, episode: number | null, imdb: string, expected: WatchStateRecord): Promise<WatchStateRecord> {
+async function placeholderRecord(scope: string, identity: string, expected: WatchStateRecord): Promise<WatchStateRecord> {
     const durationMs = positiveDuration(expected.durationMs)
-    const record: WatchStateRecord = {
-        id: type === 'movie' ? `movie:${imdb}` : `episode:${imdb}:${season}:${episode}`,
-        title: expected.title || imdb,
-        type,
+    return {
+        id: identity,
+        title: expected.title || identity,
+        type: 'movie',
         identities: [identity],
         watched: false,
         positionMs: 0,
         playedAt: null,
         playCount: 0,
         unmodified: true,
+        ...(durationMs !== null ? { durationMs } : {}),
         fingerprint: await watchFingerprint({ scope, absent: true, identity, durationMs }),
     }
-    if (type === 'episode') {
-        record.season = season ?? undefined
-        record.episode = episode ?? undefined
-    }
-    if (durationMs !== null) record.durationMs = durationMs
-    return record
 }
 
-/** Builds the entry to append: only verified fields, no invented timestamps or ids. */
-function buildEntry(parts: { imdb: string; type: 'movie' | 'episode'; season?: number; episode?: number }, patch: WatchStatePatch, expected: WatchStateRecord, durationMs: number | null): Record<string, unknown> {
-    const entry: Record<string, unknown> = parts.type === 'episode'
-        ? { uniqueId: `tv_${parts.imdb}_s${parts.season}e${parts.episode}`, mediaType: 'tv', seasonNumber: parts.season, episodeNumber: parts.episode }
-        : { uniqueId: `movie_${parts.imdb}`, mediaType: 'movie' }
-    entry.currentTime = (patch.positionMs as number) / 1000
-    if (durationMs !== null) entry.duration = durationMs / 1000
-    if (patch.playedAt !== undefined) entry.lastWatched = patch.playedAt
-    entry.title = expected.title
-    entry.posterPath = parts.type === 'episode' ? `/poster/series/${parts.imdb}` : `/poster/movie/${parts.imdb}`
-    return entry
+function buildEntry(tmdb: number, patch: WatchStatePatch, expected: WatchStateRecord, durationMs: number): Record<string, unknown> {
+    return {
+        uniqueId: `tmdb:${tmdb}`,
+        tmdbId: tmdb,
+        mediaType: 'movie',
+        currentTime: Math.round((patch.positionMs as number) / durationMs * NATIVE_DURATION),
+        duration: NATIVE_DURATION,
+        lastWatched: patch.playedAt,
+        title: expected.title,
+    }
 }
 
 export function createRealStreamWatchDestination(options: RealStreamWatchDestinationOptions): WatchStateDestination {
@@ -249,16 +190,18 @@ export function createRealStreamWatchDestination(options: RealStreamWatchDestina
     const capabilities: WatchStateDestination['capabilities'] = {
         watched: false,
         resume: true,
-        dates: false,
+        dates: true,
+        requiresDates: true,
+        requiresDuration: true,
         counts: false,
         combined: false,
         notes: [
-            'All reads and writes stay pinned to one verified RealStream user.',
-            'RealStream stores current progress only: watched flags and play counts cannot be imported, and none are invented.',
-            'Each imported entry carries the resume point alone; no watch time is stamped on it when the source has none.',
-            'Progress lives in one shared list per account: every write re-reads the list first, preserves every other entry exactly, and verifies the saved result by reading it back.',
-            'That list has no atomic compare-and-swap: a write racing the RealStream app or another device can still be lost even with this verification. Import while playback is stopped.',
-            'Imported entries embed the verified IMDb id in their poster path so the destination can re-identify them; the RealStream app may not display poster images for them.',
+            'Continue Watching imports are saved and checked. RealStream may start playback from the beginning.',
+            'Only movies with a verified TMDB ID, runtime and original resume date can be imported. Episode identifiers have not been verified.',
+            'RealStream saves progress as a percentage rounded to 0.01%. Existing entries are kept; watched flags and play counts cannot be imported.',
+            'All reads and writes stay pinned to one verified RealStream user. Every write preserves the other entries and checks the saved result.',
+            'The shared list has no atomic compare-and-swap. A write racing another device can still be lost. Import while playback is stopped.',
+            'Poster artwork is not copied because the source watch-state record does not include verified artwork.',
         ],
     }
 
@@ -282,21 +225,20 @@ export function createRealStreamWatchDestination(options: RealStreamWatchDestina
 
     async function resolve(record: WatchStateRecord, signal: AbortSignal): Promise<WatchStateRecord[]> {
         signal.throwIfAborted()
-        if (!record.identities.length) return []
+        if (record.type !== 'movie' || !record.identities.some(identity => tmdbIdentity(identity) !== null)) return []
         const read = await ensureRead(signal)
         const matches: WatchStateRecord[] = []
         for (const container of read.containers) {
             for (const entry of container.data) {
-                const hit = entryHit(entry)
-                if (hit === null || !record.identities.includes(hit.identity)) continue
+                const hit = entryHit(entry, record.identities)
+                if (hit === null) continue
                 matches.push(await recordFromEntry(scope, hit))
             }
         }
         if (matches.length > 0) return matches
         if (!read.complete) throw new Error('The RealStream progress list could not be read completely, so matches cannot be verified safely. Try the preview again.')
         for (const identity of record.identities) {
-            const parts = imdbIdentity(identity)
-            if (parts !== null) return [await placeholderRecord(scope, identity, parts.type, parts.season ?? null, parts.episode ?? null, parts.imdb, record)]
+            if (tmdbIdentity(identity) !== null) return [await placeholderRecord(scope, identity, record)]
         }
         return []
     }
@@ -310,7 +252,7 @@ export function createRealStreamWatchDestination(options: RealStreamWatchDestina
         const wantsPosition = typeof patch.positionMs === 'number'
         if (!wantsPosition) return { status: 'unchanged', message: 'Nothing was selected to import for this title.' }
         const positionMs = patch.positionMs as number
-        if (!Number.isFinite(positionMs) || positionMs <= 0) {
+        if (!Number.isSafeInteger(positionMs) || positionMs <= 0) {
             return { status: 'conflict', message: 'The proposed resume point is invalid; nothing was written.' }
         }
 
@@ -322,31 +264,40 @@ export function createRealStreamWatchDestination(options: RealStreamWatchDestina
         const entryMatches: RealStreamEntryHit[] = []
         for (const container of read.containers) {
             for (const entry of container.data) {
-                const hit = entryHit(entry)
-                if (hit !== null && expected.identities.includes(hit.identity)) entryMatches.push(hit)
+                const hit = entryHit(entry, expected.identities)
+                if (hit !== null) entryMatches.push(hit)
             }
         }
         if (entryMatches.length > 1) {
             return { status: 'conflict', message: 'More than one destination entry matches this title. They will be kept; resolve the duplicates first.', record: await recordFromEntry(scope, entryMatches[0]) }
         }
         if (entryMatches.length === 1) {
-            const current = secondsToMs(entryMatches[0].entry.currentTime ?? entryMatches[0].entry.current_time ?? entryMatches[0].entry.progress ?? entryMatches[0].entry.position)
-            const currentTime = sourceTime(entryMatches[0].entry.lastWatched ?? entryMatches[0].entry.last_watched)
-            const record = await recordFromEntry(scope, entryMatches[0])
-            if (current === patch.positionMs && (patch.playedAt === undefined || currentTime === patch.playedAt)) {
-                return { status: 'unchanged', message: 'The destination already has the selected state. Nothing was written.', record }
-            }
-            return { status: 'conflict', message: 'The destination entry changed since the preview. It will be kept; preview again.', record }
+            return { status: 'conflict', message: 'RealStream already has an entry for this movie. It will be kept; preview again.', record: await recordFromEntry(scope, entryMatches[0]) }
         }
 
-        const parts = expected.identities.map(imdbIdentity).find((value): value is { imdb: string; type: 'movie' | 'episode'; season?: number; episode?: number } => value !== null) ?? null
-        if (parts === null) {
-            return { status: 'conflict', message: 'This title has no IMDb identity, so RealStream cannot store a resume point for it.' }
+        const identity = expected.identities.find(identity => tmdbIdentity(identity) !== null)
+        const tmdb = identity ? tmdbIdentity(identity) : null
+        if (tmdb === null || identity === undefined || expected.type !== 'movie') {
+            return { status: 'conflict', message: 'Only movies with a verified TMDB identity can be imported into RealStream.' }
         }
-        const durationMs = positiveDuration(patch.durationMs) ?? positiveDuration(expected.durationMs)
-        const entry = buildEntry(parts, patch, expected, durationMs)
+        const absent = await placeholderRecord(scope, identity, expected)
+        if (expected.unmodified !== true || expected.fingerprint !== absent.fingerprint) {
+            return { status: 'conflict', message: 'The destination state differs from the preview. Preview again before importing.' }
+        }
+        const durationMs = patch.durationMs === undefined ? positiveDuration(expected.durationMs) : positiveDuration(patch.durationMs)
+        if (durationMs === null || durationMs < positionMs || (expected.durationMs !== undefined && expected.durationMs !== durationMs)) {
+            return { status: 'conflict', message: 'A verified runtime at least as long as the resume point is required; nothing was written.' }
+        }
+        if (!Number.isSafeInteger(patch.playedAt) || sourceTime(patch.playedAt) === null) {
+            return { status: 'conflict', message: 'An original resume date is required; nothing was written.' }
+        }
+        const entry = buildEntry(tmdb, patch, expected, durationMs)
+        if (entry.currentTime === 0) {
+            return { status: 'conflict', message: 'This resume point is too small for the progress precision in RealStream; nothing was written.' }
+        }
         const container = read.containers[0] ?? null
         const sentData = container ? [...container.data, entry] : [entry]
+        signal.throwIfAborted()
         await transport.writeRecord(container ? container.id : null, sentData, signal)
 
         // Exact readback: the saved entry, every pre-existing entry, and every other record.
@@ -355,23 +306,27 @@ export function createRealStreamWatchDestination(options: RealStreamWatchDestina
         const saved: RealStreamEntryHit[] = []
         for (const checked of check.containers) {
             for (const checkedEntry of checked.data) {
-                const hit = entryHit(checkedEntry)
-                if (hit !== null && expected.identities.includes(hit.identity)) saved.push(hit)
+                const hit = entryHit(checkedEntry, expected.identities)
+                if (hit !== null) saved.push(hit)
             }
         }
         if (saved.length !== 1) throw new Error(READBACK_FAILED)
-        if (secondsToMs(saved[0].entry.currentTime) !== patch.positionMs) throw new Error(READBACK_FAILED)
-        if (durationMs !== null && secondsToMs(saved[0].entry.duration) !== durationMs) throw new Error(READBACK_FAILED)
-        if (patch.playedAt !== undefined && sourceTime(saved[0].entry.lastWatched) !== patch.playedAt) throw new Error(READBACK_FAILED)
-        // Preservation: every pre-existing entry and record must survive the write exactly.
-        // A concurrent foreign append may legitimately appear; a loss of any baseline entry may not.
-        const afterEntries = check.containers.flatMap(candidate => candidate.data)
-        const afterEntryKeys = new Set(afterEntries.map(entry => stableStringify(entry)))
+        if (!saved[0].valid || stableStringify(saved[0].entry) !== stableStringify(entry)) throw new Error(READBACK_FAILED)
+        // Verify each container separately and preserve duplicate sibling multiplicities.
         const anotherWriter = 'Another writer changed the RealStream progress list during the import. The write could not be verified; preview again.'
         for (const before of read.containers) {
-            if (!check.containers.some(candidate => candidate.id === before.id)) throw new Error(anotherWriter)
-            for (const entry of before.data) {
-                if (!afterEntryKeys.has(stableStringify(entry))) throw new Error(anotherWriter)
+            const after = check.containers.find(candidate => candidate.id === before.id)
+            if (!after) throw new Error(anotherWriter)
+            const remaining = new Map<string, number>()
+            for (const sibling of after.data) {
+                const key = stableStringify(sibling)
+                remaining.set(key, (remaining.get(key) ?? 0) + 1)
+            }
+            for (const sibling of before.data) {
+                const key = stableStringify(sibling)
+                const count = remaining.get(key) ?? 0
+                if (count === 0) throw new Error(anotherWriter)
+                remaining.set(key, count - 1)
             }
         }
         for (const before of read.broken) {
