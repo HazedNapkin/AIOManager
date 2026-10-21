@@ -992,6 +992,9 @@ export function ActivityPage() {
 
     const isSelecting = selectedItems.size > 0 || isBulkMode
     const isLoading = loading || isRefreshingFromCloud
+    // Refresh the current feed in place. These are the live, scoped hook
+    // results, so removals and account changes still take effect immediately.
+    const showFeedSkeleton = isLoading && history.length === 0 && inProgress.length === 0
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -1316,7 +1319,7 @@ export function ActivityPage() {
               )
             })()}
 
-            {isLoading ? (
+            {showFeedSkeleton ? (
                 <div className="space-y-3">
                     {Array.from({ length: 6 }).map((_, i) => (
                         <ActivityItemSkeleton key={i} />
