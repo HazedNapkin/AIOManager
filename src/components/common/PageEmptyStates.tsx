@@ -82,7 +82,35 @@ export function NotesEmptyState({ onAdd }: EmptyActionProps) {
   )
 }
 
-export function ActivityEmptyState({ onPrimary, onSecondary }: EmptyActionProps) {
+export function ActivityEmptyState({ onPrimary, onSecondary, filtered, onShowAll, totalItems, activeFilterLabel }: EmptyActionProps & {
+  /** A tab/filter produced zero rows while the timeline itself has data. */
+  filtered?: boolean
+  onShowAll?: () => void
+  totalItems?: number
+  activeFilterLabel?: string
+}) {
+  // A filter with zero matches is not "no data": say what the view is missing and
+  // offer the way back, instead of claiming the user never watched anything.
+  if (filtered) {
+    return (
+      <EmptyShell>
+        <div className="w-full max-w-lg text-center">
+          <div className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-info">Nothing in this view</div>
+          <h3 className="text-xl font-bold tracking-tight">No activity matches {activeFilterLabel || 'this filter'}.</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            {typeof totalItems === 'number' && totalItems > 0
+              ? `${totalItems.toLocaleString()} item${totalItems === 1 ? '' : 's'} are waiting under All Activity.`
+              : 'Try another filter, or check back after your next sync.'}
+          </p>
+          {onShowAll && (
+            <div className="mt-6 flex justify-center gap-2">
+              <Button onClick={onShowAll} className="rounded-xl">Show all activity</Button>
+            </div>
+          )}
+        </div>
+      </EmptyShell>
+    )
+  }
   return (
     <EmptyShell>
       <div className="w-full max-w-lg">

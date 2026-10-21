@@ -23,6 +23,12 @@ const INITIAL_VISIBLE_COUNT = 60
 const VISIBLE_COUNT_INCREMENT = 40
 const EMPTY_SELECTED_ITEMS = new Set<string>()
 const GRID_CLASSES = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4'
+const ACTIVITY_TAB_LABELS: Record<string, string> = {
+    all: 'All Activity',
+    now: 'Recent',
+    movies: 'Movies',
+    series: 'Series',
+}
 
 interface ActivityFeedProps {
     history: ActivityItem[]
@@ -263,7 +269,14 @@ export function ActivityFeed({
         onOpenDetail,
     }
 
-    const renderEmptyState = () => <ActivityEmptyState />
+    const renderEmptyState = () => (
+        <ActivityEmptyState
+            filtered={combinedHistory.length > 0 && filteredHistory.length === 0}
+            totalItems={combinedHistory.length}
+            activeFilterLabel={ACTIVITY_TAB_LABELS[activeTab]}
+            onShowAll={combinedHistory.length > 0 ? () => setActiveTab('all') : undefined}
+        />
+    )
 
     const renderFeedContent = () => {
         if (filteredHistory.length === 0) return renderEmptyState()
