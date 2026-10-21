@@ -298,6 +298,8 @@ interface NuvioProgressItem {
     episode?: number | null
     position?: number
     duration?: number
+    /** Explicit percentage-only progress from providers without an elapsed time/runtime. */
+    progressPercent?: number
     last_watched?: number
 }
 
@@ -336,7 +338,14 @@ function accountActivityMeta(account: Account, accounts: Account[]) {
 export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[], options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
-    const watchedAt = Number(row.watched_at) || Date.now()
+    // Undated rows must not borrow the sync time as a fake watch date: during a
+    // large-library sync hundreds of them land within minutes of each other and
+    // chain into one giant fake binge session. Observation time still orders the
+    // row in lists, but the backfill marker excludes it from time-based stats,
+    // exactly like Stremio bitfield recoveries.
+    const watchedAtMs = Number(row.watched_at)
+    const undated = !(watchedAtMs > 0)
+    const watchedAt = undated ? Date.now() : watchedAtMs
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
     let name: string
     if (row.episode != null && resolved.name.trim()) {
@@ -363,6 +372,7 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
         type: row.content_type || 'other',
         poster,
         timestamp: new Date(Math.min(watchedAt, Date.now())),
+        ...(undated ? { backfill: true } : {}),
         duration: 0,
         watched: 0,
         progress: 100,
@@ -380,10 +390,18 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
 export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string, options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = row.video_id || nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
-    const duration = Number(row.duration) || 0
-    const position = Number(row.position) || 0
-    const progress = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
-    const lastWatched = Number(row.last_watched) || Date.now()
+    const percentOnly = row.progressPercent !== undefined
+    const duration = percentOnly ? 0 : Number(row.duration) || 0
+    const position = percentOnly ? 0 : Number(row.position) || 0
+    const progress = percentOnly
+        ? (Number.isFinite(row.progressPercent) && row.progressPercent! >= 0 && row.progressPercent! <= 100 ? row.progressPercent! : 0)
+        : duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
+    // Same undated rule as watched rows: no real last_watched means the timestamp
+    // is the sync observation, not a watch date; mark it so binge/session stats
+    // and other time-based metrics exclude it.
+    const lastWatchedMs = Number(row.last_watched)
+    const undated = !(lastWatchedMs > 0)
+    const lastWatched = undated ? Date.now() : lastWatchedMs
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
     let name: string
     if (row.episode != null && resolved.name.trim()) {
@@ -407,6 +425,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
         type: row.content_type || 'other',
         poster,
         timestamp: new Date(Math.min(lastWatched, Date.now())),
+        ...(undated ? { backfill: true } : {}),
         duration,
         watched: position,
         progress,

@@ -24,6 +24,8 @@ export interface RealStreamProgressItem {
     episode?: number | null
     position?: number
     duration?: number
+    /** Native percentage only; position and duration remain unknown (zero). */
+    progressPercent?: number
     last_watched?: number
     title?: string
     posterPath?: string
@@ -64,7 +66,7 @@ type RsRecord = Record<string, any>
 // Nuvio-contract shape consumed by transformNuvioProgressToActivityItem:
 //   seasonNumber/episodeNumber  — episode coordinates (NOT season/episode)
 //   mediaType                   — 'tv' | 'movie' (NOT 'series')
-//   currentTime/duration        — SECONDS; the activity pipeline expects MILLISECONDS
+//   currentTime/duration        — legacy seconds, or a native 10000-unit fraction
 //   posterPath                  — full URL whose path embeds the imdb id (…/poster/series/tt1234567)
 //   uniqueId                    — stable per-item id, 'tv_<tmdb>_s1e2' | 'movie_<tmdb>'
 //   tmdbId                      — JSON number exceeding Number.MAX_SAFE_INTEGER; precision-lossy
@@ -92,6 +94,12 @@ export function mapProgressRecord(r: RsRecord): RealStreamProgressItem {
         contentId = String(r.uniqueId ?? r.unique_id ?? r.id ?? '')
     }
     const uniqueId = r.uniqueId ?? r.unique_id ?? contentId
+    // Native Windows 1.0.1+2 exports a fraction, not a 10000-second runtime.
+    // Match the migration source guard; malformed fractions must not become elapsed time.
+    const percentOnly = typeof uniqueId === 'string' && /^(tmdb|imdb|tvdb):/.test(uniqueId) && Number(r.duration) === 10_000
+    const nativePosition = Number(r.currentTime)
+    const progressPercent = Number.isFinite(nativePosition) && nativePosition >= 0 && nativePosition <= 10_000
+        ? nativePosition / 100 : 0
     if (import.meta.env?.DEV && !imdbMatch) {
         console.warn('[RS] No IMDb ID found in posterPath, using fallback:', contentId, 'title:', title)
     }
@@ -101,8 +109,9 @@ export function mapProgressRecord(r: RsRecord): RealStreamProgressItem {
         video_id: uniqueId,
         season,
         episode,
-        position: Math.round((Number(r.currentTime ?? r.current_time ?? r.progress ?? r.position ?? 0) || 0) * 1000),
-        duration: Math.round((Number(r.duration ?? r.total_duration ?? r.runtime ?? 0) || 0) * 1000),
+        position: percentOnly ? 0 : Math.round((Number(r.currentTime ?? r.current_time ?? r.progress ?? r.position ?? 0) || 0) * 1000),
+        duration: percentOnly ? 0 : Math.round((Number(r.duration ?? r.total_duration ?? r.runtime ?? 0) || 0) * 1000),
+        ...(percentOnly ? { progressPercent } : {}),
         last_watched: Number(r.lastWatched ?? r.last_watched ?? r.timestamp ?? r.updated ?? r.created ?? Date.now()) || Date.now(),
         title: title || undefined,
         posterPath: posterPath || undefined,

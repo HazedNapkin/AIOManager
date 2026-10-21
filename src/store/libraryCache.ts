@@ -740,6 +740,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                             poster: a.poster,
                                             duration: a.duration,
                                             progress: a.progress,
+                                            backfill: a.backfill,
                                             timestamp: a.timestamp.getTime(),
                                         })), eventOpts)
                                     }
@@ -822,6 +823,7 @@ export const useLibraryCache = create<LibraryCacheState>((set, get) => ({
                                             poster: a.poster,
                                             duration: a.duration,
                                             progress: a.progress,
+                                            backfill: a.backfill,
                                             timestamp: a.timestamp.getTime(),
                                         })), multiRS ? { sourceConnectionId: conn.id } : undefined)
                                     }
