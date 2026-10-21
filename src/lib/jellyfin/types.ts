@@ -118,6 +118,8 @@ export interface JellyfinItemResult {
 export interface JellyfinPagedReadOptions {
     maxItems?: number
     pageSize?: number
+    /** Same-client, single-use head observation for the initial archive walk only. */
+    prefetchedHead?: JellyfinItemResult
     /**
      * Called after every page that added items, with an honest partial
      * snapshot of the walk so far (`complete` is always false: a partial

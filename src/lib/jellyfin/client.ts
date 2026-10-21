@@ -267,9 +267,15 @@ export interface JellyfinWatchClient extends JellyfinClient {
  * Creates a Jellyfin protocol client bound to one server base URL. Read-only
  * except for the two scoped, readback-verified watched-state mutations.
  * Each method performs at most its documented requests and accepts an
- * optional AbortSignal; the client stores nothing between calls.
+ * optional AbortSignal. A single-use, same-client head continuation can retain
+ * two pages briefly for the initial archive walk; no state is persisted.
  */
 export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOptions): JellyfinWatchClient {
+    // Private to this client and consumed once. Raw pages never enter persisted
+    // query data; another server, credential, or restored result cannot reuse them.
+    const playedHeads = new WeakMap<JellyfinItemResult, {
+        token: string; userId: string; checkedAt: number; pages: Map<string, unknown>
+    }>()
     const normalizedBase = normalizeJellyfinUrl(baseUrl)
     const deviceId = options?.deviceId ?? defaultDeviceId()
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -558,7 +564,8 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
      * of the read. Sorting is a preference — correctness never relies on it.
      */
     async function readPlayed(accessToken: string, userId: string, signal?: AbortSignal): Promise<JellyfinItemResult> {
-        return readItemPages(
+        const pages = new Map<string, unknown>()
+        const result = await readItemPages(
             accessToken,
             {
                 label: 'Users/{userId}/Items',
@@ -567,6 +574,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 maxItems: PLAYED_MAX_ITEMS,
                 sorted: true,
                 stopOnTotal: true,
+                capturePages: pages,
                 params: {
                     IsPlayed: 'true',
                     IncludeItemTypes: 'Movie,Episode',
@@ -577,6 +585,14 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
             },
             signal
         )
+        // Sparse, complete, unsorted, or anomalous heads take the ordinary path.
+        // A private copy keeps caller edits and metadata resolution out of reuse.
+        if (result.limited && pages.size === 2 && [...pages.entries()].every(([path, page]) =>
+            path.includes('SortBy=DatePlayed') && isRecord(page) && Array.isArray(page.Items) && page.Items.length === PLAYED_PAGE_SIZE
+        )) {
+            playedHeads.set(result, { token: accessToken, userId, checkedAt: Date.now(), pages: structuredClone(pages) })
+        }
+        return result
     }
 
     /**
@@ -598,6 +614,15 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         options?: JellyfinPagedReadOptions,
         signal?: AbortSignal
     ): Promise<JellyfinItemResult> {
+        const observedHead = options?.prefetchedHead
+        const retained = observedHead ? playedHeads.get(observedHead) : undefined
+        if (observedHead) playedHeads.delete(observedHead)
+        const age = retained ? Date.now() - retained.checkedAt : -1
+        const prefetchedPages = retained && retained.token === accessToken && retained.userId === userId
+            && age >= 0 && age < 5_000
+            && (options?.pageSize ?? PLAYED_PAGE_SIZE) === PLAYED_PAGE_SIZE
+            && (options?.maxItems ?? PLAYED_ALL_MAX_ITEMS) >= PLAYED_MAX_ITEMS
+            ? retained.pages : undefined
         return readItemPages(
             accessToken,
             {
@@ -608,6 +633,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 sorted: true,
                 stopOnTotal: false,
                 onProgress: options?.onProgress,
+                prefetchedPages,
                 params: {
                     IsPlayed: 'true',
                     IncludeItemTypes: 'Movie,Episode',
@@ -687,6 +713,8 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
             sorted: boolean
             stopOnTotal: boolean
             onProgress?: (snapshot: JellyfinItemResult) => void | Promise<void>
+            capturePages?: Map<string, unknown>
+            prefetchedPages?: Map<string, unknown>
         },
         signal?: AbortSignal
     ): Promise<JellyfinItemResult> {
@@ -707,6 +735,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
         let pages = 0
         const maxPages = Math.ceil(spec.maxItems / spec.pageSize) * 2 + 4
         for (;;) {
+            if (signal?.aborted) throw new JellyfinError('aborted', 'Played items read was aborted')
             const remaining = spec.maxItems - items.length
             if (remaining <= 0) {
                 stoppedByCap = true
@@ -723,10 +752,11 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 query.set('SortOrder', 'Descending')
             }
             let res: unknown
+            const path = `${spec.basePath}?${query.toString()}`
             try {
-                res = await request({
+                res = spec.prefetchedPages?.has(path) ? spec.prefetchedPages.get(path) : await request({
                     label: spec.label,
-                    path: `${spec.basePath}?${query.toString()}`,
+                    path,
                     token: accessToken,
                     signal,
                 })
@@ -740,6 +770,7 @@ export function createJellyfinClient(baseUrl: string, options?: JellyfinClientOp
                 }
                 throw err
             }
+            if (rawStart < PLAYED_MAX_ITEMS) spec.capturePages?.set(path, res)
             let page: unknown[]
             if (Array.isArray(res)) {
                 page = res

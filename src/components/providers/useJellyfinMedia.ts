@@ -27,7 +27,7 @@ import {
 import { captureMediaRead, type JellyfinMediaReads, type MediaRead } from '@/lib/jellyfin/reads'
 import { resolveJellyfinSeries } from '@/lib/jellyfin/metadata'
 import { canApplyMediaReadFailure, jellyfinConnectionReadFailure } from '@/lib/jellyfin/connection-health'
-import type { JellyfinItem, JellyfinItemResult, JellyfinSession } from '@/lib/jellyfin/types'
+import type { JellyfinItem, JellyfinItemResult, JellyfinSession, JellyfinPagedReadOptions } from '@/lib/jellyfin/types'
 import type { Connection } from '@/types/connection'
 
 // Transient, shared across cards, Activity and connection details. This cache
@@ -55,7 +55,10 @@ function combine<T>(queries: UseQueryResult<T>[]) {
         errors: queries.map(query => query.isError),
     }
 }
-type LibraryReads = Pick<JellyfinMediaReads, 'resume' | 'played'>
+type LibraryReads = Pick<JellyfinMediaReads, 'resume' | 'played'> & {
+    /** In-memory continuation of this exact head read, never a persisted cache. */
+    readInitialArchive?: (onProgress: JellyfinPagedReadOptions['onProgress'], signal: AbortSignal) => Promise<JellyfinItemResult>
+}
 /** Restored observations additionally carry the last full-history archive walk. */
 type RestoredLibraryReads = LibraryReads & { archive?: MediaRead<JellyfinItemResult> }
 function libraryItems(reads: LibraryReads | undefined): JellyfinItem[] {
@@ -279,6 +282,7 @@ export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
                 captureMediaRead(() => client.readResume(secret.accessToken, secret.userId, signal), signal),
                 captureMediaRead(() => client.readPlayed(secret.accessToken, secret.userId, signal), signal),
             ])
+            const observedHead = played.status === 'success' ? played.data : undefined
             const previous = mediaQueries.getQueryData<LibraryReads>([...job.queryKey, 'library'])
             const items = await resolveJellyfinSeries(libraryItems({ resume, played }), (id, metadataSignal) => client.readItem(secret.accessToken, secret.userId, id, metadataSignal), signal, libraryItems(previous))
             let offset = 0
@@ -291,7 +295,11 @@ export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
             const persistScope = mediaScopeFor(job)
             const persisted = persistScope ? observedLibraryReads({ resume, played }) : null
             if (persistScope && persisted) void persistMediaSections(job, persistScope, persisted)
-            return { resume, played }
+            return { resume, played, readInitialArchive: (onProgress: JellyfinPagedReadOptions['onProgress'], archiveSignal: AbortSignal) => {
+                archiveSignal.throwIfAborted()
+                if (!persistScope || !cacheJobIsCurrent(job, persistScope)) throw new DOMException('Media scope changed', 'AbortError')
+                return client.readAllPlayed(secret.accessToken, secret.userId, { onProgress, prefetchedHead: observedHead }, archiveSignal)
+            } }
         },
     })), combine }, mediaQueries)
     // Full-history archive walk: the 60s poll above only refreshes the head,
@@ -338,18 +346,21 @@ export function useJellyfinMediaConnections(scopes: JellyfinMediaScope[]) {
                 ...libraryItems(libraryNow),
                 ...(priorArchive?.status === 'success' ? priorArchive.data.items : []),
             ]
-            const read = await captureMediaRead(() => client.readAllPlayed(secret.accessToken, secret.userId, {
-                onProgress: async snapshot => {
-                    // Resolve this page's episodes against everything already
-                    // resolved (bounded per page) so identities stay stable at
-                    // the head/archive boundary, then publish the partial.
-                    const page = snapshot.items.slice(resolvedSoFar.length)
-                    const resolvedPage = await resolveJellyfinSeries(page, (id, metadataSignal) => client.readItem(secret.accessToken, secret.userId, id, metadataSignal), signal, [...seed, ...resolvedSoFar])
-                    resolvedSoFar.push(...resolvedPage)
-                    const partial: JellyfinMediaReads['played'] = { status: 'success', data: { ...snapshot, items: [...resolvedSoFar] }, checkedAt: Date.now() }
-                    mediaQueries.setQueryData(archiveKey, partial)
-                },
-            }, signal), signal)
+            const onProgress: JellyfinPagedReadOptions['onProgress'] = async snapshot => {
+                // Resolve this page's episodes against everything already
+                // resolved (bounded per page) so identities stay stable at
+                // the head/archive boundary, then publish the partial.
+                const page = snapshot.items.slice(resolvedSoFar.length)
+                const resolvedPage = await resolveJellyfinSeries(page, (id, metadataSignal) => client.readItem(secret.accessToken, secret.userId, id, metadataSignal), signal, [...seed, ...resolvedSoFar])
+                resolvedSoFar.push(...resolvedPage)
+                const partial: JellyfinMediaReads['played'] = { status: 'success', data: { ...snapshot, items: [...resolvedSoFar] }, checkedAt: Date.now() }
+                mediaQueries.setQueryData(archiveKey, partial)
+            }
+            // Only the first cold walk may continue its just-fetched head. Later
+            // refreshes and failed walks always request every page live again.
+            const read = await captureMediaRead(() => !priorArchive && libraryNow?.readInitialArchive
+                ? libraryNow.readInitialArchive(onProgress, signal)
+                : client.readAllPlayed(secret.accessToken, secret.userId, { onProgress }, signal), signal)
             if (read.status === 'success') {
                 read.data = resolvedSoFar.length === read.data.items.length ? { ...read.data, items: resolvedSoFar } : read.data
                 const persistScope = mediaScopeFor(job)
