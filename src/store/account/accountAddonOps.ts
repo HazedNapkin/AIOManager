@@ -33,12 +33,20 @@ import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
 import type { Account, AccountProfile } from '@/types/account'
 import { type Connection, isSyncEligibleConnection } from '@/types/connection'
 import type { SyncOwnership } from '../sync-store-helpers'
+import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
+}
+
+// A queued edit belongs to the workspace and vault in which it was requested.
+function captureAddonOwner(): () => boolean {
+    const workspaceId = getActiveWorkspaceId()
+    const encryptionKey = getEncryptionKey()
+    return () => getActiveWorkspaceId() === workspaceId && getEncryptionKey() === encryptionKey
 }
 
 async function reconcileInstallBase(account: Account): Promise<AddonDescriptor[]> {
@@ -972,11 +980,15 @@ export async function updateAddonSettings(
     },
     targetIndex?: number
 ) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return
+    // Read AFTER the mutex: a sync that publishes while this op waits on the
+    // lock must not be clobbered by a pre-await snapshot of account.addons.
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return
         const updatedAddons = await Promise.all(account.addons.map(async (addon, index) => {
             if (targetIndex !== undefined ? index === targetIndex : normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl)) {
                 const newAddon = { ...addon }
@@ -1058,6 +1070,7 @@ export async function updateAddonSettings(
             }
             return addon
         }))
+        if (!ownerIsCurrent()) return
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updateActiveProfile({ ...acc, addons: updatedAddons }, updatedAddons) : acc
         )
@@ -1086,13 +1099,15 @@ export async function updateAddonSettings(
 }
 
 export async function bulkProtectAddons(accountId: string, isProtected: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
-    const changedCount = account.addons.filter((addon) => Boolean(addon.flags?.protected) !== isProtected).length
-    if (changedCount === 0) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
+        const changedCount = account.addons.filter((addon) => Boolean(addon.flags?.protected) !== isProtected).length
+        if (changedCount === 0) return 0
         const updatedAddons = account.addons.map((a) => ({
             ...a,
             flags: { ...a.flags, protected: isProtected },
@@ -1110,11 +1125,13 @@ export async function bulkProtectAddons(accountId: string, isProtected: boolean)
 }
 
 export async function bulkProtectSelectedAddons(accountId: string, transportUrls: string[], isProtected: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
         const normalizedTargets = new Set(transportUrls.map((u) => normalizeAddonUrl(u)))
         const changedCount = account.addons.filter((a) =>
             normalizedTargets.has(normalizeAddonUrl(a.transportUrl)) &&
@@ -1179,84 +1196,103 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
 }
 
 export async function replaceTransportUrl(oldUrl: string, newUrl: string, accountId?: string, freshManifest?: AddonDescriptor['manifest'], metadata?: AddonDescriptor['metadata']) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
     const normOld = normalizeAddonUrl(oldUrl)
     const normNew = normalizeAddonUrl(newUrl)
-    const modifiedAccountIds = new Set<string>()
-    const previousAddonsByAccountId = new Map<string, AddonDescriptor[]>()
 
-    const updatedAccounts = store.getState().accounts.map((account) => {
-        if (accountId && account.id !== accountId) return account
+    // Candidate ids from the CURRENT state are advisory only: the authoritative
+    // read happens under each account's mutex below, so a replacement that
+    // waited behind a long in-flight sync rebases onto that sync's result
+    // instead of clobbering it with a pre-await snapshot (and vice versa).
+    const candidateIds = store.getState().accounts
+        .filter(account => (!accountId || account.id === accountId)
+            && account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld))
+        .map(account => account.id)
 
-        const hasOld = account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld)
-        if (!hasOld) return account
+    // Each account is replaced under its own mutex and ONLY that mutex: no task
+    // ever holds one account's lock while awaiting another's, so a global
+    // replacement cannot deadlock against syncs or other multi-account ops, and
+    // an unlocked account is replaced immediately even while another account's
+    // sync is still mid-network. backgroundSync, persistAccounts and
+    // addChangelogEntry never take the mutex, so nothing called under the lock
+    // re-enters it.
+    const outcomes = await Promise.all(candidateIds.map(async (candidateId): Promise<string | null> => {
+        const releaseMutex = await acquireSyncMutex(candidateId)
+        try {
+            if (!ownerIsCurrent()) return null
+            const account = getAccountById(store.getState().accounts, candidateId)
+            // The account may have been removed (or its whole store swapped for a
+            // workspace/vault flip) while this replacement waited on the mutex:
+            // re-check against fresh state, never resurrect the stale snapshot.
+            if (!account) return null
+            // A serialized predecessor (sync, removal, another replacement) may
+            // already have removed or replaced the old URL — follow existing
+            // semantics and skip rather than force anything.
+            if (!account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld)) return null
 
-        modifiedAccountIds.add(account.id)
-        previousAddonsByAccountId.set(account.id, account.addons)
-
-        const updatedAddons = account.addons.map(addon => {
-            if (normalizeAddonUrl(addon.transportUrl) === normOld) {
-                return {
-                    ...addon,
-                    transportUrl: newUrl,
-                    manifest: freshManifest || addon.manifest,
-                    metadata: { ...(metadata || addon.metadata), lastUpdated: Date.now() }
+            const previousAddons = account.addons
+            const updatedAddons = account.addons.map(addon => {
+                if (normalizeAddonUrl(addon.transportUrl) === normOld) {
+                    return {
+                        ...addon,
+                        transportUrl: newUrl,
+                        manifest: freshManifest || addon.manifest,
+                        metadata: { ...(metadata || addon.metadata), lastUpdated: Date.now() }
+                    }
                 }
-            }
-            return addon
-        })
-
-        const deletionState = normOld !== normNew
-            ? restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: newUrl }])
-            : {}
-        return updateActiveProfile({ ...account, addons: updatedAddons, ...deletionState, lastSync: new Date() }, updatedAddons)
-    })
-
-    store.setState({ accounts: updatedAccounts })
-
-    if (modifiedAccountIds.size === 0) return { updatedAccountIds: [], failedAccounts: [] }
-
-    persistAccounts(updatedAccounts)
-
-    for (const account of updatedAccounts) {
-        if (!modifiedAccountIds.has(account.id)) continue
-
-        backgroundSync(account.id, account, account.addons)
-    }
-
-    if (normOld !== normNew) {
-        for (const modifiedAccountId of modifiedAccountIds) {
-            const previousAddon = previousAddonsByAccountId.get(modifiedAccountId)?.find(
-                (addon) => normalizeAddonUrl(addon.transportUrl) === normOld
-            )
-            const updatedAccount = getAccountById(store.getState().accounts, modifiedAccountId)
-            const replacementAddon = updatedAccount?.addons.find(
-                (addon) => normalizeAddonUrl(addon.transportUrl) === normNew
-            )
-            await store.getState().addChangelogEntry({
-                accountId: modifiedAccountId,
-                addonId: replacementAddon?.manifest.id || previousAddon?.manifest.id || newUrl,
-                addonUrl: newUrl,
-                oldAddonUrl: previousAddon?.transportUrl || oldUrl,
-                newAddonUrl: newUrl,
-                addonName: replacementAddon?.metadata?.customName || replacementAddon?.manifest.name || previousAddon?.metadata?.customName || previousAddon?.manifest.name || 'Unknown Addon',
-                addonLogo: replacementAddon?.metadata?.customLogo || replacementAddon?.manifest.logo || previousAddon?.metadata?.customLogo || previousAddon?.manifest.logo,
-                action: 'replaced'
+                return addon
             })
-        }
-    }
 
-    return { updatedAccountIds: Array.from(modifiedAccountIds), failedAccounts: [] } as ReplaceTransportUrlResult
+            const deletionState = normOld !== normNew
+                ? restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: newUrl }])
+                : {}
+            const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, ...deletionState, lastSync: new Date() }, updatedAddons)
+            const accounts = store.getState().accounts.map((acc) =>
+                acc.id === candidateId ? updatedAccount : acc
+            )
+            store.setState({ accounts })
+            persistAccounts(accounts)
+
+            backgroundSync(candidateId, updatedAccount, updatedAccount.addons)
+
+            if (normOld !== normNew) {
+                const previousAddon = previousAddons.find(
+                    (addon) => normalizeAddonUrl(addon.transportUrl) === normOld
+                )
+                const replacementAddon = updatedAddons.find(
+                    (addon) => normalizeAddonUrl(addon.transportUrl) === normNew
+                )
+                await store.getState().addChangelogEntry({
+                    accountId: candidateId,
+                    addonId: replacementAddon?.manifest.id || previousAddon?.manifest.id || newUrl,
+                    addonUrl: newUrl,
+                    oldAddonUrl: previousAddon?.transportUrl || oldUrl,
+                    newAddonUrl: newUrl,
+                    addonName: replacementAddon?.metadata?.customName || replacementAddon?.manifest.name || previousAddon?.metadata?.customName || previousAddon?.manifest.name || 'Unknown Addon',
+                    addonLogo: replacementAddon?.metadata?.customLogo || replacementAddon?.manifest.logo || previousAddon?.metadata?.customLogo || previousAddon?.manifest.logo,
+                    action: 'replaced'
+                })
+            }
+            return candidateId
+        } finally {
+            releaseMutex()
+        }
+    }))
+
+    return { updatedAccountIds: outcomes.filter((id): id is string => id !== null), failedAccounts: [] } as ReplaceTransportUrlResult
 }
 
 export async function bulkSetHideConfigure(accountId: string, hideConfigure: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
-    const changedCount = account.addons.filter((a) => Boolean(a.metadata?.hideConfigure) !== hideConfigure).length
-    if (changedCount === 0) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
+        const changedCount = account.addons.filter((a) => Boolean(a.metadata?.hideConfigure) !== hideConfigure).length
+        if (changedCount === 0) return 0
         const updatedAddons = account.addons.map((a) => {
             const newMetadata = { ...a.metadata }
             if (hideConfigure) newMetadata.hideConfigure = true
@@ -1276,11 +1312,13 @@ export async function bulkSetHideConfigure(accountId: string, hideConfigure: boo
 }
 
 export async function bulkSetHideConfigureSelected(accountId: string, transportUrls: string[], hideConfigure: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
         const normalizedTargets = new Set(transportUrls.map((u) => normalizeAddonUrl(u)))
         const changedCount = account.addons.filter((a) =>
             normalizedTargets.has(normalizeAddonUrl(a.transportUrl)) &&
