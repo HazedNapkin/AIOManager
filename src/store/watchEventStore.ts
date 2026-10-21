@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import localforage from 'localforage'
 import { WatchEvent, SnapshotItem, LibraryItem } from '@/types/activity'
 import { Account } from '@/types/account'
-import { getSeasonEpisode, parseStremioDate, isActuallyWatched, isDatelessSavedWatchState, getLocalDayKey, getEpisodeIdentity, watchContextKey, parseScopedAccountId } from '@/lib/activity-utils'
+import { getSeasonEpisode, isActuallyWatched, isDatelessSavedWatchState, getLocalDayKey, getEpisodeIdentity, watchContextKey, parseScopedAccountId } from '@/lib/activity-utils'
+import { scopeIndexesFor, scopePartitionsFor, stremioTimeOf } from '@/lib/watch-event-indexes'
+import { MIN_EVENTS_GLOBAL } from '@/lib/watch-event-cap'
 import { decodeWatchedBitfield } from '@/lib/watched-bitfield'
 import { resolveWatchedEpisodes, fetchSeriesVideos } from '@/lib/watched-episodes'
 import { evictLegacyExternalEvents } from '@/lib/external-watch-events'
@@ -120,6 +122,8 @@ export interface ExternalWatchItem {
     duration?: number
     progress?: number
     timestamp: number
+    /** No real watch date behind this row (undated external import): the timestamp is the sync observation. */
+    backfill?: boolean
 }
 
 function collapseDayDuplicates(events: WatchEvent[]): WatchEvent[] {
@@ -433,22 +437,19 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             && state.snapshotOwners[accountId] !== options.ownerConnectionId)
         const newEvents: WatchEvent[] = []
         const updatedSnapshot = { ...accountSnapshot }
-        const existingEventIds = new Set(state.events.map(e => e.id))
-        const existingSessionEvents = new Map<string, WatchEvent>()
+        // Seed indexes come from the shared per-array cache. Sessions and merge
+        // candidates are scoped to THIS login (their keys are scope-prefixed), but
+        // id suppression is GLOBAL: canonical migration rewrites an event's scopeKey
+        // while keeping its historical id, so a bare-scope id can live under another
+        // scope's partition and must still suppress a duplicate here — the seed's id
+        // set is the whole array's, exactly like the full-array index it replaces.
+        // Private copies: the item loop below adds freshly seeded events into them,
+        // and clones keep concurrent sibling logins from observing each other's
+        // in-flight seeds.
+        const seedIndexes = scopeIndexesFor(state.events, ctx)
+        const existingEventIds = seedIndexes.ids
+        const existingSessionEvents = seedIndexes.sessions
         let snapshotChanged = false
-
-        for (const event of state.events) {
-            const episodeKey = getEpisodeIdentity(event.itemId, event.video_id, event.season, event.episode, event.type)
-        const key = `${eventScopeKey(event)}:${episodeKey}:${getLocalDayKey(event.event_ts)}`
-            const existing = existingSessionEvents.get(key)
-            if (
-                !existing ||
-                event.event_ts > existing.event_ts ||
-                (event.event_ts === existing.event_ts && event.detected_ts > existing.detected_ts)
-            ) {
-                existingSessionEvents.set(key, event)
-            }
-        }
 
         const setSnapshotItem = (itemId: string, next: SnapshotItem) => {
             const current = updatedSnapshot[itemId]
@@ -509,8 +510,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         for (const item of items) {
             if (!item._id) continue
 
-            const mtimeDate = parseStremioDate(item._mtime)
-            const mtime = mtimeDate ? mtimeDate.getTime() : 0
+            const mtime = stremioTimeOf(item._mtime) ?? 0
             if (!mtime) continue
 
             const video_id = item.state?.video_id || item._id
@@ -539,11 +539,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 const isSeries = isSeriesItem(item)
                 const hasVideoId = !!(item.state?.video_id && item.state.video_id.trim() !== '')
                 if (!datelessSaved && (!isSeries || hasVideoId)) {
-                    const ctimeDate = parseStremioDate(item._ctime)
-                    const lastWatchedDate = parseStremioDate(item.state?.lastWatched)
                     const seedTs = Math.max(
-                        ctimeDate?.getTime() ?? 0,
-                        lastWatchedDate?.getTime() ?? 0,
+                        stremioTimeOf(item._ctime) ?? 0,
+                        stremioTimeOf(item.state?.lastWatched) ?? 0,
                         mtime
                     )
                     if (seedTs > 0) {
@@ -680,10 +678,14 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const merged = [...state.events, ...newEvents]
         const deduped = Array.from(new Map(merged.map(e => [e.id, e])).values())
         const sorted = deduped.sort((a, b) => b.event_ts - a.event_ts)
-        const { kept: capped, rollups } = capWatchEventsWithRollups(
-            filterTombstonedEvents(sorted, get().deletedEventKeys),
-            state.rollups
-        )
+        const alive = filterTombstonedEvents(sorted, get().deletedEventKeys)
+        // Under the global floor the cap provably cannot evict
+        // (globalCapFor(accountCount) >= MIN_EVENTS_GLOBAL >= alive.length ⇒
+        // capWatchEvents returns the array unchanged and rollups stay as-is),
+        // so skip its account-count scan entirely.
+        const { kept: capped, rollups } = alive.length > MIN_EVENTS_GLOBAL
+            ? capWatchEventsWithRollups(alive, state.rollups)
+            : { kept: alive, rollups: state.rollups }
 
         const nextSnapshot = {
             ...state.snapshot,
@@ -701,6 +703,9 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             rollups,
         })
 
+        // Warm the shared index cache for the array just stored: the next diff or
+        // backfill under any scope reuses its partition instead of a full-array rebuild.
+        scopePartitionsFor(capped)
         persistWatchEvents()
         return newEvents
     },
@@ -720,12 +725,13 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
         const eventAttribution = options?.sourceConnectionId || options?.ownerConnectionId
             ? { sourceConnectionId: options.sourceConnectionId ?? options.ownerConnectionId, scopeKey: ctx }
             : {}
-        const existingIdentities = new Set<string>()
-        for (const e of state.events) {
-            if (eventScopeKey(e) !== ctx) continue
-            existingIdentities.add(getEpisodeIdentity(e.itemId, e.video_id, e.season, e.episode, e.type))
-        }
-        const existingIds = new Set(state.events.map(e => e.id))
+        // Seed indexes from the shared per-array cache: the GLOBAL id set (see
+        // diffAndRecord — migrated historical ids suppress duplicates across scopes)
+        // plus this scope's identities, as private copies (the loop adds recovered
+        // episodes to them).
+        const seedIndexes = scopeIndexesFor(state.events, ctx)
+        const existingIds = seedIndexes.ids
+        const existingIdentities = seedIndexes.identities
         const now = Date.now()
         const newEvents: WatchEvent[] = []
         // Bitfield-confirmed identities already covered by real events in this exact scope:
@@ -748,8 +754,8 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
             backfillProcessed.add(guardKey)
             if (backfillProcessed.size > 2000) backfillProcessed.clear()
 
-            const lastWatchedTs = parseStremioDate(item.state?.lastWatched)?.getTime()
-                || parseStremioDate(item._mtime)?.getTime()
+            const lastWatchedTs = stremioTimeOf(item.state?.lastWatched)
+                || stremioTimeOf(item._mtime)
             const ts = lastWatchedTs || now
 
             for (const ep of episodes) {
@@ -1010,6 +1016,7 @@ export const useWatchEventStore = create<WatchEventState>((set, get) => ({
                 season: item.season,
                 episode: item.episode,
                 source: platform,
+                ...(item.backfill ? { backfill: true } : {}),
                 ...eventAttribution,
             }
             eventsById.set(eventId, event)
