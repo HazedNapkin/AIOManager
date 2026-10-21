@@ -387,8 +387,25 @@ async function syncAccountCore(id: string, forceRefresh: boolean): Promise<SyncC
             (async () => {
                 try {
                     const { triggerReconciliation } = await import('@/api/connection')
-                    const pushConnections = (updatedAccount.connections || []).filter(c => !failedReadConnIds.has(c.id))
-                    const reconcileResult = await triggerReconciliation(id, updatedAccount.primaryConnectionId, pushConnections, finalAddons)
+                    const allowEmptyDeletionRetry = propagateDeletions && finalAddons.length === 0
+                    const pushConnections = (updatedAccount.connections || []).filter(c =>
+                        !failedReadConnIds.has(c.id) && (!allowEmptyDeletionRetry || (
+                            c.connectionType !== 'hydra-outbound' && (c.platform === 'nuvio' || c.platform === 'realstream')
+                        ))
+                    )
+                    if (allowEmptyDeletionRetry && pushConnections.length === 0) return
+                    // A tombstone-only provider read is an explicit deletion signal. If
+                    // that was the last addon, the reconciler must be allowed to send the
+                    // empty projection back to the provider; otherwise its anti-wipe guard
+                    // skips the write and the stale addon remains on the provider. This
+                    // retry is limited to native providers covered by discovery above.
+                    const reconcileResult = await triggerReconciliation(
+                        id,
+                        updatedAccount.primaryConnectionId,
+                        pushConnections,
+                        finalAddons,
+                        { allowCollectionShrink: allowEmptyDeletionRetry },
+                    )
                     if (reconcileResult.connectionStates && Object.keys(reconcileResult.connectionStates).length > 0) {
                         reconcileStates = reconcileResult.connectionStates as Record<string, { status?: ConnectionStatus; lastError?: string }>
                         import('@/store/connectionStore').then(({ useConnectionStore }) => {
