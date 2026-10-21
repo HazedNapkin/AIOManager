@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/accountStore'
 import { useJellyfinMediaConnections } from '@/components/providers/useJellyfinMedia'
 import { compareMediaPlayback, jellyfinMediaActivity, mergeMediaItems, mergeMediaHistory, type MediaPlayback } from '@/lib/jellyfin/activity'
 import type { ActivityItem } from '@/types/activity'
+import type { Account } from '@/types/account'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { getEpisodeIdentity } from '@/lib/activity-utils'
+import { reuseActivityItems } from '@/lib/activity-structural-sharing'
 
 export interface MediaReadIssue {
     accountId: string
@@ -15,21 +17,38 @@ export interface MediaReadIssue {
     kind?: 'limit' | 'source-count'
 }
 
-export function useJellyfinActivity(accountId?: string) {
-    const accounts = useAccountStore(state => state.accounts)
-    const deletedEventKeys = useWatchEventStore(state => state.deletedEventKeys)
+const NO_ACCOUNTS: Account[] = []
+const NO_DELETED_EVENT_KEYS: ReturnType<typeof useWatchEventStore.getState>['deletedEventKeys'] = {}
+
+export function useJellyfinActivity(accountId?: string, enabled = true) {
+    // Per-card subscriptions stay narrow: this account's own object plus its index
+    // in the account list, instead of the entire accounts array. An unrelated
+    // account store write (another card syncing, a note edit) then re-renders only
+    // the card it changed, not the whole grid. The unscoped path (activity pages)
+    // keeps the full-array subscription it always had.
+    const ownAccount = useAccountStore(s => (enabled && accountId ? s.accounts.find(a => a.id === accountId) : undefined))
+    const ownColorIndex = useAccountStore(s => (enabled && accountId ? s.accounts.findIndex(a => a.id === accountId) : 0))
+    const allAccounts = useAccountStore(s => (enabled && !accountId ? s.accounts : undefined))
+    const accounts = useMemo(
+        () => (accountId ? (ownAccount ? [ownAccount] : NO_ACCOUNTS) : (allAccounts ?? NO_ACCOUNTS)),
+        [accountId, ownAccount, allAccounts]
+    )
+    const deletedEventKeys = useWatchEventStore(state => enabled ? state.deletedEventKeys : NO_DELETED_EVENT_KEYS)
     const scopes = useMemo(() => accounts.filter(account => !accountId || account.id === accountId)
         .flatMap(account => (account.connections || []).filter(connection => connection.platform === 'jellyfin').map(connection => ({ accountId: account.id, connection }))), [accounts, accountId])
     const { results, refresh, busy, initialLoading } = useJellyfinMediaConnections(scopes)
     const [playbackExpiry, setPlaybackExpiry] = useState(0)
+    const previousHistory = useRef<ActivityItem[]>([])
     const activity = useMemo(() => {
     let history: ActivityItem[] = []
     let inProgress: ActivityItem[] = []
     const playback: MediaPlayback[] = []
     for (const result of results) {
         if (result.error) continue
-        const colorIndex = accounts.findIndex(account => account.id === result.accountId)
-        const account = accounts[colorIndex]
+        const colorIndex = accountId
+            ? (ownColorIndex >= 0 ? ownColorIndex : 0)
+            : accounts.findIndex(account => account.id === result.accountId)
+        const account = accountId ? ownAccount : accounts[colorIndex]
         if (!account) continue
         const media = jellyfinMediaActivity(account, colorIndex, result.connection, result.reads)
         history = mergeMediaHistory(history, media.history)
@@ -41,10 +60,14 @@ export function useJellyfinActivity(accountId?: string) {
         const deletedAt = deletedEventKeys[`${item.accountId}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
         return deletedAt === undefined || item.timestamp.getTime() > deletedAt
     }
-    return { history: history.filter(notDeleted), inProgress: inProgress.filter(notDeleted), playback: playback.filter(entry => notDeleted(entry.item)) }
+    // Derive against the current clock first, then reuse only exactly equal history.
+    // Live playback and future-date gates still run on every relevant update.
+    const sharedHistory = reuseActivityItems(previousHistory.current, history.filter(notDeleted))
+    previousHistory.current = sharedHistory
+    return { history: sharedHistory, inProgress: inProgress.filter(notDeleted), playback: playback.filter(entry => notDeleted(entry.item)) }
     // The expiry tick intentionally reruns the time-sensitive live-session gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [results, accounts, deletedEventKeys, playbackExpiry])
+    }, [results, accounts, accountId, ownAccount, ownColorIndex, deletedEventKeys, playbackExpiry])
     useEffect(() => {
         let deadline = Infinity
         // Schedule from the live entries this render accepted. If a deadline

@@ -23,6 +23,10 @@ let _genreCache: Map<string, string[]> | null = null
 // the final state immediately, so partial results stay usable and incremental
 // single-change publications outside a load are unaffected.
 const HISTORY_LOAD_PACE_MS = 1200
+const NO_WATCH_EVENTS: ReturnType<typeof useWatchEventStore.getState>['events'] = []
+const NO_LIBRARY_ITEMS: ReturnType<typeof useLibraryCache.getState>['items'] = []
+const NO_HISTORY_ACCOUNTS: ReturnType<typeof useAccountStore.getState>['accounts'] = []
+const NO_DELETED_EVENT_KEYS: ReturnType<typeof useWatchEventStore.getState>['deletedEventKeys'] = {}
 
 /** Reference equality over a deps tuple (for the interrupted-render caches below). */
 function depsEqual(a: unknown[], b: unknown[]): boolean {
@@ -109,13 +113,13 @@ export interface WatchHistoryResult {
     loading: boolean
 }
 
-export function useWatchHistory(accountId?: string): WatchHistoryResult {
-    const media = useJellyfinActivity(accountId)
-    const rawEvents = useWatchEventStore(s => s.events)
-    const rawLiveItems = useLibraryCache(s => s.items)
-    const loading = useLibraryCache(s => s.loading)
-    const accounts = useAccountStore(s => s.accounts)
-    const deletedEventKeys = useWatchEventStore(s => s.deletedEventKeys)
+export function useWatchHistory(accountId?: string, enabled = true): WatchHistoryResult {
+    const media = useJellyfinActivity(accountId, enabled)
+    const rawEvents = useWatchEventStore(s => enabled ? s.events : NO_WATCH_EVENTS)
+    const rawLiveItems = useLibraryCache(s => enabled ? s.items : NO_LIBRARY_ITEMS)
+    const loading = useLibraryCache(s => enabled && s.loading)
+    const accounts = useAccountStore(s => enabled ? s.accounts : NO_HISTORY_ACCOUNTS)
+    const deletedEventKeys = useWatchEventStore(s => enabled ? s.deletedEventKeys : NO_DELETED_EVENT_KEYS)
     // Ownership, canonical-login changes and deletions invalidate a paced snapshot
     // immediately. A delayed event array must never outlive its identity context.
     const pacingScope = useMemo(() => [accounts, accountId, deletedEventKeys], [accounts, accountId, deletedEventKeys])
@@ -568,12 +572,12 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
         return () => { cancelled = true }
     }, [events, genreMap])
 
-    const combinedCacheRef = useRef<{ deps: unknown[]; value: { history: HistoryEntry[]; inProgress: ActivityItem[] } } | null>(null)
-    const combined = useMemo(() => {
+    const combinedHistoryCacheRef = useRef<{ deps: unknown[]; value: HistoryEntry[] } | null>(null)
+    const combinedHistory = useMemo(() => {
         // Same interrupted-render cache as the base derivation: the merge below walks
         // every history + media row and restarts pay full price without it.
-        const deps = [history, inProgress, media.history, media.inProgress, deletedEventKeys, ctxOf]
-        const cached = combinedCacheRef.current
+        const deps = [history, media.history, deletedEventKeys, ctxOf]
+        const cached = combinedHistoryCacheRef.current
         if (cached && depsEqual(cached.deps, deps)) return cached.value
         const byId = new Map(history.map(entry => [entry.id, entry]))
         const notDeleted = (item: ActivityItem) => {
@@ -588,9 +592,15 @@ export function useWatchHistory(accountId?: string): WatchHistoryResult {
             }
         })
         entries.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        const value = { history: entries, inProgress: mergeMediaItems(inProgress, media.inProgress.filter(notDeleted)) }
-        combinedCacheRef.current = { deps, value }
-        return value
-    }, [history, inProgress, media.history, media.inProgress, deletedEventKeys, ctxOf])
-    return { ...combined, hasEventLog, loading: loading || media.initialLoading, refreshMedia: media.refresh, mediaIssues: media.readIssues }
+        combinedHistoryCacheRef.current = { deps, value: entries }
+        return entries
+    }, [history, media.history, deletedEventKeys, ctxOf])
+    const combinedInProgress = useMemo(() => {
+        const notDeleted = (item: ActivityItem) => {
+            const deletedAt = deletedEventKeys[`${ctxOf(item.accountId, item.sourceConnectionId)}:${getEpisodeIdentity(item.itemId, item.uniqueItemId, item.season, item.episode, item.type)}`]
+            return deletedAt === undefined || item.timestamp.getTime() > deletedAt
+        }
+        return mergeMediaItems(inProgress, media.inProgress.filter(notDeleted))
+    }, [inProgress, media.inProgress, deletedEventKeys, ctxOf])
+    return { history: combinedHistory, inProgress: combinedInProgress, hasEventLog, loading: loading || media.initialLoading, refreshMedia: media.refresh, mediaIssues: media.readIssues }
 }
