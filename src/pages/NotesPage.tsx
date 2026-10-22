@@ -341,6 +341,8 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
                 <div key={i} className="flex items-start gap-2 my-1 text-sm group/task">
                     <button
                         onClick={() => onToggleTask?.(i)}
+                        aria-label={`${done ? 'Mark task incomplete' : 'Mark task complete'}: ${taskMatch[2]}`}
+                        aria-pressed={done}
                         className={cn('w-4 h-4 mt-0.5 rounded border shrink-0 flex items-center justify-center transition-colors cursor-pointer', done ? 'bg-primary border-primary' : 'border-muted-foreground/40 hover:border-primary/50')}
                     >
                         {done && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
@@ -494,6 +496,7 @@ function TB({ label, icon: Icon, onClick, disabled, className }: { label: string
                 variant="ghost"
                 onClick={onClick}
                 disabled={disabled}
+                aria-label={label}
                 className={cn("h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30", className)}
             >
                 <Icon className="h-3.5 w-3.5" />
@@ -521,8 +524,10 @@ function GridPicker({ onSelect, onClose }: { onSelect: (rows: number, cols: numb
                     const row = Math.floor(idx / 5)
                     const col = idx % 5
                     return (
-                        <div
+                        <button
                             key={idx}
+                            type="button"
+                            aria-label={`Insert table with ${row + 1} rows and ${col + 1} columns`}
                             className={cn(
                                 'w-7 h-7 rounded-sm border cursor-pointer transition-colors',
                                 row <= hover[0] && col <= hover[1]
@@ -530,6 +535,7 @@ function GridPicker({ onSelect, onClose }: { onSelect: (rows: number, cols: numb
                                     : 'border-border/40 hover:border-primary/30'
                             )}
                             onMouseEnter={() => setHover([row, col])}
+                            onFocus={() => setHover([row, col])}
                             onClick={() => onSelect(row + 1, col + 1)}
                         />
                     )
@@ -1105,6 +1111,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
         <div className="flex-1 min-h-0 overflow-auto relative">
             <Textarea
                 data-theme-part="inline-input"
+                aria-label="Note content"
                 ref={textareaRef}
                 autoFocus
                 maxLength={50000}
@@ -1247,12 +1254,13 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
 
                     <Tooltip content={note.pinned ? 'Unpin' : 'Pin'} side="top">
                         <Button variant="ghost" onClick={() => updateNote(note.id, { pinned: !note.pinned })}
+                            aria-label={note.pinned ? 'Unpin note' : 'Pin note'}
                             className={cn('h-7 w-7 flex items-center justify-center p-0 rounded-md transition-colors', note.pinned ? 'text-warning bg-warning/10' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
                             <Pin className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
                     <Tooltip content="Delete" side="top">
-                        <Button variant="ghost" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 flex items-center justify-center p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                        <Button variant="ghost" aria-label="Delete note" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 flex items-center justify-center p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
@@ -1285,7 +1293,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     {showGridPicker && <GridPicker onSelect={handleGridSelect} onClose={() => setShowGridPicker(false)} />}
                 </div>
                 <TB label="Code block" icon={SquareTerminal} onClick={() => wrapSel('```\n', '\n```')} />
-                <TB label="HR" icon={Minus} onClick={() => insertAt('\n---\n')} />
+                <TB label="Horizontal rule" icon={Minus} onClick={() => insertAt('\n---\n')} />
                 <div className="flex-1" />
 
                 <div className="w-px h-4 bg-border mx-1 shrink-0" />
@@ -1317,6 +1325,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <div ref={helpRef} className="relative">
                     <Tooltip content="Syntax Help" side="top">
                         <Button variant="ghost" onClick={() => setShowHelp(v => !v)}
+                            aria-label="Syntax help"
                             className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showHelp ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                             <HelpCircle className="h-3.5 w-3.5" />
                         </Button>
@@ -1391,6 +1400,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 </div>
                 <Tooltip content="Shortcuts" side="top">
                     <Button variant="ghost" onClick={() => setShowShortcuts(v => !v)}
+                        aria-label="Keyboard shortcuts"
                         className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showShortcuts ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                         <Keyboard className="h-3.5 w-3.5" />
                     </Button>
@@ -1418,6 +1428,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     <input
                         data-theme-part="input"
                         value={findText}
+                        aria-label="Find in note"
                         onChange={e => setFindText(e.target.value)}
                         placeholder="Find..."
                         className="flex-1 bg-background/60 border border-border/40 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
@@ -1426,6 +1437,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     <input
                         data-theme-part="input"
                         value={replaceText}
+                        aria-label="Replace with"
                         onChange={e => setReplaceText(e.target.value)}
                         placeholder="Replace..."
                         className="flex-1 bg-background/60 border border-border/40 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
@@ -1442,6 +1454,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <input
                     data-theme-part="inline-input"
                     value={title}
+                    aria-label="Note title"
                     onChange={handleTitleChange}
                     onBlur={handleTitleBlur}
                     placeholder="Untitled"
@@ -1839,18 +1852,21 @@ export function NotesPage() {
                         <div className="flex items-center gap-1.5">
                             <Tooltip content={selectionMode ? "Exit Selection" : "Select Notes"} side="left">
                                 <Button variant={selectionMode ? 'default' : 'ghost'} onClick={() => { setSelectionMode(!selectionMode); setSelectedIds(new Set()) }}
+                                    aria-label={selectionMode ? 'Exit note selection' : 'Select notes'}
                                     className={cn("h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-none", selectionMode ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-muted-foreground hover:text-foreground")}>
                                     <ListChecks className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="left">
                                 <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
+                                    aria-label={view === 'graph' ? 'Close graph view' : 'Open graph view'}
                                     className="h-7 w-7 flex items-center justify-center p-0 shrink-0 text-muted-foreground hover:text-foreground">
                                     <Network className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content="New note" side="right">
                                 <Button variant="default" onClick={handleCreate}
+                                    aria-label="New note"
                                     className="relative h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-sm rounded-lg">
                                     <Plus className="h-4 w-4" />
                                 </Button>
@@ -1860,6 +1876,7 @@ export function NotesPage() {
                         trash.length > 0 && (
                             <Tooltip content="Empty trash" side="right">
                                 <Button variant="ghost" onClick={emptyTrash}
+                                    aria-label="Empty trash"
                                     className="h-7 px-2 shrink-0 text-xs font-semibold text-destructive hover:bg-destructive/10">
                                     <Trash className="h-3 w-3" /> Empty
                                 </Button>
@@ -1930,6 +1947,7 @@ export function NotesPage() {
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
                         <input
                             ref={searchRef}
+                            aria-label="Search notes"
                             data-theme-part="input"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
@@ -1937,7 +1955,7 @@ export function NotesPage() {
                             className="w-full bg-muted/30 border border-border/40 rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring focus:border-primary/50"
                         />
                         {search && (
-                            <button data-theme-part="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-muted-foreground">
+                            <button data-theme-part="button" aria-label="Clear note search" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-muted-foreground">
                                 <X className="h-3 w-3" />
                             </button>
                         )}
@@ -1988,6 +2006,7 @@ export function NotesPage() {
                                                 </div>
                                                 <Tooltip content="Restore note" side="left">
                                                     <button data-theme-part="button" onClick={() => restoreNote(item.note.id)}
+                                                        aria-label={`Restore ${item.note.title}`}
                                                         className="shrink-0 flex items-center justify-center rounded hover:bg-muted/60 text-muted-foreground/60 hover:text-primary transition-colors">
                                                         <RotateCcw className="h-3.5 w-3.5" />
                                                     </button>
@@ -2048,7 +2067,7 @@ export function NotesPage() {
                                 </Button>
                             </Tooltip>
                             <Tooltip content="Erase all notes" side="top">
-                                <Button variant="ghost" onClick={() => setEraseAllOpen(true)} disabled={notes.length === 0} className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive">
+                                <Button variant="ghost" aria-label="Erase all notes" onClick={() => setEraseAllOpen(true)} disabled={notes.length === 0} className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive">
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                             </Tooltip>
@@ -2075,6 +2094,7 @@ export function NotesPage() {
                         />
                         <Tooltip content="Collapse sidebar" side="right">
                             <Button variant="ghost" onClick={() => setSidebarCollapsed(true)}
+                                aria-label="Collapse notes sidebar"
                                 className="hidden md:inline-flex h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                 <PanelLeftClose className="h-4 w-4" />
                             </Button>
@@ -2088,12 +2108,14 @@ export function NotesPage() {
                         <>
                             <Tooltip content="New note" side="right">
                                 <Button variant="default" onClick={handleCreate}
+                                    aria-label="New note"
                                     className="h-8 w-8 shrink-0 p-0 shadow-sm rounded-lg">
                                     <Plus className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="right">
                                 <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
+                                    aria-label={view === 'graph' ? 'Close graph view' : 'Open graph view'}
                                     className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                     <Network className="h-4 w-4" />
                                 </Button>
@@ -2106,6 +2128,7 @@ export function NotesPage() {
                     <div className="mt-auto">
                         <Tooltip content="Expand sidebar" side="right">
                             <Button variant="ghost" onClick={() => setSidebarCollapsed(false)}
+                                aria-label="Expand notes sidebar"
                                 className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                 <PanelLeftOpen className="h-4 w-4" />
                             </Button>
