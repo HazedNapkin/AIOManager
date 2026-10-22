@@ -137,7 +137,7 @@ export const ActivityItemCard = memo(({
     if (viewMode === 'grid') {
         return (
             <div
-                className="group flex flex-col gap-1.5 cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="group flex min-w-0 flex-col gap-1.5 cursor-pointer overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 role="button"
                 tabIndex={0}
                 onClick={handleClick}
@@ -199,36 +199,36 @@ export const ActivityItemCard = memo(({
                     )}
 
 
-                    {episodeLabel && (
-                        <div className="absolute bottom-2 left-2 z-10">
-                            <span className={cn(
-                                "text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75",
-                                getAvatarColor(item.accountColorIndex).split(' ')[1]
-                            )}>
-                                {episodeLabel}
-                            </span>
-                        </div>
-                    )}
-
-                    {savedState && isEpisodeLike && !episodeLabel && (
-                        <div className="absolute bottom-2 left-2 z-10 max-w-[85%]">
-                            <span className="inline-block truncate text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75 text-white/95">
-                                {savedCount ? `${savedCount} episodes saved` : 'Saved episodes'}
-                            </span>
-                        </div>
-                    )}
-
-
-                    {badgePct !== undefined && !isLive && (
-                        <div className="absolute bottom-2 right-2 z-10">
-                            {badgePct >= 100 ? (
-                                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-background/85 text-success shadow-sm backdrop-blur-sm">
-                                    <Check className="h-3.5 w-3.5 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]" strokeWidth={3} />
+                    {(episodeLabel || (savedState && isEpisodeLike) || (badgePct !== undefined && !isLive)) && (
+                        <div className="absolute bottom-2 left-2 right-2 z-10 flex items-center gap-1.5">
+                            {episodeLabel && (
+                                <span
+                                    title={episodeLabel}
+                                    className={cn(
+                                        "min-w-0 truncate text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75",
+                                        getAvatarColor(item.accountColorIndex).split(' ')[1]
+                                    )}
+                                >
+                                    {episodeLabel}
                                 </span>
-                            ) : (
-                                <span className="text-xs font-bold text-foreground bg-background/85 rounded-full px-1.5 py-0.5 ring-1 ring-black/20 shadow-sm backdrop-blur-sm">
-                                    {badgePct}%
+                            )}
+
+                            {savedState && isEpisodeLike && !episodeLabel && (
+                                <span className="min-w-0 truncate text-xs font-bold px-1.5 py-0.5 rounded-full bg-black/75 text-white/95">
+                                    {savedCount ? `${savedCount} episodes saved` : 'Saved episodes'}
                                 </span>
+                            )}
+
+                            {badgePct !== undefined && !isLive && (
+                                badgePct >= 100 ? (
+                                    <span className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-background/85 text-success shadow-sm backdrop-blur-sm">
+                                        <Check className="h-3.5 w-3.5 drop-shadow-[0_1px_1px_rgba(0,0,0,0.5)]" strokeWidth={3} />
+                                    </span>
+                                ) : (
+                                    <span className="ml-auto shrink-0 text-xs font-bold text-foreground bg-background/85 rounded-full px-1.5 py-0.5 ring-1 ring-black/20 shadow-sm backdrop-blur-sm">
+                                        {badgePct}%
+                                    </span>
+                                )
                             )}
                         </div>
                     )}
@@ -237,9 +237,9 @@ export const ActivityItemCard = memo(({
 
                 <div className="px-0.5 space-y-0.5">
                     <p className="font-bold text-xs text-foreground leading-tight line-clamp-1 truncate">{item.name}</p>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
                         {episodeLabel && (
-                            <span className="shrink-0 font-mono text-xs font-bold text-primary">
+                            <span title={episodeLabel} className="min-w-0 truncate font-mono text-xs font-bold text-primary">
                                 {episodeLabel}
                             </span>
                         )}
