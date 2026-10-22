@@ -133,7 +133,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2.5 py-0.5 text-[11px] font-extrabold uppercase tracking-widest text-primary-foreground shadow-sm">
-                  Featured Addon
+                  Spotlight
                 </span>
                 <span data-theme-part="badge" className="rounded-md bg-amber-500/90 px-2 py-0.5 text-[11px] font-black text-black shadow flex items-center gap-1">
                   <Star className="h-3 w-3 fill-black text-black" />
@@ -225,7 +225,7 @@ export function DiscoverHero({ addons, isSaved, savingKey, onSave, onConfigure, 
               <button
                 key={a.uuid}
                 type="button"
-                aria-label={`Featured ${i + 1}`}
+                aria-label={`Spotlight ${i + 1}`}
                 onClick={() => setIndex(i)}
                 className={cn('h-1.5 rounded-full transition-all', i === active ? 'w-5 bg-primary' : 'w-1.5 bg-foreground/30 hover:bg-foreground/50')}
               />

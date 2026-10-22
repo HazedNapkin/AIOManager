@@ -5,7 +5,7 @@ const BASE_URL = 'https://stremio-addons.net/api/v0'
 const CACHE_TTL = 10 * 60 * 1000
 const _cache = new Map<string, { data: unknown; ts: number }>()
 
-export function _invalidateCache(): void {
+export function invalidateDiscoverCache(): void {
   _cache.clear()
 }
 

@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { cn } from '@/lib/utils'
-import { LayoutGrid, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
+import { LayoutGrid, RefreshCw, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
 import { RESOURCE_LABELS, type DiscoverCategory, type DiscoverSortBy } from '@/api/discover'
 
 // Refine facets applied client-side to the loaded results (the public directory API does not
@@ -31,6 +31,10 @@ interface DiscoverToolbarProps {
   showSort?: boolean
   compact?: boolean
   onToggleCompact?: () => void
+  refreshing?: boolean
+  refreshStatus?: string | null
+  refreshFailed?: boolean
+  onRefresh?: () => void
 }
 
 function FacetChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -70,6 +74,10 @@ export function DiscoverToolbar({
   showSort = true,
   compact,
   onToggleCompact,
+  refreshing = false,
+  refreshStatus,
+  refreshFailed = false,
+  onRefresh,
 }: DiscoverToolbarProps) {
   const activeFilterCount = selectedResources.length + selectedTypes.length
   const searchRef = useRef<HTMLInputElement>(null)
@@ -170,6 +178,36 @@ export function DiscoverToolbar({
               >
                 <Rows3 className="h-3.5 w-3.5" />
               </Button>
+              </Tooltip>
+            </div>
+          )}
+
+          {onRefresh && (
+            <div className="flex items-center gap-1.5">
+              {(refreshing || refreshStatus || refreshFailed) && (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={cn(
+                    'whitespace-nowrap text-[11px] text-muted-foreground',
+                    refreshFailed && 'text-destructive'
+                  )}
+                >
+                  {refreshing ? 'Refreshing…' : refreshFailed ? 'Refresh failed' : refreshStatus}
+                </span>
+              )}
+              <Tooltip content={refreshing ? 'Refreshing addon directory' : 'Refresh addon directory'} side="bottom">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  ripple={false}
+                  className="h-8 w-8 shrink-0"
+                  onClick={onRefresh}
+                  disabled={refreshing}
+                  aria-label={refreshing ? 'Refreshing addon directory' : 'Refresh addon directory'}
+                >
+                  <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+                </Button>
               </Tooltip>
             </div>
           )}
