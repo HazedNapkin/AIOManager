@@ -97,6 +97,7 @@ interface SyncState {
     // tell "cloud genuinely empty" apart from "local index was wiped underneath us".
     lastSyncedNotesCount: number | null
     lastAppliedAccountCount: number | null
+    lastSyncedAccountIds: string[] | null
     lastAppliedAddonCount: number | null
     serverStremioCredentialedAccounts: string[] | null
     // True only when an authenticated+unlocked session has NO usable server credential
@@ -144,6 +145,7 @@ export const useSyncStore = create<SyncState>()(
             lastSyncedCloudEtag: null,
             lastSyncedNotesCount: null,
             lastAppliedAccountCount: null,
+            lastSyncedAccountIds: null,
             lastAppliedAddonCount: null,
             serverStremioCredentialedAccounts: null,
             needsReauth: false,
@@ -592,7 +594,9 @@ export const useSyncStore = create<SyncState>()(
                         const d = (data || {}) as Record<string, unknown>
                         const dSettings = (d.settings || {}) as Record<string, unknown>
                         data = {
-                            accounts: d.accounts ?? undefined,
+                            accounts: d.accounts,
+                            deletedAccounts: d.deletedAccounts,
+                            restoredAccounts: d.restoredAccounts,
                             addons: d.addons || { version: '1.0', savedAddons: [] },
                             profiles: Array.isArray(d.profiles) ? d.profiles : [],
                             failover: d.failover || [],
@@ -736,30 +740,17 @@ export const useSyncStore = create<SyncState>()(
                     let decision = 'passive merge'
                     const postConflictPull = get().pendingConflictAccountId === id
 
-                    if (syncData.accounts) {
-                        const localAccounts = useAccountStore.getState().accounts
-                        const remoteAccountsRaw = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | undefined)?.accounts || []
-                        const remoteAccounts = remoteAccountsRaw as Record<string, unknown>[]
+                    if (syncData.accounts !== undefined) {
+                        const remoteAccounts = Array.isArray(syncData.accounts) ? syncData.accounts : (syncData.accounts as Record<string, unknown> | null)?.accounts
+                        if (!Array.isArray(remoteAccounts)) throw new Error('Cloud accounts must be an array')
+                        const mirror = shouldMirrorAccountPull({ isRemoteNewer, hasRemoteData: remoteAccounts.length > 0, postConflict: postConflictPull })
+                        decision = mirror ? 'Adopt Remote (preserve unsynced accounts; apply explicit deletions)' : 'Merge (preserve unsaved changes; apply explicit deletions)'
+                        await useAccountStore.getState().importAccounts(syncData, true, mirror ? 'mirror' : 'merge', preUnlockEncryptionKey, ownership, 'sync')
+                        ownership.assert()
                         syncRuntime.lastSyncedAccountCount = remoteAccounts.length
-
-                        const hasRemoteData = remoteAccounts.length > 0
-                        const hasLocalData = localAccounts.length > 0
-
-                        if (!hasRemoteData && hasLocalData) {
-                            decision = 'Seed Cloud (local data exists, cloud is empty)'
-                            await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
-                            requestFollowUpPush()
-                        } else if (hasRemoteData) {
-                            if (shouldMirrorAccountPull({ isRemoteNewer, hasRemoteData, postConflict: postConflictPull })) {
-                                decision = 'Adopt Remote (cloud is newer, replace local)'
-                                await useAccountStore.getState().importAccounts(syncData, true, 'mirror', preUnlockEncryptionKey, ownership)
-                            } else {
-                                decision = postConflictPull
-                                    ? 'Merge (preserve unsaved changes after conflict)'
-                                    : 'Merge (equal or local-newer timestamps)'
-                                await useAccountStore.getState().importAccounts(syncData, true, 'merge', preUnlockEncryptionKey, ownership)
-                            }
-                        }
+                        set({ lastSyncedAccountIds: remoteAccounts.map(a => a.id as string) })
+                        const localIds = new Set(useAccountStore.getState().accounts.map(a => a.id))
+                        if (localIds.size !== remoteAccounts.length || remoteAccounts.some(a => !localIds.has(a.id as string))) requestFollowUpPush()
                     }
 
                     // Render after accounts load; keep pushes disabled until deferred slices finish.
@@ -1190,6 +1181,7 @@ export const useSyncStore = create<SyncState>()(
                     lastSyncedCloudEtag: null,
                     lastSyncedNotesCount: null,
                     lastAppliedAccountCount: null,
+                    lastSyncedAccountIds: null,
                     lastAppliedAddonCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
@@ -1344,7 +1336,9 @@ export const useSyncStore = create<SyncState>()(
                     ownership.assert()
                     if (shouldBlockEmptyAccountPush({
                         currentAccountCount: accountCount,
-                        lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount,
+                        lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount ?? get().lastSyncedAccountIds?.length ?? get().lastAppliedAccountCount,
+                        lastSyncedAccountIds: get().lastSyncedAccountIds,
+                        deletedAccountIds: Object.keys(useAccountStore.getState().deletedAccounts),
                         isManualPush: !isAuto && !isDebounced,
                     })) {
                         trace('sync', 'push.blocked-empty-accounts', { accountId: auth.id, lastSyncedAccountCount: syncRuntime.lastSyncedAccountCount })
@@ -1562,10 +1556,7 @@ export const useSyncStore = create<SyncState>()(
                     }
 
                     // Recheck push ownership after loading completion helpers.
-                    const [pushMetadata, canonicalBase] = await Promise.all([
-                        import('@/store/account/accountImportExport').catch(() => null),
-                        import('@/lib/canonical-base').catch(() => null),
-                    ])
+                    const canonicalBase = await import('@/lib/canonical-base').catch(() => null)
                     if (!pushCurrent()) return false
                     syncRuntime.lastPushedHash = stateHash
                     syncRuntime.lastSyncedAccountCount = accountCount
@@ -1574,7 +1565,7 @@ export const useSyncStore = create<SyncState>()(
                         syncRuntime.lastPulledNotes = notesToPush
                         syncRuntime.lastPulledNotesTrash = mergedNotesTrash
                     }
-                    pushMetadata?.setLastPushedAt(Date.now())
+                    set({ lastSyncedAccountIds: (exportedAccounts.accounts as { id: string }[]).map(a => a.id) })
                     if (typeof resData.contentHash === 'string') {
                         set({ lastSyncedCloudEtag: resData.contentHash })
                     }
@@ -1803,9 +1794,15 @@ export const useSyncStore = create<SyncState>()(
                         }
                     }
 
-                    if (data.accounts) {
+                    if (data.accounts !== undefined) {
                         fence()
-                        await useAccountStore.getState().importAccounts(data, true, 'mirror', undefined, ownership)
+                        await useAccountStore.getState().importAccounts(data, true, 'mirror', undefined, ownership, 'restore')
+                        fence()
+                        const ids = useAccountStore.getState().accounts.map(a => a.id)
+                        syncRuntime.lastSyncedAccountCount = ids.length
+                        set({ lastSyncedAccountIds: ids })
+                    } else {
+                        throw new Error('Cloud data is missing accounts; nothing was replaced')
                     }
                     fence()
                     {
@@ -1987,6 +1984,7 @@ export const useSyncStore = create<SyncState>()(
                     lastSyncedCloudEtag: null,
                     lastSyncedNotesCount: null,
                     lastAppliedAccountCount: null,
+                    lastSyncedAccountIds: null,
                     lastAppliedAddonCount: null,
                     serverStremioCredentialedAccounts: null,
                     needsReauth: false
@@ -2015,6 +2013,7 @@ export const useSyncStore = create<SyncState>()(
                 lastSyncedCloudEtag: state.lastSyncedCloudEtag,
                 lastSyncedNotesCount: state.lastSyncedNotesCount,
                 lastAppliedAccountCount: state.lastAppliedAccountCount,
+                lastSyncedAccountIds: state.lastSyncedAccountIds,
                 lastAppliedAddonCount: state.lastAppliedAddonCount,
                 serverStremioCredentialedAccounts: state.serverStremioCredentialedAccounts,
             }),

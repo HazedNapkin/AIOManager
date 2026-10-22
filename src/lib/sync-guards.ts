@@ -7,12 +7,18 @@ export interface EmptyPushGuardState {
     currentAccountCount: number
     lastSyncedAccountCount: number | null
     isManualPush: boolean
+    lastSyncedAccountIds?: string[] | null
+    deletedAccountIds?: string[]
 }
 
 export function shouldBlockEmptyAccountPush(s: EmptyPushGuardState): boolean {
     if (s.currentAccountCount > 0) return false
     if (s.lastSyncedAccountCount === null) return false
     if (s.lastSyncedAccountCount === 0) return false
+    // Only durable, explicit deletions of every known cloud account authorize an
+    // automatic empty push. An empty/unhydrated array cannot provide this proof.
+    const deleted = new Set(s.deletedAccountIds)
+    if (s.lastSyncedAccountIds?.length === s.lastSyncedAccountCount && s.lastSyncedAccountIds.every(id => deleted.has(id))) return false
     // Reaching 0 from a populated last-known state via an explicit user action is a
     // legitimate "delete everything" — only automatic/background pushes are blocked.
     return !s.isManualPush

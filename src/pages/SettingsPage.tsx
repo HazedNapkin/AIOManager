@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
+import { readAccountImport } from '@/lib/account-membership'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
@@ -60,6 +61,7 @@ import { SettingsSearch, resolveSectionElement, type SettingSearchEntry } from '
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 
 type ImportPreview = {
+    hasAccounts: boolean
     fileName: string
     sizeLabel: string
     version?: string
@@ -92,11 +94,7 @@ const asArray = (value: unknown): unknown[] => {
 }
 
 const getPreviewAccounts = (data: Record<string, unknown>) => {
-    let accountsToImport = (data?.accounts || []) as unknown
-    if (!Array.isArray(accountsToImport) && accountsToImport && typeof accountsToImport === 'object') {
-        accountsToImport = ((accountsToImport as Record<string, unknown>).accounts || []) as unknown
-    }
-    return asArray(accountsToImport)
+    return readAccountImport(data) || []
 }
 
 const getPreviewSavedAddons = (data: Record<string, unknown>) => asArray(
@@ -130,7 +128,7 @@ const BACKUP_SECTIONS = [
 ]
 
 function applySectionFilter(data: Record<string, unknown>, sections: Set<string>): void {
-    if (!sections.has('accounts')) { delete data.accounts; delete data.manifests; delete data.apiKeys; delete data.watchEvents; delete data.watchSnapshot }
+    if (!sections.has('accounts')) { delete data.accounts; delete data.deletedAccounts; delete data.restoredAccounts; delete data.manifests; delete data.apiKeys; delete data.watchEvents; delete data.watchSnapshot }
     if (!sections.has('library')) { delete data.addons; delete data.accountStates; delete data.profiles }
     if (!sections.has('vault')) { delete data.vault; delete data.vaultTombstones }
     if (!sections.has('failover')) { delete data.failover }
@@ -228,6 +226,7 @@ export function SettingsPage() {
     const [exporting, setExporting] = useState(false)
     const [importing, setImporting] = useState(false)
     const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
+    const [importAccountMode, setImportAccountMode] = useState<'merge' | 'restore'>('merge')
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [showExportDialog, setShowExportDialog] = useState(false)
     const [exportSections, setExportSections] = useState<Set<string>>(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
@@ -288,7 +287,7 @@ export function SettingsPage() {
         const matchingAccounts = incomingAccounts.filter((incoming) =>
             accounts.some(a => {
                 const inc = incoming as Record<string, unknown>
-                return a.email?.toLowerCase() === ((inc.email as string) || '').toLowerCase()
+                return a.id === inc.id || (!!a.email && typeof inc.email === 'string' && !!inc.email && a.email.toLowerCase() === inc.email.toLowerCase())
             })
         ).length
         const missingCredentials = (incomingAccounts as Record<string, unknown>[]).filter((incoming) => !incoming.authKey).length
@@ -313,10 +312,10 @@ export function SettingsPage() {
             settings +
             watchEvents
 
-        if (recognizedTotal === 0) {
+        if (recognizedTotal === 0 && data.accounts === undefined) {
             errors.push('No recognizable AIOManager data was found in this JSON file.')
         }
-        if (incomingAccounts.length === 0) {
+        if (data.accounts === undefined) {
             warnings.push('This backup does not include accounts; it may only restore library data, settings, or diagnostics.')
         }
         if (missingCredentials > 0) {
@@ -333,6 +332,7 @@ export function SettingsPage() {
         }
 
         return {
+            hasAccounts: data.accounts !== undefined,
             fileName: file.name,
             sizeLabel: formatFileSize(file.size),
             version: typeof data?.version === 'string' ? data.version : undefined,
@@ -442,6 +442,7 @@ export function SettingsPage() {
                 return
             }
             setPendingImport({ text, preview })
+            setImportAccountMode('merge')
             setImportSections(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import preview failed:', error)
@@ -457,9 +458,11 @@ export function SettingsPage() {
         setImporting(true)
         try {
             const filtered = filterImportJson(pendingImport.text, importSections)
-            await importAccounts(filtered, false, 'merge', undefined)
+            await importAccounts(filtered, false, 'merge', undefined, undefined, importAccountMode)
             await initializeAddonStore()
-            toast({ title: "Import Successful", description: "Selected data has been restored." })
+            const accountCount = useAccountStore.getState().accounts.length
+            const restoredAccounts = importSections.has('accounts') && pendingImport.preview.hasAccounts && importAccountMode === 'restore'
+            toast({ title: 'Import Successful', description: restoredAccounts ? `Account list restored: ${accountCount} accounts. Other selected data was merged.` : `Selected data merged. You now have ${accountCount} accounts; existing accounts were kept.` })
             setPendingImport(null)
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import failed:', error)
@@ -633,7 +636,7 @@ export function SettingsPage() {
                                 </div>
                             </div>
                             <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
-                                <Button variant="outline" onClick={handleExport} disabled={exporting || accounts.length === 0} className="w-full gap-2 sm:w-auto">
+                                <Button variant="outline" onClick={handleExport} disabled={exporting} className="w-full gap-2 sm:w-auto">
                                     <Download className="h-4 w-4" />
                                     {exporting ? 'Exporting...' : 'Export'}
                                 </Button>
@@ -831,6 +834,20 @@ export function SettingsPage() {
                                 </div>
                             </div>
 
+                            {pendingImport.preview.hasAccounts && importSections.has('accounts') && (
+                                <fieldset className="space-y-2 rounded-xl border border-border/35 p-3 text-sm">
+                                    <legend className="px-1 font-medium">Account list</legend>
+                                    <label className="flex items-start gap-2">
+                                        <input type="radio" name="backup-account-mode" value="merge" checked={importAccountMode === 'merge'} onChange={() => setImportAccountMode('merge')} disabled={importing} className="mt-1" />
+                                        <span>Merge accounts <span className="block text-xs text-muted-foreground">Keep existing accounts and add or update accounts from this file. The file count is not the final total.</span></span>
+                                    </label>
+                                    <label className="flex items-start gap-2">
+                                        <input type="radio" name="backup-account-mode" value="restore" checked={importAccountMode === 'restore'} onChange={() => setImportAccountMode('restore')} disabled={importing} className="mt-1" />
+                                        <span>Restore account list <span className="block text-xs text-muted-foreground">Replace your current {accounts.length} accounts with the {pendingImport.preview.counts.accounts} accounts in this file. Accounts absent from the file will be removed from AIOManager and this change will sync to your other devices. Other selected data is merged.</span></span>
+                                    </label>
+                                </fieldset>
+                            )}
+
                             {pendingImport.preview.warnings.length > 0 && (
                                 <div data-theme-tone="status" data-theme-part="panel" className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
                                     <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-warning">
@@ -854,7 +871,7 @@ export function SettingsPage() {
                             disabled={importing || importSections.size === 0}
                             className="h-11 rounded-full"
                         >
-                            {importing ? 'Importing...' : 'Import Backup'}
+                            {importing ? 'Importing...' : importAccountMode === 'restore' && importSections.has('accounts') && pendingImport?.preview.hasAccounts ? `Restore ${pendingImport.preview.counts.accounts} Accounts` : 'Import Backup'}
                         </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>

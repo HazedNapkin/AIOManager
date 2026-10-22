@@ -1,6 +1,7 @@
 import { mergeAddons } from '@/lib/utils'
 import { mergeAddonDeletionState, filterResurrected } from '@/lib/addon-tombstones'
 import { normalizeDestinations } from '@/lib/addon-destinations'
+import { deleteAccountIds, mergeAccountMembership, readAccountImport, restoreAccountIds, type AccountListImport } from '@/lib/account-membership'
 import { readSyncedSettings } from '@/lib/synced-settings'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
@@ -18,8 +19,9 @@ import {
     getEncryptionKey,
     sanitizeAddonManifest,
     safeUUID,
-    persistAccounts,
+    persistAccountMembership,
     acquireSyncMutex,
+    ACCOUNT_MEMBERSHIP_MUTEX,
     STORAGE_KEY,
     CHANGELOG_KEY,
     BACKUP_KEY,
@@ -31,12 +33,6 @@ import type { AccountStore } from '../accountStore'
 import { captureSyncOwnership } from '../sync-store-helpers'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
-
-let _lastPushedAt: number | null = null
-
-export function setLastPushedAt(ts: number | null) {
-    _lastPushedAt = ts
-}
 
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
@@ -159,9 +155,11 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
 
     if (forSync) {
         return {
-            version: '2.0.0',
+            version: '2.1.0',
             manifests: manifestMap,
             accounts: exportedAccounts,
+            deletedAccounts: store.getState().deletedAccounts,
+            restoredAccounts: store.getState().restoredAccounts,
             apiKeys,
             accountStates: useAddonStore.getState().accountStates,
             changelog: store.getState().changelog.slice(0, 100),
@@ -181,10 +179,12 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
     const notesTrash = useNotesStore.getState().trash || []
 
     const data: Record<string, unknown> = {
-        version: '2.0.0',
+        version: '2.1.0',
         exportedAt: new Date().toISOString(),
         manifests: manifestMap,
         accounts: exportedAccounts,
+        deletedAccounts: store.getState().deletedAccounts,
+        restoredAccounts: store.getState().restoredAccounts,
         apiKeys,
         profiles: useProfileStore.getState().profiles.map((p) => ({
             ...p,
@@ -239,16 +239,23 @@ export async function exportAccountsForSync(): Promise<Record<string, unknown>> 
 
 // Accept file JSON or a parsed sync envelope. Ownership fences cover imports, rollback,
 // and deferred persistence so superseded work cannot change the replacement session.
-export async function importAccounts(json: string | Record<string, unknown>, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null, ownership?: import('../sync-store-helpers').SyncOwnership) {
+export async function importAccounts(json: string | Record<string, unknown>, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null, ownership?: import('../sync-store-helpers').SyncOwnership, accountList: AccountListImport = 'merge') {
     const own = ownership ?? captureSyncOwnership()
     const store = await getStore()
     own.assert()
+    if (!store.getState().hydrated) {
+        await store.getState().initialize()
+        own.assert()
+        if (!store.getState().hydrated) throw new Error('Accounts could not be loaded; import was not applied')
+    }
     store.setState({ error: null })
     setAccountLoading('__import__')
-    let mutexReleases: Array<() => void> = []
-    let restorePreImport: (() => void) | null = null
+    const mutexReleases: Array<() => void> = []
+    let restorePreImport: (() => Promise<void>) | null = null
     try {
-        mutexReleases = await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id)))
+        mutexReleases.push(await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX))
+        mutexReleases.push(...await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id))))
+        own.assert()
         let data: Record<string, unknown>
         if (!json) throw new Error('No data provided to import')
         try {
@@ -256,6 +263,12 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
         } catch (e) {
             throw new Error('Invalid JSON format for import')
         }
+        if (!data || typeof data !== 'object') throw new Error('Invalid backup format')
+        const accountsToImport = readAccountImport(data)
+        if (accountList === 'sync' && accountsToImport === undefined) throw new Error('Cloud data is missing accounts')
+        // A file merge is additive. Sync/restore retain deletion history;
+        // explicit imports acknowledge deletions for the selected accounts.
+        let membership = mergeAccountMembership(store.getState(), accountList !== 'merge' ? data : {})
 
         const manifestMap = (data.manifests || {}) as Record<string, unknown>
 
@@ -276,6 +289,7 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
         const willImportNotes = Array.isArray(data.notes) && (data.notes as unknown[]).length > 0
         const preImport = {
             accounts: willImportAccounts ? structuredClone(store.getState().accounts) : null,
+            membership: willImportAccounts ? mergeAccountMembership(store.getState()) : null,
             changelog: willImportAccounts ? structuredClone(store.getState().changelog) : null,
             addonLibrary: structuredClone(useAddonStore.getState().library),
             addonAccountStates: structuredClone(useAddonStore.getState().accountStates),
@@ -292,8 +306,8 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             settings: readSyncedSettings(),
         }
         // Restore memory first, then re-persist under the same ownership fence.
-        restorePreImport = () => {
-            if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, changelog: preImport.changelog ?? undefined })
+        restorePreImport = async () => {
+            if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, ...preImport.membership, changelog: preImport.changelog ?? undefined })
             useAddonStore.setState({ library: preImport.addonLibrary, accountStates: preImport.addonAccountStates })
             useFailoverStore.setState({ rules: preImport.failoverRules, webhook: preImport.failoverWebhook })
             useProfileStore.setState({ profiles: preImport.profiles })
@@ -301,14 +315,13 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             if (preImport.watchEvents !== null) useWatchEventStore.setState({ events: preImport.watchEvents ?? undefined, snapshot: preImport.watchSnapshot ?? undefined, deletedEventKeys: preImport.watchDeleted ?? undefined })
             if (preImport.notesIndex !== null) useNotesStore.setState({ notes: preImport.notesIndex ?? undefined, trash: preImport.notesTrash ?? undefined })
             applySyncedSettings(preImport.settings, true)
-            void (async () => {
+            await (async () => {
                 try {
                     const { default: localforage } = await import('localforage')
-                    const { persistAccounts } = await import('../accountStore')
                     const notesModule = await import('@/store/notesStore')
                     own.assert()
                     const results = await Promise.allSettled([
-                        preImport.accounts !== null ? persistAccounts(store.getState().accounts, own) : Promise.resolve(),
+                        preImport.accounts !== null && preImport.membership !== null ? persistAccountMembership(preImport.accounts, preImport.membership, own) : Promise.resolve(),
                         localforage.setItem('aioman:addon-library', useAddonStore.getState().library),
                         localforage.setItem('aioman:account-addons', useAddonStore.getState().accountStates),
                         localforage.setItem('aioman:failover-rules', useFailoverStore.getState().rules),
@@ -432,12 +445,11 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             }
         }
 
-        let accountsToImport = data.accounts || []
-        if (!Array.isArray(accountsToImport) && typeof accountsToImport === 'object') {
-            accountsToImport = (accountsToImport as Record<string, unknown>).accounts as unknown[] || []
+        if (accountsToImport === undefined) {
+            own.assert()
+            if (!isSilent) triggerSync()
+            return
         }
-
-        if (!Array.isArray(accountsToImport)) accountsToImport = []
 
         const normalizedAccounts = (accountsToImport as Record<string, unknown>[]).map((acc) => {
             return {
@@ -556,8 +568,10 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
 
         const reconciledAccounts: Account[] = []
         const processedLocalIds = new Set<string>()
+        const incomingIds = new Set(normalizedAccounts.map(a => a.id))
 
         for (const ra of normalizedAccounts) {
+            if (accountList === 'sync' && Object.hasOwn(membership.deletedAccounts, ra.id)) continue
             if (ra.connections) {
                 // The opener validates legacy same-key ciphertext; anything that cannot be
                 // decrypted, parsed and matched to the record's user becomes pending.
@@ -568,17 +582,20 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                         text => decrypt(text, getReadEncryptionKey()),
                     ))))
             }
-            let matchedAccount = currentAccounts.find((a) => a.id === ra.id)
+            const availableAccounts = currentAccounts.filter(a => !processedLocalIds.has(a.id)
+                && (a.id === ra.id || !incomingIds.has(a.id))
+                && (accountList !== 'sync' || !Object.hasOwn(membership.deletedAccounts, a.id)))
+            let matchedAccount = availableAccounts.find((a) => a.id === ra.id)
 
             if (!matchedAccount && ra.rawKey) {
-                const found = localDecrypted.find((ld) => ld.key === ra.rawKey)
-                if (found) matchedAccount = currentAccounts.find((a) => a.id === found.id)
+                const found = localDecrypted.find((ld) => ld.key === ra.rawKey && availableAccounts.some(a => a.id === ld.id))
+                if (found) matchedAccount = availableAccounts.find((a) => a.id === found.id)
             }
 
             const raHasCredentials = !!ra.rawKey || (ra.connections || []).some(c => c.credentials)
 
             if (!matchedAccount && ra.email) {
-                matchedAccount = currentAccounts.find((a) => {
+                matchedAccount = availableAccounts.find((a) => {
                     if (a.email?.toLowerCase() !== ra.email?.toLowerCase()) return false
                     const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
                     return raHasCredentials === aHasCredentials
@@ -586,7 +603,7 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             }
 
             if (!matchedAccount && ra.apiKey) {
-                matchedAccount = currentAccounts.find((a) => {
+                matchedAccount = availableAccounts.find((a) => {
                     if (a.apiKey !== ra.apiKey) return false
                     const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
                     return raHasCredentials === aHasCredentials
@@ -689,28 +706,24 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
             }
         }
 
+        if (accountList !== 'sync') {
+            membership = restoreAccountIds(membership, [...normalizedAccounts.map(a => a.id), ...reconciledAccounts.map(a => a.id)])
+        }
+        if (accountList === 'restore') {
+            membership = deleteAccountIds(membership, currentAccounts.filter(a => !processedLocalIds.has(a.id)).map(a => a.id))
+        }
         const localOnlyAccounts =
-            mode === 'mirror'
+            accountList === 'restore'
                 ? []
                 : await Promise.all(
                     currentAccounts
-                        .filter((a) => !processedLocalIds.has(a.id))
+                        .filter((a) => !processedLocalIds.has(a.id) && !Object.hasOwn(membership.deletedAccounts, a.id))
                         .map(migrateLocalAccountSecrets)
                 )
 
-        const lastPushMs = _lastPushedAt
-        const freshLocalAccounts = mode === 'mirror'
-            ? currentAccounts.filter(a =>
-                !processedLocalIds.has(a.id) &&
-                a.createdAt !== undefined &&
-                (lastPushMs === null || a.createdAt > lastPushMs))
-            : []
-
         let finalAccounts: typeof currentAccounts
-        if (mode === 'mirror') {
-            finalAccounts = freshLocalAccounts.length > 0
-                ? [...reconciledAccounts, ...freshLocalAccounts]
-                : reconciledAccounts
+        if (accountList === 'restore' || mode === 'mirror') {
+            finalAccounts = [...reconciledAccounts, ...localOnlyAccounts]
         } else {
             const reconciledById = new Map(reconciledAccounts.map(a => [a.id, a]))
             const localById = new Map(localOnlyAccounts.map(a => [a.id, a]))
@@ -723,7 +736,6 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                 const local = localById.get(id)
                 if (reconciled) ordered.push(reconciled)
                 else if (local) ordered.push(local)
-                else ordered.push(existing)
             }
             for (const acc of reconciledAccounts) {
                 if (!seenIds.has(acc.id)) { ordered.push(acc); seenIds.add(acc.id) }
@@ -732,46 +744,6 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
                 if (!seenIds.has(acc.id)) { ordered.push(acc); seenIds.add(acc.id) }
             }
             finalAccounts = ordered
-        }
-
-        if (freshLocalAccounts.length > 0) {
-            console.warn(`[Import] Mirror merge spared ${freshLocalAccounts.length} account(s) created after the last confirmed push (never synced, so the cloud cannot have seen them): ${freshLocalAccounts.map(a => `${a.name} (${a.id})`).join(', ')}`)
-        }
-
-        if (currentAccounts.length > 0 && finalAccounts.length < currentAccounts.length) {
-            if (import.meta.env.DEV) console.warn(`[Import] Would reduce accounts from ${currentAccounts.length} to ${finalAccounts.length}. Aborting write and pushing local state.`)
-            own.assert()
-            setTimeout(() => triggerSync(), 500)
-            clearAllAccountLoading()
-            return
-        }
-
-        if (finalAccounts.length === 0) {
-            const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
-            if (backup && backup.length > 0) {
-                if (import.meta.env.DEV) console.warn(`[Import] Final accounts would be empty but backup has ${backup.length}. Restoring from backup.`)
-                const restoredBackup = localDecryptionKey
-                    ? await Promise.all(backup.map(async (account) => {
-                        try {
-                            const rawAuthKey = await decrypt(getStremioAuthKey(account), getReadEncryptionKey())
-                            const rawPassword = account.password ? await decrypt(account.password, getReadEncryptionKey()).catch(() => undefined) : undefined
-                            return {
-                                ...account,
-                                authKey: await encrypt(rawAuthKey, getWriteEncryptionKey()),
-                                password: rawPassword ? await encrypt(rawPassword, getWriteEncryptionKey()) : account.password,
-                            }
-                        } catch {
-                            return account
-                        }
-                    }))
-                    : backup
-                own.assert()
-                store.setState({ accounts: restoredBackup })
-                await localforage.setItem(STORAGE_KEY, restoredBackup)
-                setTimeout(() => triggerSync(), 500)
-                clearAllAccountLoading()
-                return
-            }
         }
 
         if (finalAccounts.length > 0) {
@@ -783,8 +755,11 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
         }
 
         own.assert()
-        store.setState({ accounts: finalAccounts, hydrated: true })
-        persistAccounts(finalAccounts, own)
+        if (accountList === 'restore' && (finalAccounts.length !== accountsToImport.length || new Set(finalAccounts.map(a => a.id)).size !== finalAccounts.length)) {
+            throw new Error('The backup account list could not be restored exactly; no account changes were saved')
+        }
+        await persistAccountMembership(finalAccounts, membership, own)
+        store.setState({ accounts: finalAccounts, ...membership, hydrated: true })
 
         if (!isSilent) {
             triggerSync()
@@ -796,13 +771,14 @@ export async function importAccounts(json: string | Record<string, unknown>, isS
     } catch (error) {
         // A superseded import must not roll back or publish errors into the replacement session.
         if (!own.current()) throw error
-        try { restorePreImport?.() } catch (rollbackErr) {
+        try { await restorePreImport?.() } catch (rollbackErr) {
             if (import.meta.env.DEV) console.error('[Import] Rollback to pre-import state failed:', rollbackErr)
         }
+        if (!own.current()) throw error
         store.setState({ error: (error as Error).message })
         throw error
     } finally {
         mutexReleases.forEach(release => release())
-        clearAllAccountLoading()
+        if (own.current()) clearAllAccountLoading()
     }
 }

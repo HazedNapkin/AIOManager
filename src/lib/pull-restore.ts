@@ -40,7 +40,6 @@ export interface AccountPullModeInputs {
 // Accounts decision for a full pull. Pure so the conflict→refresh interaction
 // is unit-testable against the real production rule.
 export function shouldMirrorAccountPull(inputs: AccountPullModeInputs): boolean {
-    if (!inputs.hasRemoteData) return false
     if (inputs.postConflict) return false
     return inputs.isRemoteNewer
 }
