@@ -36,7 +36,7 @@ import type {
 export type * from './types.ts'
 
 const CLIENT_NAME = 'AIOManager'
-const CLIENT_VERSION = '2.0.0'
+const CLIENT_VERSION = '2.1.0'
 const DEFAULT_TIMEOUT_MS = 15000
 const RESUME_PAGE_LIMIT = 50
 const PLAYED_MAX_ITEMS = 500
