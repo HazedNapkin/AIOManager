@@ -159,11 +159,18 @@ export function AddonList({ accountId }: AddonListProps) {
   }
 
   const handleTabChange = (val: string) => {
-    setSearchParams({ tab: val }, { replace: true })
+    // Focus and pointer events can arrive before the router renders the new tab.
+    const currentTab = new URLSearchParams(window.location.search).get('tab') || 'addons'
+    if (val === currentTab || !validTabs.includes(val as AccountTab)) return
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      next.set('tab', val)
+      return next
+    }, { preventScrollReset: true })
   }
 
   const handleFailoverViewChange = (view: FailoverView) => {
-    setSearchParams({ tab: failoverTabByView[view] }, { replace: true })
+    handleTabChange(failoverTabByView[view])
   }
 
   const [selectedAddonUrls, setSelectedAddonUrls] = useState<Set<string>>(new Set())
@@ -321,7 +328,7 @@ export function AddonList({ accountId }: AddonListProps) {
         allowCollectionShrink: true,
         previousCollection: account.addons,
       })
-      useAccountStore.getState().reorderAddons(account.id, [])
+      await useAccountStore.getState().reorderAddons(account.id, [], { explicitInstallUrls: [] })
       toast({ title: 'All Addons Cleared', description: `Removed ${account.addons.length} addons from ${account.name}.` })
       setShowClearAllConfirm(false)
       await syncAccount(account.id)
@@ -580,7 +587,7 @@ export function AddonList({ accountId }: AddonListProps) {
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="truncate text-2xl font-semibold tracking-tight md:text-3xl">{displayName}</h2>
               {updatesAvailable.length > 0 && (
-                <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
+                <span data-theme-part="badge" className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[11px] font-semibold text-primary">
                   {updatesAvailable.length} update{updatesAvailable.length !== 1 ? 's' : ''} available
                 </span>
               )}
@@ -590,13 +597,18 @@ export function AddonList({ accountId }: AddonListProps) {
               <span className="text-border">/</span>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" className="h-7 gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
+                  <Button size="sm" variant="ghost" aria-label={`Active setup: ${activeProfileName}`} className="h-7 gap-1 rounded-lg px-2 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground">
                     <User className="h-3.5 w-3.5" />
+                    <span className="text-muted-foreground/70">Setup:</span>
                     <span className="truncate max-w-[140px]">{activeProfileName}</span>
                     <ChevronDown className="h-3.5 w-3.5 opacity-50" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-w-[calc(100vw-2rem)]">
+                <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+                  <div className="border-b border-border/40 px-3 py-3">
+                    <p className="text-xs font-semibold">Setups · Addons + Autopilot rules</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">One active setup for this local account. Switching changes its addons and activates that setup’s Autopilot rules.</p>
+                  </div>
                   <DropdownMenuItem
                     className="gap-2"
                     onClick={() => handleSwitchProfile('default')}
@@ -618,27 +630,31 @@ export function AddonList({ accountId }: AddonListProps) {
                         {account.activeProfileId === p.id && <Check className="h-4 w-4 text-primary shrink-0" />}
                       </DropdownMenuItem>
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity sm:opacity-60">
-                        <DropdownMenuItem
-                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setProfileEditName(p.name);
-                            setProfileToEdit({ id: p.id, name: p.name });
-                          }}
-                          title={`Rename ${p.name}`}
-                        >
-                          <Edit2 className="h-3.5 w-3.5" />
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setProfileToDelete({ id: p.id, name: p.name });
-                          }}
-                          title={`Delete ${p.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </DropdownMenuItem>
+                        <Tooltip content={`Rename ${p.name}`} side="top">
+                          <DropdownMenuItem
+                            className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-foreground rounded hover:bg-muted transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfileEditName(p.name);
+                              setProfileToEdit({ id: p.id, name: p.name });
+                            }}
+                            aria-label={`Rename ${p.name}`}
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                          </DropdownMenuItem>
+                        </Tooltip>
+                        <Tooltip content={`Delete ${p.name}`} side="top">
+                          <DropdownMenuItem
+                            className="h-7 w-7 p-0 flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProfileToDelete({ id: p.id, name: p.name });
+                            }}
+                            aria-label={`Delete ${p.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </DropdownMenuItem>
+                        </Tooltip>
                       </div>
                     </div>
                   ))}
@@ -649,8 +665,9 @@ export function AddonList({ accountId }: AddonListProps) {
                     className="gap-2 text-primary focus:text-primary"
                   >
                     <Plus className="h-4 w-4 shrink-0" />
-                    Create New Setup
+                    Create setup
                   </DropdownMenuItem>
+                  <div className="border-t border-border/40 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">Need a separate person or Nuvio profile? Open Connections to manage its login and local account.</div>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -658,7 +675,7 @@ export function AddonList({ accountId }: AddonListProps) {
         </div>
 
         {accounts.length > 1 && (
-          <div className="self-end rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm sm:self-auto" data-account-switcher-pill>
+          <div data-theme-part="panel" className="self-end rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm sm:self-auto" data-account-switcher-pill>
             <AccountSwitcher
             mode="pagination"
             accounts={accounts}
@@ -678,7 +695,7 @@ export function AddonList({ accountId }: AddonListProps) {
           <TabsTrigger value="addons" className="relative">
             Installed Addons
             {addons.length > 0 && (
-              <span className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
+              <span data-theme-part="badge" className="ml-2 flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-semibold text-muted-foreground">
                 {addons.length}
               </span>
             )}
@@ -712,6 +729,7 @@ export function AddonList({ accountId }: AddonListProps) {
                 />
                 {searchQuery && (
                   <button
+                    data-theme-part="button"
                     onClick={() => handleSearchChange('')}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors"
                   >
@@ -719,11 +737,11 @@ export function AddonList({ accountId }: AddonListProps) {
                   </button>
                 )}
               </div>
-              <div className="hidden items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0 md:flex">
-                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('grid')} aria-label="Grid view">
+              <div data-theme-part="tabs-list" className="hidden items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0 md:flex">
+                <Button variant="ghost" size="sm" data-theme-part="tab" data-state={addonListView === 'grid' ? 'active' : 'inactive'} className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('grid')} aria-label="Grid view">
                   <LayoutGrid className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="sm" className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('list')} aria-label="List view">
+                <Button variant="ghost" size="sm" data-theme-part="tab" data-state={addonListView === 'list' ? 'active' : 'inactive'} className={`h-8 w-8 rounded-lg p-0 ${addonListView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`} onClick={() => setAddonListView('list')} aria-label="List view">
                   <List className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -778,7 +796,7 @@ export function AddonList({ accountId }: AddonListProps) {
                       <span className="sm:hidden">Actions</span>
                       <span className="hidden sm:inline">Bulk Actions</span>
                       {updatesAvailable.length > 0 && (
-                        <span className="ml-1 w-4 h-4 flex items-center justify-center text-xs font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
+                        <span data-theme-part="badge" className="ml-1 w-4 h-4 flex items-center justify-center text-xs font-semibold bg-primary text-primary-foreground rounded-full shrink-0">
                           {updatesAvailable.length}
                         </span>
                       )}
@@ -931,7 +949,7 @@ export function AddonList({ accountId }: AddonListProps) {
               action={<Button variant="outline" onClick={() => setSearchQuery('')}>Clear Search</Button>}
             />
           ) : (
-            <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
             <>
             <StaggerContainer className={effectiveAddonListView === 'list' ? 'flex flex-col gap-2' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'}>
               {filteredAddons.slice(0, visibleCount).map((addon) => {

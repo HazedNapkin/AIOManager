@@ -58,7 +58,7 @@ export function ServicesEditor({ value, onSave, onCancel }: ServicesEditorProps)
     const handleSave = () => onSave(local)
 
     return (
-        <div className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
+        <div data-theme-part="panel" className="bg-muted/10 border border-border/30 rounded-2xl p-4 space-y-4 shadow-sm animate-in fade-in duration-200">
             <div className="flex items-center justify-between border-b border-border/20 pb-3">
                 <h3 className="font-semibold text-sm">Services Editor</h3>
             </div>
@@ -76,7 +76,7 @@ export function ServicesEditor({ value, onSave, onCancel }: ServicesEditorProps)
                         : keys
 
                     return (
-                        <div key={idx} className="border border-border/20 rounded-lg p-3 bg-background/50 space-y-2.5 relative">
+                        <div key={idx} data-theme-part="panel" className="border border-border/20 rounded-lg p-3 bg-background/50 space-y-2.5 relative">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs font-bold">{formatSvcName(svcId)}</span>

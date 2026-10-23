@@ -57,9 +57,9 @@ export function AccountSetupCreateDialog({
         onPointerDown={(e) => e.stopPropagation()}
       >
         <DialogHeader>
-          <DialogTitle>Create Setup</DialogTitle>
+          <DialogTitle>Create setup</DialogTitle>
           <DialogDescription>
-            Setups keep separate add-ons and Autopilot rules inside {accountName}. Use them for different people, rooms, testing, or alternate configurations.
+            Save an addon collection and its own Autopilot rules inside {accountName}. Switching setups activates both together.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
@@ -70,11 +70,15 @@ export function AccountSetupCreateDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="e.g. Kids, Guests, Testing"
+              placeholder="e.g. Testing, Minimal, Alternative sources"
               autoFocus
             />
           </div>
-          <div className="flex items-start justify-between gap-4 rounded-xl border border-border/45 bg-muted/25 p-3">
+          <div className="space-y-2 border-t border-border/40 pt-4 text-xs leading-relaxed text-muted-foreground">
+            <p><strong className="font-medium text-foreground">One setup is active at a time.</strong> Creating a setup activates it. Its addons sync to this account’s enabled connections, and its Autopilot rules become active. Your other setups stay saved.</p>
+            <p>For people or remote profiles that need different collections at the same time, manage each in a separate local account. Nuvio’s Profiles tab can create that local account for you.</p>
+          </div>
+          <div data-theme-part="panel" className="flex items-start justify-between gap-4 rounded-xl border border-border/45 bg-muted/25 p-3">
             <div className="space-y-1">
               <Label htmlFor="clone" className="text-sm font-semibold">
                 Clone current setup
@@ -97,7 +101,7 @@ export function AccountSetupCreateDialog({
             Cancel
           </Button>
           <Button onClick={handleConfirm} disabled={!name.trim()}>
-            Create Setup
+            Create and activate
           </Button>
         </DialogFooter>
       </DialogContent>

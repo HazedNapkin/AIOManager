@@ -1,12 +1,11 @@
 import { triggerSync } from '@/lib/sync-trigger'
-import { ACCOUNT_CONTEXT_BULK_OP } from '@/lib/account-contexts'
 import {
     fetchAddonManifest as apiFetchAddonManifest,
-    updateAddons,
     getAddons,
 } from '@/api/addons'
 import { getAddonVersionKey, normalizeAddonUrl, mergeAddons } from '@/lib/utils'
-import { addTombstones, reconcileTombstones } from '@/lib/addon-tombstones'
+import { addTombstones, restoreAddonDeletions, filterResurrected } from '@/lib/addon-tombstones'
+import { effectiveAddonsFor, normalizeDestinations, stripDestinationsForWire } from '@/lib/addon-destinations'
 import { AddonDescriptor } from '@/types/addon'
 import { dedupeAddonsByTransportUrl } from '@/lib/addon-dedupe'
 import { mapConcurrent } from '@/lib/concurrency'
@@ -25,6 +24,7 @@ import {
     acquireSyncMutex,
     isAuthError,
     getStremioAuthKey,
+    getStremioConnection,
     setAccountLoading,
     clearAccountLoading,
     hasPlatformConnection,
@@ -32,12 +32,21 @@ import {
 import type { AccountStore, ReplaceTransportUrlResult } from '../accountStore'
 import type { Account, AccountProfile } from '@/types/account'
 import { type Connection, isSyncEligibleConnection } from '@/types/connection'
+import type { SyncOwnership } from '../sync-store-helpers'
+import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
+}
+
+// A queued edit belongs to the workspace and vault in which it was requested.
+function captureAddonOwner(): () => boolean {
+    const workspaceId = getActiveWorkspaceId()
+    const encryptionKey = getEncryptionKey()
+    return () => getActiveWorkspaceId() === workspaceId && getEncryptionKey() === encryptionKey
 }
 
 async function reconcileInstallBase(account: Account): Promise<AddonDescriptor[]> {
@@ -57,22 +66,32 @@ async function reconcileInstallBase(account: Account): Promise<AddonDescriptor[]
 
 const pluginUrlKey = (url?: string): string => (url ? url.trim().replace(/\/+$/, '').toLowerCase() : '')
 
-async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId: string, activeProfileId?: string) {
+async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId: string, activeProfileId?: string, ownership?: SyncOwnership) {
     const creds = (conn.credentials || {}) as Record<string, string>
     const { nuvioDriverFor } = await import('@/lib/drivers/factory')
+    ownership?.assert()
     const driver = nuvioDriverFor(conn)
     const { fetchConnectionToken } = await import('@/api/connection')
+    ownership?.assert()
     const token = await fetchConnectionToken(accountId, conn.id, 'nuvio')
+    ownership?.assert()
     const { setCachedNuvioToken } = await import('@/lib/nuvio-token-cache')
+    ownership?.assert()
     setCachedNuvioToken(conn.id, token)
     const { resolveNuvioPushProfile } = await import('@/lib/nuvio-profile-resolve')
+    ownership?.assert()
     const profileId = resolveNuvioPushProfile(conn, activeProfileId, token.profileId ?? creds.profileIndex ?? creds.profileId)
-    await driver.writeAddons(token.accessToken, addons, profileId)
+    // R9: the provider wire carries projected provider data only — internal
+    // destination policy is stripped before the driver. The plugin mirror below is
+    // a separate per-connection list and never carries addon policy.
+    await driver.writeAddons(token.accessToken, stripDestinationsForWire(addons), profileId)
+    ownership?.assert()
 
     const canonicalPlugins = conn.pluginList || []
     if (canonicalPlugins.length > 0) {
         try {
             const platformPlugins = await driver.readPlugins(token.accessToken, profileId)
+            ownership?.assert()
             const canonicalUrls = new Set(canonicalPlugins.map(p => pluginUrlKey(p.url)))
             const platformUrls = new Set((platformPlugins || []).map((p: { url?: string }) => pluginUrlKey(p.url)))
             const needsPush = platformUrls.size !== canonicalUrls.size
@@ -85,26 +104,33 @@ async function pushNuvio(conn: Connection, addons: AddonDescriptor[], accountId:
     }
 }
 
-async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string) {
+async function pushRealStream(conn: Connection, addons: AddonDescriptor[], accountId: string, ownership?: SyncOwnership) {
     const { fetchConnectionToken } = await import('@/api/connection')
+    ownership?.assert()
     const token = await fetchConnectionToken(accountId, conn.id, 'realstream')
+    ownership?.assert()
 
     const { realStreamDriverFor } = await import('@/lib/drivers/factory')
+    ownership?.assert()
     // userId is a stable PocketBase identity set at auth time; it never changes between refreshes.
     const userId = conn.credentials?.userId || ''
     if (!userId) throw Object.assign(new Error('RealStream user ID missing; re-authenticate this connection'), { isAuthError: true })
 
-    await realStreamDriverFor(conn).writeAddons(token.accessToken, addons, userId)
+    // R9: strip internal destination policy before the provider wire.
+    await realStreamDriverFor(conn).writeAddons(token.accessToken, stripDestinationsForWire(addons), userId)
 }
 
 // Hydra (CORS-fragile against arbitrary servers) + any client-side failure fall back to the server.
-async function serverReconcile(accountId: string, account: Account, connections: Connection[], options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
+async function serverReconcile(accountId: string, account: Account, connections: Connection[], options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean; ownership?: SyncOwnership } = {}) {
     try {
         const { triggerReconciliation } = await import('@/api/connection')
+        options.ownership?.assert()
         const addons = options.addons ?? account.addons
         const result = await triggerReconciliation(accountId, account.primaryConnectionId, connections, addons, { allowCollectionShrink: options.allowCollectionShrink })
+        options.ownership?.assert()
         if (result.connectionStates && Object.keys(result.connectionStates).length > 0) {
             const { useConnectionStore } = await import('@/store/connectionStore')
+            options.ownership?.assert()
             useConnectionStore.setState(s => ({
                 connectionStates: {
                     ...s.connectionStates,
@@ -113,6 +139,7 @@ async function serverReconcile(accountId: string, account: Account, connections:
             }))
         }
     } catch (e) {
+        if (options.ownership && !options.ownership.current()) return
         toast({
             title: 'Connection sync failed',
             description: e instanceof Error ? e.message : 'One or more connections could not be updated.',
@@ -121,14 +148,24 @@ async function serverReconcile(accountId: string, account: Account, connections:
     }
 }
 
-export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean } = {}) {
+export async function pushToConnections(accountId: string, options: { addons?: AddonDescriptor[]; allowCollectionShrink?: boolean; ownership?: SyncOwnership } = {}) {
+    const ownership = options.ownership
     const store = await getStore()
+    if (ownership && !ownership.current()) return
     const account = getAccountById(store.getState().accounts, accountId)
     const eligible = (account?.connections || []).filter(c => c.enabled && isSyncEligibleConnection(c))
     if (!account || eligible.length === 0) return
 
     const sourceAddons = options.addons ?? account.addons ?? []
     const enabledAddons = sourceAddons.filter(a => a?.flags?.enabled !== false)
+    // Per-connection destination projection: each eligible connection receives its
+    // own effective list (hub minus that login's exclusions). The hub stays the
+    // superset; a row excluded for one target is simply absent from that target's
+    // write — including an EMPTY write when every row is excluded there (policy-
+    // authorized clear, R2). The global empty-guard below still applies to the
+    // whole hub: a fully-empty canonical list is only pushed with explicit
+    // allowCollectionShrink, never because of policy.
+    const effectiveFor = (conn: Connection) => effectiveAddonsFor(enabledAddons, { platform: conn.platform, connectionId: conn.id })
     trace('push', 'connections-start', { accountId, eligible: eligible.map(c => c.platform), source: sourceAddons.length, enabled: enabledAddons.length, allowCollectionShrink: !!options.allowCollectionShrink })
     if (enabledAddons.length === 0 && !options.allowCollectionShrink) {
         trace('push', 'connections-skip-empty', { accountId })
@@ -136,8 +173,10 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 
     const { useConnectionStore } = await import('@/store/connectionStore')
+    if (ownership && !ownership.current()) return
     const now = Date.now()
     const setStatus = (connId: string, status: Connection['status'], lastError: string | null = null) => {
+        if (ownership && !ownership.current()) return
         useConnectionStore.setState(s => ({
             connectionStates: {
                 ...s.connectionStates,
@@ -162,7 +201,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
                         : acc
                 )
             }))
-            persistAccounts(store.getState().accounts)
+            persistAccounts(store.getState().accounts, ownership)
         }
     }
 
@@ -170,15 +209,17 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     let authFailures = 0
 
     for (const conn of eligible) {
+        if (ownership && !ownership.current()) return
         if (conn.platform !== 'nuvio' && conn.platform !== 'realstream') {
             serverConnections.push(conn)
             continue
         }
         try {
-            if (conn.platform === 'nuvio') await pushNuvio(conn, enabledAddons, accountId, account.activeProfileId)
-            else await pushRealStream(conn, enabledAddons, accountId)
+            if (conn.platform === 'nuvio') await pushNuvio(conn, effectiveFor(conn), accountId, account.activeProfileId, ownership)
+            else await pushRealStream(conn, effectiveFor(conn), accountId, ownership)
             setStatus(conn.id, 'active')
         } catch (err) {
+            if (ownership && !ownership.current()) return
             const msg = err instanceof Error ? err.message : 'Connection sync failed'
             trace('push', 'connection-error', { accountId, platform: conn.platform, connId: conn.id, auth: isAuthError(err), error: msg })
             if (isAuthError(err)) {
@@ -191,6 +232,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
         }
     }
 
+    if (ownership && !ownership.current()) return
     if (authFailures > 0) {
         toast({
             title: 'Connection re-authentication needed',
@@ -200,7 +242,7 @@ export async function pushToConnections(accountId: string, options: { addons?: A
     }
 
     if (serverConnections.length > 0) {
-        await serverReconcile(accountId, account, serverConnections, { addons: sourceAddons, allowCollectionShrink: options.allowCollectionShrink })
+        await serverReconcile(accountId, account, serverConnections, { addons: sourceAddons, allowCollectionShrink: options.allowCollectionShrink, ownership })
     }
 }
 
@@ -215,21 +257,35 @@ function backgroundSync(accountId: string, account: Account, updatedAddons: Addo
     const promises: Promise<void>[] = []
 
     const authKey = getStremioAuthKey(account)
-    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
+    const stremioConn = getStremioConnection(account)
     const stremioPushEnabled = !stremioConn || stremioConn.enabled !== false
     trace('backgroundSync', 'enter', { accountId, hasAuthKey: !!authKey, stremioPushEnabled, count: updatedAddons.length, allowCollectionShrink: !!options?.allowCollectionShrink, trigger, addons: briefAddons(updatedAddons) })
     if (authKey && stremioPushEnabled) {
-        const context = options?.allowCollectionShrink ? ACCOUNT_CONTEXT_BULK_OP : accountId
         promises.push(
-            getCachedAuthKey(authKey, getEncryptionKey())
-                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, context, { previousCollection: account.addons, allowCollectionShrink: options?.allowCollectionShrink }))
-                .catch(err => {
-                    if (isAuthError(err)) {
-                        toast({ title: 'Session expired', description: 'Session expired. Re-authenticate your connection.', variant: 'destructive' })
+            (async () => {
+                // Fan out to every enabled Stremio login (canonical first); each login
+                // writes with its own sealed key so secondaries never ride the
+                // canonical session.
+                const { pushAddonsToStremioConnections } = await import('@/lib/account-compat')
+                const result = await pushAddonsToStremioConnections(account, updatedAddons, { allowCollectionShrink: options?.allowCollectionShrink, previousCollection: account.addons })
+                for (const failure of result.failed) {
+                    if (isAuthError(failure.error)) {
+                        toast({
+                            title: 'Session expired',
+                            description: failure.isPrimary
+                                ? 'Session expired. Re-authenticate your connection.'
+                                : 'A secondary Stremio login expired. Re-authenticate it from its connection card.',
+                            variant: 'destructive',
+                        })
                     } else {
-                        toast({ title: 'Sync failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' })
+                        toast({
+                            title: failure.isPrimary ? 'Sync failed' : 'Secondary Stremio sync failed',
+                            description: failure.error instanceof Error ? failure.error.message : 'Unknown error',
+                            variant: 'destructive',
+                        })
                     }
-                })
+                }
+            })()
         )
     }
 
@@ -283,7 +339,8 @@ export async function installAddonToAccount(accountId: string, addonUrl: string,
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: addonUrl }])
+        let updatedAccount: Account = { ...account, addons: finalAddons, ...deletionState, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -362,6 +419,9 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
                     flags: { ...existing.flags, ...normalized.flags },
                     metadata: { ...existing.metadata, ...normalized.metadata },
                     catalogOverrides: existing.catalogOverrides,
+                    // A fresh manifest fetch carries no destination policy; the
+                    // hub row's stored policy survives every reinstall (R1).
+                    destinations: existing.destinations ?? normalized.destinations,
                 }
             } else {
                 updatedAddons.push(normalized)
@@ -373,7 +433,8 @@ export async function installAddonsToAccount(accountId: string, addonUrls: strin
             manifest: getEffectiveManifest(addon)
         }))
 
-        let updatedAccount: Account = { ...account, addons: finalAddons, deletedAddons: reconcileTombstones(account.deletedAddons, finalAddons), lastSync: new Date() }
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, fetchedAddons)
+        let updatedAccount: Account = { ...account, addons: finalAddons, ...deletionState, lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, finalAddons)
         const accounts = store.getState().accounts.map((acc) => (
             acc.id === accountId ? updatedAccount : acc
@@ -433,7 +494,7 @@ export async function removeAddonFromAccount(accountId: string, transportUrl: st
             (a) => normalizeAddonUrl(a.transportUrl) !== normalizeAddonUrl(transportUrl)
         )
 
-        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl], Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -496,7 +557,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
         const updatedAddons = [...account.addons]
         updatedAddons.splice(index, 1)
 
-        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl]), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, [transportUrl], Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, updatedAddons)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -523,7 +584,7 @@ export async function removeAddonByIndexFromAccount(accountId: string, index: nu
     }
 }
 
-export async function reorderAddons(accountId: string, newOrder: AddonDescriptor[]) {
+export async function reorderAddons(accountId: string, newOrder: AddonDescriptor[], options: { explicitInstallUrls?: string[] } = {}) {
     const store = await getStore()
     const timestampedOrder = newOrder.map(addon => ({
         ...addon,
@@ -540,13 +601,24 @@ export async function reorderAddons(accountId: string, newOrder: AddonDescriptor
         const account = getAccountById(store.getState().accounts, accountId)
         if (!account) throw new Error('Account not found')
 
-        let updatedAccount: Account = { ...account, addons: timestampedOrder, lastSync: new Date() }
-        updatedAccount = updateActiveProfile(updatedAccount, timestampedOrder)
+        // Collection clones explicitly install their source URLs. Ordinary reorders
+        // pass no install intent, so stale list membership cannot cancel a deletion.
+        const explicitUrls = new Set((options.explicitInstallUrls || []).map(normalizeAddonUrl))
+        const explicitAddons = timestampedOrder.filter(addon => explicitUrls.has(normalizeAddonUrl(addon.transportUrl)))
+        const deletionState = restoreAddonDeletions(account.deletedAddons, account.restoredAddons, explicitAddons)
+        const finalOrder = filterResurrected(timestampedOrder, [], deletionState.deletedAddons)
+        if (options.explicitInstallUrls !== undefined) {
+            const keptUrls = new Set(finalOrder.map(addon => normalizeAddonUrl(addon.transportUrl)))
+            const removedUrls = account.addons.filter(addon => !keptUrls.has(normalizeAddonUrl(addon.transportUrl))).map(addon => addon.transportUrl)
+            deletionState.deletedAddons = addTombstones(deletionState.deletedAddons, removedUrls, Date.now(), deletionState.restoredAddons)
+        }
+        let updatedAccount: Account = { ...account, addons: finalOrder, ...deletionState, lastSync: new Date() }
+        updatedAccount = updateActiveProfile(updatedAccount, finalOrder)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
         persistAccounts(accounts)
 
-        backgroundSync(accountId, account, timestampedOrder, { allowCollectionShrink: true }, 'reorder')
+        backgroundSync(accountId, account, finalOrder, { allowCollectionShrink: true }, 'reorder')
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to reorder addons'
         store.setState({ error: message })
@@ -567,7 +639,7 @@ export async function bulkDeleteAddons(accountId: string, keptAddons: AddonDescr
         if (!account) throw new Error('Account not found')
 
         const timestamped = keptAddons.map(addon => ({ ...addon, metadata: { ...addon.metadata, lastUpdated: Date.now() } }))
-        let updatedAccount: Account = { ...account, addons: timestamped, deletedAddons: addTombstones(account.deletedAddons, removedUrls), lastSync: new Date() }
+        let updatedAccount: Account = { ...account, addons: timestamped, deletedAddons: addTombstones(account.deletedAddons, removedUrls, Date.now(), account.restoredAddons), lastSync: new Date() }
         updatedAccount = updateActiveProfile(updatedAccount, timestamped)
         const accounts = store.getState().accounts.map((acc) => (acc.id === accountId ? updatedAccount : acc))
         store.setState({ accounts })
@@ -908,20 +980,33 @@ export async function updateAddonSettings(
         catalogOverrides?: AddonDescriptor['catalogOverrides'],
         manifest?: AddonDescriptor['manifest'],
         note?: string,
+        destinations?: AddonDescriptor['destinations'] | null,
     },
     targetIndex?: number
 ) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return
+    // Read AFTER the mutex: a sync that publishes while this op waits on the
+    // lock must not be clobbered by a pre-await snapshot of account.addons.
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return
         const updatedAddons = await Promise.all(account.addons.map(async (addon, index) => {
             if (targetIndex !== undefined ? index === targetIndex : normalizeAddonUrl(addon.transportUrl) === normalizeAddonUrl(transportUrl)) {
                 const newAddon = { ...addon }
 
                 if ('note' in settings) {
                     newAddon.note = settings.note || undefined
+                }
+
+                if ('destinations' in settings) {
+                    // Absent/empty/cleared policy collapses to "sync everywhere" —
+                    // the field disappears rather than lingering as an empty object.
+                    const normalized = normalizeDestinations(settings.destinations)
+                    if (normalized) newAddon.destinations = normalized
+                    else delete newAddon.destinations
                 }
 
                 const clearedFields: string[] = []
@@ -989,6 +1074,7 @@ export async function updateAddonSettings(
             }
             return addon
         }))
+        if (!ownerIsCurrent()) return
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updateActiveProfile({ ...acc, addons: updatedAddons }, updatedAddons) : acc
         )
@@ -1017,13 +1103,15 @@ export async function updateAddonSettings(
 }
 
 export async function bulkProtectAddons(accountId: string, isProtected: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
-    const changedCount = account.addons.filter((addon) => Boolean(addon.flags?.protected) !== isProtected).length
-    if (changedCount === 0) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
+        const changedCount = account.addons.filter((addon) => Boolean(addon.flags?.protected) !== isProtected).length
+        if (changedCount === 0) return 0
         const updatedAddons = account.addons.map((a) => ({
             ...a,
             flags: { ...a.flags, protected: isProtected },
@@ -1041,11 +1129,13 @@ export async function bulkProtectAddons(accountId: string, isProtected: boolean)
 }
 
 export async function bulkProtectSelectedAddons(accountId: string, transportUrls: string[], isProtected: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
         const normalizedTargets = new Set(transportUrls.map((u) => normalizeAddonUrl(u)))
         const changedCount = account.addons.filter((a) =>
             normalizedTargets.has(normalizeAddonUrl(a.transportUrl)) &&
@@ -1087,7 +1177,7 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
             return !shouldRemove
         })
 
-        const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, removedUrls) }, updatedAddons)
+        const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, deletedAddons: addTombstones(account.deletedAddons, removedUrls, Date.now(), account.restoredAddons) }, updatedAddons)
         const accounts = store.getState().accounts.map((acc) =>
             acc.id === accountId ? updatedAccount : acc
         )
@@ -1110,81 +1200,103 @@ export async function removeLocalAddons(accountId: string, idsOrUrls: string[]) 
 }
 
 export async function replaceTransportUrl(oldUrl: string, newUrl: string, accountId?: string, freshManifest?: AddonDescriptor['manifest'], metadata?: AddonDescriptor['metadata']) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
     const normOld = normalizeAddonUrl(oldUrl)
     const normNew = normalizeAddonUrl(newUrl)
-    const modifiedAccountIds = new Set<string>()
-    const previousAddonsByAccountId = new Map<string, AddonDescriptor[]>()
 
-    const updatedAccounts = store.getState().accounts.map((account) => {
-        if (accountId && account.id !== accountId) return account
+    // Candidate ids from the CURRENT state are advisory only: the authoritative
+    // read happens under each account's mutex below, so a replacement that
+    // waited behind a long in-flight sync rebases onto that sync's result
+    // instead of clobbering it with a pre-await snapshot (and vice versa).
+    const candidateIds = store.getState().accounts
+        .filter(account => (!accountId || account.id === accountId)
+            && account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld))
+        .map(account => account.id)
 
-        const hasOld = account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld)
-        if (!hasOld) return account
+    // Each account is replaced under its own mutex and ONLY that mutex: no task
+    // ever holds one account's lock while awaiting another's, so a global
+    // replacement cannot deadlock against syncs or other multi-account ops, and
+    // an unlocked account is replaced immediately even while another account's
+    // sync is still mid-network. backgroundSync, persistAccounts and
+    // addChangelogEntry never take the mutex, so nothing called under the lock
+    // re-enters it.
+    const outcomes = await Promise.all(candidateIds.map(async (candidateId): Promise<string | null> => {
+        const releaseMutex = await acquireSyncMutex(candidateId)
+        try {
+            if (!ownerIsCurrent()) return null
+            const account = getAccountById(store.getState().accounts, candidateId)
+            // The account may have been removed (or its whole store swapped for a
+            // workspace/vault flip) while this replacement waited on the mutex:
+            // re-check against fresh state, never resurrect the stale snapshot.
+            if (!account) return null
+            // A serialized predecessor (sync, removal, another replacement) may
+            // already have removed or replaced the old URL — follow existing
+            // semantics and skip rather than force anything.
+            if (!account.addons.some(a => normalizeAddonUrl(a.transportUrl) === normOld)) return null
 
-        modifiedAccountIds.add(account.id)
-        previousAddonsByAccountId.set(account.id, account.addons)
-
-        const updatedAddons = account.addons.map(addon => {
-            if (normalizeAddonUrl(addon.transportUrl) === normOld) {
-                return {
-                    ...addon,
-                    transportUrl: newUrl,
-                    manifest: freshManifest || addon.manifest,
-                    metadata: { ...(metadata || addon.metadata), lastUpdated: Date.now() }
+            const previousAddons = account.addons
+            const updatedAddons = account.addons.map(addon => {
+                if (normalizeAddonUrl(addon.transportUrl) === normOld) {
+                    return {
+                        ...addon,
+                        transportUrl: newUrl,
+                        manifest: freshManifest || addon.manifest,
+                        metadata: { ...(metadata || addon.metadata), lastUpdated: Date.now() }
+                    }
                 }
-            }
-            return addon
-        })
-
-        return updateActiveProfile({ ...account, addons: updatedAddons, lastSync: new Date() }, updatedAddons)
-    })
-
-    store.setState({ accounts: updatedAccounts })
-
-    if (modifiedAccountIds.size === 0) return { updatedAccountIds: [], failedAccounts: [] }
-
-    persistAccounts(updatedAccounts)
-
-    for (const account of updatedAccounts) {
-        if (!modifiedAccountIds.has(account.id)) continue
-
-        backgroundSync(account.id, account, account.addons)
-    }
-
-    if (normOld !== normNew) {
-        for (const modifiedAccountId of modifiedAccountIds) {
-            const previousAddon = previousAddonsByAccountId.get(modifiedAccountId)?.find(
-                (addon) => normalizeAddonUrl(addon.transportUrl) === normOld
-            )
-            const updatedAccount = getAccountById(store.getState().accounts, modifiedAccountId)
-            const replacementAddon = updatedAccount?.addons.find(
-                (addon) => normalizeAddonUrl(addon.transportUrl) === normNew
-            )
-            await store.getState().addChangelogEntry({
-                accountId: modifiedAccountId,
-                addonId: replacementAddon?.manifest.id || previousAddon?.manifest.id || newUrl,
-                addonUrl: newUrl,
-                oldAddonUrl: previousAddon?.transportUrl || oldUrl,
-                newAddonUrl: newUrl,
-                addonName: replacementAddon?.metadata?.customName || replacementAddon?.manifest.name || previousAddon?.metadata?.customName || previousAddon?.manifest.name || 'Unknown Addon',
-                addonLogo: replacementAddon?.metadata?.customLogo || replacementAddon?.manifest.logo || previousAddon?.metadata?.customLogo || previousAddon?.manifest.logo,
-                action: 'replaced'
+                return addon
             })
-        }
-    }
 
-    return { updatedAccountIds: Array.from(modifiedAccountIds), failedAccounts: [] } as ReplaceTransportUrlResult
+            const deletionState = normOld !== normNew
+                ? restoreAddonDeletions(account.deletedAddons, account.restoredAddons, [{ transportUrl: newUrl }])
+                : {}
+            const updatedAccount = updateActiveProfile({ ...account, addons: updatedAddons, ...deletionState, lastSync: new Date() }, updatedAddons)
+            const accounts = store.getState().accounts.map((acc) =>
+                acc.id === candidateId ? updatedAccount : acc
+            )
+            store.setState({ accounts })
+            persistAccounts(accounts)
+
+            backgroundSync(candidateId, updatedAccount, updatedAccount.addons)
+
+            if (normOld !== normNew) {
+                const previousAddon = previousAddons.find(
+                    (addon) => normalizeAddonUrl(addon.transportUrl) === normOld
+                )
+                const replacementAddon = updatedAddons.find(
+                    (addon) => normalizeAddonUrl(addon.transportUrl) === normNew
+                )
+                await store.getState().addChangelogEntry({
+                    accountId: candidateId,
+                    addonId: replacementAddon?.manifest.id || previousAddon?.manifest.id || newUrl,
+                    addonUrl: newUrl,
+                    oldAddonUrl: previousAddon?.transportUrl || oldUrl,
+                    newAddonUrl: newUrl,
+                    addonName: replacementAddon?.metadata?.customName || replacementAddon?.manifest.name || previousAddon?.metadata?.customName || previousAddon?.manifest.name || 'Unknown Addon',
+                    addonLogo: replacementAddon?.metadata?.customLogo || replacementAddon?.manifest.logo || previousAddon?.metadata?.customLogo || previousAddon?.manifest.logo,
+                    action: 'replaced'
+                })
+            }
+            return candidateId
+        } finally {
+            releaseMutex()
+        }
+    }))
+
+    return { updatedAccountIds: outcomes.filter((id): id is string => id !== null), failedAccounts: [] } as ReplaceTransportUrlResult
 }
 
 export async function bulkSetHideConfigure(accountId: string, hideConfigure: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
-    const changedCount = account.addons.filter((a) => Boolean(a.metadata?.hideConfigure) !== hideConfigure).length
-    if (changedCount === 0) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
+        const changedCount = account.addons.filter((a) => Boolean(a.metadata?.hideConfigure) !== hideConfigure).length
+        if (changedCount === 0) return 0
         const updatedAddons = account.addons.map((a) => {
             const newMetadata = { ...a.metadata }
             if (hideConfigure) newMetadata.hideConfigure = true
@@ -1204,11 +1316,13 @@ export async function bulkSetHideConfigure(accountId: string, hideConfigure: boo
 }
 
 export async function bulkSetHideConfigureSelected(accountId: string, transportUrls: string[], hideConfigure: boolean) {
+    const ownerIsCurrent = captureAddonOwner()
     const store = await getStore()
-    const account = getAccountById(store.getState().accounts, accountId)
-    if (!account) return 0
     const releaseMutex = await acquireSyncMutex(accountId)
     try {
+        if (!ownerIsCurrent()) return 0
+        const account = getAccountById(store.getState().accounts, accountId)
+        if (!account) return 0
         const normalizedTargets = new Set(transportUrls.map((u) => normalizeAddonUrl(u)))
         const changedCount = account.addons.filter((a) =>
             normalizedTargets.has(normalizeAddonUrl(a.transportUrl)) &&

@@ -27,6 +27,7 @@ import { create } from 'zustand'
 import localforage from 'localforage'
 import { restorationManager } from '@/lib/autopilot/restorationManager'
 import type { CloneMode } from '@/lib/clone-mode'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
 
 import { applySavedAddonToAccount, applySavedAddonToAccounts, applyTagToAccount, applyTagToAccounts, bulkApplySavedAddons, bulkApplyTag, bulkRemoveAddons, bulkRemoveByTag, bulkReinstallAddons, bulkInstallFromUrls, bulkReplaceUrl, bulkCloneAccount, bulkSyncOrder, bulkReinstallAllOnAccount, syncAccountState, syncAllAccountStates, replaceTransportUrlUniversally, SAVED_ADDON_ACCOUNT_CONCURRENCY } from './addon/addonDeployment'
 import { updateSavedAddonManifest } from './addon/addonManifest'
@@ -112,7 +113,7 @@ export interface AddonStore {
   error: string | null
   checkingHealth: boolean
 
-  initialize: () => Promise<void>
+  initialize: (ownership?: SyncOwnership) => Promise<void>
 
   updateLatestVersions: (versions: Record<string, string>) => void
   updateManifestChangeHints: (hints: Record<string, SavedAddonManifestChangeSummary>) => void
@@ -170,7 +171,7 @@ export interface AddonStore {
     tag: string,
     accountIds: Array<{ id: string; authKey: string }>
   ) => Promise<BulkResult>
-  importAccountStates: (states: Record<string, AccountAddonState>) => Promise<void>
+  importAccountStates: (states: Record<string, AccountAddonState>, ownership?: SyncOwnership) => Promise<void>
 
   bulkApplySavedAddons: (
     savedAddonIds: string[],
@@ -225,7 +226,7 @@ export interface AddonStore {
   lastHealthCheck?: number
 
   exportLibrary: (forSync?: boolean) => string | Record<string, unknown>
-  importLibrary: (json: string | Record<string, unknown>, merge: boolean, isSilent?: boolean, isImmediate?: boolean) => Promise<void>
+  importLibrary: (json: string | Record<string, unknown>, merge: boolean, isSilent?: boolean, isImmediate?: boolean, ownership?: SyncOwnership) => Promise<void>
 
   checkAllHealth: () => Promise<void>
   updateHealthStatus: (statuses: Array<{ id: string; isOnline: boolean }>) => Promise<void>
@@ -258,7 +259,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     }
   },
 
-  initialize: async () => {
+  initialize: async (ownership?: SyncOwnership) => {
+    const own = ownership ?? captureSyncOwnership()
     try {
       const [library, accountStates, latestVersions] = await Promise.all([
         loadAddonLibrary(),
@@ -266,6 +268,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         localforage.getItem<Record<string, string>>('aioman:latest-versions'),
       ])
 
+      // Recheck ownership before publishing hydrated state.
+      own.assert()
       set({
         library,
         accountStates,
@@ -286,11 +290,14 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         if (import.meta.env.DEV) console.log(`[AddonStore] Self-repair: ${broken.length} addons with missing/broken manifests`)
         let repaired = 0
         for (let i = 0; i < broken.length; i += 3) {
+          // Fence detached repairs before publishing, updating cooldowns, or saving.
+          if (!own.current()) return
           await Promise.allSettled(broken.slice(i, i + 3).map(async (addon) => {
             const lastFailure = selfRepairBackoff.get(addon.installUrl)
             if (lastFailure && (Date.now() - lastFailure < SELF_REPAIR_COOLDOWN_MS)) return
             try {
               const descriptor = await fetchAddonManifest(addon.installUrl, 'Self-Repair')
+              if (!own.current()) return
               const freshManifest = identifyAddon(addon.installUrl, descriptor.manifest)
               set(state => ({
                 library: {
@@ -305,19 +312,22 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
               selfRepairBackoff.delete(addon.installUrl)
               repaired++
             } catch (e) {
+              if (!own.current()) return
               selfRepairBackoff.set(addon.installUrl, Date.now())
               if (import.meta.env.DEV) console.warn(`[Self-Repair] Failed for ${addon.name || addon.installUrl}:`, e)
             }
           }))
         }
         if (repaired > 0) {
+          if (!own.current()) return
           await saveAddonLibrary(get().library)
           if (import.meta.env.DEV) console.log(`[AddonStore] Self-repair complete: ${repaired} manifests fixed`)
         }
       })()
     } catch (error) {
       if (import.meta.env.DEV) console.error('Failed to initialize addon store:', error)
-      set({ error: 'Failed to load addon data' })
+      // A superseded initialization publishes no error state either.
+      if (own.current()) set({ error: 'Failed to load addon data' })
     }
   },
 
@@ -457,7 +467,6 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         addonName = identified.name
         if (!manifest) manifest = identified
       }
-
 
       const normUrl = normalizeAddonUrl(installUrl)
       const existingAddon = Object.values(get().library).find(
@@ -930,9 +939,12 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     return applyTagToAccounts(tag, accountIds)
   },
 
-  importAccountStates: async (states: Record<string, AccountAddonState>) => {
+  importAccountStates: async (states: Record<string, AccountAddonState>, ownership?: SyncOwnership) => {
+    // Fence state publication and persistence dispatches.
+    ownership?.assert()
     const currentStates = { ...get().accountStates, ...states }
     set({ accountStates: currentStates })
+    ownership?.assert()
     await localforage.setItem('aioman:account-addons', currentStates)
   },
 
@@ -999,7 +1011,8 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
     )
   },
 
-  importLibrary: async (json, merge, isSilent = false, isImmediate = false) => {
+  importLibrary: async (json, merge, isSilent = false, isImmediate = false, ownership?: SyncOwnership) => {
+    const own = ownership ?? captureSyncOwnership()
     set({ loading: true, error: null })
     if (import.meta.env.DEV) console.log("%c[AddonStore] Importing library with SECURE HARDENING", "color: green; font-weight: bold;")
     try {
@@ -1159,9 +1172,12 @@ export const useAddonStore = create<AddonStore>((set, get) => ({
         }
       }
 
+      // Fence hydration before publishing into shared state.
+      own.assert()
       set({ library: currentLibrary })
 
       if (isImmediate) {
+        own.assert()
         await saveAddonLibrary(currentLibrary)
       } else {
         _saveLibraryDebounced(get)

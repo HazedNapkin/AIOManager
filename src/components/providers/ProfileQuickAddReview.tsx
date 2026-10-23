@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Loader2, AlertCircle, RefreshCw, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,7 +10,7 @@ import { useAccountStore } from '@/store/accountStore'
 import { addNuvioProfiles } from '@/store/account/profileQuickAdd'
 import type { ProfileQuickAddEntry, ProfileQuickAddResult } from '@/store/account/profileQuickAdd'
 import type { Account } from '@/types/account'
-import { cn } from '@/lib/utils'
+import { cn, maskEmailLevel, maskNameLevel, maskProfileLevel } from '@/lib/utils'
 
 type Phase = 'review' | 'done'
 
@@ -19,6 +19,8 @@ interface ProfileQuickAddReviewProps {
     sourceAccountId: string
     /** Login email carried by the current Nuvio credentials; undefined lets the user type it. */
     email?: string
+    /** The Nuvio connection whose login creates the sibling profiles (first login when omitted). */
+    sourceConnectionId?: string
     entries: ProfileQuickAddEntry[]
     onClose: () => void
 }
@@ -38,16 +40,22 @@ function ColorDot({ colorHex }: { colorHex?: string }) {
  * from the platform profiles. Batch adds always land here for the
  * count-confirm, never straight from the tab.
  */
-export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, onClose }: ProfileQuickAddReviewProps) {
+export function ProfileQuickAddReview({ open, sourceAccountId, email, sourceConnectionId, entries, onClose }: ProfileQuickAddReviewProps) {
     const [phase, setPhase] = useState<Phase>('review')
     const [rows, setRows] = useState<ProfileQuickAddEntry[]>(entries)
     const [password, setPassword] = useState('')
+    const [passwordVisible, setPasswordVisible] = useState(false)
     const [manualEmail, setManualEmail] = useState('')
     const [submitting, setSubmitting] = useState(false)
     const [added, setAdded] = useState<ProfileQuickAddResult[]>([])
     const [failed, setFailed] = useState<ProfileQuickAddResult[]>([])
     const [skipped, setSkipped] = useState<ProfileQuickAddResult[]>([])
     const accounts = useAccountStore(s => s.accounts)
+    const privacyEnabled = useUIStore(s => s.isPrivacyModeEnabled)
+    const privacyLevelProfiles = useUIStore(s => s.privacyLevelProfiles)
+    const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
+    const accountLabel = (name: string) => maskNameLevel(name, privacyEnabled ? privacyLevelNames : 0)
 
     // Reset per invocation so repeated opens always reflect the current roster.
     useEffect(() => {
@@ -55,6 +63,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
         setPhase('review')
         setRows(entries)
         setPassword('')
+        setPasswordVisible(false)
         setManualEmail('')
         setAdded([])
         setFailed([])
@@ -80,6 +89,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                 effectiveEmail,
                 password,
                 batch,
+                { sourceConnectionId },
             )
             if (phase === 'done') {
                 setFailed(prev => prev.filter(f => !batch.some(b =>
@@ -138,7 +148,7 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                                             value={row.name}
                                             onChange={e => setRows(prev => prev.map((r, j) => j === i ? { ...r, name: e.target.value } : r))}
                                             className="h-8 flex-1 text-xs"
-                                            aria-label={`Account name for ${entries[i]?.name || 'profile'}`}
+                                            aria-label={`Account name for ${maskProfileLevel(entries[i]?.name || 'profile', privacyEnabled ? privacyLevelProfiles : 0)}`}
                                         />
                                         {hasBatch && (
                                             <span className="w-16 shrink-0 text-right text-[11px] text-muted-foreground">#{row.profileIndex}</span>
@@ -163,22 +173,27 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                                     </div>
                                 )}
                                 {email && (
-                                    <div className="flex items-center justify-between gap-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2">
-                                        <span className="min-w-0 truncate text-xs text-muted-foreground">{email}</span>
+                                    <div data-theme-part="panel" className="flex items-center justify-between gap-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2">
+                                        <span className="min-w-0 truncate text-xs text-muted-foreground">{maskEmailLevel(email, privacyEnabled ? privacyLevelEmail : 0)}</span>
                                         <span className="shrink-0 text-[11px] text-muted-foreground/70">login</span>
                                     </div>
                                 )}
                                 <div className="space-y-1.5">
                                     <Label htmlFor="quick-add-password" className="text-xs">Nuvio password</Label>
-                                    <Input
-                                        id="quick-add-password"
-                                        value={password}
-                                        onChange={e => setPassword(e.target.value)}
-                                        type="password"
-                                        autoComplete="new-password"
-                                        className="h-8 text-xs"
-                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleConfirm() } }}
-                                    />
+                                    <div className="relative">
+                                        <Input
+                                            id="quick-add-password"
+                                            value={password}
+                                            onChange={e => setPassword(e.target.value)}
+                                            type={passwordVisible ? 'text' : 'password'}
+                                            autoComplete="new-password"
+                                            className="h-8 pr-10 text-xs"
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleConfirm() } }}
+                                        />
+                                        <Button type="button" variant="ghost" size="icon" className="absolute right-0.5 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground" aria-label={passwordVisible ? 'Hide Nuvio password' : 'Show Nuvio password'} aria-controls="quick-add-password" aria-pressed={passwordVisible} onClick={() => setPasswordVisible(visible => !visible)}>
+                                            {passwordVisible ? <EyeOff aria-hidden="true" className="h-3.5 w-3.5" /> : <Eye aria-hidden="true" className="h-3.5 w-3.5" />}
+                                        </Button>
+                                    </div>
                                     <p className="text-[11px] text-muted-foreground">Used once now, never stored.</p>
                                 </div>
                             </div>
@@ -209,10 +224,10 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
 
                         <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
                             {createdAccounts.map(({ result, account }) => (
-                                <div key={result.accountId} className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card px-3 py-2 shadow-sm">
-                                    <AccountAvatar size="sm" showStatus={false} account={account!} />
+                                <div key={result.accountId} data-theme-part="panel" className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card px-3 py-2 shadow-sm">
+                                    <AccountAvatar size="sm" showStatus={false} account={{ ...account, name: accountLabel(account.name), email: maskEmailLevel(account.email || '', privacyEnabled ? privacyLevelEmail : 0) }} />
                                     <div className="min-w-0 flex-1">
-                                        <p className="truncate text-sm font-medium">{account!.name}</p>
+                                        <p className="truncate text-sm font-medium">{accountLabel(account.name)}</p>
                                         <p className="mt-0.5 text-[11px] text-muted-foreground">Ready. Addons and history arrive with the first sync.</p>
                                     </div>
                                     <Button variant="outline" size="sm" className="h-7 shrink-0 px-2.5 text-xs" onClick={() => openAccount(result.accountId!)}>
@@ -222,10 +237,10 @@ export function ProfileQuickAddReview({ open, sourceAccountId, email, entries, o
                             ))}
 
                             {[...skipped, ...failed].map((result, i) => (
-                                <div key={`miss-${i}`} className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/8 px-3 py-2.5">
+                                <div data-theme-tone="status" key={`miss-${i}`} data-theme-part="panel" className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/8 px-3 py-2.5">
                                     <AlertCircle className="h-4 w-4 shrink-0 text-warning mt-0.5" />
                                     <div className="min-w-0 flex-1">
-                                        <p className="truncate text-xs font-medium">{result.entry.name}</p>
+                                        <p className="truncate text-xs font-medium">{accountLabel(result.entry.name)}</p>
                                         <p className="mt-0.5 text-[11px] text-muted-foreground">{result.error || 'Could not create'}</p>
                                     </div>
                                     {!result.skipped && (

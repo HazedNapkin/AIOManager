@@ -10,23 +10,24 @@ import { useProfileStore } from '@/store/profileStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { useSyncStore, markAccountsHydrated } from '@/store/syncStore'
 import { useNotesStore } from '@/store/notesStore'
-import { LoginPage } from '@/pages/LoginPage'
 import { DeviceNameDialog } from '@/components/auth/DeviceNameDialog'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useNavigate, Routes, Route } from 'react-router-dom'
-import { useEffect, useState, lazy, Suspense } from 'react'
-
+import { useEffect, useState, Suspense } from 'react'
 
 import { AppLoader, LoadingScreen } from '@/components/common/LoadingScreen'
+import { lazyChunk } from '@/lib/lazy-chunk'
 
-const ReplaySharePage = lazy(() => import('@/pages/ReplaySharePage').then(m => ({ default: m.ReplaySharePage })))
+const ReplaySharePage = lazyChunk(() => import('@/pages/ReplaySharePage').then(m => ({ default: m.ReplaySharePage })))
 
 // Always-mounted modals are dead weight in the entry chunk: lazy + latch them so the code loads
 // on first open (off the critical path) and stays mounted afterward to keep open/close animations.
-const AccountForm = lazy(() => import('@/components/accounts/AccountForm').then(m => ({ default: m.AccountForm })))
-const AddonInstaller = lazy(() => import('@/components/addons/AddonInstaller').then(m => ({ default: m.AddonInstaller })))
-const KeybindingsHelp = lazy(() => import('@/components/KeybindingsHelp').then(m => ({ default: m.KeybindingsHelp })))
-const WhatsNewModal = lazy(() => import('@/components/WhatsNewModal').then(m => ({ default: m.WhatsNewModal })))
+const AccountForm = lazyChunk(() => import('@/components/accounts/AccountForm').then(m => ({ default: m.AccountForm })))
+const AddonInstaller = lazyChunk(() => import('@/components/addons/AddonInstaller').then(m => ({ default: m.AddonInstaller })))
+const KeybindingsHelp = lazyChunk(() => import('@/components/KeybindingsHelp').then(m => ({ default: m.KeybindingsHelp })))
+const WhatsNewModal = lazyChunk(() => import('@/components/WhatsNewModal').then(m => ({ default: m.WhatsNewModal })))
+
+const LoginPage = lazyChunk(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })))
 
 function App() {
   const navigate = useNavigate()
@@ -338,7 +339,11 @@ function App() {
       }
     }
 
-    return <LoginPage />
+    return (
+      <Suspense fallback={<AppLoader />}>
+        <LoginPage />
+      </Suspense>
+    )
   }
 
   if (isKronoriumRoute) {
@@ -368,8 +373,5 @@ function App() {
     </TooltipProvider>
   )
 }
-
-
-
 
 export default App

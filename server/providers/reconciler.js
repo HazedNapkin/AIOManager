@@ -2,9 +2,28 @@ import db from '../db.js'
 import { decrypt } from '../crypto.js'
 import { FALLBACK_KEYS } from '../keys.js'
 import { trace } from '../utils/trace.js'
+import { connectionEffectiveAddons, connectionExcludedUrls, chainGuardFailureWithExclusions } from '../utils/addon-destinations.js'
+import { REFRESH_BUFFER_MS } from './token-refresh.js'
 
 const BACKOFF_THRESHOLD = 3
 const BACKOFF_SLOTS = [1, 2, 4, 8, 16]
+
+// Cache owner-scoped connections briefly; credential writes invalidate the cache.
+const connectionCache = new Map()
+const storedConnections = new WeakMap()
+const CONNECTION_CACHE_TTL_MS = 30 * 1000
+let connectionCacheGeneration = 0
+
+export function invalidateConnectionCache(syncUser = null) {
+    connectionCacheGeneration++
+    if (!syncUser) {
+        connectionCache.clear()
+        return
+    }
+    for (const [key, entry] of connectionCache) {
+        if (entry.syncUser === syncUser) connectionCache.delete(key)
+    }
+}
 
 function getBackoffSkip(consecutiveFailures) {
     if (consecutiveFailures < BACKOFF_THRESHOLD) return 0
@@ -15,36 +34,72 @@ function getBackoffSkip(consecutiveFailures) {
     return BACKOFF_SLOTS[slotIndex]
 }
 
+const urlMemo = new Map()
 function normalizeUrl(url) {
     if (!url) return ''
-    let normalized = url.trim()
+    const key = String(url)
+    const cached = urlMemo.get(key)
+    if (cached !== undefined) return cached
+    let normalized = key.trim()
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
-    return normalized.toLowerCase()
+    normalized = normalized.toLowerCase()
+    if (urlMemo.size >= 5000) urlMemo.clear()
+    urlMemo.set(key, normalized)
+    return normalized
 }
 
-// syncUser scopes the lookup to the owning user. The HTTP endpoint (providers.js) MUST pass the
-// authenticated user so a caller can't resolve another user's stored credentials by accountId
-// (cross-tenant IDOR). Server-trusted callers (the autopilot worker, which derives account_id from
-// owner-scoped rules) may omit it.
-// preferBaseUrled returns the index of the connection already chosen for a platform.
-function preferBaseUrled(connections, platform) {
-    return connections.findIndex(c => c.platform === platform)
+// preferBaseUrled, scoped to ONE connection: a baseUrl-less bundle pushes to the public
+// api.nuvio.tv, so a baseUrl-bearing dupe of the SAME connection always outranks a newer
+// row that lost the instance URL. Distinct connection ids are distinct logins and are
+// never compared.
+function buildNativeConnection(type, row, accountId, bundle) {
+    return {
+        id: row.connection_id || `${accountId}:${type}`,
+        platform: type,
+        accountId,
+        driverType: 'native',
+        enabled: true,
+        status: 'active',
+        credentials: bundle,
+        consecutiveFailures: 0,
+        capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons'],
+    }
 }
 
 async function resolveConnections(accountId, syncUser = null) {
+    // Legacy rules need an owner before they may read provider credentials.
+    if (!syncUser) {
+        trace('reconciler', 'resolveConnections.skip', { accountId, reason: 'no-owner' })
+        return []
+    }
+    const cacheKey = JSON.stringify([accountId, syncUser])
+    const hit = connectionCache.get(cacheKey)
+    if (hit && Date.now() - hit.at < CONNECTION_CACHE_TTL_MS) {
+        const connections = structuredClone(hit.connections)
+        for (const connection of connections) storedConnections.set(connection, connectionCacheGeneration)
+        return connections
+    }
+    const generation = connectionCacheGeneration
+
     const rows = await db.query(
-        syncUser
-            ? 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC'
-            : 'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 ORDER BY updated_at DESC',
-        syncUser ? [accountId, syncUser] : [accountId]
+        'SELECT connection_id, auth_key, credential_type FROM server_credentials WHERE account_id = $1 AND sync_user = $2 ORDER BY updated_at DESC',
+        [accountId, syncUser]
     )
     if (!rows || rows.length === 0) return []
 
     const connections = []
-    const seenPlatforms = new Set()
+    // Multiplicity: every DISTINCT connection id resolves to its own connection (its own
+    // sealed credential row). Only rows of the SAME connection dedupe — legacy per-device
+    // duplicates of one login collapse to the newest row (ORDER BY updated_at DESC), so
+    // the pre-multiplicity "one login per platform" shape survives for legacy data while
+    // several logins on one platform never collapse into the most recent one.
+    const platformRowIndexes = new Map()
     const seenHydra = new Set()
+    const seenStremioAccountLevel = new Set()
+    const seenStremioConnectionIds = new Set()
+    const seenPlatforms = new Set()
     for (const row of rows) {
         if (!row.auth_key) continue
         const type = row.credential_type || 'stremio'
@@ -70,51 +125,37 @@ async function resolveConnections(accountId, syncUser = null) {
             continue
         }
 
-        // one connection per platform; keep the most recent (older rows are stale per-device dupes)
         if (type === 'nuvio' || type === 'realstream') {
             let bundle = null
             try { bundle = JSON.parse(decrypt(row.auth_key, FALLBACK_KEYS)) } catch { continue }
             if (!bundle?.accessToken) continue
-            // preferBaseUrled: a baseUrl-less bundle pushes to the public api.nuvio.tv, so a
-            // baseUrl-bearing row always outranks a newer dupe that lost the instance URL.
-            const existingIdx = preferBaseUrled(connections, type)
-            if (existingIdx > -1) {
+            // Rows without a connection id are the legacy per-device shape of ONE login:
+            // they collapse to a single stable synth connection per platform.
+            const rowKey = row.connection_id || `legacy:${type}`
+            const mapKey = `${type}\u0000${rowKey}`
+            const existingIdx = platformRowIndexes.get(mapKey)
+            if (existingIdx !== undefined) {
                 const incumbent = connections[existingIdx]
                 if (!incumbent.credentials?.baseUrl && bundle.baseUrl) {
-                    connections[existingIdx] = {
-                        id: row.connection_id,
-                        platform: type,
-                        accountId,
-                        driverType: 'native',
-                        enabled: true,
-                        status: 'active',
-                        credentials: bundle,
-                        consecutiveFailures: 0,
-                        capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
-                    }
+                    connections[existingIdx] = buildNativeConnection(type, row, accountId, bundle)
                 }
                 continue
             }
-            connections.push({
-                id: row.connection_id,
-                platform: type,
-                accountId,
-                driverType: 'native',
-                enabled: true,
-                status: 'active',
-                credentials: bundle,
-                consecutiveFailures: 0,
-                capabilities: type === 'nuvio' ? ['addons', 'plugins', 'profiles'] : ['addons']
-            })
+            platformRowIndexes.set(mapKey, connections.length)
+            connections.push(buildNativeConnection(type, row, accountId, bundle))
             continue
         }
-        if (seenPlatforms.has(type)) continue
-        seenPlatforms.add(type)
 
-        // Stremio uses raw auth key string, not JSON credential bundle
         if (type === 'stremio') {
+            // Stremio uses a raw auth key string, not a JSON credential bundle. The
+            // account-level row (no connection id) is the CANONICAL login mirror and keeps
+            // the legacy `${accountId}:stremio` identity; each per-connection row is a
+            // distinct secondary login resolved under the client's own connection id.
             const authKey = decrypt(row.auth_key, FALLBACK_KEYS)
-            if (authKey) {
+            if (!authKey) continue
+            if (!row.connection_id) {
+                if (seenStremioAccountLevel.has(accountId)) continue
+                seenStremioAccountLevel.add(accountId)
                 connections.push({
                     id: `${accountId}:stremio`,
                     platform: 'stremio',
@@ -126,10 +167,35 @@ async function resolveConnections(accountId, syncUser = null) {
                     consecutiveFailures: 0,
                     capabilities: ['addons']
                 })
+                continue
             }
+            if (seenStremioConnectionIds.has(row.connection_id)) continue
+            seenStremioConnectionIds.add(row.connection_id)
+            connections.push({
+                id: row.connection_id,
+                platform: 'stremio',
+                accountId,
+                driverType: 'native',
+                enabled: true,
+                status: 'active',
+                credentials: { authKey },
+                consecutiveFailures: 0,
+                capabilities: ['addons']
+            })
+            continue
         }
+
+        if (seenPlatforms.has(type)) continue
+        seenPlatforms.add(type)
     }
 
+    for (const connection of connections) connection.syncUser = syncUser
+    // A write during the query must not repopulate the cache with an older view.
+    if (generation === connectionCacheGeneration) {
+        if (connectionCache.size >= 500) connectionCache.delete(connectionCache.keys().next().value)
+        connectionCache.set(cacheKey, { at: Date.now(), syncUser, connections: structuredClone(connections) })
+    }
+    for (const connection of connections) storedConnections.set(connection, generation)
     return connections
 }
 
@@ -158,21 +224,24 @@ async function loadDriver(platform, credentials, connection) {
         }
 
         if (connection?.id) {
-            try {
-                const { refreshNuvioToken } = await import('./token-refresh.js')
-                const fresh = await refreshNuvioToken(connection.id, connection.accountId)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        refreshToken: fresh.refreshToken,
-                        expiresAt: fresh.expiresAt,
-                        profileId: fresh.profileId ?? connection.credentials?.profileId,
+            const expiresAt = connection.credentials?.expiresAt
+            if (storedConnections.get(connection) !== connectionCacheGeneration || !expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshNuvioToken } = await import('./token-refresh.js')
+                    const fresh = await refreshNuvioToken(connection.id, connection.accountId, undefined, connection.syncUser)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            refreshToken: fresh.refreshToken,
+                            expiresAt: fresh.expiresAt,
+                            profileId: fresh.profileId ?? connection.credentials?.profileId,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired || err._credentialSuperseded) {
+                        throw err
+                    }
                 }
             }
         }
@@ -186,20 +255,23 @@ async function loadDriver(platform, credentials, connection) {
         })
 
         if (connection?.id) {
-            try {
-                const { refreshRealStreamToken } = await import('./token-refresh.js')
-                const fresh = await refreshRealStreamToken(connection.id)
-                if (fresh) {
-                    connection.credentials = {
-                        ...connection.credentials,
-                        accessToken: fresh.accessToken,
-                        userId: fresh.userId ?? connection.credentials?.userId,
-                        expiresAt: fresh.expiresAt,
+            const expiresAt = connection.credentials?.expiresAt
+            if (storedConnections.get(connection) !== connectionCacheGeneration || !expiresAt || expiresAt - Date.now() <= REFRESH_BUFFER_MS) {
+                try {
+                    const { refreshRealStreamToken } = await import('./token-refresh.js')
+                    const fresh = await refreshRealStreamToken(connection.id, connection.accountId, connection.syncUser)
+                    if (fresh) {
+                        connection.credentials = {
+                            ...connection.credentials,
+                            accessToken: fresh.accessToken,
+                            userId: fresh.userId ?? connection.credentials?.userId,
+                            expiresAt: fresh.expiresAt,
+                        }
                     }
-                }
-            } catch (err) {
-                if (err.isAuthError || err._authExpired) {
-                    throw err
+                } catch (err) {
+                    if (err.isAuthError || err._authExpired || err._credentialSuperseded) {
+                        throw err
+                    }
                 }
             }
         }
@@ -210,14 +282,16 @@ async function loadDriver(platform, credentials, connection) {
         let authValue = connection.credentials?.authValue
         let config = connection.driverConfig
         if (authValue === undefined || !config?.baseUrl) {
+            if (!connection.syncUser || !connection.accountId) return null
             const cred = await db.get(
-                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' LIMIT 1",
-                [connection.id]
+                "SELECT auth_key FROM server_credentials WHERE connection_id = $1 AND credential_type = 'hydra' AND sync_user = $2 AND account_id = $3 LIMIT 1",
+                [connection.id, connection.syncUser, connection.accountId]
             )
             if (cred?.auth_key) {
                 const decrypted = decrypt(cred.auth_key, FALLBACK_KEYS)
                 let bundle
                 try { bundle = JSON.parse(decrypted) } catch { bundle = { authValue: decrypted } }
+                if (!bundle || typeof bundle !== 'object') return null
                 if (authValue === undefined) authValue = bundle.authValue
                 if (!config?.baseUrl) config = { baseUrl: bundle.baseUrl, authType: bundle.authType, authHeader: bundle.authHeader }
             }
@@ -314,11 +388,81 @@ function enqueuePlatformWrite(connection, run) {
     return next
 }
 
-async function writePlatformAddons(driver, connection, addons, source) {
+// An account runs one rule per addon chain, and every rule stores the ACCOUNT's whole addon
+// list. Pushing that snapshot verbatim therefore rewrites the sibling chains from a copy that
+// goes stale the moment the sibling rule swaps: last writer wins, and the loser's failover is
+// reverted on the platform. Chain membership is stable, so the caller names the sibling chains;
+// their *state* is mirrored from the platform here, which makes concurrent writers agree
+// regardless of write order. URLs this rule does not manage are still written from the canonical
+// list, so genuine additions are unaffected, and with no sibling chains this is a no-op.
+// Only the NAMED members are mirrored: every other live row is one the canonical list
+// deliberately omits (a retired addon mid-delete, a manual removal), and re-adding it would
+// resurrect a deletion this write is supposed to land.
+// `excludedUrls` (normalized) are this connection's destination-policy removals: a
+// deliberately excluded member must never be mirrored back as a foreign row either.
+async function reconcileForeignChains(driver, connection, canonical, requiredUrls, foreignChainUrls, excludedUrls = null) {
+    const foreign = new Set((Array.isArray(foreignChainUrls) ? foreignChainUrls : []).map(u => normalizeUrl(u)))
+    if (foreign.size === 0) return canonical
+    const own = new Set((Array.isArray(requiredUrls) ? requiredUrls : []).map(u => normalizeUrl(u)))
+    const excluded = excludedUrls instanceof Set && excludedUrls.size > 0 ? excludedUrls : null
+    const urlOf = (a) => normalizeUrl(a?.transportUrl || a?.url || '')
+    let live = []
+    try {
+        live = await readPlatformAddons(driver, connection)
+    } catch (err) {
+        // Conservative fallback: with no live read the stored snapshot is the only source.
+        trace('reconciler', 'reconcileForeignChains.readFailed', { platform: connection.platform, error: err.message })
+        return canonical
+    }
+    if (!Array.isArray(live) || live.length === 0) return canonical
+
+    const out = canonical.filter(a => !foreign.has(urlOf(a)))
+    const present = new Set(out.map(urlOf))
+    for (const row of live) {
+        const url = urlOf(row)
+        // Mirror ONLY the named foreign-chain members. Any other live row is one the
+        // canonical list deliberately omits (a retired addon mid-delete, a manual
+        // removal); re-adding it would resurrect a deletion the write must land.
+        if (!url || !foreign.has(url)) continue
+        // Destination policy: a member this connection deliberately excludes is
+        // intentionally absent — the mirror must not resurrect it.
+        if (excluded && excluded.has(url)) continue
+        if (present.has(url) || own.has(url)) continue
+        if ((row.flags?.enabled ?? row.enabled) === false) continue
+        present.add(url)
+        out.push({
+            transportUrl: row.transportUrl || row.url,
+            manifest: row.manifest || { name: row.name || '' },
+            flags: { ...(row.flags || {}), enabled: true },
+        })
+    }
+    trace('reconciler', 'reconcileForeignChains.merged', { platform: connection.platform, foreign: foreign.size, count: out.length })
+    return out
+}
+
+// `prep` runs inside the per-connection queue slot, so the read it needs, the guard it
+// applies and the write that follows cannot interleave with another writer's (the read
+// target is the platform's own list, which a concurrent writer would otherwise change
+// between our read and our write). It returns { list } or { skip, reason }.
+async function writePlatformAddons(driver, connection, addons, source, prep = null) {
     const c = connection.credentials
-    const prepared = (addons || []).map(applyCustomMetadata)
-    trace('reconciler', 'writePlatformAddons', { platform: connection.platform, source, count: prepared.length, urls: prepared.map(a => a.transportUrl || '') })
-    return enqueuePlatformWrite(connection, () => {
+    return enqueuePlatformWrite(connection, async () => {
+        let list = addons
+        if (typeof prep === 'function') {
+            const outcome = (await prep(addons)) || {}
+            if (outcome.skip) return { skipped: true, reason: outcome.reason || 'prep-skip' }
+            if (Array.isArray(outcome.list)) list = outcome.list
+        }
+        const prepared = (list || []).map(a => {
+            const withMeta = applyCustomMetadata(a)
+            // R9: drivers and the provider wire receive projected provider data only.
+            // The internal destination policy never ships — unlike note/metadata it
+            // is not user content for the platform.
+            if (!withMeta?.destinations) return withMeta
+            const { destinations, ...rest } = withMeta
+            return rest
+        })
+        trace('reconciler', 'writePlatformAddons', { platform: connection.platform, source, count: prepared.length, urls: prepared.map(a => a.transportUrl || '') })
         if (connection.platform === 'stremio' && !isHydraOutbound(connection)) {
             if (!c?.authKey) { const e = new Error('Stremio credentials not loaded'); e.isAuthError = true; throw e }
             return driver.writeAddons(c.authKey, prepared)
@@ -459,7 +603,6 @@ export function createReconciler(fastify) {
             return { changes: [], canonical }
         }
 
-        const canonicalUrlSet = new Set(canonical.map(a => normalizeUrl(a.transportUrl)))
         const canonicalManifestByUrl = new Map(
             canonical.map(a => [normalizeUrl(a.transportUrl), manifestSignature(a.manifest)])
         )
@@ -468,6 +611,12 @@ export function createReconciler(fastify) {
                 .filter(a => a?.metadata?.customName)
                 .map(a => [normalizeUrl(a.transportUrl), a.metadata.customName])
         )
+        // Destination policy (per connection): every target projects its OWN effective
+        // list from the canonical descriptors — the hub stays the single superset, a
+        // row excluded for this login is simply absent from its write, including an
+        // EMPTY write when every row is excluded there (policy-authorized clear, R2).
+        // The global empty-canonical guard above is unchanged: a fully-empty
+        // canonical list only reaches platforms with explicit allowCollectionShrink.
         const changes = []
 
         for (const connection of targetConnections) {
@@ -481,11 +630,16 @@ export function createReconciler(fastify) {
                 const driver = await loadDriver(connection.platform, connection.credentials || {}, connection)
                 if (!driver) continue
 
+                const effective = connectionEffectiveAddons(canonical, connection)
+                const effectiveUrlSet = new Set(effective.map(a => normalizeUrl(a.transportUrl)))
+
                 let needsWrite = true
                 try {
                     const platformAddons = await readPlatformAddons(driver, connection)
                     const platformUrlSet = new Set(platformAddons.map(a => normalizeUrl(a.transportUrl || a.url)))
-                    const sameUrls = platformUrlSet.size === canonicalUrlSet.size && [...canonicalUrlSet].every(u => platformUrlSet.has(u))
+                    // E2 enforcement lives here: a platform row the policy excludes
+                    // makes the sets differ, so the projected write REMOVES it.
+                    const sameUrls = platformUrlSet.size === effectiveUrlSet.size && [...effectiveUrlSet].every(u => platformUrlSet.has(u))
                     if (sameUrls) {
                         const nameMismatch = customNameByUrl.size > 0 && platformAddons.some(p => {
                             const url = normalizeUrl(p.transportUrl || p.url)
@@ -506,7 +660,7 @@ export function createReconciler(fastify) {
                 } catch { /* can't read, assume needs write */ }
 
                 if (needsWrite) {
-                    await writePlatformAddons(driver, connection, canonical, 'reconcile')
+                    await writePlatformAddons(driver, connection, effective, 'reconcile')
                     changes.push({ type: 'restore', url: '', platform: connection.platform, primary: false })
                 }
                 recordSuccess(accountId, connId)
@@ -530,20 +684,18 @@ export function createReconciler(fastify) {
 
         // Chain guard (spec F2): an enforced list that would drop every managed
         // chain member (all disabled -> "neither installed") or lose the active
-        // tier must never reach a platform. Computed once, after the enabled
-        // filter: survivors are chain URLs actually present-and-enabled in canon.
-        // Skip means NO write, NO recordSuccess (arming the fresh-in-sync guard
-        // with an unwritten list would poison it), NO recordFailure (a data
-        // problem must not back off the connection).
-        if (Array.isArray(requiredUrls) && requiredUrls.length > 0) {
-            const canonUrlSet = new Set(canon.map(a => normalizeUrl(a.transportUrl)))
-            const survivors = requiredUrls.map(u => normalizeUrl(u)).filter(u => canonUrlSet.has(u))
-            if (survivors.length === 0 || !survivors.includes(normalizeUrl(requiredActiveUrl))) {
-                fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Chain guard: enforced list drops the managed chain (required: ${requiredUrls.length}, survivors: ${survivors.length}, active present: ${survivors.includes(normalizeUrl(requiredActiveUrl))}); skipping write.`)
-                trace('reconciler', 'enforceAccount.chainGuard', { accountId, required: requiredUrls.length, survivors: survivors.length })
-                return { synced: [], connectionStates: getConnectionStates(accountId), chainGuardSkipped: true }
-            }
-        }
+        // tier must never reach a platform — EXCEPT when the dropped member is a
+        // deliberate destination exclusion for THAT connection: the tolerant twin
+        // (chainGuardFailureWithExclusions) waives exactly those, never globally
+        // disabling the chain and never demanding a backup be enabled to
+        // compensate. The guard now runs PER CONNECTION on that connection's
+        // projected list; a data problem must not back off the connection
+        // (skip means NO write, NO recordSuccess — arming the fresh-in-sync guard
+        // with an unwritten list would poison it — and NO recordFailure).
+        const managedChains = Array.isArray(opts.managedChains) && opts.managedChains.length > 0
+            ? opts.managedChains
+            : (Array.isArray(requiredUrls) && requiredUrls.length > 0 ? [{ urls: requiredUrls, target: requiredActiveUrl }] : [])
+        let chainGuardSkipped = false
 
         for (const connection of (connections || []).filter(c => c.enabled)) {
             const connId = connection.id
@@ -552,6 +704,22 @@ export function createReconciler(fastify) {
                 continue
             }
             try {
+                // Per-connection destination projection: the enforced write carries
+                // this login's effective list (canon minus its exclusions). Canon
+                // non-empty with an EMPTY effective list is a policy-authorized
+                // clear — the write removes the target's excluded copies (E2).
+                // The guard's PRE list is the unfiltered canon: the exclusion
+                // explanation ("every canon-carried member was deliberately
+                // excluded HERE") is only derivable against the pre-projection set.
+                const effective = connectionEffectiveAddons(canon, connection)
+                const excludedUrls = connectionExcludedUrls(canon, connection)
+                const preFailure = chainGuardFailureWithExclusions(canon, effective, managedChains, excludedUrls)
+                if (preFailure) {
+                    fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Chain guard: enforced list drops a managed chain (${preFailure}); skipping write.`)
+                    trace('reconciler', 'enforceAccount.chainGuard', { accountId, platform: connection.platform, chains: managedChains.length, failure: preFailure })
+                    chainGuardSkipped = true
+                    continue
+                }
                 // A client-side Stremio writer takes priority; without one the server driver
                 // writes Stremio itself (it holds the authKey), so an API-driven enforce —
                 // e.g. an AIOMetadata "sync to all" push — can never silently skip Stremio.
@@ -561,7 +729,32 @@ export function createReconciler(fastify) {
                     if (canon.length === 0) continue
                     const driver = await loadDriver(connection.platform, connection.credentials || {}, connection)
                     if (!driver) continue
-                    await writePlatformAddons(driver, connection, canon, 'enforce')
+                    const outcome = await writePlatformAddons(driver, connection, effective, 'enforce', async (list) => {
+                        const merged = await reconcileForeignChains(driver, connection, list, requiredUrls, opts.foreignChainUrls, excludedUrls)
+                        // Belt-and-braces: no merge step may ride an excluded row
+                        // back onto this connection's write (E2).
+                        const finalList = excludedUrls.size > 0
+                            ? merged.filter(a => !excludedUrls.has(normalizeUrl(a?.transportUrl || a?.url || '')))
+                            : merged
+                        // The foreign mirror rebuilds sibling-chain member sets from the
+                        // live platform: a canon-carried FOREIGN member absent from the
+                        // merged list is a by-design drop, not an accidental one.
+                        const urlOf = (a) => normalizeUrl(a?.transportUrl || a?.url || '')
+                        const preSet = new Set((list || []).map(urlOf).filter(Boolean))
+                        const postSet = new Set((finalList || []).map(urlOf).filter(Boolean))
+                        const byDesign = new Set()
+                        for (const u of (Array.isArray(opts.foreignChainUrls) ? opts.foreignChainUrls : [])) {
+                            const norm = normalizeUrl(u)
+                            if (norm && preSet.has(norm) && !postSet.has(norm)) byDesign.add(norm)
+                        }
+                        const failure = chainGuardFailureWithExclusions(canon, finalList, managedChains, excludedUrls, byDesign)
+                        if (failure) {
+                            fastify.log.warn({ category: 'Reconciler' }, `[${accountId}] Chain guard: merged list would drop a managed chain (${failure}); skipping write.`)
+                            return { skip: true, reason: failure }
+                        }
+                        return { list: finalList }
+                    })
+                    if (outcome && outcome.skipped) { chainGuardSkipped = true; continue }
                 }
                 recordSuccess(accountId, connId)
                 synced.push(connection.platform)
@@ -572,7 +765,7 @@ export function createReconciler(fastify) {
         }
 
         trace('reconciler', 'enforceAccount.complete', { accountId, synced, timing: Date.now() - start })
-        return { synced, connectionStates: getConnectionStates(accountId) }
+        return { synced, connectionStates: getConnectionStates(accountId), chainGuardSkipped }
     }
 
     // Nuvio instances that reject the optional plugins table; skip after the first 401

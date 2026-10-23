@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { StaggerContainer, StaggerItem } from '@/components/ui/stagger'
 import { Button } from '@/components/ui/button'
 import { StatusChip } from '@/components/ui/status-chip'
@@ -51,12 +52,12 @@ export function SavedAddonGrid({
   onReorderSection,
   highlight,
 }: SavedAddonGridProps) {
-  const renderAddon = (addon: SavedAddon, profileName?: string, showHighlight = false) => {
-    const onLongPress = (id: string) => {
-      onEnterSelectionMode()
-      onToggleSelect(id)
-    }
+  const onLongPress = useCallback((id: string) => {
+    onEnterSelectionMode()
+    onToggleSelect(id)
+  }, [onEnterSelectionMode, onToggleSelect])
 
+  const renderAddon = (addon: SavedAddon, profileName?: string, showHighlight = false) => {
     if (viewMode === 'list') {
       return (
         <StaggerItem key={addon.id}>
@@ -141,7 +142,7 @@ export function SavedAddonGrid({
         const isExpanded = !collapsedProfiles.has(profile.id)
 
         return (
-          <div key={profile.id} className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+          <div key={profile.id} data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <Button
                 variant="ghost"
@@ -183,7 +184,7 @@ export function SavedAddonGrid({
         const isExpanded = !collapsedProfiles.has('unassigned')
 
         return (
-          <div className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
+          <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 space-y-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <Button
                 variant="ghost"

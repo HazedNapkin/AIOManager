@@ -2,6 +2,7 @@ import { resilientFetch } from '@/lib/api-resilience'
 import { useSyncStore, getSyncApiPath } from '@/store/syncStore'
 import { getDeviceAwareAuthHeaders } from '@/lib/device-session'
 import type { Connection } from '@/types/connection'
+import { isAddonConnection } from '@/types/connection'
 import type { AddonDescriptor } from '@/types/addon'
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -36,11 +37,14 @@ export async function triggerReconciliation(
     options?: { allowCollectionShrink?: boolean },
 ): Promise<ReconcileResult> {
     const base = getSyncApiPath(useSyncStore.getState().serverUrl)
-    const sanitizedConnections = connections?.map(({ credentials: _creds, ...rest }) => rest)
+    const sanitizedConnections = connections?.filter(isAddonConnection).map(({ credentials: _creds, ...rest }) => rest)
+    const addonPrimary = connections && !sanitizedConnections?.some(c => c.id === primaryConnectionId)
+        ? sanitizedConnections?.find(c => c.enabled)?.id
+        : primaryConnectionId
     const res = await resilientFetch(`${base}/providers/sync/${accountId}`, {
         method: 'POST',
         headers: await getAuthHeaders(),
-        body: JSON.stringify({ primaryConnectionId, connections: sanitizedConnections, addons, allowCollectionShrink: options?.allowCollectionShrink === true }),
+        body: JSON.stringify({ primaryConnectionId: addonPrimary, connections: sanitizedConnections, addons, allowCollectionShrink: options?.allowCollectionShrink === true }),
         timeout: 30000,
     })
     if (!res.ok) {

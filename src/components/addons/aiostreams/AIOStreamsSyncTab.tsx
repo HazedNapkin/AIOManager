@@ -22,6 +22,8 @@ import {
     AIOSTREAMS_PARENT_CONFIG_KEYS,
     sanitizeAIOStreamsConfigForCreate,
     sanitizeAIOStreamsConfigForUpdate,
+    preserveAIOStreamsParentLinkage,
+    verifyAIOStreamsWriteReadback,
 } from '@/lib/aiostreams-utils'
 import { SectionPreview } from './SectionPreview'
 import { cn } from '@/lib/utils'
@@ -70,6 +72,7 @@ interface SyncResult {
     preserved?: string[]
     rollbackConfig?: Record<string, unknown>
     restored?: boolean
+    verifyWarning?: { mismatchedFields: string[]; lostFields: string[] }
 }
 
 interface DiffEntry {
@@ -300,7 +303,7 @@ function copyConfigFields(
 function preserveKeys(
     nextConfig: Record<string, unknown>,
     targetConfig: Record<string, unknown>,
-    keys: string[]
+    keys: readonly string[]
 ) {
     for (const key of keys) {
         if (targetConfig[key] !== undefined) {
@@ -411,9 +414,14 @@ function buildTargetConfig(
         }
     }
 
+    // Drop any parent reference that came in with the SOURCE values (a full
+    // copy must never re-link the target to the source's parent), then restore
+    // the target's own parent keys so a synced child keeps its inheritance
+    // instead of being flattened into a standalone config.
     stripParentConfig(nextConfig)
     stripSystemConfig(nextConfig)
     preserveKeys(nextConfig, targetConfig, AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS)
+    preserveAIOStreamsParentLinkage(nextConfig, targetConfig)
 
     if (copyBranding) copyConfigFields(nextConfig, sourceConfig, BRANDING_KEYS)
     else preserveKeys(nextConfig, targetConfig, BRANDING_KEYS)
@@ -467,6 +475,7 @@ export function AIOStreamsSyncTab({
     const [creatingTargets, setCreatingTargets] = useState(false)
     const [createTargetResults, setCreateTargetResults] = useState<CreateTargetResult[]>([])
     const [restoringTargetUrls, setRestoringTargetUrls] = useState<Set<string>>(new Set())
+    const [instanceAccessKey, setInstanceAccessKey] = useState('')
     const syncInFlightRef = useRef(false)
     const sourceLocationRef = useRef(`${window.location.pathname}${window.location.search}${window.location.hash}`)
 
@@ -606,7 +615,9 @@ export function AIOStreamsSyncTab({
             const account = accountById.get(accountId)
             const accountName = account?.accountName ?? accountId
             try {
-                const result = await createAIOStreamsUser(sourceBaseUrl, targetPassword, cloneConfig(baseConfig))
+                const result = await createAIOStreamsUser(sourceBaseUrl, targetPassword, cloneConfig(baseConfig), {
+                    instanceAccessKey: instanceAccessKey.trim() || undefined,
+                })
                 try { await saveAIOStreamsPassword(sourceBaseUrl, result.uuid, targetPassword) } catch {}
 
                 const addonUrl = `${sourceBaseUrl}/stremio/${result.uuid}/${result.encryptedPassword}/manifest.json`
@@ -659,6 +670,7 @@ export function AIOStreamsSyncTab({
         sourceConfig,
         toast,
         navigate,
+        instanceAccessKey,
     ])
 
     const handleRestoreTarget = useCallback(async (result: SyncResult) => {
@@ -681,7 +693,8 @@ export function AIOStreamsSyncTab({
                 result.target.baseUrl,
                 result.target.uuid,
                 rollbackPassword,
-                sanitizeAIOStreamsConfigForUpdate(result.rollbackConfig)
+                sanitizeAIOStreamsConfigForUpdate(result.rollbackConfig),
+                { instanceAccessKey: instanceAccessKey.trim() || undefined }
             )
             setResults(prev => prev.map(item => (
                 item.target.transportUrl === result.target.transportUrl
@@ -705,7 +718,7 @@ export function AIOStreamsSyncTab({
                 return next
             })
         }
-    }, [restoringTargetUrls, selectedTargets, toast])
+    }, [restoringTargetUrls, selectedTargets, toast, instanceAccessKey])
 
     const selectedPreviewKeys = useMemo(
         () => getPreviewKeys(syncMode, selectedSections, copyBranding),
@@ -773,7 +786,9 @@ export function AIOStreamsSyncTab({
             if (!target) return null
 
             try {
-                const targetData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password)
+                // Raw view: the write base must be the target's stored child
+                // config so parent inheritance survives the sync.
+                const targetData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })
                 const targetConfig = targetData.userData as Record<string, unknown>
                 const comparableTargetConfig = getComparableTargetConfig(targetConfig)
                 const plannedConfig = buildTargetConfig(sourceConfig, targetConfig, syncMode, selectedSections, copyBranding)
@@ -888,7 +903,7 @@ export function AIOStreamsSyncTab({
                     const hasUsablePreview = !!preview && !preview.error && !!preview.targetConfig && !!preview.plannedConfig
                     const targetConfig = hasUsablePreview
                         ? cloneConfig(preview!.targetConfig!)
-                        : ((await fetchAIOStreamsUser(target.baseUrl, target.uuid, password)).userData as Record<string, unknown>)
+                        : ((await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })).userData as Record<string, unknown>)
                     const comparableTargetConfig = getComparableTargetConfig(targetConfig)
                     const plannedConfig = hasUsablePreview
                         ? cloneConfig(preview!.plannedConfig!)
@@ -905,13 +920,42 @@ export function AIOStreamsSyncTab({
                         return { target, status: 'skipped' as const, changedSections: [], preserved: preservedLabels }
                     }
 
-                    await updateAIOStreamsUser(target.baseUrl, target.uuid, password, plannedConfig)
+                    await updateAIOStreamsUser(target.baseUrl, target.uuid, password, plannedConfig, {
+                        instanceAccessKey: instanceAccessKey.trim() || undefined,
+                    })
+
+                    // Post-write revalidation. The upstream PUT has no version
+                    // guard (last-write-wins), so verify the requested fields
+                    // actually persisted and the target's parent linkage and
+                    // target-local state survived. A mismatch is reported, never
+                    // silently retried.
+                    let verifyWarning: SyncResult['verifyWarning'] | undefined
+                    try {
+                        const readbackData = await fetchAIOStreamsUser(target.baseUrl, target.uuid, password, { raw: true })
+                        const verification = verifyAIOStreamsWriteReadback({
+                            planned: plannedConfig,
+                            readback: readbackData.userData as Record<string, unknown>,
+                            fields: selectedPreviewFieldKeys,
+                            preWrite: targetConfig,
+                            preservedFields: [
+                                ...AIOSTREAMS_PARENT_CONFIG_KEYS.filter(key => targetConfig[key] !== undefined),
+                                ...AIOSTREAMS_TARGET_LOCAL_CONFIG_KEYS.filter(key => key !== 'accessKey' && targetConfig[key] !== undefined),
+                            ],
+                        })
+                        if (!verification.ok) {
+                            verifyWarning = { mismatchedFields: verification.mismatchedFields, lostFields: verification.lostFields }
+                        }
+                    } catch {
+                        // Readback is best-effort; the write itself already succeeded.
+                    }
+
                     return {
                         target,
                         status: 'changed' as const,
                         changedSections,
                         preserved: preservedLabels,
                         rollbackConfig: sanitizeAIOStreamsConfigForUpdate(targetConfig),
+                        verifyWarning,
                     }
                 } catch (e: unknown) {
                     return {
@@ -934,6 +978,7 @@ export function AIOStreamsSyncTab({
             const changedCount = finalizedResults.filter(r => r.status === 'changed').length
             const skippedCount = finalizedResults.filter(r => r.status === 'skipped').length
             const failCount = finalizedResults.filter(r => r.status === 'failed').length
+            const unverifiedCount = finalizedResults.filter(r => r.status === 'changed' && r.verifyWarning).length
             const selectedSectionLabels = syncMode === 'full'
                 ? ['Everything']
                 : Array.from(selectedSections).map(key => getSyncGroupDefinition(key)?.label ?? key)
@@ -952,15 +997,15 @@ export function AIOStreamsSyncTab({
                 preserved: preservedLabels,
             })
 
-            if (failCount === 0) {
+            if (failCount === 0 && unverifiedCount === 0) {
                 toast({
                     title: 'Sync complete',
                     description: `${changedCount} updated, ${skippedCount} already matched`,
                 })
             } else {
                 toast({
-                    title: 'Sync partially complete',
-                    description: `${changedCount} updated, ${skippedCount} skipped, ${failCount} failed`,
+                    title: failCount === 0 ? 'Sync complete (verify attention)' : 'Sync partially complete',
+                    description: `${changedCount} updated, ${skippedCount} skipped, ${failCount} failed${unverifiedCount > 0 ? `, ${unverifiedCount} stored differently than drafted (likely changed elsewhere)` : ''}`,
                     variant: 'destructive',
                 })
             }
@@ -975,7 +1020,7 @@ export function AIOStreamsSyncTab({
             setSyncing(false)
             syncInFlightRef.current = false
         }
-    }, [selectedTargets, targetOptions, selectedSections, selectedPreviewKeys, sourceConfig, syncMode, copyBranding, preservedLabels, sourceName, sourceAccountName, sourceBaseUrl, toast, previews, previewCreatedAt, previewChangedCount, previewErrorCount])
+    }, [selectedTargets, targetOptions, selectedSections, selectedPreviewKeys, selectedPreviewFieldKeys, sourceConfig, syncMode, copyBranding, preservedLabels, sourceName, sourceAccountName, sourceBaseUrl, toast, previews, previewCreatedAt, previewChangedCount, previewErrorCount, instanceAccessKey])
 
     const handleRetryFailed = useCallback(() => {
         const failedUrls = new Set(results.filter(r => r.status === 'failed').map(r => r.target.transportUrl))
@@ -1029,14 +1074,14 @@ export function AIOStreamsSyncTab({
                                     </p>
                                 </div>
                             </div>
-                            <div className="w-fit rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-xs text-muted-foreground">
+                            <div data-theme-part="badge" className="w-fit rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-xs text-muted-foreground">
                                 {selectedTargets.size} selected
                             </div>
                         </div>
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                        <div className="rounded-[1.5rem] border border-border/30 bg-muted/[0.08] p-3">
+                        <div data-theme-part="panel" className="rounded-[1.5rem] border border-border/30 bg-muted/[0.08] p-3">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                                 <div className="min-w-0 flex-1">
                                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">From</p>
@@ -1055,7 +1100,7 @@ export function AIOStreamsSyncTab({
                             </div>
                         </div>
 
-                        <section id="aiostreams-customize-sync" className="space-y-4 rounded-2xl border border-border/30 bg-muted/[0.08] p-3">
+                        <section id="aiostreams-customize-sync" data-theme-part="panel" className="space-y-4 rounded-2xl border border-border/30 bg-muted/[0.08] p-3">
                             <div>
                                 <p className="text-sm font-semibold">What moves</p>
                                 <p className="text-xs text-muted-foreground">
@@ -1077,6 +1122,8 @@ export function AIOStreamsSyncTab({
                                             role="radio"
                                             aria-checked={syncMode === 'full'}
                                             disabled={editingLocked}
+                                            data-theme-part="button"
+                                            data-state={syncMode === 'full' ? 'active' : 'inactive'}
                                             onClick={() => setSyncMode('full')}
                                             className={cn(
                                                 'rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60',
@@ -1094,6 +1141,8 @@ export function AIOStreamsSyncTab({
                                             role="radio"
                                             aria-checked={syncMode === 'sections'}
                                             disabled={editingLocked}
+                                            data-theme-part="button"
+                                            data-state={syncMode === 'sections' ? 'active' : 'inactive'}
                                             onClick={() => setSyncMode('sections')}
                                             className={cn(
                                                 'rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60',
@@ -1110,7 +1159,7 @@ export function AIOStreamsSyncTab({
                                 </div>
 
                                 {syncMode === 'sections' && (
-                                    <div className="space-y-2 rounded-xl border border-border/30 bg-muted/10 p-3">
+                                    <div data-theme-part="panel" className="space-y-2 rounded-xl border border-border/30 bg-muted/10 p-3">
                                         <div className="flex items-center justify-between">
                                             <p className="text-xs font-medium uppercase text-muted-foreground">Settings groups</p>
                                             <Button
@@ -1178,6 +1227,8 @@ export function AIOStreamsSyncTab({
                                             role="radio"
                                             aria-checked={!copyBranding}
                                             disabled={editingLocked}
+                                            data-theme-part="button"
+                                            data-state={!copyBranding ? 'active' : 'inactive'}
                                             onClick={() => setCopyBranding(false)}
                                             className={cn(
                                                 'rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60',
@@ -1192,6 +1243,8 @@ export function AIOStreamsSyncTab({
                                             role="radio"
                                             aria-checked={copyBranding}
                                             disabled={editingLocked}
+                                            data-theme-part="button"
+                                            data-state={copyBranding ? 'active' : 'inactive'}
                                             onClick={() => setCopyBranding(true)}
                                             className={cn(
                                                 'rounded-xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60',
@@ -1203,6 +1256,30 @@ export function AIOStreamsSyncTab({
                                         </button>
                                     </div>
                                 </div>
+
+                                <details data-theme-part="panel" className="rounded-2xl border border-border/30 bg-muted/[0.06] p-3">
+                                    <summary className="cursor-pointer text-xs font-medium text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                        Key-gated instance? Add its access key (optional)
+                                    </summary>
+                                    <div className="mt-2 space-y-1.5">
+                                        <Label htmlFor="aiostreams-instance-access-key" className="text-xs font-medium text-muted-foreground">
+                                            Instance access key
+                                        </Label>
+                                        <Input
+                                            id="aiostreams-instance-access-key"
+                                            type="password"
+                                            value={instanceAccessKey}
+                                            disabled={editingLocked}
+                                            onChange={e => setInstanceAccessKey(e.target.value)}
+                                            placeholder="Only for instances that gate config writes"
+                                            className="h-9 rounded-xl border-border/40 bg-background/70 font-mono"
+                                            autoComplete="off"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Some AIOStreams instances require a separate access key (instance dashboard / CONFIG_ACCESS_KEY) for config changes. The config password alone is rejected there. Applies to every write and creation from this tab.
+                                        </p>
+                                    </div>
+                                </details>
                         </section>
                     </CardContent>
                 </Card>
@@ -1220,7 +1297,7 @@ export function AIOStreamsSyncTab({
                         </div>
 
                         {sameUserAccounts.length > 0 && (
-                            <div className="space-y-2 rounded-2xl border border-info/20 bg-info/5 p-3">
+                            <div data-theme-tone="status" data-theme-part="panel" className="space-y-2 rounded-2xl border border-info/20 bg-info/5 p-3">
                                 <div>
                                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Already sharing this user</p>
                                     <p className="text-xs text-muted-foreground">
@@ -1229,7 +1306,7 @@ export function AIOStreamsSyncTab({
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     {sameUserAccounts.map(account => (
-                                        <span key={account.accountId} className="inline-flex items-center gap-1.5 rounded-full border border-info/20 bg-background/60 px-2.5 py-1 text-xs font-medium">
+                                        <span key={account.accountId} data-theme-part="badge" className="inline-flex items-center gap-1.5 rounded-full border border-info/20 bg-background/60 px-2.5 py-1 text-xs font-medium">
                                             <Users className="h-3 w-3 text-info" />
                                             {account.accountName}
                                         </span>
@@ -1239,7 +1316,7 @@ export function AIOStreamsSyncTab({
                         )}
 
                         {missingAccountCount > 0 && (
-                            <div className="space-y-3 rounded-2xl border border-border/30 bg-muted/[0.08] p-3">
+                            <div data-theme-part="panel" className="space-y-3 rounded-2xl border border-border/30 bg-muted/[0.08] p-3">
                                 <div>
                                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">New targets</p>
                                 </div>
@@ -1330,14 +1407,14 @@ export function AIOStreamsSyncTab({
                                             </Button>
                                         </div>
 
-                                        <p className="rounded-xl border border-border/30 bg-background/45 p-2 text-xs text-muted-foreground">
+                                        <p data-theme-part="panel" className="rounded-xl border border-border/30 bg-background/45 p-2 text-xs text-muted-foreground">
                                             New setups use the same scope above: Everything creates a full clone; Groups creates a setup from only the selected groups.
                                         </p>
 
                                         {createTargetResults.length > 0 && (
                                             <div className="space-y-1">
                                                 {createTargetResults.map(result => (
-                                                    <div key={result.accountId} className={cn(
+                                                    <div data-theme-tone="status" key={result.accountId} data-theme-part="panel" className={cn(
                                                         'flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs',
                                                         result.status === 'created' ? 'border-success/20 bg-success/5 text-success' : 'border-destructive/20 bg-destructive/5 text-destructive'
                                                     )}>
@@ -1434,6 +1511,7 @@ export function AIOStreamsSyncTab({
                                             return (
                                                 <article
                                                     key={target.transportUrl}
+                                                    data-theme-part="addon-card"
                                                     className={cn(
                                                         'rounded-2xl border p-3 transition-colors',
                                                         isSelected ? 'border-primary/30 bg-primary/[0.04]' : 'border-border/30 bg-muted/[0.08] hover:bg-muted/15'
@@ -1462,7 +1540,7 @@ export function AIOStreamsSyncTab({
                                                             </span>
                                                         </Label>
                                                         {stored && !isSelected && (
-                                                            <span className="hidden rounded-full bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline">
+                                                            <span data-theme-part="badge" className="hidden rounded-full bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground sm:inline">
                                                                 Password saved
                                                             </span>
                                                         )}
@@ -1531,13 +1609,13 @@ export function AIOStreamsSyncTab({
                             </Button>
                         </div>
                         {preservedLabels.length > 0 && (
-                            <div className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5">
+                            <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-info/20 bg-info/5 px-3 py-2.5">
                                 <p className="text-xs text-info">
                                     Left unchanged: {preservedLabels.join(', ')}.
                                 </p>
                             </div>
                         )}
-                        <div className="rounded-2xl border border-border/30 bg-muted/[0.08] px-3 py-2 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/30 bg-muted/[0.08] px-3 py-2 text-xs text-muted-foreground">
                             {previewChangedCount} will update - {previewSkippedCount} already match - {previewErrorCount} need a password or check
                         </div>
                     </CardHeader>
@@ -1558,7 +1636,7 @@ export function AIOStreamsSyncTab({
                                     : 'Already matches'
 
                             return (
-                                <details key={preview.target.transportUrl} open={!!preview.error} className="overflow-hidden rounded-2xl border border-border/30 bg-muted/[0.06]">
+                                <details key={preview.target.transportUrl} open={!!preview.error} data-theme-part="panel" className="overflow-hidden rounded-2xl border border-border/30 bg-muted/[0.06]">
                                     <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                                         <AddonIcon
                                             name={preview.target.addonName}
@@ -1575,7 +1653,7 @@ export function AIOStreamsSyncTab({
                                         </StatusChip>
                                     </summary>
                                     {preview.error && (
-                                        <div className="border-t border-destructive/10 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                                        <div data-theme-tone="status" data-theme-part="panel" className="border-t border-destructive/10 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                                             {preview.error}
                                         </div>
                                     )}
@@ -1646,7 +1724,7 @@ export function AIOStreamsSyncTab({
                                     <PreviewStat label="Matched" value={receipt.skippedCount} tone="success" />
                                     <PreviewStat label="Failed" value={receipt.failedCount} tone="destructive" />
                                 </div>
-                                <div className="rounded-xl border border-border/30 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
+                                <div data-theme-part="panel" className="rounded-xl border border-border/30 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
                                     <p className="truncate">
                                         Source: <span className="font-medium text-foreground">{receipt.sourceName}</span> - {formatHost(receipt.sourceBaseUrl)} - {new Date(receipt.timestamp).toLocaleString()}
                                     </p>
@@ -1660,7 +1738,7 @@ export function AIOStreamsSyncTab({
 
                     <CardContent className="space-y-2">
                         {results.map((result) => (
-                            <div key={result.target.transportUrl} className={cn(
+                            <div data-theme-tone="status" key={result.target.transportUrl} data-theme-part="panel" className={cn(
                                 'flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs',
                                 result.status === 'failed'
                                     ? 'border-destructive/20 bg-destructive/5'
@@ -1678,6 +1756,15 @@ export function AIOStreamsSyncTab({
                                 >
                                     {result.restored ? 'Restored' : result.status === 'skipped' ? 'Already matched' : result.status === 'changed' ? 'Updated' : 'Failed'}
                                 </StatusChip>
+                                {result.status === 'changed' && result.verifyWarning && (
+                                    <Tooltip content={`Stored differently than drafted${result.verifyWarning.mismatchedFields.length > 0 ? ` - fields: ${result.verifyWarning.mismatchedFields.join(', ')}` : ''}${result.verifyWarning.lostFields.length > 0 ? ` - lost: ${result.verifyWarning.lostFields.join(', ')}` : ''}. The instance may have been changed concurrently; re-run a preview to see the current state.`}>
+                                      <TooltipTrigger asChild>
+                                        <span data-theme-part="badge" className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning">
+                                            Verify attention
+                                        </span>
+                                      </TooltipTrigger>
+                                    </Tooltip>
+                                )}
                                 {result.status === 'failed' && result.error && (
                                     <Tooltip content={result.error}>
                                       <TooltipTrigger asChild>
@@ -1802,7 +1889,7 @@ function PreviewStat({
             : 'border-destructive/20 bg-destructive/5 text-destructive'
 
     return (
-        <div className={cn('rounded-xl border px-3 py-2 text-center', toneClass)}>
+        <div data-theme-part="panel" className={cn('rounded-xl border px-3 py-2 text-center', toneClass)}>
             <p className="text-sm font-semibold">{value}</p>
             <p className="text-xs uppercase tracking-wide opacity-75">{label}</p>
         </div>

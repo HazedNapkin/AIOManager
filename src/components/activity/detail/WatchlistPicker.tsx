@@ -97,6 +97,7 @@ export function WatchlistPicker({
     const dropdown = open && dropdownPos ? createPortal(
         <div
             ref={dropdownRef}
+            data-theme-part="popover"
             style={{ position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width, zIndex: 100 }}
             className="bg-card border border-border/40 rounded-2xl shadow-lg overflow-hidden"
         >
@@ -105,6 +106,7 @@ export function WatchlistPicker({
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <input
                         ref={searchRef}
+                        data-theme-part="input"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         placeholder="Search accounts..."
@@ -115,6 +117,7 @@ export function WatchlistPicker({
             <div className="max-h-80 overflow-y-auto p-1">
                 <button
                     type="button"
+                    data-theme-part="menu-item"
                     onClick={() => onToggle('')}
                     className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg transition-colors ${hasUniversal ? 'bg-primary/12 text-primary border border-primary/25' : 'border border-transparent hover:bg-muted/50'}`}
                 >
@@ -137,6 +140,7 @@ export function WatchlistPicker({
                         <button
                             key={acc.id}
                             type="button"
+                            data-theme-part="menu-item"
                             onClick={() => onToggle(acc.id)}
                             className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg transition-colors ${selected ? 'bg-primary/12 text-primary border border-primary/25' : 'border border-transparent hover:bg-muted/50'}`}
                         >
@@ -156,6 +160,7 @@ export function WatchlistPicker({
             <button
                 ref={buttonRef}
                 type="button"
+                data-theme-part="button"
                 disabled={loading}
                 onClick={() => setOpen(!open)}
                 className={cn('inline-flex h-11 flex-1 justify-center items-center gap-2 rounded-full px-6 text-sm font-semibold backdrop-blur-md transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 sm:flex-none sm:w-auto sm:justify-start', watchlistTargets.size > 0 ? heroPrimaryBtn : heroGhostBtn)}

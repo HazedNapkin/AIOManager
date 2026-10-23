@@ -1,9 +1,48 @@
 import type { Connection, ConnectionStatus } from '@/types/connection'
+import { AlertCircle, CheckCircle2, Loader2, Zap } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getPlatformEntry } from '@/lib/platform-registry'
 import { StatusChip, type StatusChipProps } from '@/components/ui/status-chip'
 import type { DisplayStatus } from '@/lib/connection-format'
 import hydraLogo from '@/assets/platforms/hydra.png'
+
+export interface ConnectionTestOutcome {
+    ok: boolean
+    message: string
+}
+
+export function ConnectionTestButton({ testing, disabled, onClick }: {
+    testing: boolean
+    disabled?: boolean
+    onClick: () => void
+}) {
+    return (
+        <Button variant="subtle" size="sm" className="h-8 shrink-0 gap-1.5 text-xs" onClick={onClick} disabled={testing || disabled} aria-busy={testing}>
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+            {testing ? 'Testing...' : 'Test Connection'}
+        </Button>
+    )
+}
+
+export function ConnectionTestResult({ result }: { result: ConnectionTestOutcome | null }) {
+    if (!result) return null
+    return (
+        <div data-theme-tone="status"
+            role={result.ok ? 'status' : 'alert'}
+            data-theme-part="panel"
+            className={cn(
+                'flex items-start gap-2 rounded-xl border px-3 py-2 text-xs',
+                result.ok
+                    ? 'border-success/30 bg-success/10 text-success'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive'
+            )}
+        >
+            {result.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="min-w-0 break-words">{result.message}</span>
+        </div>
+    )
+}
 
 export const STATUS_LABEL: Record<ConnectionStatus, string> = {
     active: 'Active',
@@ -65,7 +104,7 @@ export function ConnectionStatusPill({ status, className }: { status: DisplaySta
 export function PlatformLogo({ platform, className, isHydra }: { platform: string; className?: string; isHydra?: boolean }) {
     if (isHydra) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
+            <div data-theme-part="image-tile" className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={hydraLogo} alt="Hydra" loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
@@ -73,14 +112,13 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
     const entry = getPlatformEntry(platform)
     if (entry) {
         return (
-            <div className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
+            <div data-theme-part="image-tile" className={cn('relative overflow-hidden rounded-xl bg-muted/50', className)}>
                 <img src={entry.logo} alt={entry.name} loading="lazy" className="h-full w-full object-contain p-1" />
             </div>
         )
     }
     return (
-        <div className={cn('relative flex items-center justify-center', className)}>
-            <div className="absolute inset-0 rounded-xl bg-muted" />
+        <div data-theme-part="image-tile" className={cn('relative flex items-center justify-center rounded-xl bg-muted', className)}>
             <span className="relative z-10 text-xs font-bold text-muted-foreground">
                 {platform[0]?.toUpperCase() || '?'}
             </span>
@@ -89,6 +127,7 @@ export function PlatformLogo({ platform, className, isHydra }: { platform: strin
 }
 
 export function connectionLabel(connection: Connection): string {
+    if (connection.platform === 'jellyfin') return connection.mediaServer?.productName || connection.displayName || 'Jellyfin-compatible server'
     const isHydra = connection.connectionType === 'hydra-outbound'
     const entry = getPlatformEntry(connection.platform)
     return isHydra

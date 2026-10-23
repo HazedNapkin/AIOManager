@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { maskNameLevel, maskUrlLevel, maskProfileLevel, maskEmailLevel } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { isSyncioExport, parseSyncioExport } from '@/lib/syncio-import'
+import { readAccountImport } from '@/lib/account-membership'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAccountStore } from '@/store/accountStore'
 import { useAddonStore } from '@/store/addonStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useUIStore } from '@/store/uiStore'
 import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { toast } from '@/hooks/use-toast'
@@ -36,15 +39,11 @@ import {
     AlertTriangle,
     CheckCircle2,
     FileJson,
-    User,
-    Link,
-    Users,
     Activity,
-    Mail,
     Info,
 } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { PrivacyLevelSlider } from '@/components/ui/privacy-level-slider'
+import { PrivacyControls } from '@/components/settings/PrivacyControls'
 
 import { SyncDiagnostics } from '@/components/settings/SyncDiagnostics'
 
@@ -58,8 +57,11 @@ import { RepairTools } from '@/components/settings/RepairTools'
 import { IntegrationsSection } from '@/components/settings/IntegrationsSection'
 import { ApiKeysSection } from '@/components/settings/ApiKeysSection'
 import { RememberedDevicesSection } from '@/components/settings/RememberedDevicesSection'
+import { SettingsSearch, resolveSectionElement, type SettingSearchEntry } from '@/components/settings/SettingsNavigation'
+import { ToolbarShell } from '@/components/ui/toolbar-shell'
 
 type ImportPreview = {
+    hasAccounts: boolean
     fileName: string
     sizeLabel: string
     version?: string
@@ -92,11 +94,7 @@ const asArray = (value: unknown): unknown[] => {
 }
 
 const getPreviewAccounts = (data: Record<string, unknown>) => {
-    let accountsToImport = (data?.accounts || []) as unknown
-    if (!Array.isArray(accountsToImport) && accountsToImport && typeof accountsToImport === 'object') {
-        accountsToImport = ((accountsToImport as Record<string, unknown>).accounts || []) as unknown
-    }
-    return asArray(accountsToImport)
+    return readAccountImport(data) || []
 }
 
 const getPreviewSavedAddons = (data: Record<string, unknown>) => asArray(
@@ -130,7 +128,7 @@ const BACKUP_SECTIONS = [
 ]
 
 function applySectionFilter(data: Record<string, unknown>, sections: Set<string>): void {
-    if (!sections.has('accounts')) { delete data.accounts; delete data.manifests; delete data.apiKeys; delete data.watchEvents; delete data.watchSnapshot }
+    if (!sections.has('accounts')) { delete data.accounts; delete data.deletedAccounts; delete data.restoredAccounts; delete data.manifests; delete data.apiKeys; delete data.watchEvents; delete data.watchSnapshot }
     if (!sections.has('library')) { delete data.addons; delete data.accountStates; delete data.profiles }
     if (!sections.has('vault')) { delete data.vault; delete data.vaultTombstones }
     if (!sections.has('failover')) { delete data.failover }
@@ -156,27 +154,66 @@ export function SettingsPage() {
     const setPrivacyOption = useUIStore(s => s.setPrivacyOption)
     const { clear: clearLibraryCache, invalidate } = useLibraryCache()
 
-    const [activeTab, setActiveTab] = useState(() => {
-        const hash = window.location.hash.replace('#', '')
-        if (['general', 'appearance', 'data', 'advanced'].includes(hash)) {
-            return hash
-        }
-        return 'general'
-    })
+    const location = useLocation()
+    const navigate = useNavigate()
+    const tab = location.hash.slice(1)
+    const activeTab = ['general', 'appearance', 'data', 'advanced'].includes(tab) ? tab : 'general'
 
     const handleTabChange = (val: string) => {
-        setActiveTab(val)
-        window.history.replaceState(null, '', `#${val}`)
+        const currentTab = window.location.hash.slice(1) || 'general'
+        if (val === currentTab || !['general', 'appearance', 'data', 'advanced'].includes(val)) return
+        navigate({ pathname: location.pathname, search: location.search, hash: `#${val}` }, { preventScrollReset: true })
+    }
+
+    // "Find a setting" search destination. The search itself lives in
+    // SettingsNavigation; this only routes to the EXISTING tab + section so
+    // the URL-driven tab history keeps working exactly as before.
+    const [pendingDestination, setPendingDestination] = useState<{
+        anchor: string
+        heading?: string
+        tab: string
+    } | null>(null)
+    const [highlightedAnchor, setHighlightedAnchor] = useState<string | null>(null)
+
+    const handleSearchNavigate = (entry: SettingSearchEntry) => {
+        setPendingDestination({ anchor: entry.anchor ?? entry.id, heading: entry.heading, tab: entry.tab })
+        if (entry.tab !== activeTab) handleTabChange(entry.tab)
     }
 
     useEffect(() => {
-        const settingsPath = window.location.pathname
-        return () => {
-            if (window.location.pathname === settingsPath) {
-                window.history.replaceState(null, '', window.location.pathname)
+        if (!pendingDestination || pendingDestination.tab !== activeTab) return
+        let cancelled = false
+        const startedAt = performance.now()
+        const tryFocusDestination = () => {
+            if (cancelled) return
+            const target = resolveSectionElement(pendingDestination.anchor, pendingDestination.heading)
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                target.setAttribute('tabindex', '-1')
+                target.focus({ preventScroll: true })
+                setHighlightedAnchor(pendingDestination.anchor)
+                setPendingDestination(null)
+            } else if (performance.now() - startedAt < 1500) {
+                requestAnimationFrame(tryFocusDestination)
+            } else {
+                setPendingDestination(null)
             }
         }
-    }, [])
+        requestAnimationFrame(tryFocusDestination)
+        return () => { cancelled = true }
+    }, [activeTab, pendingDestination])
+
+    useEffect(() => {
+        if (!highlightedAnchor) return
+        const timeout = setTimeout(() => setHighlightedAnchor(null), 2200)
+        return () => clearTimeout(timeout)
+    }, [highlightedAnchor])
+
+    const sectionAnchorClass = (anchor: string) =>
+        cn(
+            'scroll-mt-24 rounded-3xl transition-shadow duration-700',
+            highlightedAnchor === anchor && 'ring-2 ring-primary/40 ring-offset-4 ring-offset-background'
+        )
 
     const [confirmDialog, setConfirmDialog] = useState<{
         open: boolean
@@ -189,6 +226,7 @@ export function SettingsPage() {
     const [exporting, setExporting] = useState(false)
     const [importing, setImporting] = useState(false)
     const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
+    const [importAccountMode, setImportAccountMode] = useState<'merge' | 'restore'>('merge')
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [showExportDialog, setShowExportDialog] = useState(false)
     const [exportSections, setExportSections] = useState<Set<string>>(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
@@ -249,7 +287,7 @@ export function SettingsPage() {
         const matchingAccounts = incomingAccounts.filter((incoming) =>
             accounts.some(a => {
                 const inc = incoming as Record<string, unknown>
-                return a.email?.toLowerCase() === ((inc.email as string) || '').toLowerCase()
+                return a.id === inc.id || (!!a.email && typeof inc.email === 'string' && !!inc.email && a.email.toLowerCase() === inc.email.toLowerCase())
             })
         ).length
         const missingCredentials = (incomingAccounts as Record<string, unknown>[]).filter((incoming) => !incoming.authKey).length
@@ -274,10 +312,10 @@ export function SettingsPage() {
             settings +
             watchEvents
 
-        if (recognizedTotal === 0) {
+        if (recognizedTotal === 0 && data.accounts === undefined) {
             errors.push('No recognizable AIOManager data was found in this JSON file.')
         }
-        if (incomingAccounts.length === 0) {
+        if (data.accounts === undefined) {
             warnings.push('This backup does not include accounts; it may only restore library data, settings, or diagnostics.')
         }
         if (missingCredentials > 0) {
@@ -294,6 +332,7 @@ export function SettingsPage() {
         }
 
         return {
+            hasAccounts: data.accounts !== undefined,
             fileName: file.name,
             sizeLabel: formatFileSize(file.size),
             version: typeof data?.version === 'string' ? data.version : undefined,
@@ -403,6 +442,7 @@ export function SettingsPage() {
                 return
             }
             setPendingImport({ text, preview })
+            setImportAccountMode('merge')
             setImportSections(new Set(['accounts', 'library', 'vault', 'failover', 'settings', 'notes']))
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import preview failed:', error)
@@ -418,9 +458,11 @@ export function SettingsPage() {
         setImporting(true)
         try {
             const filtered = filterImportJson(pendingImport.text, importSections)
-            await importAccounts(filtered, false, 'merge', undefined)
+            await importAccounts(filtered, false, 'merge', undefined, undefined, importAccountMode)
             await initializeAddonStore()
-            toast({ title: "Import Successful", description: "Selected data has been restored." })
+            const accountCount = useAccountStore.getState().accounts.length
+            const restoredAccounts = importSections.has('accounts') && pendingImport.preview.hasAccounts && importAccountMode === 'restore'
+            toast({ title: 'Import Successful', description: restoredAccounts ? `Account list restored: ${accountCount} accounts. Other selected data was merged.` : `Selected data merged. You now have ${accountCount} accounts; existing accounts were kept.` })
             setPendingImport(null)
         } catch (error) {
             if (import.meta.env.DEV) console.error('Import failed:', error)
@@ -449,67 +491,42 @@ export function SettingsPage() {
     return (
         <div className="space-y-4 sm:space-y-8">
             <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-fit">
-                    <TabsTrigger value="general" className="h-9 px-3 text-xs sm:px-4">
-                        <Shield className="h-3.5 w-3.5" />
-                        General
-                    </TabsTrigger>
-                    <TabsTrigger value="appearance" className="h-9 px-3 text-xs sm:px-4">
-                        <Palette className="h-3.5 w-3.5" />
-                        Appearance
-                    </TabsTrigger>
-                    <TabsTrigger value="data" className="h-9 px-3 text-xs sm:px-4">
-                        <Settings2 className="h-3.5 w-3.5" />
-                        Data & Sync
-                    </TabsTrigger>
-                    <TabsTrigger value="advanced" className="h-9 px-3 text-xs sm:px-4">
-                        <Wrench className="h-3.5 w-3.5" />
-                        Advanced
-                    </TabsTrigger>
-                </TabsList>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-fit">
+                        <TabsTrigger value="general" className="h-9 px-3 text-xs sm:px-4">
+                            <Shield className="h-3.5 w-3.5" />
+                            General
+                        </TabsTrigger>
+                        <TabsTrigger value="appearance" className="h-9 px-3 text-xs sm:px-4">
+                            <Palette className="h-3.5 w-3.5" />
+                            Appearance
+                        </TabsTrigger>
+                        <TabsTrigger value="data" className="h-9 px-3 text-xs sm:px-4">
+                            <Settings2 className="h-3.5 w-3.5" />
+                            Data & Sync
+                        </TabsTrigger>
+                        <TabsTrigger value="advanced" className="h-9 px-3 text-xs sm:px-4">
+                            <Wrench className="h-3.5 w-3.5" />
+                            Advanced
+                        </TabsTrigger>
+                    </TabsList>
+                    <ToolbarShell className="w-full p-3 lg:w-96" contentClassName="w-full">
+                        <SettingsSearch className="w-full" onNavigate={handleSearchNavigate} />
+                    </ToolbarShell>
+                </div>
 
-                <div className="mt-4 sm:mt-8">
+                <div className="mt-4 sm:mt-6">
                     {/* General Tab */}
                     <TabsContent value="general" className="mt-0">
                         <div className="grid gap-4 sm:gap-6">
-                            <AccountSection />
-
-                            <div className="rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
-                                <div className="flex items-center gap-3">
-                                    <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                        <SquircleOverlay />
-                                        <Info className="relative z-10 h-4 w-4 text-muted-foreground" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-base font-semibold">About</h3>
-                                        <p className="text-xs sm:text-sm text-muted-foreground">Version and build information for this installation</p>
-                                    </div>
-                                </div>
-                                <div className="mt-4 space-y-1 text-sm">
-                                    <div className="flex items-center justify-between border-b border-border/25 pb-2">
-                                        <span className="text-muted-foreground">Version</span>
-                                        <span className="font-medium">{__BUILD_VERSION__}</span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(__BUILD_COMMIT__)
-                                            toast({ title: 'Copied', description: `Build ${__BUILD_COMMIT__} copied to clipboard.` })
-                                        }}
-                                        className="flex w-full items-center justify-between pt-1 text-left"
-                                        title="Click to copy the build identifier"
-                                    >
-                                        <span className="text-muted-foreground">Build</span>
-                                        <span className="font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
-                                    </button>
-                                </div>
+                            <div data-settings-anchor="sync-identity" className={sectionAnchorClass('sync-identity')}>
+                                <AccountSection />
                             </div>
 
-                            <InstallAppCard />
-
-                            <div className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="flex items-center gap-3">
+                            <div data-settings-anchor="privacy-mode" className={sectionAnchorClass('privacy-mode')}>
+                                <div data-theme-part="panel" className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-6 shadow-sm">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex min-w-0 items-center gap-3">
                                         <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                             <SquircleOverlay />
                                             <EyeOff className="relative z-10 h-4 w-4 text-muted-foreground" />
@@ -523,7 +540,7 @@ export function SettingsPage() {
                                         id="privacy-mode"
                                         checked={isPrivacyModeEnabled}
                                         onCheckedChange={togglePrivacyMode}
-                                        className="self-start sm:self-auto"
+                                        className="shrink-0"
                                     />
                                 </div>
                                 <AnimatePresence initial={false}>
@@ -535,89 +552,91 @@ export function SettingsPage() {
                                             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                                             className="overflow-hidden"
                                         >
-                                            <div className="flex flex-col gap-4 rounded-xl border border-border/30 bg-muted/20 p-4 mt-2">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-2">
-                                                        <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                                                        <p className="text-xs font-medium text-muted-foreground">Granular Privacy Controls</p>
-                                                    </div>
-                                                    <p className="text-[11px] text-muted-foreground/60">Live preview below each setting</p>
-                                                </div>
-                                                <div className="flex flex-col gap-4">
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><User className="h-3.5 w-3.5 text-muted-foreground" />Account Names</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelNames === 0 ? 'Visible' : privacyLevelNames === 1 ? 'Light' : privacyLevelNames === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelNames} onChange={(v) => setPrivacyOption('privacyLevelNames', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            Sonic's Account <span className="text-muted-foreground/50 mx-1">→</span> {maskNameLevel("Sonic's Account", privacyLevelNames)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="h-px bg-border/20" />
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Link className="h-3.5 w-3.5 text-muted-foreground" />Addon URLs</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelUrls === 0 ? 'Visible' : privacyLevelUrls === 1 ? 'Light' : privacyLevelUrls === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelUrls} onChange={(v) => setPrivacyOption('privacyLevelUrls', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            {privacyLevelUrls === 0 ? 'metadata.aiostreams.io/stremio/abc' : maskUrlLevel('https://metadata.aiostreams.io/stremio/abc/manifest.json', privacyLevelUrls)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="h-px bg-border/20" />
-                                                    <div className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Users className="h-3.5 w-3.5 text-muted-foreground" />Profile Names</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelProfiles === 0 ? 'Visible' : privacyLevelProfiles === 1 ? 'Light' : privacyLevelProfiles === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelProfiles} onChange={(v) => setPrivacyOption('privacyLevelProfiles', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            Main Setup <span className="text-muted-foreground/50 mx-1">→</span> {maskProfileLevel('Main Setup', privacyLevelProfiles, 3)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <span className="flex items-center gap-2 text-xs font-medium"><Mail className="h-3.5 w-3.5 text-muted-foreground" />Email</span>
-                                                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/50">{privacyLevelEmail === 0 ? 'Visible' : privacyLevelEmail === 1 ? 'Light' : privacyLevelEmail === 2 ? 'Strict' : 'Hidden'}</span>
-                                                        </div>
-                                                        <PrivacyLevelSlider value={privacyLevelEmail} onChange={(v) => setPrivacyOption('privacyLevelEmail', v)} />
-                                                        <p className="text-xs text-muted-foreground/70 font-mono truncate rounded-lg bg-muted/30 px-2.5 py-1.5 border border-border/20">
-                                                            sonic@example.com <span className="text-muted-foreground/50 mx-1">→</span> {maskEmailLevel('sonic@example.com', privacyLevelEmail)}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                            <PrivacyControls
+                                                namesLevel={privacyLevelNames}
+                                                urlsLevel={privacyLevelUrls}
+                                                profilesLevel={privacyLevelProfiles}
+                                                emailLevel={privacyLevelEmail}
+                                                onChange={setPrivacyOption}
+                                            />
                                         </motion.div>
                                     )}
                                 </AnimatePresence>
+                            </div>
+                            </div>
+
+                            <div data-settings-anchor="install-app" className={cn(sectionAnchorClass('install-app'), 'empty:hidden')}>
+                                <InstallAppCard />
+                            </div>
+
+                            <div data-settings-anchor="about" className={sectionAnchorClass('about')}>
+                                <div data-theme-part="panel" className="flex flex-col gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25 sm:h-10 sm:w-10">
+                                            <SquircleOverlay />
+                                            <Info className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-base font-semibold">About</h3>
+                                            <p className="text-xs text-muted-foreground">Version & build information</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-6 text-sm">
+                                        <div>
+                                            <p className="text-xs text-muted-foreground">Version</p>
+                                            <p className="mt-1 font-medium">{__BUILD_VERSION__}</p>
+                                        </div>
+                                        <Tooltip content="Click to copy the build identifier" side="top">
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    try {
+                                                        await navigator.clipboard.writeText(__BUILD_COMMIT__)
+                                                        toast({ title: 'Copied', description: 'Build identifier copied to clipboard.' })
+                                                    } catch {
+                                                        toast({ variant: 'destructive', title: 'Could not copy build identifier' })
+                                                    }
+                                                }}
+                                                className="rounded-md text-left transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
+                                                data-theme-part="inline-action"
+                                                aria-label="Copy build identifier"
+                                            >
+                                                <span className="block text-xs text-muted-foreground">Build</span>
+                                                <span className="mt-1 block font-mono font-medium">{__BUILD_COMMIT__.slice(0, 7)}</span>
+                                            </button>
+                                        </Tooltip>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </TabsContent>
 
                     {/* Appearance Tab */}
                     <TabsContent value="appearance" className="mt-0">
-                        <ThemeSection theme={theme} setTheme={setTheme} />
+                        <div data-settings-anchor="themes" className={sectionAnchorClass('themes')}>
+                            <ThemeSection theme={theme} setTheme={setTheme} />
+                        </div>
                     </TabsContent>
 
                     {/* Data & Sync Tab */}
                     <TabsContent value="data" className="mt-0 space-y-4 sm:space-y-6">
                         {/* Backup & Restore */}
-                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
+                        <div data-settings-anchor="backup-restore" className={sectionAnchorClass('backup-restore')}>
+                            <div data-theme-part="panel" className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
                             <div className="flex flex-1 items-start gap-4">
                                 <div className="relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                                     <SquircleOverlay />
                                     <Database className="relative z-10 h-4 w-4 text-muted-foreground" />
                                 </div>
                                 <div className="space-y-1">
-                                    <h3 className="text-base font-semibold">Cloud Backup & Restore</h3>
+                                    <h3 className="text-base font-semibold">Backup & Restore</h3>
                                     <p className="text-sm text-muted-foreground max-w-md">
-                                        Export your entire configuration (Accounts, Profiles, Addons, and Rules) to a portable JSON file.
+                                        Export your configuration to a JSON file, or restore a saved backup.
                                     </p>
                                 </div>
                             </div>
                             <div className="grid shrink-0 grid-cols-2 gap-2 sm:flex">
-                                <Button variant="outline" onClick={handleExport} disabled={exporting || accounts.length === 0} className="w-full gap-2 sm:w-auto">
+                                <Button variant="outline" onClick={handleExport} disabled={exporting} className="w-full gap-2 sm:w-auto">
                                     <Download className="h-4 w-4" />
                                     {exporting ? 'Exporting...' : 'Export'}
                                 </Button>
@@ -625,6 +644,7 @@ export function SettingsPage() {
                                     <Upload className="h-4 w-4" />
                                     {importing ? 'Importing...' : 'Import'}
                                 </Button>
+                            </div>
                             </div>
                         </div>
 
@@ -637,37 +657,22 @@ export function SettingsPage() {
                         />
 
                         {/* Metadata Integrations */}
-                        <IntegrationsSection />
-
-                        {/* Account API Keys */}
-                        <ApiKeysSection />
-
-                        {/* Active Sync Summary */}
-                        <SyncSummarySection />
-
-                        {/* Non-destructive Clear History Cache */}
-                        <div className="flex flex-col justify-between gap-4 sm:gap-5 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm md:flex-row md:items-center">
-                            <div className="flex flex-1 items-start gap-3 sm:gap-4">
-                                <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
-                                    <SquircleOverlay />
-                                    <Trash2 className="relative z-10 h-4 w-4 text-muted-foreground" />
-                                </div>
-                                <div className="space-y-1">
-                                    <h3 className="text-sm sm:text-base font-semibold">Clear History Cache</h3>
-                                    <p className="max-w-2xl text-sm text-muted-foreground">
-                                        Wipes all locally cached activity view data. Useful if you want to force a clean re-pull from your accounts immediately.
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="flex shrink-0 gap-2">
-                                <Button variant="outline" onClick={handleClearActivity} className="gap-2">
-                                    <Trash2 className="h-4 w-4" />
-                                    Clear Cache
-                                </Button>
-                            </div>
+                        <div data-settings-anchor="metadata-integrations" className={sectionAnchorClass('metadata-integrations')}>
+                            <IntegrationsSection />
                         </div>
 
-                        <div className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
+                        {/* Account API Keys */}
+                        <div data-settings-anchor="api-keys" className={sectionAnchorClass('api-keys')}>
+                            <ApiKeysSection />
+                        </div>
+
+                        {/* Active Sync Summary */}
+                        <div data-settings-anchor="sync-connections" className={cn(sectionAnchorClass('sync-connections'), 'empty:hidden')}>
+                            <SyncSummarySection />
+                        </div>
+
+                        <div data-settings-anchor="live-activity" className={sectionAnchorClass('live-activity')}>
+                            <div data-theme-part="panel" className="flex flex-col gap-3 sm:gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 sm:p-5 shadow-sm">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="flex items-center gap-3">
                                     <div className="relative flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
@@ -676,7 +681,7 @@ export function SettingsPage() {
                                     </div>
                                     <div>
                                         <Label htmlFor="live-activity" className="text-sm sm:text-base font-medium cursor-pointer">Live Activity Refresh</Label>
-                                        <p className="text-xs sm:text-sm text-muted-foreground">While viewing the Activity page, auto-refresh progress every 60 seconds</p>
+                                        <p className="text-xs sm:text-sm text-muted-foreground">Refresh progress every minute while Activity is open</p>
                                     </div>
                                 </div>
                                 <Switch
@@ -694,14 +699,45 @@ export function SettingsPage() {
                                         }
                                     </p>
                                 )}
+                            </div>
+                        </div>
+
+                        {/* Cache maintenance follows the normal data controls. */}
+                        <div data-settings-anchor="history-cache" className={sectionAnchorClass('history-cache')}>
+                            <div data-theme-part="panel" className="flex flex-col justify-between gap-4 rounded-[1.75rem] border border-border/45 bg-card/80 p-4 shadow-sm sm:gap-5 sm:p-5 md:flex-row md:items-center">
+                                <div className="flex flex-1 items-start gap-3 sm:gap-4">
+                                    <div className="relative mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25 sm:h-10 sm:w-10">
+                                        <SquircleOverlay />
+                                        <Trash2 className="relative z-10 h-4 w-4 text-muted-foreground" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-sm font-semibold sm:text-base">Clear History Cache</h3>
+                                        <p className="max-w-2xl text-sm text-muted-foreground">Clear local activity and watch events. Sync again to rebuild the cache from your accounts.</p>
+                                    </div>
+                                </div>
+                                <Button variant="outline" onClick={handleClearActivity} className="shrink-0 gap-2 self-start md:self-auto">
+                                    <Trash2 className="h-4 w-4" />
+                                    Clear Cache
+                                </Button>
+                            </div>
                         </div>
                     </TabsContent>
                     <TabsContent value="advanced" className="mt-0 space-y-4 sm:space-y-6">
-                        <NotificationsSection />
-                        <RepairTools />
-                        <RememberedDevicesSection />
-                        <SyncDiagnostics />
-                        <DangerZone />
+                        <div data-settings-anchor="monitoring-alerts" className={sectionAnchorClass('monitoring-alerts')}>
+                            <NotificationsSection />
+                        </div>
+                        <div data-settings-anchor="remembered-devices" className={sectionAnchorClass('remembered-devices')}>
+                            <RememberedDevicesSection />
+                        </div>
+                        <div data-settings-anchor="sync-diagnostics" className={sectionAnchorClass('sync-diagnostics')}>
+                            <SyncDiagnostics />
+                        </div>
+                        <div data-settings-anchor="repair-recovery" className={sectionAnchorClass('repair-recovery')}>
+                            <RepairTools />
+                        </div>
+                        <div data-settings-anchor="danger-zone" className={sectionAnchorClass('danger-zone')}>
+                            <DangerZone />
+                        </div>
                     </TabsContent>
                 </div>
             </Tabs>
@@ -724,7 +760,7 @@ export function SettingsPage() {
                     </AlertDialogHeader>
                     {pendingImport && (
                         <div className="space-y-4 px-6 pb-5">
-                            <div className="rounded-2xl border border-border/40 bg-muted/20 p-3 text-sm">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-muted/20 p-3 text-sm">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                         <p className="truncate font-medium text-foreground">{pendingImport.preview.fileName}</p>
@@ -747,14 +783,14 @@ export function SettingsPage() {
                                     ['Vault Keys', pendingImport.preview.counts.vaultKeys],
                                     ['Settings', pendingImport.preview.counts.settings],
                                 ].map(([label, count]) => (
-                                    <div key={label} className="rounded-xl border border-border/35 bg-background/60 p-3">
+                                    <div key={label} data-theme-part="panel" className="rounded-xl border border-border/35 bg-background/60 p-3">
                                         <p className="text-base font-semibold text-foreground">{count}</p>
                                         <p className="text-muted-foreground">{label}</p>
                                     </div>
                                 ))}
                             </div>
 
-                            <div className="rounded-2xl border border-border/35 bg-background/50 p-3 text-xs text-muted-foreground">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/50 p-3 text-xs text-muted-foreground">
                                 <p>
                                     {pendingImport.preview.counts.matchingAccounts} account{pendingImport.preview.counts.matchingAccounts !== 1 ? 's' : ''} appear to match existing local accounts by ID or email.
                                 </p>
@@ -769,8 +805,8 @@ export function SettingsPage() {
                                 <div className="flex items-center justify-between">
                                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Select what to import</p>
                                     <div className="flex gap-2">
-                                        <button type="button" onClick={() => setImportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
-                                        <button type="button" onClick={() => setImportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                                        <button type="button" data-theme-part="button" onClick={() => setImportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                        <button type="button" data-theme-part="button" onClick={() => setImportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -780,6 +816,8 @@ export function SettingsPage() {
                                             <button
                                                 key={section.key}
                                                 type="button"
+                                                data-theme-part="button"
+                                                aria-pressed={isSelected}
                                                 onClick={() => toggleImportSection(section.key)}
                                                 className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
                                             >
@@ -796,8 +834,22 @@ export function SettingsPage() {
                                 </div>
                             </div>
 
+                            {pendingImport.preview.hasAccounts && importSections.has('accounts') && (
+                                <fieldset className="space-y-2 rounded-xl border border-border/35 p-3 text-sm">
+                                    <legend className="px-1 font-medium">Account list</legend>
+                                    <label className="flex items-start gap-2">
+                                        <input type="radio" name="backup-account-mode" value="merge" checked={importAccountMode === 'merge'} onChange={() => setImportAccountMode('merge')} disabled={importing} className="mt-1" />
+                                        <span>Merge accounts <span className="block text-xs text-muted-foreground">Keep existing accounts and add or update accounts from this file. The file count is not the final total.</span></span>
+                                    </label>
+                                    <label className="flex items-start gap-2">
+                                        <input type="radio" name="backup-account-mode" value="restore" checked={importAccountMode === 'restore'} onChange={() => setImportAccountMode('restore')} disabled={importing} className="mt-1" />
+                                        <span>Restore account list <span className="block text-xs text-muted-foreground">Replace your current {accounts.length} accounts with the {pendingImport.preview.counts.accounts} accounts in this file. Accounts absent from the file will be removed from AIOManager and this change will sync to your other devices. Other selected data is merged.</span></span>
+                                    </label>
+                                </fieldset>
+                            )}
+
                             {pendingImport.preview.warnings.length > 0 && (
-                                <div className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
+                                <div data-theme-tone="status" data-theme-part="panel" className="space-y-2 rounded-2xl border border-warning/25 bg-warning/10 p-3">
                                     <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-warning">
                                         <AlertTriangle className="h-3.5 w-3.5" />
                                         Import Notes
@@ -819,7 +871,7 @@ export function SettingsPage() {
                             disabled={importing || importSections.size === 0}
                             className="h-11 rounded-full"
                         >
-                            {importing ? 'Importing...' : 'Import Backup'}
+                            {importing ? 'Importing...' : importAccountMode === 'restore' && importSections.has('accounts') && pendingImport?.preview.hasAccounts ? `Restore ${pendingImport.preview.counts.accounts} Accounts` : 'Import Backup'}
                         </Button>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -840,8 +892,8 @@ export function SettingsPage() {
                         <div className="flex items-center justify-between">
                             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Sections</p>
                             <div className="flex gap-2">
-                                <button type="button" onClick={() => setExportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
-                                <button type="button" onClick={() => setExportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
+                                <button type="button" data-theme-part="button" onClick={() => setExportSections(new Set(BACKUP_SECTIONS.map(s => s.key)))} className="text-xs text-primary hover:underline">Select All</button>
+                                <button type="button" data-theme-part="button" onClick={() => setExportSections(new Set())} className="text-xs text-muted-foreground hover:underline">Clear</button>
                             </div>
                         </div>
                         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -851,6 +903,8 @@ export function SettingsPage() {
                                     <button
                                         key={section.key}
                                         type="button"
+                                        data-theme-part="button"
+                                        aria-pressed={isSelected}
                                         onClick={() => toggleExportSection(section.key)}
                                         className={`flex items-start gap-2 rounded-xl border p-2.5 text-left transition-colors ${isSelected ? 'border-primary/30 bg-primary/8' : 'border-border/30 bg-muted/20 opacity-60'}`}
                                     >

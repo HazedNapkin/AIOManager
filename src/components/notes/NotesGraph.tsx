@@ -395,52 +395,52 @@ export function NotesGraph({ notes, onNodeClick }: NotesGraphProps) {
             <canvas ref={canvasRef} role="img" aria-label={`Notes graph showing ${nodes.filter(n => !n.isTag).length} notes and ${links.length} connections. Use arrow keys to navigate nodes, Enter to select.`} tabIndex={0} onKeyDown={handleKeyDown} className={cn("block w-full h-full outline-none", hoveredNodeId || focusedNodeId ? 'cursor-pointer' : isDragging ? 'cursor-grabbing' : 'cursor-grab')} />
             <span className="sr-only">Interactive force-directed graph visualizing connections between notes. Nodes represent notes, lines represent wikilink connections. Tab to focus the graph, use arrow keys to move between note nodes, and press Enter to open a note.</span>
             <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
-                <button onClick={() => setSettingsOpen(!settingsOpen)} className={cn("w-8 h-8 rounded-lg border flex items-center justify-center shadow-sm", settingsOpen ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/40 text-muted-foreground hover:text-foreground")}>
+                <button data-theme-part="button" aria-label="Graph settings" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(!settingsOpen)} className={cn("w-8 h-8 rounded-lg border flex items-center justify-center shadow-sm", settingsOpen ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/40 text-muted-foreground hover:text-foreground")}>
                     <Settings2 className="w-4 h-4" />
                 </button>
                 {settingsOpen && (
-                    <div className="w-64 bg-card border border-border/40 rounded-2xl p-4 shadow-2xl flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-150">
+                    <div data-theme-part="popover" className="w-64 bg-card border border-border/40 rounded-2xl p-4 shadow-2xl flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-150">
                         <div className="flex items-center gap-2 mb-1">
                             <Settings2 className="w-3.5 h-3.5 text-primary" />
                             <span className="text-[13px] font-medium text-foreground/60">Graph Engine</span>
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-xs font-medium text-muted-foreground flex justify-between"><span>Link Distance</span><span>{linkDistance}</span></label>
-                            <input type="range" min="30" max="300" value={linkDistance} onChange={e => setLinkDistance(Number(e.target.value))} className="accent-primary" />
+                            <input data-theme-part="slider" aria-label="Link distance" type="range" min="30" max="300" value={linkDistance} onChange={e => setLinkDistance(Number(e.target.value))} className="accent-primary" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-xs font-medium text-muted-foreground flex justify-between"><span>Repel Strength</span><span>{repelStrength}</span></label>
-                            <input type="range" min="1000" max="10000" step="500" value={repelStrength} onChange={e => setRepelStrength(Number(e.target.value))} className="accent-primary" />
+                            <input data-theme-part="slider" aria-label="Repel strength" type="range" min="1000" max="10000" step="500" value={repelStrength} onChange={e => setRepelStrength(Number(e.target.value))} className="accent-primary" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-xs font-medium text-muted-foreground flex justify-between"><span>Center Gravity</span><span>{centerGravity.toFixed(2)}</span></label>
-                            <input type="range" min="0" max="0.1" step="0.01" value={centerGravity} onChange={e => setCenterGravity(Number(e.target.value))} className="accent-primary" />
+                            <input data-theme-part="slider" aria-label="Center gravity" type="range" min="0" max="0.1" step="0.01" value={centerGravity} onChange={e => setCenterGravity(Number(e.target.value))} className="accent-primary" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-xs font-medium text-muted-foreground flex justify-between"><span>Orbital Spin</span><span>{rotation.toFixed(2)}</span></label>
-                            <input type="range" min="-0.5" max="0.5" step="0.05" value={rotation} onChange={e => setRotation(Number(e.target.value))} className="accent-primary" />
+                            <input data-theme-part="slider" aria-label="Orbital spin" type="range" min="-0.5" max="0.5" step="0.05" value={rotation} onChange={e => setRotation(Number(e.target.value))} className="accent-primary" />
                         </div>
                         <div className="h-px bg-border/40 my-1" />
                         <label className="flex items-center gap-2.5 text-xs font-medium text-foreground cursor-pointer select-none">
-                            <input type="checkbox" checked={showTags} onChange={e => setShowTags(e.target.checked)} className="accent-primary w-3.5 h-3.5 rounded" /> Show Tags
+                            <input data-theme-part="checkbox" type="checkbox" checked={showTags} onChange={e => setShowTags(e.target.checked)} className="accent-primary w-3.5 h-3.5 rounded" /> Show Tags
                         </label>
                         <label className="flex items-center gap-2.5 text-xs font-medium text-foreground cursor-pointer select-none">
-                            <input type="checkbox" checked={showOrphans} onChange={e => setShowOrphans(e.target.checked)} className="accent-primary w-3.5 h-3.5 rounded" /> Show Orphans
+                            <input data-theme-part="checkbox" type="checkbox" checked={showOrphans} onChange={e => setShowOrphans(e.target.checked)} className="accent-primary w-3.5 h-3.5 rounded" /> Show Orphans
                         </label>
                     </div>
                 )}
             </div>
             <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
-                <button onClick={() => setTransform(p => ({ ...p, scale: Math.min(p.scale * 1.2, 4) }))} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><ZoomIn className="w-4 h-4" /></button>
-                <button onClick={() => setTransform(p => ({ ...p, scale: Math.max(p.scale * 0.8, 0.1) }))} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><ZoomOut className="w-4 h-4" /></button>
-                <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><Target className="w-4 h-4" /></button>
-                <button onClick={() => { if (!isFullscreen) containerRef.current?.requestFullscreen(); else document.exitFullscreen() }} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm">
+                <button data-theme-part="button" aria-label="Zoom in" onClick={() => setTransform(p => ({ ...p, scale: Math.min(p.scale * 1.2, 4) }))} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><ZoomIn className="w-4 h-4" /></button>
+                <button data-theme-part="button" aria-label="Zoom out" onClick={() => setTransform(p => ({ ...p, scale: Math.max(p.scale * 0.8, 0.1) }))} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><ZoomOut className="w-4 h-4" /></button>
+                <button data-theme-part="button" aria-label="Reset graph view" onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm"><Target className="w-4 h-4" /></button>
+                <button data-theme-part="button" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onClick={() => { if (!isFullscreen) containerRef.current?.requestFullscreen(); else document.exitFullscreen() }} className="w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground shadow-sm">
                     {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                 </button>
             </div>
             <div className="absolute bottom-4 left-4 z-10 w-64 group">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
-                <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Filter graph..." className="w-full bg-card border border-border/40 rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary/50" />
+                <input data-theme-part="input" aria-label="Filter graph" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Filter graph..." className="w-full bg-card border border-border/40 rounded-lg pl-8 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary/50" />
             </div>
         </div>
     )

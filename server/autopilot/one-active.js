@@ -1,15 +1,22 @@
 // Shared one-active flag derivation, extracted from engine.js for testability.
 
+const _normMemo = new Map()
 function normalizeAddonUrl(url) {
     if (!url) return ''
-    let normalized = String(url).trim()
+    const key = String(url)
+    const hit = _normMemo.get(key)
+    if (hit !== undefined) return hit
+    let normalized = key.trim()
     if (!/^(?:https?|stremio):\/\//i.test(normalized)) normalized = `https://${normalized}`
     normalized = normalized.replace(/^stremio:\/\//i, 'https://')
     normalized = normalized.replace(/^http:\/\//i, 'https://')
     normalized = normalized.replace(/\/manifest\.json$/i, '')
     normalized = normalized.replace(/\/+$/, '')
     normalized = normalized.replace(/\?.*$/, '')
-    return normalized.toLowerCase()
+    normalized = normalized.toLowerCase()
+    if (_normMemo.size > 5000) _normMemo.clear()
+    _normMemo.set(key, normalized)
+    return normalized
 }
 
 /**
@@ -31,10 +38,33 @@ function normalizeAddonUrl(url) {
  * @param {string} activeUrl the tier that must end up enabled
  * @returns {{ list: Array, violationDetected: boolean }}
  */
+// Fold the flags of every chain an account manages into one account-wide list. The invariant
+// is per-account, not per-writer: the list a rule pushes carries the members of every chain,
+// so a writer that only derives its own chain publishes its stale copy of the others and
+// silently reverts a sibling chain's failover (last writer wins).
+export function applyAccountChainFlags(list, chains) {
+    let out = Array.isArray(list) ? list : []
+    const skipped = []
+    for (const chain of (Array.isArray(chains) ? chains : [])) {
+        if (!chain || !Array.isArray(chain.urls) || chain.urls.length === 0 || !chain.target) continue
+        // Only derive a chain this list can fully express: if the target member is absent we
+        // cannot know whether the chain is being retired or the list is simply out of date, and
+        // disabling the member we DO see would be the destructive guess. Report it instead so the
+        // caller can fall back to the platform's own member set for that chain only.
+        const urls = new Set(out.map(a => normalizeAddonUrl(a?.transportUrl || '')))
+        if (!urls.has(normalizeAddonUrl(chain.target))) { skipped.push(chain); continue }
+        out = applyOneActiveFlags(out, chain.urls, chain.target).list
+    }
+    return { list: out, skipped }
+}
+
 export function applyOneActiveFlags(list, chainUrls, activeUrl) {
     const addonList = Array.isArray(list) ? list : []
     const normalizedChain = (Array.isArray(chainUrls) ? chainUrls : []).map(u => normalizeAddonUrl(u))
     const normalizedTarget = normalizeAddonUrl(activeUrl)
+
+    const chainSet = new Set(normalizedChain)
+    const chainIndex = new Map(normalizedChain.map((u, i) => [u, i]))
 
     // Duplicate manifest ids cannot identify a chain member reliably.
     const idCounts = new Map()
@@ -51,15 +81,15 @@ export function applyOneActiveFlags(list, chainUrls, activeUrl) {
         if (!addon.manifest?.id) return
         if (duplicateIds.has(addon.manifest.id)) return
         const normUrl = normalizeAddonUrl(addon.transportUrl)
-        const idx = normalizedChain.indexOf(normUrl)
-        if (idx !== -1) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
+        const idx = chainIndex.get(normUrl)
+        if (idx !== undefined) chainIdMap.set(addon.manifest.id, normalizedChain[idx])
     })
 
     let violationDetected = false
     const updatedList = addonList.map(addon => {
         const normUrl = normalizeAddonUrl(addon.transportUrl)
         let effectiveUrl = normUrl
-        let isChainMember = normalizedChain.includes(normUrl)
+        let isChainMember = chainSet.has(normUrl)
 
         if (!isChainMember && addon.manifest?.id && chainIdMap.has(addon.manifest.id)) {
             isChainMember = true
@@ -78,4 +108,31 @@ export function applyOneActiveFlags(list, chainUrls, activeUrl) {
     })
 
     return { list: updatedList, violationDetected }
+}
+
+// One predicate for every guard site. A write may never leave a managed chain without an enabled
+// active member: the account's list is shared by one rule per chain, so a list that drops a
+// sibling chain's active member silently reverts that chain's failover (last writer wins). Note
+// this deliberately still allows a chain with several enabled members - that is the multi-enabled
+// violation the engine writes to repair - while refusing the state that loses the active tier.
+//
+// Pure on purpose, and in this module rather than the reconciler: the guard is a predicate over
+// the candidate list, so it is unit-testable without a database, and the reconcile path evaluates
+// the same predicate inside the platform write slot.
+//
+// `list` is an enabled-only list (the caller's canonical list), so membership IS enabledness, and
+// an addon that is present but disabled must not be passed in. Matching is by normalized URL, the
+// same key the flag derivation above uses.
+export function chainGuardFailure(list, managedChains) {
+    const enabled = new Set((list || []).map(a => normalizeAddonUrl(a?.transportUrl || '')).filter(Boolean))
+    for (const chain of (managedChains || [])) {
+        const members = (chain?.urls || []).map(u => normalizeAddonUrl(u))
+        if (members.length === 0) continue
+        const survivors = members.filter(u => enabled.has(u))
+        const target = normalizeAddonUrl(chain?.target || '')
+        if (survivors.length === 0 || (target && !survivors.includes(target))) {
+            return `${members.length} member(s), survivors ${survivors.length}, active present ${survivors.includes(target)}`
+        }
+    }
+    return null
 }

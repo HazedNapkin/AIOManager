@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Tooltip } from '@/components/ui/tooltip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
 import { cn } from '@/lib/utils'
-import { LayoutGrid, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
+import { LayoutGrid, RefreshCw, Rows3, Search, SlidersHorizontal, Sparkles, Star, X } from 'lucide-react'
 import { RESOURCE_LABELS, type DiscoverCategory, type DiscoverSortBy } from '@/api/discover'
 
 // Refine facets applied client-side to the loaded results (the public directory API does not
@@ -31,12 +31,19 @@ interface DiscoverToolbarProps {
   showSort?: boolean
   compact?: boolean
   onToggleCompact?: () => void
+  refreshing?: boolean
+  refreshStatus?: string | null
+  refreshFailed?: boolean
+  onRefresh?: () => void
 }
 
 function FacetChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
+      data-theme-part="button"
+      data-state={active ? 'active' : 'inactive'}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
@@ -67,6 +74,10 @@ export function DiscoverToolbar({
   showSort = true,
   compact,
   onToggleCompact,
+  refreshing = false,
+  refreshStatus,
+  refreshFailed = false,
+  onRefresh,
 }: DiscoverToolbarProps) {
   const activeFilterCount = selectedResources.length + selectedTypes.length
   const searchRef = useRef<HTMLInputElement>(null)
@@ -112,10 +123,12 @@ export function DiscoverToolbar({
 
         <div className="flex items-center gap-2 flex-wrap sm:ml-auto sm:flex-nowrap sm:shrink-0">
           {showSort && (
-            <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+            <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
               <Button
                 variant="ghost"
                 size="sm"
+                data-theme-part="tab"
+                data-state={sortBy === 'stars' ? 'active' : 'inactive'}
                 className={cn('h-7 gap-1.5 rounded-lg px-2.5 text-xs', sortBy === 'stars' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => onSortByChange('stars')}
               >
@@ -125,6 +138,8 @@ export function DiscoverToolbar({
               <Button
                 variant="ghost"
                 size="sm"
+                data-theme-part="tab"
+                data-state={sortBy === 'createdAt' ? 'active' : 'inactive'}
                 className={cn('h-7 gap-1.5 rounded-lg px-2.5 text-xs', sortBy === 'createdAt' ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => onSortByChange('createdAt')}
               >
@@ -135,12 +150,14 @@ export function DiscoverToolbar({
           )}
 
           {showSort && onToggleCompact && (
-            <div className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
+            <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-xl p-0.5 border border-border/40 gap-0.5">
               <Tooltip content="Grid view" side="bottom">
               <Button
                 variant="ghost"
                 size="sm"
                 ripple={false}
+                data-theme-part="tab"
+                data-state={!compact ? 'active' : 'inactive'}
                 aria-label="Grid view"
                 className={cn('h-7 rounded-lg px-2', !compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => { if (compact) onToggleCompact() }}
@@ -153,12 +170,44 @@ export function DiscoverToolbar({
                 variant="ghost"
                 size="sm"
                 ripple={false}
+                data-theme-part="tab"
+                data-state={compact ? 'active' : 'inactive'}
                 aria-label="Compact view"
                 className={cn('h-7 rounded-lg px-2', compact ? 'bg-background shadow-sm text-foreground hover:bg-background' : 'text-muted-foreground hover:text-foreground')}
                 onClick={() => { if (!compact) onToggleCompact() }}
               >
                 <Rows3 className="h-3.5 w-3.5" />
               </Button>
+              </Tooltip>
+            </div>
+          )}
+
+          {onRefresh && (
+            <div className="flex items-center gap-1.5">
+              {(refreshing || refreshStatus || refreshFailed) && (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={cn(
+                    'whitespace-nowrap text-[11px] text-muted-foreground',
+                    refreshFailed && 'text-destructive'
+                  )}
+                >
+                  {refreshing ? 'Refreshing…' : refreshFailed ? 'Refresh failed' : refreshStatus}
+                </span>
+              )}
+              <Tooltip content={refreshing ? 'Refreshing addon directory' : 'Refresh addon directory'} side="bottom">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  ripple={false}
+                  className="h-8 w-8 shrink-0"
+                  onClick={onRefresh}
+                  disabled={refreshing}
+                  aria-label={refreshing ? 'Refreshing addon directory' : 'Refresh addon directory'}
+                >
+                  <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+                </Button>
               </Tooltip>
             </div>
           )}
@@ -230,6 +279,9 @@ export function DiscoverToolbar({
               <button
                 key={c.slug}
                 type="button"
+                data-theme-part="button"
+                data-state={active ? 'active' : 'inactive'}
+                aria-pressed={active}
                 onClick={() => onToggleCategory(c.slug)}
                 className={cn(
                   'shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',

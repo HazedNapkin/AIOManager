@@ -1,4 +1,3 @@
-import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { cn } from '@/lib/utils'
 import { useState } from 'react'
 
@@ -114,8 +113,7 @@ export function AddonIcon({
   const shouldShowFallback = !shouldShowLogo
 
   return (
-    <div className={cn('relative flex shrink-0 items-center justify-center', className)}>
-      <SquircleOverlay />
+    <div data-theme-part="image-tile" className={cn('relative flex shrink-0 items-center justify-center rounded-xl bg-muted', className)}>
       {shouldShowFallback ? (
         <span className={cn('relative z-10 font-bold text-muted-foreground', textClassName)}>
           {fallbackLetter}
@@ -127,7 +125,7 @@ export function AddonIcon({
           decoding="async"
           src={logo}
           alt={alt}
-          className={cn('absolute inset-0 z-10 h-full w-full object-contain p-1', imageClassName)}
+          className={cn('absolute inset-0 z-10 h-full w-full rounded-[inherit] object-contain p-1', imageClassName)}
           onError={() => setRejectedLogo(logo)}
           onLoad={(event) => {
             const image = event.currentTarget

@@ -52,7 +52,7 @@ export function ReplayMonths({ data }: ReplayMonthsProps) {
                                 }`}
                             onClick={() => setSelectedMonth(month)}
                         >
-                            <div className={`p-8 rounded-xl h-full flex flex-col justify-between border-2 transition-colors hover:border-primary/30 bg-white/5 shadow-xl ${month.isHighActivity ? 'border-primary/50' : 'border-white/10'
+                            <div data-theme-part="card" className={`p-8 rounded-xl h-full flex flex-col justify-between border-2 transition-colors hover:border-primary/30 bg-white/5 shadow-xl ${month.isHighActivity ? 'border-primary/50' : 'border-white/10'
                                 }`}>
                                 <div className="space-y-6">
                                     <div className="flex justify-between items-start">

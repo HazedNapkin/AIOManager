@@ -100,14 +100,42 @@ const Button = React.forwardRef<
     onClick?.(e)
   }
 
-  const mergedRef = React.useCallback((node: HTMLButtonElement | null) => {
-    (buttonRef as React.MutableRefObject<HTMLButtonElement | null>).current = node
-    if (typeof ref === 'function') ref(node)
-    else if (ref) (ref as React.MutableRefObject<HTMLButtonElement | null>).current = node
+  // Merge the ripple ref with the forwarded ref. Keyed on [ref]: since Radix Slot
+  // >= 1.2.5 memoizes its composed refs, the forwarded identity is stable across
+  // parent re-renders, so this callback is stable too and the host ref never
+  // churns. React 19 cleanup semantics are forwarded: if the consumer's callback
+  // ref returns a cleanup it is called exactly once on detach (no extra null
+  // call); otherwise the consumer receives the standard null notification.
+  const mergedRef = React.useCallback((node: HTMLButtonElement | null): void | (() => void) => {
+    const rippleRef = buttonRef as React.MutableRefObject<HTMLButtonElement | null>
+    rippleRef.current = node
+    if (typeof ref === 'function') {
+      const forwarded = ref
+      const returned = forwarded(node) as unknown
+      const cleanup = typeof returned === 'function' ? (returned as () => void) : null
+      return () => {
+        rippleRef.current = null
+        if (cleanup) cleanup()
+        else forwarded(null)
+      }
+    }
+    if (ref) {
+      const objectRef = ref as React.MutableRefObject<HTMLButtonElement | null>
+      objectRef.current = node
+      return () => {
+        rippleRef.current = null
+        objectRef.current = null
+      }
+    }
+    return () => {
+      rippleRef.current = null
+    }
   }, [ref])
 
   return (
     <Comp
+      data-theme-part="button"
+      data-variant={variant ?? 'default'}
       type={resolvedType}
       className={cn(
         buttonVariants({ variant, size, className }),

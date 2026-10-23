@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { Tv, Play, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
+import { Tv, Play, Check, Calendar, Clock, Star, ChevronRight } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { AccountAvatar } from '@/components/accounts/AccountAvatar'
+import { EPISODE_WATCHER_AVATAR_CAP, episodeWatcherLabel, type EpisodeWatcherIndex } from '@/lib/episode-watchers'
 import { fetchSeasonEpisodes, fetchSeasonsList, proxyFetch, type SeasonInfo, type EpisodeInfo } from '@/api/metadata/adapters/tmdb'
 import type { DetailItem } from '@/components/activity/detail/types'
 
@@ -11,6 +13,15 @@ interface SeasonBrowserProps {
     activeItem: DetailItem | null
     isLight: boolean
     loading: boolean
+    /** Actual watched episodes (real events + verified bitfield recoveries) to mark in the browser. */
+    watchedEpisodes?: ReadonlyArray<{ season: number; episode: number }>
+    /**
+     * Which accounts actually watched each episode (household-wide, same evidence bar
+     * as watchedEpisodes). Built once by the caller; rows do O(1) lookups and render a
+     * capped, non-interactive avatar stack so the list shows who watched what without
+     * opening every episode.
+     */
+    episodeWatchers?: EpisodeWatcherIndex
     onEpisodeClick?: (data: {
         episodeNumber: number
         episodeName: string
@@ -22,7 +33,7 @@ interface SeasonBrowserProps {
     }) => void
 }
 
-export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEpisodeClick }: SeasonBrowserProps) {
+export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, watchedEpisodes, episodeWatchers, onEpisodeClick }: SeasonBrowserProps) {
     const [seasons, setSeasons] = useState<SeasonInfo[]>([])
     const [selectedSeason, setSelectedSeason] = useState<number | null>(null)
     const [episodes, setEpisodes] = useState<EpisodeInfo[]>([])
@@ -34,6 +45,18 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
     const absoluteSeasonRedirectRef = useRef<string | null>(null)
 
     const effectiveTmdbId = seriesTmdbId ?? cinemetaTmdbId
+
+    // Watched episodes by season (real watch events + verified bitfield recoveries), used to
+    // mark every actually-watched episode and to pick a sensible starting season when the
+    // active item itself has no episode anchor (imported saved series).
+    const watchedBySeason = new Map<number, Set<number>>()
+    for (const ep of watchedEpisodes ?? []) {
+        if (ep?.season == null || ep?.episode == null) continue
+        const set = watchedBySeason.get(ep.season) ?? new Set<number>()
+        if (set.size === 0) watchedBySeason.set(ep.season, set)
+        set.add(ep.episode)
+    }
+    const latestWatchedSeason = watchedBySeason.size > 0 ? Math.max(...watchedBySeason.keys()) : null
 
     useEffect(() => {
         setSeasons([])
@@ -53,7 +76,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                 const filtered = list.filter(s => s.seasonNumber > 0)
                 if (filtered.length === 0) { setTmdbSeasonsFailed(true); return }
                 setSeasons(filtered)
-                const watched = activeItem?.season
+                const watched = activeItem?.season ?? latestWatchedSeason
                 const target = watched != null && filtered.some(s => s.seasonNumber === watched)
                     ? watched
                     : filtered[0].seasonNumber
@@ -61,7 +84,7 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
             })
             .catch(() => { if (active) setTmdbSeasonsFailed(true) })
         return () => { active = false }
-    }, [seriesTmdbId, activeItem?.season])
+    }, [seriesTmdbId, activeItem?.season, latestWatchedSeason])
 
     useEffect(() => {
         if (!seriesTmdbId || selectedSeason === null) return
@@ -174,12 +197,12 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
 
     useEffect(() => {
         if ((seriesTmdbId && !tmdbSeasonsFailed) || cinemetaSeasons.length === 0 || selectedSeason !== null) return
-        const watched = activeItem?.season
+        const watched = activeItem?.season ?? latestWatchedSeason
         const target = watched != null && cinemetaSeasons.some(s => s.seasonNumber === watched)
             ? watched
             : cinemetaSeasons[0].seasonNumber
         setSelectedSeason(target)
-    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed])
+    }, [cinemetaSeasons, seriesTmdbId, selectedSeason, activeItem, tmdbSeasonsFailed, latestWatchedSeason])
 
     if (loading || (seasons.length === 0 && cinemetaSeasons.length === 0)) return null
 
@@ -265,6 +288,8 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                         <button
                             key={s.seasonNumber}
                             type="button"
+                            data-theme-part="tab"
+                            data-state={isActive ? 'active' : 'inactive'}
                             onClick={() => setSelectedSeason(s.seasonNumber)}
                             className={cn(
                                 'shrink-0 rounded-full px-4 py-2 text-xs font-bold transition-all active:scale-95',
@@ -296,12 +321,28 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                     </p>
                 ) : (
                     activeEpisodes.map(ep => {
-                        const isWatched = highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber
+                        // Selection keeps the union (highlighted episode OR actually watched):
+                        // the active/played row stays visually selected, while the watched
+                        // marker (`data-watched`, Check icon) is reserved for episodes with
+                        // real completion evidence — partial history never gets it.
+                        const actuallyWatched = selectedSeason !== null && watchedBySeason.get(selectedSeason)?.has(ep.episodeNumber) === true
+                        const isWatched = (highlight !== null && highlight.season === selectedSeason && highlight.episode === ep.episodeNumber)
+                            || actuallyWatched
+                        // Who actually watched this episode (any account in the household).
+                        // Informational only: the stack is plain spans with a shared
+                        // title/aria label, so nothing interactive nests inside the row
+                        // button and no per-avatar Tooltip portals exist to stack up.
+                        const watchers = selectedSeason !== null
+                            ? episodeWatchers?.get(selectedSeason)?.get(ep.episodeNumber)
+                            : undefined
                         return (
-                            <Tooltip content="View episode details" side="top">
+                            <Tooltip key={ep.episodeNumber} content="View episode details" side="top">
                             <button
                                 key={ep.episodeNumber}
                                 type="button"
+                                data-theme-part="nav-item"
+                                data-state={isWatched ? 'active' : 'inactive'}
+                                data-watched={actuallyWatched ? 'true' : 'false'}
                                 onClick={() => handleEpisodeClick(ep)}
                                 className={cn(
                                     'group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',
@@ -323,8 +364,13 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                                         E{ep.episodeNumber}
                                     </span>
                                     {isWatched && (
-                                        <span className="absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                                            <Play className="h-2.5 w-2.5 fill-current" />
+                                        <span className={cn(
+                                            'absolute bottom-1 right-1 flex h-4 w-4 items-center justify-center rounded-full text-primary-foreground',
+                                            actuallyWatched ? 'bg-primary' : 'bg-primary/70',
+                                        )}>
+                                            {actuallyWatched
+                                                ? <Check className="h-2.5 w-2.5" strokeWidth={3} />
+                                                : <Play className="h-2.5 w-2.5 fill-current" />}
                                         </span>
                                     )}
                                 </div>
@@ -356,6 +402,38 @@ export function SeasonBrowser({ seriesTmdbId, activeItem, isLight, loading, onEp
                                         )}
                                     </div>
                                 </div>
+                                {watchers && watchers.length > 0 && (
+                                    <span
+                                        role="img"
+                                        data-watcher-count={watchers.length}
+                                        title={episodeWatcherLabel(watchers)}
+                                        aria-label={episodeWatcherLabel(watchers)}
+                                        className="flex shrink-0 items-center -space-x-1.5"
+                                    >
+                                        {watchers.slice(0, EPISODE_WATCHER_AVATAR_CAP).map(w => (
+                                            <span
+                                                key={w.id}
+                                                data-watcher-avatar=""
+                                                className="relative flex h-5 w-5 items-center justify-center overflow-hidden rounded-full border border-background bg-card sm:h-6 sm:w-6"
+                                            >
+                                                <AccountAvatar
+                                                    account={{ name: w.name, emoji: w.emoji, avatar: w.avatar }}
+                                                    size="xs"
+                                                    showStatus={false}
+                                                    className="!h-full !w-full rounded-full"
+                                                />
+                                            </span>
+                                        ))}
+                                        {watchers.length > EPISODE_WATCHER_AVATAR_CAP && (
+                                            <span
+                                                data-watcher-overflow=""
+                                                className="pl-2.5 text-[10px] font-bold leading-none text-muted-foreground"
+                                            >
+                                                +{watchers.length - EPISODE_WATCHER_AVATAR_CAP}
+                                            </span>
+                                        )}
+                                    </span>
+                                )}
                                 <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-muted-foreground" />
                             </button>
                             </Tooltip>

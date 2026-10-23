@@ -3,7 +3,6 @@ import { determineSourceOfTruth, fetchSoTAddons } from './externalAddonSync'
 import { normalizeAddonUrl } from '@/lib/utils'
 import type { AddonDescriptor } from '@/types/addon'
 import { triggerSync } from '@/lib/sync-trigger'
-import { getStremioAuthKey, getCachedAuthKey, getEncryptionKey } from '@/store/accountStore'
 
 export async function backgroundSyncExternal(
     accountId: string,
@@ -67,21 +66,20 @@ export async function backgroundSyncExternal(
             .catch(err => console.error('[ExternalFailoverPush] Failed to push to connections:', err))
     )
 
-    const stremioKey = getStremioAuthKey(account)
-    const stremioConn = account.connections?.find(c => c.platform === 'stremio')
-    const stremioPushEnabled = !stremioConn || stremioConn.enabled !== false
-
-    if (stremioKey && stremioPushEnabled) {
-        const { updateAddons } = await import('@/api/addons')
-        promises.push(
-            getCachedAuthKey(stremioKey, getEncryptionKey())
-                .then(decryptedKey => updateAddons(decryptedKey, updatedAddons, accountId, {
-                    previousCollection: account.addons,
-                    allowCollectionShrink: options?.allowCollectionShrink
-                }))
-                .catch(console.error)
-        )
-    }
+    // Stremio: every enabled login bound to the account, each with its own sealed key
+    // (pushToConnections above deliberately excludes native Stremio logins).
+    promises.push(
+        (async () => {
+            const { pushAddonsToStremioConnections } = await import('@/lib/account-compat')
+            const result = await pushAddonsToStremioConnections(account, updatedAddons, {
+                previousCollection: account.addons,
+                allowCollectionShrink: options?.allowCollectionShrink,
+            })
+            for (const failure of result.failed) {
+                console.error(`[ExternalFailoverPush] Push to Stremio login ${failure.connectionId} failed:`, failure.error)
+            }
+        })().catch(err => console.error('[ExternalFailoverPush] Failed to push to Stremio:', err))
+    )
 
     await Promise.all(promises)
 

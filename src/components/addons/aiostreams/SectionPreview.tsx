@@ -37,7 +37,7 @@ function renderPreviewContent(data: unknown): React.ReactNode {
         return (
             <div className="space-y-1.5">
                 <p className="text-xs font-bold">{previewData.length} item{previewData.length !== 1 ? 's' : ''}</p>
-                <div className="space-y-0.5 bg-muted/30 rounded-lg p-2">
+                <div data-theme-part="field" className="space-y-0.5 bg-muted/30 rounded-lg p-2">
                     {previewData.slice(0, 5).map((item, i) => (
                         <p key={i} className="text-xs font-mono text-foreground/70 truncate">
                             {typeof item === 'object' && item !== null
@@ -62,7 +62,7 @@ function renderPreviewContent(data: unknown): React.ReactNode {
             <div className="space-y-1.5">
                 <p className="text-xs font-bold">{entries.length} propert{entries.length !== 1 ? 'ies' : 'y'}</p>
                 <ScrollArea className="max-h-32">
-                    <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap break-all leading-relaxed bg-muted/30 rounded-lg p-2">
+                    <pre data-theme-part="field" className="text-xs font-mono text-foreground/70 whitespace-pre-wrap break-all leading-relaxed bg-muted/30 rounded-lg p-2">
                         {JSON.stringify(previewData, null, 1).slice(0, 500)}
                         {JSON.stringify(previewData).length > 500 ? '\n…' : ''}
                     </pre>

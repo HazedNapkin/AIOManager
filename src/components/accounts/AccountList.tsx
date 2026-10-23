@@ -37,6 +37,8 @@ import { getPlatformEntry } from '@/lib/platform-registry'
 import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { accountMatchesQuery } from '@/lib/account-compat'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
+import { useAuthStore } from '@/store/authStore'
+import { useLibraryCache } from '@/store/libraryCache'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { AccountListRow } from './AccountListRow'
@@ -46,6 +48,27 @@ export function AccountList() {
   useScrollRestoration('accounts')
   const openAddAccountDialog = useUIStore((state) => state.openAddAccountDialog)
   const { accounts, error, clearError, syncAllAccounts, syncAccount, removeAccount, loading } = useAccounts()
+  const encryptionKey = useAuthStore(state => state.encryptionKey)
+  const liveActivity = useUIStore(state => state.liveActivity)
+  const ensureActivityLoaded = useLibraryCache(state => state.ensureLoaded)
+
+  useEffect(() => {
+    if (!encryptionKey || accounts.length === 0) return
+    const load = (refresh = false) => {
+      if (document.hidden || useAuthStore.getState().encryptionKey !== encryptionKey) return
+      if (refresh && Date.now() - useLibraryCache.getState().lastFetched >= 60_000) useLibraryCache.setState({ isStale: true })
+      // The shared cache deduplicates reads and preserves its normal five-minute TTL.
+      void ensureActivityLoaded(accounts).catch(() => {})
+    }
+    load()
+    const timer = liveActivity ? setInterval(() => load(true), 60_000) : undefined
+    const onVisible = () => load(liveActivity)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      if (timer) clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [accounts, encryptionKey, liveActivity, ensureActivityLoaded])
   const loadingCount = useAccountStore(state => state.loadingAccounts.size)
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
@@ -386,7 +409,7 @@ export function AccountList() {
   return (
     <div className="space-y-4">
       {error && (
-        <div className={`${isSessionExpiredError ? 'border-warning/35 bg-warning/10 text-warning' : 'border-destructive/35 bg-destructive/10 text-destructive'} rounded-xl border px-4 py-3`}>
+        <div data-theme-tone="status" data-theme-part="panel" className={`${isSessionExpiredError ? 'border-warning/35 bg-warning/10 text-warning' : 'border-destructive/35 bg-destructive/10 text-destructive'} rounded-xl border px-4 py-3`}>
           <div className="flex items-start gap-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div className="min-w-0 flex-1 space-y-1">
@@ -414,7 +437,7 @@ export function AccountList() {
                 </Button>
               )}
             </div>
-            <button onClick={clearError} className="rounded-full p-1 opacity-70 transition-opacity hover:opacity-100" aria-label="Dismiss account error">
+            <button data-theme-part="button" onClick={clearError} className="rounded-full p-1 opacity-70 transition-opacity hover:opacity-100" aria-label="Dismiss account error">
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -440,6 +463,7 @@ export function AccountList() {
             />
             {searchQuery && (
               <button
+                data-theme-part="button"
                 onClick={() => handleSearchChange('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus:outline-none"
               >
@@ -447,10 +471,12 @@ export function AccountList() {
               </button>
             )}
           </div>
-          <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+          <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
             <Button
               variant="ghost"
               size="sm"
+              data-theme-part="tab"
+              data-state={accountsView === 'grid' ? 'active' : 'inactive'}
               className={`h-8 w-8 rounded-lg p-0 ${accountsView === 'grid' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => setAccountsView('grid')}
               aria-label="Grid view"
@@ -460,6 +486,8 @@ export function AccountList() {
             <Button
               variant="ghost"
               size="sm"
+              data-theme-part="tab"
+              data-state={accountsView === 'list' ? 'active' : 'inactive'}
               className={`h-8 w-8 rounded-lg p-0 ${accountsView === 'list' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => setAccountsView('list')}
               aria-label="List view"
@@ -633,7 +661,7 @@ export function AccountList() {
         ]}
       />
 
-      <div className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
+      <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/40 p-3 shadow-sm">
       {accountsView === 'list' ? (
         <div className="flex flex-col gap-2">
           {filteredAccounts.length === 0 && searchQuery ? (
@@ -663,7 +691,7 @@ export function AccountList() {
           )}
         </div>
       ) : (
-        <StaggerContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StaggerContainer className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {filteredAccounts.length === 0 && searchQuery ? (
             <EmptyState
               className="col-span-full animate-in fade-in zoom-in-95"

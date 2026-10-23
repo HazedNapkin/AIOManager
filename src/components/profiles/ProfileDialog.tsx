@@ -108,7 +108,7 @@ export function ProfileDialog({ profile, trigger, onDelete }: ProfileDialogProps
                             />
                         </div>
                         {!profile && (
-                            <p className="rounded-xl border border-border/45 bg-muted/25 px-3 py-2 text-xs leading-snug text-muted-foreground">
+                            <p data-theme-part="panel" className="rounded-xl border border-border/45 bg-muted/25 px-3 py-2 text-xs leading-snug text-muted-foreground">
                                 After creating it, assign saved addons to this profile from the library or when saving addons from an account.
                             </p>
                         )}

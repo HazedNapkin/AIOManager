@@ -106,6 +106,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
         onKeyDown={handleKeyDown}
       >
         <div
+          data-theme-part="dialog-overlay"
           className={cn(
             'fixed inset-0 bg-black/50 transition-opacity duration-100',
             visible ? 'opacity-100' : 'opacity-0'
@@ -191,6 +192,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
 
     return (
       <div
+        data-theme-part="dialog"
         ref={node => {
             sheetRef.current = node
             if (typeof ref === 'function') ref(node)
@@ -224,6 +226,8 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
         {children}
         {!hideClose && (
           <button
+            data-theme-part="button"
+            data-variant="ghost"
             type="button"
             onClick={() => onOpenChange?.(false)}
             aria-label="Close dialog"

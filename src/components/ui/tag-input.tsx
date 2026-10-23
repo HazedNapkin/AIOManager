@@ -85,7 +85,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
     const dropdownOpen = isFocused && visibleSuggestions.length > 0
 
     return (
-        <div
+        <div data-theme-part="field"
             className="relative flex flex-wrap gap-2 p-2 border border-border/40 rounded-xl bg-muted/30 focus-within:ring-2 focus-within:ring-ring/20 focus-within:border-ring"
             onFocus={() => setIsFocused(true)}
             onBlur={handleContainerBlur}
@@ -93,7 +93,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
             {value.map((tag) => (
                 <Badge key={tag} variant="secondary" className="gap-1 pr-1">
                     {tag}
-                    <button
+                    <button data-theme-part="button"
                         type="button"
                         aria-label={`Remove ${tag} tag`}
                         className="rounded-full hover:bg-foreground/20 p-0.5 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -105,6 +105,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
             ))}
             <div className="flex-1 min-w-[120px]">
                 <Input
+                    data-theme-part="inline-input"
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
@@ -129,7 +130,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
                 </Button>
             )}
             {dropdownOpen && (
-                <div
+                <div data-theme-part="menu"
                     id={suggestionMenuId}
                     role="listbox"
                     className="absolute left-0 right-0 top-full z-50 mt-2 max-h-48 overflow-y-auto rounded-lg border border-border/60 bg-card p-1 shadow-xl"
@@ -138,7 +139,7 @@ export function TagInput({ value, onChange, placeholder, suggestions }: TagInput
                         Existing tags
                     </div>
                     {visibleSuggestions.map((tag) => (
-                        <button
+                        <button data-theme-part="menu-item"
                             key={tag}
                             type="button"
                             role="option"

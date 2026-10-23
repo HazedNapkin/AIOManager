@@ -29,7 +29,7 @@ export function SessionDepth({ sessionDepths, loading }: SessionDepthProps) {
     }
 
     return (
-        <div ref={ref} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
+        <div ref={ref} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">{total} total sessions</span>
             </div>

@@ -6,6 +6,7 @@ const Avatar = React.forwardRef<
     React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (<div
     ref={ref}
+    data-theme-part="avatar"
     className={cn(
         "relative flex h-10 w-10 shrink-0 overflow-hidden rounded-full",
         className
@@ -29,6 +30,7 @@ const AvatarFallback = React.forwardRef<
     React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (<div
     ref={ref}
+    data-theme-part="avatar-fallback"
     className={cn(
         "flex h-full w-full items-center justify-center rounded-full bg-muted",
         className

@@ -52,7 +52,7 @@ export function ActivityHeatmap({ itemsByHour, loading }: ActivityHeatmapProps) 
     const peak = data.reduce((best, item) => item.count > best.count ? item : best, data[0])
 
     return (
-        <div ref={ref} className="h-[200px] rounded-2xl border border-border/35 bg-muted/15 p-3">
+        <div ref={ref} data-theme-part="panel" className="h-[200px] rounded-2xl border border-border/35 bg-muted/15 p-3">
             <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Peak hour</span>
                 <span className="text-xs font-bold text-foreground">{peak?.hour || '12am'}</span>

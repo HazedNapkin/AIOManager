@@ -3,6 +3,7 @@ import {
       getAddons,
 } from '@/api/addons'
 import { normalizeAddonUrl, ACCOUNT_COLORS, hasFallbackAddonIdentity } from '@/lib/utils'
+import { mergeAddonDeletionState } from '@/lib/addon-tombstones'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { loginWithCredentials } from '@/api/auth'
 import { LoginResponse } from '@/api/stremio-client'
@@ -16,12 +17,17 @@ import { identifyAddon } from '@/lib/addon-identifier'
 import type { AddonCollectionDiff } from '@/lib/addon-collection-diff'
 import localforage from 'localforage'
 import { trace } from '@/lib/trace'
+import { deleteAccountIds, mergeAccountMembership, type AccountMembership, type AccountListImport } from '@/lib/account-membership'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
+import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
 
 import { create } from 'zustand'
 
 export const STORAGE_KEY = 'aioman:accounts'
 export const CHANGELOG_KEY = 'aioman:changelog'
 export const BACKUP_KEY = 'aioman:accounts:backup'
+export const ACCOUNT_MEMBERSHIP_KEY = 'aioman:account-membership'
+export const ACCOUNT_MEMBERSHIP_MUTEX = '__account-membership__'
 
 export const safeUUID = () => {
     try { return crypto.randomUUID() } catch {
@@ -33,13 +39,38 @@ export const safeUUID = () => {
 }
 
 let _persistTimer: ReturnType<typeof setTimeout> | null = null
+let _accountPersistQueue: Promise<void> = Promise.resolve()
 
-export const persistAccounts = (accounts: Account[]) => {
+// Recheck ownership when the deferred write actually runs.
+export const persistAccounts = (accounts: Account[], ownership?: { current: () => boolean }) => {
+    const workspace = getActiveWorkspaceId()
+    // Local edits remain durable if an unrelated pull starts and fails. Imports
+    // pass their stricter generation fence; all writes stay workspace-scoped.
+    const current = ownership?.current ?? (() => getActiveWorkspaceId() === workspace)
     if (_persistTimer) clearTimeout(_persistTimer)
     _persistTimer = setTimeout(async () => {
         _persistTimer = null
-        try { await localforage.setItem(STORAGE_KEY, accounts) } catch (e) { if (import.meta.env.DEV) console.error('[persistAccounts] Failed to save accounts:', e) }
+        if (!current()) return
+        _accountPersistQueue = _accountPersistQueue.then(async () => {
+            if (!current()) return
+            await localforage.setItem(STORAGE_KEY, accounts)
+        }).catch(e => { if (import.meta.env.DEV) console.error('[persistAccounts] Failed to save accounts:', e) })
     }, 300)
+}
+
+// Deletion intent reaches disk before the list. If a tab closes between writes,
+// initialize filters the older list (and the recovery backup) through the markers.
+export async function persistAccountMembership(accounts: Account[], membership: AccountMembership, ownership: SyncOwnership): Promise<void> {
+    if (_persistTimer) { clearTimeout(_persistTimer); _persistTimer = null }
+    const write = _accountPersistQueue.then(async () => {
+        ownership.assert()
+        await localforage.setItem(ACCOUNT_MEMBERSHIP_KEY, membership)
+        ownership.assert()
+        await localforage.setItem(STORAGE_KEY, accounts)
+        ownership.assert()
+    })
+    _accountPersistQueue = write.catch(() => {})
+    await write
 }
 
 if (typeof window !== 'undefined') {
@@ -70,8 +101,9 @@ export const acquireSyncMutex = async (accountId: string): Promise<() => void> =
 export const getAccountById = (accounts: Account[], id: string): Account | undefined =>
   accounts.find(a => a.id === id)
 
-import { getStremioConnection, getStremioAuthKey, getAccountEmail } from '@/lib/account-compat'
-export { getStremioConnection, getStremioAuthKey, getAccountEmail }
+import { getStremioConnection, getStremioAuthKey, getAccountEmail, getStremioConnections } from '@/lib/account-compat'
+import { scopeStremioKeyRotation } from '@/lib/connection-identity'
+export { getStremioConnection, getStremioAuthKey, getAccountEmail, getStremioConnections }
 
 export function hasPlatformConnection(account: Account): boolean {
     return !!getStremioAuthKey(account) || !!(account.connections || []).some(c => c.enabled)
@@ -267,11 +299,9 @@ export const refreshAuthKeyFromStoredPassword = async (
       authKeyCache.set(encryptedAuthKey, response.authKey)
       await upsertAuthKeyHash(account.id, response.authKey)
 
-      const updatedConnections = (account.connections || []).map(c =>
-            c.platform === 'stremio'
-                  ? { ...c, credentials: { ...c.credentials, authKey: encryptedAuthKey } }
-                  : c
-      )
+      // A stored-password refresh rotates the account's CANONICAL Stremio login only;
+      // secondary Stremio logins on the same account keep their own sealed keys.
+      const updatedConnections = scopeStremioKeyRotation(account.connections, account.primaryConnectionId, encryptedAuthKey)
       return {
             authKey: response.authKey,
             account: {
@@ -329,6 +359,8 @@ export interface ReplaceTransportUrlResult {
 
 export interface AccountStore {
       accounts: Account[]
+      deletedAccounts: Record<string, number>
+      restoredAccounts: Record<string, number>
       loadingAccounts: Set<string>
       error: string | null
       changelog: AddonChangelogEntry[]
@@ -347,11 +379,11 @@ export interface AccountStore {
       installAddonsToAccount: (accountId: string, addonUrls: string[], concurrency?: number) => Promise<{ successCount: number; failCount: number }>
       removeAddonFromAccount: (accountId: string, transportUrl: string) => Promise<void>
       removeAddonByIndexFromAccount: (accountId: string, index: number) => Promise<void>
-      reorderAddons: (accountId: string, newOrder: AddonDescriptor[]) => Promise<void>
+      reorderAddons: (accountId: string, newOrder: AddonDescriptor[], options?: { explicitInstallUrls?: string[] }) => Promise<void>
       bulkDeleteAddons: (accountId: string, keptAddons: AddonDescriptor[], removedUrls: string[]) => Promise<void>
       exportAccounts: (includeCredentials: boolean) => Promise<string>
       exportAccountsForSync: () => Promise<Record<string, unknown>>
-      importAccounts: (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => Promise<void>
+      importAccounts: (json: string | Record<string, unknown>, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null, ownership?: SyncOwnership, accountList?: AccountListImport) => Promise<void>
       updateAccount: (
             id: string,
             data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean; sourceOfTruth?: string }
@@ -384,6 +416,7 @@ export interface AccountStore {
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   manifest?: AddonDescriptor['manifest'],
                   note?: string,
+                  destinations?: AddonDescriptor['destinations'] | null,
             },
             targetIndex?: number
       ) => Promise<void>
@@ -417,6 +450,8 @@ export interface ProfileSwitchResult {
 
 export const useAccountStore = create<AccountStore>((set, get) => ({
       accounts: [],
+      deletedAccounts: {},
+      restoredAccounts: {},
       hydrated: false,
       loadingAccounts: new Set<string>(),
       error: null,
@@ -432,22 +467,28 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       initialize: async () => {
+            const ownership = captureSyncOwnership()
             try {
                   let storedAccounts = await localforage.getItem<Account[]>(STORAGE_KEY)
                   const storedChangelog = await localforage.getItem<AddonChangelogEntry[]>(CHANGELOG_KEY)
+                  const membership = mergeAccountMembership(await localforage.getItem<AccountMembership>(ACCOUNT_MEMBERSHIP_KEY) || {})
+                  ownership.assert()
 
                   // This catches the case where a corrupted re-login wiped accounts between sessions.
                   if (!storedAccounts || !Array.isArray(storedAccounts)) {
                         const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
+                        ownership.assert()
                         if (backup && Array.isArray(backup) && backup.length > 0) {
                               if (import.meta.env.DEV) console.warn(`[AccountStore] Accounts missing on disk. Restoring ${backup.length} accounts from backup.`)
-                              storedAccounts = backup
-                              await localforage.setItem(STORAGE_KEY, backup)
+                              storedAccounts = backup.filter(a => !Object.hasOwn(membership.deletedAccounts, a.id))
+                              await localforage.setItem(STORAGE_KEY, storedAccounts)
                         }
                   }
 
+                  ownership.assert()
+                  set(membership)
                   if (storedAccounts && Array.isArray(storedAccounts)) {
-                        const accounts = storedAccounts.map((acc) => ({
+                        const accounts = storedAccounts.filter(a => !Object.hasOwn(membership.deletedAccounts, a.id)).map((acc) => ({
                               ...acc,
                               lastSync: new Date(acc.lastSync),
                         }))
@@ -529,6 +570,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   }
                   set({ hydrated: true })
             } catch (error) {
+                  if (!ownership.current()) return
                   if (import.meta.env.DEV) console.error('Failed to load accounts from storage:', error)
                   set({ error: 'Failed to load saved accounts' })
             }
@@ -539,6 +581,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       addAccountByAuthKey: async (authKey: string, name: string, accentColor?: string, emoji?: string, avatar?: string) => {
+            const ownership = captureSyncOwnership()
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             const start = Date.now()
@@ -613,9 +656,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         primaryConnectionId: stremioConnectionId,
                   }
 
-                  const accounts = [...get().accounts, account]
-                  set({ accounts })
-                  persistAccounts(accounts)
+                  const releaseMembership = await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX)
+                  try {
+                        ownership.assert()
+                        const accounts = [...get().accounts, account]
+                        set({ accounts })
+                        persistAccounts(accounts)
+                  } finally { releaseMembership() }
                   await upsertAuthKeyHash(account.id, authKey)
 
                   const { useLibraryCache } = await import('@/store/libraryCache')
@@ -635,6 +682,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       addAccountByCredentials: async (email: string, password: string, name: string, accentColor?: string, emoji?: string, avatar?: string, intent: 'login' | 'signup' = 'login') => {
+            const ownership = captureSyncOwnership()
             if (_registrationInProgress) throw new Error('Registration already in progress')
             _registrationInProgress = true
             const opId = '__add_account__'
@@ -716,9 +764,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         primaryConnectionId: stremioConnectionId,
                   }
 
-                  const accounts = [...get().accounts, account]
-                  set({ accounts })
-                  persistAccounts(accounts)
+                  const releaseMembership = await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX)
+                  try {
+                        ownership.assert()
+                        const accounts = [...get().accounts, account]
+                        set({ accounts })
+                        persistAccounts(accounts)
+                  } finally { releaseMembership() }
                   await upsertAuthKeyHash(account.id, response.authKey)
 
                   const { useLibraryCache } = await import('@/store/libraryCache')
@@ -738,6 +790,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
         },
 
       addLocalAccount: async (name: string, accentColor?: string, emoji?: string, avatar?: string) => {
+            const ownership = captureSyncOwnership()
             const opId = '__add_account__'
             set({ loadingAccounts: new Set([...get().loadingAccounts, opId]), error: null })
             trace('account', 'add.start', { method: 'local' })
@@ -757,9 +810,13 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         apiKey: safeUUID(),
                         createdAt: Date.now(),
                   }
-                  const accounts = [...get().accounts, account]
-                  set({ accounts })
-                  persistAccounts(accounts)
+                  const releaseMembership = await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX)
+                  try {
+                        ownership.assert()
+                        const accounts = [...get().accounts, account]
+                        set({ accounts })
+                        persistAccounts(accounts)
+                  } finally { releaseMembership() }
 
                   const { useLibraryCache } = await import('@/store/libraryCache')
                   useLibraryCache.setState({ isStale: true })
@@ -776,12 +833,24 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       },
 
       removeAccount: async (id: string) => {
+            const ownership = captureSyncOwnership()
+            const releaseMembership = await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX)
             const releaseMutex = await acquireSyncMutex(id)
             const start = Date.now()
             trace('account', 'remove.start', { accountId: id })
             try {
+            ownership.assert()
+            const accountsBeforeRemoval = get().accounts.find(a => a.id === id)
+            if (!accountsBeforeRemoval) return
+            const accounts = get().accounts.filter(acc => acc.id !== id)
+            const membership = deleteAccountIds(mergeAccountMembership(get()), [id])
+            await persistAccountMembership(accounts, membership, ownership)
+            set({ accounts, ...membership })
+            removeAuthKeyHash(id)
+            triggerSync()
             try {
                   const { useFailoverStore } = await import('@/store/failoverStore')
+                  ownership.assert()
                   const failoverState = useFailoverStore.getState()
                   const rulesForAccount = failoverState.rules.filter(r => r.accountId === id)
 
@@ -796,6 +865,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     const apiPath = baseUrl.startsWith('http') ? `${baseUrl.replace(/\/$/, '')}/api` : '/api'
                                     const { deriveSyncToken } = await import('@/lib/crypto')
                                     const syncToken = await deriveSyncToken(auth.password)
+                                    ownership.assert()
                                     await fetch(`${apiPath}/autopilot/account/${id}`, {
                                         method: 'DELETE',
                                         headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
@@ -803,6 +873,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     if (import.meta.env.DEV) console.log(`[Account] Bulk-deleted server rules for account ${id}`)
                               }
                         } catch (serverErr) {
+                              ownership.assert()
                               if (import.meta.env.DEV) console.warn('[Account] Bulk server delete failed, falling back to per-rule delete:', serverErr)
                               // Fallback: delete each rule individually from server (fire-and-forget)
                               for (const rule of rulesForAccount) {
@@ -811,8 +882,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         }
 
                         const remainingRules = failoverState.rules.filter(r => r.accountId !== id)
+                        ownership.assert()
                         useFailoverStore.setState({ rules: remainingRules })
                         const localforageFO = await import('localforage')
+                        ownership.assert()
                         await localforageFO.default.setItem('aioman:failover-rules', remainingRules)
                   }
             } catch (e) {
@@ -820,7 +893,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             }
 
             try {
-                  const account = get().accounts.find(a => a.id === id)
+                  const account = accountsBeforeRemoval
                   if (account) {
                         const connIds = (account.connections || []).map(c => c.id)
                         if (connIds.length > 0) {
@@ -832,6 +905,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                                     const { deriveSyncToken } = await import('@/lib/crypto')
                                     const syncToken = await deriveSyncToken(auth.password)
                                     for (const connId of connIds) {
+                                          ownership.assert()
                                           await fetch(`${credApiPath}/providers/connections/${connId}/credentials`, {
                                                 method: 'DELETE',
                                                 headers: { 'x-sync-password': syncToken, 'x-sync-user': auth.id }
@@ -843,14 +917,18 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             } catch {}
 
             const { useLibraryCache } = await import('@/store/libraryCache')
+            ownership.assert()
             useLibraryCache.getState().removeItemsForAccount(id)
 
             const { useAddonStore } = await import('@/store/addonStore')
+            ownership.assert()
             await useAddonStore.getState().deleteAccountState(id)
 
             const { useWatchEventStore } = await import('@/store/watchEventStore')
+            ownership.assert()
             const wes = useWatchEventStore.getState()
             await wes.load()
+            ownership.assert()
             if (useWatchEventStore.getState().initialized) {
                 const loaded = useWatchEventStore.getState().events
                 const filtered = loaded.filter(e => e.accountId !== id)
@@ -858,15 +936,10 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                 useWatchEventStore.getState().initialize(filtered, restSnapshot)
             }
 
-            const accounts = get().accounts.filter((acc) => acc.id !== id)
-            set({ accounts })
-            persistAccounts(accounts)
-            removeAuthKeyHash(id)
-
-            triggerSync()
             trace('account', 'remove.success', { accountId: id, remainingAccounts: accounts.length, timing: Date.now() - start })
             } finally {
                   releaseMutex()
+                  releaseMembership()
             }
       },
 
@@ -909,9 +982,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             const { bulkDeleteAddons } = await import('./account/accountAddonOps')
             return bulkDeleteAddons(accountId, keptAddons, removedUrls)
       },
-      reorderAddons: async (accountId: string, newOrder: AddonDescriptor[]) => {
+      reorderAddons: async (accountId: string, newOrder: AddonDescriptor[], options?: { explicitInstallUrls?: string[] }) => {
             const { reorderAddons } = await import('./account/accountAddonOps')
-            return reorderAddons(accountId, newOrder)
+            return reorderAddons(accountId, newOrder, options)
       },
 
       exportAccounts: async (includeCredentials: boolean) => {
@@ -924,9 +997,9 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             return exportAccountsForSync()
       },
 
-      importAccounts: async (json: string, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null) => {
+      importAccounts: async (json: string | Record<string, unknown>, isSilent?: boolean, mode?: 'merge' | 'mirror', localDecryptionKey?: CryptoKey | null, ownership?: SyncOwnership, accountList?: AccountListImport) => {
             const { importAccounts } = await import('./account/accountImportExport')
-            return importAccounts(json, isSilent, mode, localDecryptionKey)
+            return importAccounts(json, isSilent, mode, localDecryptionKey, ownership, accountList)
       },
 
       updateAccount: async (id: string, data: { name?: string; authKey?: string; email?: string; password?: string; accentColor?: string; emoji?: string; avatar?: string; note?: string; hideLastWatched?: boolean; hideAddonPreview?: boolean; hidePlatformLogos?: boolean; allowExternalAddonManagement?: boolean; sourceOfTruth?: string }) => {
@@ -971,18 +1044,23 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                         authKeyCache.delete(getStremioAuthKey(account))
                         const encryptedNewKey = await encrypt(authKey, encryptionKey)
                         updatedAccount.authKey = encryptedNewKey
-                        updatedAccount.connections = (updatedAccount.connections || []).map(c =>
-                              c.platform === 'stremio'
-                                    ? { ...c, credentials: { ...c.credentials, authKey: encryptedNewKey } }
-                                    : c
-                        )
+                        // Rotating the account login updates the CANONICAL Stremio
+                        // connection; secondary logins keep their own sealed keys.
+                        updatedAccount.connections = scopeStremioKeyRotation(updatedAccount.connections, updatedAccount.primaryConnectionId, encryptedNewKey)
                         authKeyCache.set(getStremioAuthKey(updatedAccount), authKey)
                         await upsertAuthKeyHash(updatedAccount.id, authKey)
                         const addons = await getAddons(authKey, updatedAccount.id)
-                        updatedAccount.addons = addons.map((a) => ({
-                              ...a,
-                              manifest: sanitizeAddonManifest(a.manifest, a.transportUrl),
-                        }))
+                        // Re-authentication refreshes credentials, so a stale platform
+                        // snapshot must pass the same additive merge as a passive sync.
+                        const { mergeRemoteIntoHub } = await import('./account/accountSync')
+                        const deletionState = mergeAddonDeletionState(account.deletedAddons, undefined, account.restoredAddons, undefined)
+                        updatedAccount.addons = mergeRemoteIntoHub({ ...account, ...deletionState }, addons)
+                        Object.assign(updatedAccount, deletionState)
+                        updatedAccount.profiles = updatedAccount.profiles?.map(profile =>
+                              profile.id === (updatedAccount.activeProfileId || 'default')
+                                    ? { ...profile, addons: structuredClone(updatedAccount.addons) }
+                                    : profile
+                        )
                         updatedAccount.lastSync = new Date()
                         updatedAccount.status = 'active'
                   }
@@ -1054,6 +1132,7 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
                   metadata?: { customName?: string; customLogo?: string; customDescription?: string; syncToLibrary?: boolean; hideConfigure?: boolean },
                   catalogOverrides?: AddonDescriptor['catalogOverrides'],
                   note?: string,
+                  destinations?: AddonDescriptor['destinations'] | null,
             },
             targetIndex?: number
       ) => {
@@ -1117,6 +1196,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
       reset: async () => {
             set({
                   accounts: [],
+                  deletedAccounts: {},
+                  restoredAccounts: {},
                   loadingAccounts: new Set<string>(),
                   error: null,
                   changelog: [],
@@ -1124,6 +1205,8 @@ export const useAccountStore = create<AccountStore>((set, get) => ({
             })
             resetAuthKeyHashes()
             await localforage.removeItem(STORAGE_KEY)
+            // Keep deletion markers with the recovery backup; a full workspace wipe
+            // clears both. Resetting memory must not revive removed backup rows.
             await localforage.removeItem(CHANGELOG_KEY)
       },
 

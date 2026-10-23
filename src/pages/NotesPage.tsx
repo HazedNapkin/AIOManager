@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useNotesStore, type Note, type NoteMeta, extractTags } from '@/store/notesStore'
@@ -288,7 +289,7 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
         if (!inCodeBlock) return
         const key = `code-${elements.length}`
         elements.push(
-            <div key={key} className="my-3 rounded-xl border border-border/40 overflow-hidden">
+            <div key={key} data-theme-part="field" className="my-3 rounded-xl border border-border/40 overflow-hidden">
                 {codeLang && (
                     <div className="px-3 py-1 bg-muted/60 border-b border-border/30 text-xs font-mono text-muted-foreground">{codeLang}</div>
                 )}
@@ -340,6 +341,8 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
                 <div key={i} className="flex items-start gap-2 my-1 text-sm group/task">
                     <button
                         onClick={() => onToggleTask?.(i)}
+                        aria-label={`${done ? 'Mark task incomplete' : 'Mark task complete'}: ${taskMatch[2]}`}
+                        aria-pressed={done}
                         className={cn('w-4 h-4 mt-0.5 rounded border shrink-0 flex items-center justify-center transition-colors cursor-pointer', done ? 'bg-primary border-primary' : 'border-muted-foreground/40 hover:border-primary/50')}
                     >
                         {done && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
@@ -468,7 +471,7 @@ function renderMarkdown(text: string, onToggleTask?: (lineIndex: number) => void
 
     if (taskTotal > 0) {
         elements.unshift(
-            <div key="task-progress" className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-primary/5 border border-primary/10">
+            <div key="task-progress" data-theme-part="badge" className="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-lg bg-primary/5 border border-primary/10">
                 <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                     <div className="h-full bg-primary rounded-full transition-[transform,opacity,box-shadow]" style={{ width: `${taskTotal > 0 ? (taskDone / taskTotal) * 100 : 0}%` }} />
                 </div>
@@ -493,6 +496,7 @@ function TB({ label, icon: Icon, onClick, disabled, className }: { label: string
                 variant="ghost"
                 onClick={onClick}
                 disabled={disabled}
+                aria-label={label}
                 className={cn("h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-30", className)}
             >
                 <Icon className="h-3.5 w-3.5" />
@@ -514,14 +518,16 @@ function GridPicker({ onSelect, onClose }: { onSelect: (rows: number, cols: numb
     }, [onClose])
 
     return (
-        <div ref={ref} className="absolute right-0 top-full mt-1 p-3 bg-popover border border-border/40 rounded-lg shadow-xl z-50 min-w-[200px]">
+        <div ref={ref} data-theme-part="popover" className="absolute right-0 top-full mt-1 p-3 bg-popover border border-border/40 rounded-lg shadow-xl z-50 min-w-[200px]">
             <div className="grid grid-cols-5 gap-1">
                 {Array.from({ length: 25 }, (_, idx) => {
                     const row = Math.floor(idx / 5)
                     const col = idx % 5
                     return (
-                        <div
+                        <button
                             key={idx}
+                            type="button"
+                            aria-label={`Insert table with ${row + 1} rows and ${col + 1} columns`}
                             className={cn(
                                 'w-7 h-7 rounded-sm border cursor-pointer transition-colors',
                                 row <= hover[0] && col <= hover[1]
@@ -529,6 +535,7 @@ function GridPicker({ onSelect, onClose }: { onSelect: (rows: number, cols: numb
                                     : 'border-border/40 hover:border-primary/30'
                             )}
                             onMouseEnter={() => setHover([row, col])}
+                            onFocus={() => setHover([row, col])}
                             onClick={() => onSelect(row + 1, col + 1)}
                         />
                     )
@@ -557,18 +564,18 @@ function TableContextMenu({
     }, [onClose])
 
     return (
-        <div ref={ref} className="fixed z-[100] min-w-[160px] bg-popover border border-border/40 rounded-lg shadow-xl overflow-hidden py-1" style={{ left: x, top: y }}>
+        <div ref={ref} data-theme-part="menu" className="fixed z-[100] min-w-[160px] bg-popover border border-border/40 rounded-lg shadow-xl overflow-hidden py-1" style={{ left: x, top: y }}>
             {!isHeader && (
-                <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-row-above')}>Add row above</button>
+                <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-row-above')}>Add row above</button>
             )}
-            <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-row-below')}>Add row below</button>
+            <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-row-below')}>Add row below</button>
             {!isHeader && (
-                <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left text-destructive" onClick={() => onAction('delete-row')}>Delete row</button>
+                <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left text-destructive" onClick={() => onAction('delete-row')}>Delete row</button>
             )}
             <div className="my-1 border-t border-border/40" />
-            <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-col-left')}>Add column left</button>
-            <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-col-right')}>Add column right</button>
-            <button className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left text-destructive" onClick={() => onAction('delete-col')}>Delete column</button>
+            <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-col-left')}>Add column left</button>
+            <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left" onClick={() => onAction('add-col-right')}>Add column right</button>
+            <button data-theme-part="menu-item" className="w-full px-3 py-1.5 text-xs hover:bg-muted/50 text-left text-destructive" onClick={() => onAction('delete-col')}>Delete column</button>
         </div>
     )
 }
@@ -1103,6 +1110,8 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
     const editorPane = (
         <div className="flex-1 min-h-0 overflow-auto relative">
             <Textarea
+                data-theme-part="inline-input"
+                aria-label="Note content"
                 ref={textareaRef}
                 autoFocus
                 maxLength={50000}
@@ -1113,7 +1122,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 className="h-full min-h-full border-0 rounded-none focus-visible:ring-0 resize-none text-sm bg-transparent px-4 sm:px-6 py-5 font-mono leading-relaxed whitespace-pre-wrap break-words"
             />
             {slashOpen && filteredCommands.length > 0 && (
-                <div 
+                <div data-theme-part="menu"
                     className="absolute w-64 max-h-[300px] overflow-y-auto bg-popover border border-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1.5 animate-in fade-in zoom-in-95 duration-100"
                     style={{ top: slashPos.top, left: slashPos.left }}
                 >
@@ -1123,6 +1132,8 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                         return (
                             <button
                                 key={cmd.label}
+                                data-theme-part="menu-item"
+                                data-highlighted={i === slashIndex ? '' : undefined}
                                 onClick={() => executeSlash(cmd)}
                                 className={cn(
                                     "flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm text-left transition-colors",
@@ -1139,7 +1150,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 </div>
             )}
             {wikilinkOpen && filteredWikilinks.length > 0 && (
-                <div 
+                <div data-theme-part="menu"
                     className="absolute w-64 max-h-[300px] overflow-y-auto bg-popover border border-border/40 rounded-xl shadow-2xl z-50 flex flex-col p-1.5 animate-in fade-in zoom-in-95 duration-100"
                     style={{ top: wikilinkPos.top, left: wikilinkPos.left }}
                 >
@@ -1147,6 +1158,8 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     {filteredWikilinks.map((n, i) => (
                         <button
                             key={n.id}
+                            data-theme-part="menu-item"
+                            data-highlighted={i === wikilinkIndex ? '' : undefined}
                             onClick={() => executeWikilink(n)}
                             className={cn(
                                 "flex items-center gap-3 px-2 py-1.5 rounded-lg text-sm text-left transition-colors",
@@ -1169,7 +1182,10 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
         </div>
     )
 
-    const renderedMarkdown = useMemo(() => content.trim() ? renderMarkdown(content, handleToggleTask) : null, [content, handleToggleTask])
+    const renderedMarkdown = useMemo(
+        () => (viewMode === 'preview' || viewMode === 'split') && content.trim() ? renderMarkdown(content, handleToggleTask) : null,
+        [viewMode, content, handleToggleTask]
+    )
 
     const previewPane = (
         <div ref={previewRef} className="flex-1 min-h-0 overflow-auto px-4 sm:px-6 py-5 prose-sm space-y-0.5 break-words"
@@ -1185,7 +1201,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
     return (
         <div className="flex flex-col h-full bg-card">
             {/* Top Header - Airy and minimal */}
-            <div className="flex items-center gap-2 px-4 sm:px-6 py-3 border-b border-border/40 shrink-0">
+            <div data-theme-part="toolbar" data-theme-inset className="flex items-center gap-2 px-4 sm:px-6 py-3 border-b border-border/40 shrink-0">
                 <Button
                     variant="outline"
                     onClick={onClose}
@@ -1226,24 +1242,25 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                         </Button>
                     )}
                     <Tooltip content={viewLabel} side="top">
-                        <div className="inline-flex p-0.5 rounded-md bg-muted/40 border border-border/40 mr-2">
-                            <button onClick={() => setViewMode('preview')}
+                        <div data-theme-part="tabs-list" data-theme-inset className="inline-flex p-0.5 rounded-md bg-muted/40 border border-border/40 mr-2">
+                            <button data-theme-part="tab" data-theme-inset data-state={viewMode === 'preview' ? 'active' : 'inactive'} onClick={() => setViewMode('preview')}
                                     className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow]', viewMode === 'preview' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Preview</button>
-                            <button onClick={() => setViewMode('edit')}
+                            <button data-theme-part="tab" data-theme-inset data-state={viewMode === 'edit' ? 'active' : 'inactive'} onClick={() => setViewMode('edit')}
                                     className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow]', viewMode === 'edit' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Edit</button>
-                            <button onClick={() => setViewMode('split')}
+                            <button data-theme-part="tab" data-theme-inset data-state={viewMode === 'split' ? 'active' : 'inactive'} onClick={() => setViewMode('split')}
                                     className={cn('h-6 px-2.5 rounded text-[11px] font-medium transition-[transform,opacity,box-shadow] hidden md:block', viewMode === 'split' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>Split</button>
                         </div>
                     </Tooltip>
 
                     <Tooltip content={note.pinned ? 'Unpin' : 'Pin'} side="top">
                         <Button variant="ghost" onClick={() => updateNote(note.id, { pinned: !note.pinned })}
+                            aria-label={note.pinned ? 'Unpin note' : 'Pin note'}
                             className={cn('h-7 w-7 flex items-center justify-center p-0 rounded-md transition-colors', note.pinned ? 'text-warning bg-warning/10' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
                             <Pin className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
                     <Tooltip content="Delete" side="top">
-                        <Button variant="ghost" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 flex items-center justify-center p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                        <Button variant="ghost" aria-label="Delete note" onClick={() => setShowDeleteConfirm(true)} className="h-7 w-7 flex items-center justify-center p-0 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                     </Tooltip>
@@ -1251,7 +1268,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
             </div>
 
             {/* Toolbar - No background, simplified */}
-            <div className="flex items-center gap-0.5 px-5 py-1 border-b border-border/40 shrink-0 flex-wrap">
+            <div data-theme-part="toolbar" data-theme-inset className="flex items-center gap-0.5 px-5 py-1 border-b border-border/40 shrink-0 flex-wrap">
                 <TB label="Undo (Ctrl+Z)" icon={Undo2} onClick={handleUndo} disabled={historyIndex === 0} />
                 <TB label="Redo (Ctrl+Y)" icon={Redo2} onClick={handleRedo} disabled={historyIndex >= history.length - 1} />
                 <div className="w-px h-4 bg-border mx-1 shrink-0" />
@@ -1276,7 +1293,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     {showGridPicker && <GridPicker onSelect={handleGridSelect} onClose={() => setShowGridPicker(false)} />}
                 </div>
                 <TB label="Code block" icon={SquareTerminal} onClick={() => wrapSel('```\n', '\n```')} />
-                <TB label="HR" icon={Minus} onClick={() => insertAt('\n---\n')} />
+                <TB label="Horizontal rule" icon={Minus} onClick={() => insertAt('\n---\n')} />
                 <div className="flex-1" />
 
                 <div className="w-px h-4 bg-border mx-1 shrink-0" />
@@ -1284,21 +1301,21 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <div ref={exportRef} className="relative">
                     <TB label="Export" icon={Download} onClick={() => setShowExport(v => !v)} className={showExport ? 'bg-muted/60' : ''} />
                     {showExport && (
-                        <div className="absolute right-0 top-full mt-1 w-44 bg-popover border border-border/40 rounded-lg shadow-xl z-50 overflow-hidden">
-                            <button onClick={handleCopyMd} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
+                        <div data-theme-part="menu" className="absolute right-0 top-full mt-1 w-44 bg-popover border border-border/40 rounded-lg shadow-xl z-50 overflow-hidden">
+                            <button data-theme-part="menu-item" onClick={handleCopyMd} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
                                 <Copy className="h-3 w-3" /> Copy as Markdown
                             </button>
-                            <button onClick={handleCopyHtml} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
+                            <button data-theme-part="menu-item" onClick={handleCopyHtml} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
                                 <Copy className="h-3 w-3" /> Copy as HTML
                             </button>
                             <div className="border-t border-border/40" />
-                            <button onClick={handleDownloadMd} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
+                            <button data-theme-part="menu-item" onClick={handleDownloadMd} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
                                 <Download className="h-3 w-3" /> Download .md
                             </button>
-                            <button onClick={handleDownloadHtml} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
+                            <button data-theme-part="menu-item" onClick={handleDownloadHtml} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
                                 <Download className="h-3 w-3" /> Download .html
                             </button>
-                            <button onClick={handleDownloadTxt} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
+                            <button data-theme-part="menu-item" onClick={handleDownloadTxt} className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors">
                                 <Download className="h-3 w-3" /> Download .txt
                             </button>
                         </div>
@@ -1308,6 +1325,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <div ref={helpRef} className="relative">
                     <Tooltip content="Syntax Help" side="top">
                         <Button variant="ghost" onClick={() => setShowHelp(v => !v)}
+                            aria-label="Syntax help"
                             className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showHelp ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                             <HelpCircle className="h-3.5 w-3.5" />
                         </Button>
@@ -1315,6 +1333,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                     {showHelp && helpPos && createPortal(
                         <div
                             ref={helpPopoverRef}
+                            data-theme-part="popover"
                             className="fixed w-64 bg-popover border border-border/40 rounded-xl shadow-2xl z-[100] overflow-hidden animate-in fade-in zoom-in-95 duration-100"
                             style={{
                                 left: Math.max(8, Math.min(helpPos.left - 256, window.innerWidth - 264)),
@@ -1381,6 +1400,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 </div>
                 <Tooltip content="Shortcuts" side="top">
                     <Button variant="ghost" onClick={() => setShowShortcuts(v => !v)}
+                        aria-label="Keyboard shortcuts"
                         className={cn('h-7 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors rounded-md', showShortcuts ? 'bg-muted/60' : 'hover:bg-muted/50')}>
                         <Keyboard className="h-3.5 w-3.5" />
                     </Button>
@@ -1404,16 +1424,20 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
             )}
 
             {showFind && (
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 px-3 py-1.5 border-b bg-muted/10 shrink-0">
+                <div data-theme-part="toolbar" data-theme-inset className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 px-3 py-1.5 border-b bg-muted/10 shrink-0">
                     <input
+                        data-theme-part="input"
                         value={findText}
+                        aria-label="Find in note"
                         onChange={e => setFindText(e.target.value)}
                         placeholder="Find..."
                         className="flex-1 bg-background/60 border border-border/40 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
                         autoFocus
                     />
                     <input
+                        data-theme-part="input"
                         value={replaceText}
+                        aria-label="Replace with"
                         onChange={e => setReplaceText(e.target.value)}
                         placeholder="Replace..."
                         className="flex-1 bg-background/60 border border-border/40 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
@@ -1428,7 +1452,9 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
 
             <div className="px-4 sm:px-6 pt-5 pb-1 shrink-0">
                 <input
+                    data-theme-part="inline-input"
                     value={title}
+                    aria-label="Note title"
                     onChange={handleTitleChange}
                     onBlur={handleTitleBlur}
                     placeholder="Untitled"
@@ -1445,12 +1471,13 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
             </div>
 
             {backlinks.length > 0 && (
-                <div className="px-5 py-2.5 border-t bg-muted/5 shrink-0 flex items-center gap-3">
+                <div data-theme-part="toolbar" data-theme-inset className="px-5 py-2.5 border-t bg-muted/5 shrink-0 flex items-center gap-3">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground/60 shrink-0">Backlinks</span>
                     <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                         {backlinks.map(bl => (
                             <button
                                 key={bl.id}
+                                data-theme-part="button"
                                 onClick={() => onNavigateToNote?.(bl.id)}
                                 className="px-2 py-0.5 rounded-md bg-primary/8 text-primary text-xs font-medium hover:bg-primary/15 transition-colors border border-primary/10 whitespace-nowrap"
                             >
@@ -1472,6 +1499,7 @@ function NoteEditor({ note, onClose, onNavigateToNote, allNotes }: NoteEditorPro
                 <input
                     key={`${editingCell.tableStart}-${editingCell.row}-${editingCell.col}`}
                     ref={cellInputRef}
+                    data-theme-part="input"
                     autoFocus
                     value={editingCell.value}
                     onChange={e => setEditingCell({ ...editingCell, value: e.target.value })}
@@ -1504,6 +1532,9 @@ function NoteCard({
 
     return (
         <button onClick={selectionMode ? () => onSelect?.(note.id) : onClick}
+            data-theme-part="nav-item"
+            data-theme-inset
+            data-state={isActive && !selectionMode ? 'active' : 'inactive'}
             className={cn('w-full text-left px-3 py-3 border-b border-border/40 transition-[transform,opacity,box-shadow] hover:bg-muted/40 group relative', isActive && !selectionMode && 'bg-primary/12', isSelected && 'bg-primary/8')}>
             {isActive && !selectionMode && (
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-primary rounded-r" />
@@ -1533,7 +1564,7 @@ function NoteCard({
                     {tags.length > 0 && (
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
                             {tags.slice(0, 3).map(tag => (
-                                <span key={tag} className="px-1 py-0 rounded bg-info/10 text-info text-xs font-medium">
+                                <span key={tag} data-theme-part="badge" className="px-1 py-0 rounded bg-info/10 text-info text-xs font-medium">
                                     #{tag}
                                 </span>
                             ))}
@@ -1547,6 +1578,9 @@ function NoteCard({
 
 export function NotesPage() {
     useDocumentTitle('Notes')
+    const location = useLocation()
+    const requestedNoteId = new URLSearchParams(location.search).get('note')
+    const openedNoteLink = useRef<string | null>(null)
     const notes = useNotesStore(s => s.notes)
     const trash = useNotesStore(s => s.trash)
     const createNote = useNotesStore(s => s.createNote)
@@ -1658,12 +1692,25 @@ export function NotesPage() {
     }, [loadNoteContent])
 
     useEffect(() => {
+        if (requestedNoteId && notes.some(note => note.id === requestedNoteId)) {
+            const linkKey = `${location.key}:${requestedNoteId}`
+            if (openedNoteLink.current !== linkKey) {
+                openedNoteLink.current = linkKey
+                setSelectedId(requestedNoteId)
+                setView('notes')
+                setSearch('')
+                setActiveTag(null)
+                setShowEditor(true)
+                void loadNoteContent(requestedNoteId)
+            }
+            return
+        }
         if (!selectedId && sorted.length > 0) {
             const firstId = sorted[0].id
             setSelectedId(firstId)
             loadNoteContent(firstId)
         }
-    }, [selectedId, sorted, loadNoteContent])
+    }, [selectedId, sorted, notes, loadNoteContent, requestedNoteId, location.key])
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -1676,7 +1723,13 @@ export function NotesPage() {
     }, [handleCreate])
 
     const handleExportZip = useCallback(async (ids?: string[]) => {
-        const allNotesWithContent = await useNotesStore.getState().getAllNotesWithContent()
+        let allNotesWithContent: Note[]
+        try {
+            allNotesWithContent = await useNotesStore.getState().getAllNotesWithContent()
+        } catch {
+            toast({ variant: 'destructive', title: 'Notes export paused', description: 'Some notes could not be read. No partial backup was created. Unlock your vault or restore its key, then retry.' })
+            return
+        }
         const files: Record<string, Uint8Array> = {}
         const notesToExport = ids ? allNotesWithContent.filter(n => ids.includes(n.id)) : allNotesWithContent
         if (notesToExport.length === 0) return
@@ -1771,13 +1824,13 @@ export function NotesPage() {
     return (
         <div className="flex flex-col gap-4">
             {saveFailed && (
-                <div className="flex items-center gap-2 rounded-xl border border-yellow-500/40 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-600 dark:text-yellow-400">
+                <div data-theme-part="panel" data-theme-tone="status" className="flex items-center gap-2 rounded-xl border border-warning/40 bg-warning/10 px-4 py-2.5 text-sm text-warning">
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
                     <span>Failed to save changes. Your latest edits may not be persisted.</span>
                 </div>
             )}
         <div className="flex flex-col md:flex-row gap-6 h-[calc(100vh-16rem)] min-h-[500px]">
-            <div className={cn(
+            <div data-theme-part="card" className={cn(
                 'flex flex-col w-full md:w-[300px] min-h-0 flex-1 md:flex-none md:shrink-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden transition-[width] duration-200',
                 showEditor && selected ? 'hidden md:flex' : 'flex',
                 sidebarCollapsed && 'md:w-[52px]'
@@ -1799,18 +1852,21 @@ export function NotesPage() {
                         <div className="flex items-center gap-1.5">
                             <Tooltip content={selectionMode ? "Exit Selection" : "Select Notes"} side="left">
                                 <Button variant={selectionMode ? 'default' : 'ghost'} onClick={() => { setSelectionMode(!selectionMode); setSelectedIds(new Set()) }}
+                                    aria-label={selectionMode ? 'Exit note selection' : 'Select notes'}
                                     className={cn("h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-none", selectionMode ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-muted-foreground hover:text-foreground")}>
                                     <ListChecks className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="left">
                                 <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
+                                    aria-label={view === 'graph' ? 'Close graph view' : 'Open graph view'}
                                     className="h-7 w-7 flex items-center justify-center p-0 shrink-0 text-muted-foreground hover:text-foreground">
                                     <Network className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content="New note" side="right">
                                 <Button variant="default" onClick={handleCreate}
+                                    aria-label="New note"
                                     className="relative h-7 w-7 flex items-center justify-center p-0 shrink-0 shadow-sm rounded-lg">
                                     <Plus className="h-4 w-4" />
                                 </Button>
@@ -1820,6 +1876,7 @@ export function NotesPage() {
                         trash.length > 0 && (
                             <Tooltip content="Empty trash" side="right">
                                 <Button variant="ghost" onClick={emptyTrash}
+                                    aria-label="Empty trash"
                                     className="h-7 px-2 shrink-0 text-xs font-semibold text-destructive hover:bg-destructive/10">
                                     <Trash className="h-3 w-3" /> Empty
                                 </Button>
@@ -1829,18 +1886,24 @@ export function NotesPage() {
                 </div>
 
                 <div className="px-3 pb-2 shrink-0">
-                    <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
+                    <div data-theme-part="tabs-list" data-theme-inset className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 shadow-sm">
                         <Button variant="ghost" onClick={() => setView('notes')}
+                            data-theme-part="tab"
+                            data-theme-inset
+                            data-state={view !== 'trash' ? 'active' : 'inactive'}
                             className={cn('h-8 rounded-xl border border-transparent text-xs font-semibold transition-colors', view !== 'trash' ? 'border-border/40 bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40')}>
                             <StickyNote className="h-3.5 w-3.5" />
                             Notes
-                            <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{notes.length}</span>
+                            <span data-theme-part="badge" className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{notes.length}</span>
                         </Button>
                         <Button variant="ghost" onClick={() => setView('trash')}
+                            data-theme-part="tab"
+                            data-theme-inset
+                            data-state={view === 'trash' ? 'active' : 'inactive'}
                             className={cn('h-8 rounded-xl border border-transparent text-xs font-semibold transition-colors', view === 'trash' ? 'border-border/40 bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted/40')}>
                             <Trash className="h-3.5 w-3.5" />
                             Deleted
-                            {trash.length > 0 && <span className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{trash.length}</span>}
+                            {trash.length > 0 && <span data-theme-part="badge" className="ml-auto rounded-md bg-muted/60 px-1.5 text-xs tabular-nums text-muted-foreground">{trash.length}</span>}
                         </Button>
                     </div>
                 </div>
@@ -1850,6 +1913,9 @@ export function NotesPage() {
                         <div className="flex items-center gap-1 flex-wrap">
                             <button
                                 onClick={() => setActiveTag(null)}
+                                data-theme-part="tab"
+                                data-theme-inset
+                                data-state={!activeTag ? 'active' : 'inactive'}
                                 className={cn(
                                     'px-2 py-0.5 rounded-full text-xs font-medium transition-[transform,opacity,box-shadow] border whitespace-nowrap',
                                     !activeTag ? 'bg-primary/12 text-primary border-primary/25' : 'text-muted-foreground border-transparent hover:text-foreground'
@@ -1861,6 +1927,9 @@ export function NotesPage() {
                                 <button
                                     key={tag}
                                     onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                                    data-theme-part="tab"
+                                    data-theme-inset
+                                    data-state={activeTag === tag ? 'active' : 'inactive'}
                                     className={cn(
                                         'px-2 py-0.5 rounded-full text-xs font-medium transition-[transform,opacity,box-shadow] border whitespace-nowrap',
                                         activeTag === tag ? 'bg-primary/12 text-primary border-primary/25' : 'text-muted-foreground border-transparent hover:text-foreground'
@@ -1878,13 +1947,15 @@ export function NotesPage() {
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
                         <input
                             ref={searchRef}
+                            aria-label="Search notes"
+                            data-theme-part="input"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder="Search…"
                             className="w-full bg-muted/30 border border-border/40 rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring focus:border-primary/50"
                         />
                         {search && (
-                            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-muted-foreground">
+                            <button data-theme-part="button" aria-label="Clear note search" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-muted-foreground">
                                 <X className="h-3 w-3" />
                             </button>
                         )}
@@ -1934,7 +2005,8 @@ export function NotesPage() {
                                                     </p>
                                                 </div>
                                                 <Tooltip content="Restore note" side="left">
-                                                    <button onClick={() => restoreNote(item.note.id)}
+                                                    <button data-theme-part="button" onClick={() => restoreNote(item.note.id)}
+                                                        aria-label={`Restore ${item.note.title}`}
                                                         className="shrink-0 flex items-center justify-center rounded hover:bg-muted/60 text-muted-foreground/60 hover:text-primary transition-colors">
                                                         <RotateCcw className="h-3.5 w-3.5" />
                                                     </button>
@@ -1957,7 +2029,7 @@ export function NotesPage() {
                     )}
                 </div>
                 {selectionMode && selectedIds.size > 0 && (
-                    <div className="p-3 border-t bg-card shrink-0 flex items-center justify-between gap-2 animate-in slide-in-from-bottom-2 duration-200 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
+                    <div data-theme-part="toolbar" data-theme-inset className="p-3 border-t bg-card shrink-0 flex items-center justify-between gap-2 animate-in slide-in-from-bottom-2 duration-200 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
                         <span className="text-[13px] font-medium text-foreground/60">{selectedIds.size} selected</span>
                         <div className="flex items-center gap-1.5">
                             <Button variant="outline" size="sm" onClick={() => handleExportZip(Array.from(selectedIds))} className="h-7 text-xs gap-1.5 px-2.5 border-border/40">
@@ -1970,7 +2042,7 @@ export function NotesPage() {
                     </div>
                 )}
                 {!selectionMode && (
-                    <div className="mt-auto px-3 py-2 border-t border-border/40 shrink-0 flex items-center justify-between gap-2">
+                    <div data-theme-part="toolbar" data-theme-inset className="mt-auto px-3 py-2 border-t border-border/40 shrink-0 flex items-center justify-between gap-2">
                         <input
                             ref={importInputRef}
                             type="file"
@@ -1995,7 +2067,7 @@ export function NotesPage() {
                                 </Button>
                             </Tooltip>
                             <Tooltip content="Erase all notes" side="top">
-                                <Button variant="ghost" onClick={() => setEraseAllOpen(true)} disabled={notes.length === 0} className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive">
+                                <Button variant="ghost" aria-label="Erase all notes" onClick={() => setEraseAllOpen(true)} disabled={notes.length === 0} className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive">
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                             </Tooltip>
@@ -2022,6 +2094,7 @@ export function NotesPage() {
                         />
                         <Tooltip content="Collapse sidebar" side="right">
                             <Button variant="ghost" onClick={() => setSidebarCollapsed(true)}
+                                aria-label="Collapse notes sidebar"
                                 className="hidden md:inline-flex h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                 <PanelLeftClose className="h-4 w-4" />
                             </Button>
@@ -2035,17 +2108,19 @@ export function NotesPage() {
                         <>
                             <Tooltip content="New note" side="right">
                                 <Button variant="default" onClick={handleCreate}
+                                    aria-label="New note"
                                     className="h-8 w-8 shrink-0 p-0 shadow-sm rounded-lg">
                                     <Plus className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
                             <Tooltip content={view === 'graph' ? "Close Graph" : "Graph View"} side="right">
                                 <Button variant={view === 'graph' ? 'secondary' : 'ghost'} onClick={() => setView(view === 'graph' ? 'notes' : 'graph')}
+                                    aria-label={view === 'graph' ? 'Close graph view' : 'Open graph view'}
                                     className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                     <Network className="h-4 w-4" />
                                 </Button>
                             </Tooltip>
-                            <span className="mt-1 rounded-full bg-muted px-1.5 text-[10px] font-bold leading-4 text-muted-foreground tabular-nums">
+                            <span data-theme-part="badge" className="mt-1 rounded-full bg-muted px-1.5 text-[10px] font-bold leading-4 text-muted-foreground tabular-nums">
                                 {notes.length}
                             </span>
                         </>
@@ -2053,6 +2128,7 @@ export function NotesPage() {
                     <div className="mt-auto">
                         <Tooltip content="Expand sidebar" side="right">
                             <Button variant="ghost" onClick={() => setSidebarCollapsed(false)}
+                                aria-label="Expand notes sidebar"
                                 className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground">
                                 <PanelLeftOpen className="h-4 w-4" />
                             </Button>
@@ -2062,7 +2138,7 @@ export function NotesPage() {
             )}
             </div>
 
-            <div className={cn(
+            <div data-theme-part="card" className={cn(
                 'flex flex-1 min-w-0 flex-col bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden',
                 (view === 'graph' || (showEditor && selected && view === 'notes')) ? 'flex' : 'hidden md:flex'
             )}>

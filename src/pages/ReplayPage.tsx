@@ -209,7 +209,7 @@ export function ReplayPage() {
         return (
             <div style={{ '--background': '0 0% 0%', '--foreground': '0 0% 98%', '--card': '0 0% 4%', '--card-foreground': '0 0% 98%', '--popover': '0 0% 4%', '--popover-foreground': '0 0% 98%', '--primary': '45 93% 47%', '--primary-foreground': '0 0% 0%', '--secondary': '0 0% 10%', '--secondary-foreground': '0 0% 98%', '--muted': '0 0% 10%', '--muted-foreground': '0 0% 64%', '--accent': '0 0% 10%', '--accent-foreground': '0 0% 98%', '--destructive': '0 63% 31%', '--destructive-foreground': '0 0% 98%', '--border': '0 0% 15%', '--input': '0 0% 15%', '--ring': '45 93% 47%', background: '#08080f', color: 'white', minHeight: '100vh' } as React.CSSProperties}>
                 <div className="min-h-screen mesh-gradient flex flex-col items-center justify-center p-8 text-center">
-                    <div className="p-4 bg-destructive/10 rounded-xl border border-destructive/20 mb-8">
+                    <div data-theme-part="panel" data-theme-tone="status" className="p-4 bg-destructive/10 rounded-xl border border-destructive/20 mb-8">
                         <AlertCircle className="text-destructive w-8 h-8" />
                     </div>
                     <h1 className="text-3xl font-bold text-white tracking-tighter uppercase">No History Found</h1>
@@ -217,6 +217,7 @@ export function ReplayPage() {
                         We couldn't find any watch history for your accounts. Start watching something to see your Replay!
                     </p>
                     <button
+                        data-theme-part="button"
                         onClick={() => navigate('/metrics')}
                         className="bg-[#151520] shadow-xl border border-white/10 px-8 py-4 rounded-full text-white font-bold uppercase flex items-center gap-3 hover:bg-white/10 transition-all"
                     >
@@ -241,6 +242,7 @@ export function ReplayPage() {
                 <div className="fixed top-0 inset-x-0 h-20 md:h-24 z-[100] flex items-center justify-between px-4 md:px-8 bg-gradient-to-b from-[#08080f]/95 to-transparent pointer-events-none pt-2 md:pt-0">
                     <div className="w-1/4 md:w-1/3 flex justify-start pointer-events-auto">
                         <button
+                            data-theme-part="button"
                             onClick={() => navigate('/metrics')}
                             className="bg-white/5 md:bg-[#151520] backdrop-blur-md shadow-xl border border-white/10 p-2.5 md:p-3 rounded-full md:rounded-xl text-white/40 hover:text-white transition-all flex items-center gap-3 group"
                         >
@@ -292,6 +294,8 @@ export function ReplayPage() {
                                 return (
                                     <div key={year} className="flex flex-col items-center">
                                         <button
+                                            data-theme-part="tab"
+                                            data-state={isSelectedYear ? 'active' : 'inactive'}
                                             onClick={() => handleYearChange(year)}
                                             className="w-9 h-9 flex flex-shrink-0 items-center justify-center transition-all duration-200"
                                             style={{
@@ -346,6 +350,8 @@ export function ReplayPage() {
                                                                         animate={{ opacity: 1, scale: 1 }}
                                                                         exit={{ opacity: 0, scale: 0.8 }}
                                                                         transition={{ delay: index * 0.04 }}
+                                                                        data-theme-part="tab"
+                                                                        data-state={isSelectedMonth ? 'active' : 'inactive'}
                                                                         onClick={() => handleYearChange(monthStr)}
                                                                         className="w-9 h-9 flex flex-shrink-0 items-center justify-center transition-all duration-200"
                                                                         style={{
@@ -390,6 +396,8 @@ export function ReplayPage() {
                             <div style={{ width: '1px', height: '8px', background: 'rgba(255,255,255,0.08)', margin: '4px 0' }} />
 
                             <button
+                                data-theme-part="tab"
+                                data-state={activeSelectedYear === 'all-time' ? 'active' : 'inactive'}
                                 onClick={() => handleYearChange('all-time')}
                                 className="w-9 h-9 flex flex-col flex-shrink-0 items-center justify-center gap-0 leading-[0.9] transition-all duration-200"
                                 style={{
@@ -421,6 +429,7 @@ export function ReplayPage() {
 
                         {/* Mobile Toggle Button */}
                         <button
+                            data-theme-part="button"
                             className={`md:hidden w-10 h-10 flex items-center justify-center rounded-full transition-all ${isMobileMenuOpen ? 'mt-1 bg-white/5 text-rose-400 border border-rose-400/30' : 'bg-white/10 text-white hover:bg-white/20'}`}
                             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                         >
@@ -431,6 +440,7 @@ export function ReplayPage() {
                     {/* SECTION NAVIGATION - FLOATING LEFT PILL */}
                     <div className="fixed top-1/2 left-6 -translate-y-1/2 z-50 flex flex-col gap-3 p-2 bg-white/5 border border-white/10 shadow-2xl rounded-full hidden md:flex backdrop-blur-md items-center">
                         <button
+                            data-theme-part="button"
                             onClick={() => handleScrollDirection('up')}
                             disabled={activeSection === sections[0].id}
                             className="text-white/40 hover:text-white disabled:opacity-20 disabled:hover:text-white/40 transition-colors p-1 mt-1"
@@ -443,6 +453,8 @@ export function ReplayPage() {
                         {sections.map(section => (
                             <div key={section.id} className="relative group flex items-center justify-center">
                                 <button
+                                    data-theme-part="tab"
+                                    data-state={activeSection === section.id ? 'active' : 'inactive'}
                                     onClick={() => scrollToSection(section.id)}
                                     className={`w-3 h-3 rounded-full transition-all duration-300 ${activeSection === section.id
                                         ? 'bg-white scale-125 shadow-[0_0_10px_rgba(255,255,255,0.5)]'
@@ -459,6 +471,7 @@ export function ReplayPage() {
                         <div className="w-px h-2 bg-white/10" />
 
                         <button
+                            data-theme-part="button"
                             onClick={() => handleScrollDirection('down')}
                             disabled={activeSection === sections[sections.length - 1].id}
                             className="text-white/40 hover:text-white disabled:opacity-20 disabled:hover:text-white/40 transition-colors p-1 mb-1"

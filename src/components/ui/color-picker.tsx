@@ -264,9 +264,10 @@ export const ColorPicker = memo(function ColorPicker({ value, onChange, classNam
         <div className={className ?? 'space-y-3'}>
             <SVArea hue={h} sat={s} val={v} onChange={handleSVChange} onInteractionStart={beginInteraction} onInteractionEnd={endInteraction} />
             <HueBar hue={h} onChange={handleHueChange} onInteractionStart={beginInteraction} onInteractionEnd={endInteraction} />
-            <div className="flex min-w-0 items-center gap-2.5 px-3 py-2 rounded-xl border border-border/20 bg-muted/10 group hover:border-primary/30 focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/30 transition-colors">
+            <div data-theme-part="field" className="flex min-w-0 items-center gap-2.5 px-3 py-2 rounded-xl border border-border/20 bg-muted/10 group hover:border-primary/30 focus-within:border-primary/30 focus-within:ring-1 focus-within:ring-primary/30 transition-colors">
                 <div className="w-5 h-5 rounded-lg shadow-sm shrink-0 ring-1 ring-black/5" style={{ background: displayHex }} />
                 <input
+                    data-theme-part="inline-input"
                     value={draft}
                     onChange={e => setDraft(e.target.value)}
                     onBlur={() => applyHex(draft)}

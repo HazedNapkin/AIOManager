@@ -18,14 +18,14 @@ export function EmptyState({ icon, title, description, action, secondaryAction, 
   }
 
   return (
-    <div className={cn(
+    <div data-theme-part="panel" className={cn(
       'text-center py-12 rounded-xl border',
       variants[variant],
       className
     )}>
       {icon && (
         <div className="flex justify-center mb-4">
-          <div className="w-12 h-12 rounded-full bg-muted/40 flex items-center justify-center text-muted-foreground">
+          <div data-theme-part="badge" className="w-12 h-12 rounded-full bg-muted/40 flex items-center justify-center text-muted-foreground">
             {icon}
           </div>
         </div>

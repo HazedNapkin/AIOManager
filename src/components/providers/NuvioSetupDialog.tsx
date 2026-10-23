@@ -252,9 +252,11 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                 <div className="min-h-[200px]">
                     {step === 'login' && (
                         <div className="space-y-4 mt-2">
-                            <div className="grid grid-cols-2 gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40">
+                            <div data-theme-part="tabs-list" className="grid grid-cols-2 gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40">
                                 <button
                                     type="button"
+                                    data-theme-part="tab"
+                                    data-state={mode === 'login' ? 'active' : 'inactive'}
                                     onClick={() => { setMode('login'); setError(null) }}
                                     className={cn(
                                         'relative h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring z-10',
@@ -264,6 +266,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                     {mode === 'login' && (
                                         <motion.div
                                             layoutId="nuvio-mode-active"
+                                            data-theme-part="tab-indicator"
                                             className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
                                             transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                                         />
@@ -272,6 +275,8 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                 </button>
                                 <button
                                     type="button"
+                                    data-theme-part="tab"
+                                    data-state={mode === 'signup' ? 'active' : 'inactive'}
                                     onClick={() => { setMode('signup'); setError(null) }}
                                     className={cn(
                                         'relative h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring z-10',
@@ -281,6 +286,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                     {mode === 'signup' && (
                                         <motion.div
                                             layoutId="nuvio-mode-active"
+                                            data-theme-part="tab-indicator"
                                             className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
                                             transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                                         />
@@ -340,6 +346,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                             <div className="pt-1">
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={() => setShowAdvanced(v => !v)}
                                     className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
                                 >
@@ -348,7 +355,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                             </div>
 
                             {showAdvanced && (
-                                <div className="space-y-3 rounded-xl border border-border/40 bg-muted/20 p-3">
+                                <div data-theme-part="panel" className="space-y-3 rounded-xl border border-border/40 bg-muted/20 p-3">
                                     <p className="text-xs text-muted-foreground">
                                         Point this connection at a self-hosted or alternate Nuvio backend. Leave blank to use the default.
                                     </p>
@@ -378,7 +385,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                         )}
                                     </div>
                                     {passwordAuthUnavailable && (
-                                        <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
+                                        <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
                                             <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                                             <span>This backend reports password sign-in is unavailable</span>
                                         </div>
@@ -387,7 +394,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                             )}
 
                             {error && (
-                                <div className="rounded-xl bg-destructive/5 border border-destructive/20 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+                                <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/5 border border-destructive/20 px-3 py-2 text-xs text-destructive flex items-center gap-2">
                                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                                     {error}
                                 </div>
@@ -402,6 +409,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                 {profiles.map(profile => (
                                     <button
                                         key={profile.id}
+                                        data-theme-part="card"
                                         className={cn(
                                             'flex items-center gap-3 rounded-2xl border p-4 text-left transition-colors',
                                             selectedProfileId === profile.id
@@ -435,7 +443,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                         <div className="space-y-4 mt-2">
                             <p className="text-sm text-muted-foreground">Review your Nuvio connection before adding.</p>
 
-                            <div className="rounded-2xl border border-border/40 bg-card p-4 space-y-3">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-4 space-y-3">
                                 <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                                     <span className="text-muted-foreground">Account</span>
                                     <span className="font-medium truncate">{email}</span>
@@ -458,7 +466,7 @@ export function NuvioSetupDialog({ open, onOpenChange, onComplete, initialBacken
                                 )}
                             </div>
 
-                            <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
+                            <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-xs text-warning flex items-start gap-2">
                                 <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                                 <span>Your Nuvio password is never stored. Only the session token is stored encrypted on your sync server.</span>
                             </div>

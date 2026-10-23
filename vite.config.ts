@@ -7,6 +7,7 @@ import path from 'path'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import { visualizer } from 'rollup-plugin-visualizer'
+import type { OutputChunk } from 'vite'
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '')
@@ -67,11 +68,52 @@ export default defineConfig(({ mode }) => {
             mdx(MdxConfig),
             react(),
             tailwindcss(),
+            {
+                // Preload app code without evaluating it before storage migration finishes.
+                name: 'boot-modulepreload',
+                apply: 'build',
+                generateBundle: {
+                    order: 'post',
+                    handler(_options, bundle) {
+                        const htmlAsset = bundle['index.html']
+                        if (!htmlAsset || htmlAsset.type !== 'asset' || typeof htmlAsset.source !== 'string') return
+                        const appEntry = Object.values(bundle).find(
+                            (c): c is OutputChunk => c.type === 'chunk' && c.name === 'app-entry'
+                        )
+                        if (!appEntry) return
+                        const closure: string[] = []
+                        const walk = (chunk: OutputChunk) => {
+                            for (const dep of chunk.imports) {
+                                const depChunk = bundle[dep]
+                                if (depChunk?.type === 'chunk' && !closure.includes(depChunk.fileName)) {
+                                    closure.push(depChunk.fileName)
+                                    walk(depChunk)
+                                }
+                            }
+                        }
+                        walk(appEntry)
+                        const tags = [...new Set(closure)].map(
+                            (f) => `<link rel="modulepreload" crossorigin href="/${f}">`
+                        )
+                        tags.push(`<link rel="modulepreload" crossorigin href="/${appEntry.fileName}">`)
+                        // Match Vite's crossorigin mode so preloaded CSS reuses the same cache entry.
+                        for (const css of appEntry.viteMetadata?.importedCss ?? []) {
+                            const tag = `<link rel="preload" href="/${css}" as="style" crossorigin>`
+                            if (!tags.includes(tag)) tags.push(tag)
+                        }
+                        htmlAsset.source = htmlAsset.source.replace('</head>', `${tags.join('\n')}\n</head>`)
+                    },
+                },
+            },
         ],
         resolve: {
             alias: {
                 '@': path.resolve(__dirname, './src'),
             },
+        },
+        // Local mockups and validation pages are not application entry points.
+        optimizeDeps: {
+            entries: ['index.html'],
         },
         esbuild: {
             drop: ['console'],

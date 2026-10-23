@@ -26,6 +26,7 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
         role="switch"
         aria-checked={checked}
         data-state={checked ? 'checked' : 'unchecked'}
+        data-theme-part="switch"
         disabled={disabled}
         className={cn(
           'peer inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
@@ -40,6 +41,7 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
         {...props}
       >
         <motion.span
+          data-theme-part="switch-thumb"
           className="pointer-events-none block h-5 rounded-full bg-background shadow-lg ring-0"
           animate={{
             x: checked ? 20 : 0,

@@ -37,7 +37,7 @@ export function VelocityChart({ contentVelocity, loading }: VelocityChartProps) 
     return (
         <div ref={ref} className="space-y-2">
             {data.map((entry, index) => (
-                <div key={entry.name} className="rounded-2xl border border-border/35 bg-muted/15 p-3">
+                <div key={entry.name} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-3">
                     <div className="mb-2 flex items-center justify-between gap-3">
                         <div className="min-w-0">
                             <div className="truncate text-sm font-semibold">{entry.name}</div>

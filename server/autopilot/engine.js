@@ -1,4 +1,5 @@
 import db from '../db.js'
+import { resolveStremioConnectionIdentity } from '../lib/stremio-credentials.js'
 import { normalizeAddonUrl } from '../utils/addon-url.js'
 import { encrypt, decrypt, generateRandomKey } from '../crypto.js'
 import { PRIMARY_KEY, FALLBACK_KEYS } from '../keys.js'
@@ -9,7 +10,8 @@ import { safeFetchWithRedirects } from '../utils/safe-fetch.js'
 import { deriveAddonName, maskContext, truncateUrl } from '../utils/log-helpers.js'
 import { createStremioDriver } from '../providers/stremio-driver.js'
 import { isUnifiedEnforcement } from '../config.js'
-import { applyOneActiveFlags } from './one-active.js'
+import { applyOneActiveFlags, applyAccountChainFlags } from './one-active.js'
+import { isExcludedFromDestinations } from '../utils/addon-destinations.js'
 import { getGlobalWebhook } from './global-webhook.js'
 import { createHealthChecker, HEALTH_CACHE_TTL_MS } from './health-checks.js'
 
@@ -81,6 +83,76 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             ruleFetchCacheBytes -= o.bytes
         }
     }
+
+    // Steady-state rules re-decrypt the same version-immutable row fields on every
+    // recheck (auth_key, priority_chain, active_url, addon_list, custom_check_urls,
+    // webhook_url; the addon_list leg dominates). The row cache above already trusts
+    // (id, updated_at) as the version of exactly these fields — every writer bumps
+    // updated_at — so the decrypted STRINGS are memoized under that version key and
+    // re-validated against the exact ciphertext before reuse: a row edited without
+    // bumping updated_at still misses. Only immutable strings are stored; parse and
+    // every downstream derivation still run per cycle, so no shared mutable object
+    // is introduced. Stabilization is deliberately NOT memoized: heartbeats update
+    // it in autopilot_rule_stats without touching autopilot_rules.updated_at.
+    // TTL and byte bounds are memory hygiene only — freshness is the version key
+    // plus ciphertext identity, never the TTL.
+    const RULE_DECRYPT_CACHE_MAX_ENTRIES = 2048
+    const RULE_DECRYPT_CACHE_MAX_BYTES = 64 * 1024 * 1024
+    const ruleDecryptCache = new Map()
+    let ruleDecryptCacheBytes = 0
+    const ruleDecryptCacheStats = { hits: 0, misses: 0, bytesSaved: 0, evictions: 0, windowStart: Date.now() }
+
+    const evictOldestRuleDecryptEntry = () => {
+        const oldest = ruleDecryptCache.keys().next().value
+        if (oldest === undefined) return
+        ruleDecryptCacheBytes -= ruleDecryptCache.get(oldest).bytes
+        ruleDecryptCache.delete(oldest)
+        ruleDecryptCacheStats.evictions++
+    }
+
+    function decryptRuleField(row, field) {
+        const ciphertext = row[field]
+        // Legacy plaintext (no IV:cipher:tag shape) never enters the cache.
+        if (typeof ciphertext !== 'string' || !ciphertext.includes(':') || ciphertext.startsWith('http')) return decrypt(ciphertext, FALLBACK_KEYS)
+        const key = `${row.id}\u0000${row.updated_at ?? 'null'}\u0000${field}`
+        const hit = ruleDecryptCache.get(key)
+        if (hit) {
+            if (hit.cipher === ciphertext && Date.now() - hit.at <= RULE_CACHE_TTL_MS) {
+                ruleDecryptCache.delete(key)
+                ruleDecryptCache.set(key, hit)
+                ruleDecryptCacheStats.hits++
+                ruleDecryptCacheStats.bytesSaved += hit.plainBytes
+                return hit.plaintext
+            }
+            // Expired (hygiene) or the ciphertext drifted under the same version
+            // key: drop the entry and re-decrypt from the row's current value.
+            ruleDecryptCache.delete(key)
+            ruleDecryptCacheBytes -= hit.bytes
+        }
+        const plaintext = decrypt(ciphertext, FALLBACK_KEYS)
+        ruleDecryptCacheStats.misses++
+        // Failed decrypts (null) are never memoized: serving a cached failure
+        // until the row or the process changes could hide a recovery path.
+        // Corrupt rows simply re-attempt (and re-fail) every recheck, exactly
+        // like the uncached behavior; per-cycle failure recording at the call
+        // sites keys off this return value and is unaffected.
+        if (plaintext === null || plaintext === undefined) return plaintext
+        // Bound the encoded payload bytes. JavaScript strings and Map metadata
+        // also have heap overhead, separately limited by the entry count.
+        const plainBytes = Buffer.byteLength(plaintext, 'utf8')
+        const bytes = Buffer.byteLength(ciphertext, 'utf8') + plainBytes
+        // A single entry larger than the whole budget is never stored (storing
+        // it would either breach the cap or thrash insert/evict every call).
+        if (bytes > RULE_DECRYPT_CACHE_MAX_BYTES) return plaintext
+        ruleDecryptCache.set(key, { cipher: ciphertext, plaintext, plainBytes, bytes, at: Date.now() })
+        ruleDecryptCacheBytes += bytes
+        // Strict cumulative bound: evict oldest until within budget (size > 0
+        // so the loop can never strand a lone entry above the cap).
+        while (ruleDecryptCacheBytes > RULE_DECRYPT_CACHE_MAX_BYTES && ruleDecryptCache.size > 0) evictOldestRuleDecryptEntry()
+        while (ruleDecryptCache.size > RULE_DECRYPT_CACHE_MAX_ENTRIES) evictOldestRuleDecryptEntry()
+        return plaintext
+    }
+
     const pruneRuleRuntimeState = () => {
         if (ruleRuntimeState.size <= MAX_RULE_RUNTIME_ENTRIES) return
         const cutoff = Date.now() - RULE_RUNTIME_TTL_MS
@@ -472,7 +544,53 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         return { canonical: auditedAddons, remoteAddons, normalizedActive }
     }
 
-    const writeStremioCollection = async (authKey, canonical, { remoteAddons = [], normalizedActive, accountId }) => {
+    // Read current owner-scoped policy for each write; caching could re-install
+    // a newly excluded addon during an otherwise valid Autopilot decision.
+    const loadCanonicalDestinations = async (accountId, syncUser) => {
+        const byUrl = new Map()
+        if (!syncUser) {
+            const owned = await db.get('SELECT sync_user FROM account_canonical_addons WHERE account_id = $1', [accountId])
+            if (owned?.sync_user) throw new Error('A rule owner is required to verify destination rules')
+        }
+        const row = await db.get('SELECT addon_list FROM account_canonical_addons WHERE account_id = $1 AND sync_user = $2', [accountId, syncUser || ''])
+        if (!row?.addon_list) return byUrl
+        const decrypted = decrypt(row.addon_list, FALLBACK_KEYS)
+        if (!decrypted) throw new Error('Could not read the stored destination rules')
+        const addons = JSON.parse(decrypted)
+        if (!Array.isArray(addons)) throw new Error('Invalid stored addon collection')
+        for (const addon of addons) {
+            const url = normalizeAddonUrl(addon?.transportUrl || '').toLowerCase()
+            if (url && addon?.destinations) byUrl.set(url, addon.destinations)
+        }
+        return byUrl
+    }
+
+    const withCurrentDestinations = async (addons, accountId, syncUser) => {
+        const policy = await loadCanonicalDestinations(accountId, syncUser)
+        return (addons || []).map(addon => {
+            const current = policy.get(normalizeAddonUrl(addon?.transportUrl || '').toLowerCase())
+            if (current) return { ...addon, destinations: current }
+            if (!addon?.destinations) return addon
+            const { destinations, ...rest } = addon
+            return rest
+        })
+    }
+
+    const resolveStremioConnectionId = async (accountId, syncUser, authKey, connectionId) => {
+        const identity = await resolveStremioConnectionIdentity(accountId, syncUser, authKey, connectionId)
+        return identity.ambiguous || identity.legacy ? undefined : identity.connectionId
+    }
+
+    const stremioExcludedUrlsFromPolicy = (byUrl, connectionId) => {
+        const out = new Set()
+        for (const [url, destinations] of (byUrl || new Map())) {
+            if (!connectionId && destinations?.excludedConnections?.length) throw new Error('Could not identify the Stremio login for its destination rules')
+            if (isExcludedFromDestinations(destinations, { platform: 'stremio', connectionId })) out.add(url)
+        }
+        return out
+    }
+
+    const writeStremioCollection = async (authKey, canonical, { remoteAddons = [], normalizedActive, accountId, syncUser, connectionId }) => {
         const refreshedMerged = await mapConcurrent(canonical || [], 5, async addon => {
             const normUrl = normalizeAddonUrl(addon.transportUrl).toLowerCase()
             if (normUrl === normalizedActive && addon.flags?.enabled !== false) {
@@ -485,10 +603,27 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             return addon
         })
 
-        const finalAddons = prepareAddonsForStremio(refreshedMerged)
+        // Filter after flag overlays and merges, for this exact login as well
+        // as its platform. A sibling login's exclusion never changes this one.
+        const policyByUrl = await loadCanonicalDestinations(accountId, syncUser)
+        const targetId = await resolveStremioConnectionId(accountId, syncUser, authKey, connectionId)
+        const stremioExcluded = stremioExcludedUrlsFromPolicy(policyByUrl, targetId)
+        const policyFiltered = stremioExcluded.size > 0
+            ? refreshedMerged.filter(a => !stremioExcluded.has(normalizeAddonUrl(a.transportUrl || '').toLowerCase()))
+            : refreshedMerged
+
+        const finalAddons = prepareAddonsForStremio(policyFiltered)
 
         if (finalAddons.length === 0 && remoteAddons.length > 0) {
-            throw new Error('Sync produced an empty list, aborting to prevent wiping Stremio collection.')
+            // Policy-aware empty guard: an empty result is allowed only when every
+            // live remote URL is a deliberate stremio exclusion (all-removed-
+            // explained). Anything unexplained is still a wipe attempt.
+            const remoteUrls = (remoteAddons || []).map(a => normalizeAddonUrl(a.transportUrl || '').toLowerCase()).filter(Boolean)
+            const allExplained = remoteUrls.length > 0 && remoteUrls.every(u => stremioExcluded.has(u))
+            if (!allExplained) {
+                throw new Error('Sync produced an empty list, aborting to prevent wiping Stremio collection.')
+            }
+            fastify.log.info({ category: 'Autopilot' }, `[${maskContext(accountId)}] Empty Stremio write authorized: every live addon is deliberately excluded by destination policy.`)
         }
 
         if (areCollectionsDifferent(finalAddons, remoteAddons)) {
@@ -497,7 +632,71 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         return finalAddons
     }
 
-    const enforceConnectionOnly = async (rule, reconciledAddons, chain = [], activeUrl = null) => {
+    // Sibling chains of the same account: chain membership is stable (only the active member
+    // moves), so reading it from the rule rows is safe; the sibling's *target* is read from
+    // the current cycle first (a rule persists active_url only after the whole account batch,
+    // so the DB value is one cycle stale exactly when two chains fail over together) and from
+    // the persisted row second.
+    // Lifecycle: an entry is an UNCOMMITTED decision, nothing more. siblingChainPlans honors
+    // it only while the rule row still looks exactly as it did when the decision was recorded
+    // (same persisted active_url AND same updated_at). The engine's own batch commit bumps
+    // updated_at — and so does every manual writer (routes upsert) — so both retire the entry
+    // and the fresh row wins. Cycle boundaries also clear entries, including when a batch
+    // commit fails and therefore leaves the row version unchanged.
+    const cycleTargets = new Map()
+
+    const parseChainValue = (raw, row = null) => {
+        const decrypted = row ? decryptRuleField(row, 'priority_chain') : decrypt(raw, FALLBACK_KEYS)
+        let parsed = []
+        try {
+            if (Array.isArray(decrypted)) parsed = decrypted
+            else if (typeof decrypted === 'string' && decrypted.startsWith('[')) parsed = JSON.parse(decrypted)
+            else if (typeof raw === 'string' && raw.startsWith('[')) parsed = JSON.parse(raw)
+        } catch { }
+        return Array.isArray(parsed) ? parsed : []
+    }
+
+    // One plan per sibling rule: the chain members another rule owns, plus that chain's target.
+    const siblingChainPlans = async (accountId, ownRuleId, ownChain) => {
+        const own = new Set((ownChain || []).map(u => normalizeAddonUrl(u).toLowerCase()))
+        let rows = []
+        try {
+            rows = await db.query('SELECT id, priority_chain, active_url, updated_at FROM autopilot_rules WHERE account_id = $1 AND is_active = 1 AND id <> $2', [accountId, ownRuleId])
+        } catch (err) {
+            fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Sibling chain read failed: ${err.message}`)
+            return []
+        }
+        const plans = []
+        for (const row of (rows || [])) {
+            const urls = []
+            for (const url of parseChainValue(row.priority_chain, row)) {
+                const norm = normalizeAddonUrl(url).toLowerCase()
+                if (!norm || own.has(norm) || urls.includes(norm)) continue
+                urls.push(norm)
+            }
+            if (urls.length === 0) continue
+            const persisted = normalizeAddonUrl(decryptRuleField(row, 'active_url') || row.active_url || '').toLowerCase()
+            // An uncommitted in-cycle decision outranks the row — but only while the row is
+            // still untouched since that decision was recorded (same persisted value, same
+            // updated_at). Our own batch commit and any manual writer both bump updated_at,
+            // which retires the entry; otherwise a decision recorded in an old cycle would
+            // keep overriding a manual active_url change that landed between cycles.
+            const decision = cycleTargets.get(row.id)
+            const decided = decision
+                && decision.persisted === persisted
+                && (decision.updatedAt == null || decision.updatedAt === row.updated_at)
+                && urls.includes(decision.target)
+                ? decision.target
+                : null
+            const target = decided ?? (urls.includes(persisted) ? persisted : null)
+            // No derivable target: leave that chain's flags untouched rather than disabling it.
+            if (!target) continue
+            plans.push({ ruleId: row.id, urls, target })
+        }
+        return plans
+    }
+
+    const enforceConnectionOnly = async (rule, reconciledAddons, chain = [], activeUrl = null, siblingPlans = null, mirrorUrls = null) => {
         if (!reconciler?.enforceAccount) return { synced: [] }
         const connections = await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)
         const targets = (connections || []).filter(c =>
@@ -511,7 +710,17 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const guardOpts = (Array.isArray(chain) && chain.length > 0)
             ? { requiredUrls: chain, requiredActiveUrl: activeUrl }
             : {}
-        const result = await reconciler.enforceAccount(rule.account_id, targets, reconciledAddons, guardOpts)
+        const plans = siblingPlans || (await siblingChainPlans(rule.account_id, rule.id, chain))
+        const currentAddons = await withCurrentDestinations(reconciledAddons, rule.account_id, rule.owner_sync_user)
+        const result = await reconciler.enforceAccount(rule.account_id, targets, currentAddons, {
+            ...guardOpts,
+            // Only the chains this rule cannot derive are mirrored from the platform: a decided
+            // target outranks a platform list that has not caught up with it yet, and mirroring a
+            // decided chain would make the guard refuse a perfectly valid write.
+            foreignChainUrls: mirrorUrls ?? plans.flatMap(p => p.urls),
+            // Guard scope: every chain this account manages, not just this rule's.
+            managedChains: [{ urls: chain, target: activeUrl }, ...plans],
+        })
         if (result.synced.length > 0) {
             fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Connection-only enforcement pushed to ${result.synced.join(', ')}.`)
         }
@@ -523,7 +732,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         const authKey = descriptor.authKey
         if (!authKey) {
             const rule = { account_id: accountId, id: ruleId, owner_sync_user: descriptor.ownerSyncUser, connection_id: descriptor.connectionId, platform: descriptor.platform }
-            const result = await enforceConnectionOnly(rule, storedAddonList, chain, activeUrl)
+            const result = await enforceConnectionOnly(rule, storedAddonList, chain, activeUrl, await siblingChainPlans(accountId, ruleId, chain))
             if (result.chainGuardSkipped) {
                 // Broken chain state: skip so the engine can reconstitute on the next pass.
                 fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(accountId)}] Chain guard skipped enforcement for rule ${ruleId}: stored addon list does not carry the active chain tier.`)
@@ -533,7 +742,9 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
         try {
             const built = await buildReconciledList(authKey, chain, activeUrl, accountId, ruleId, storedAddonList, forceReinstall)
-            await writeStremioCollection(authKey, built.canonical, { remoteAddons: built.remoteAddons, normalizedActive: built.normalizedActive, accountId })
+            const owner = descriptor.ownerSyncUser ?? (await db.get('SELECT owner_sync_user FROM autopilot_rules WHERE id = $1 AND account_id = $2', [ruleId, accountId]))?.owner_sync_user
+            built.canonical = await withCurrentDestinations(built.canonical, accountId, owner)
+            await writeStremioCollection(authKey, built.canonical, { remoteAddons: built.remoteAddons, normalizedActive: built.normalizedActive, accountId, syncUser: owner, connectionId: descriptor.connectionId })
             return built.canonical
         } catch (err) {
             if (err.status === 401) {
@@ -674,17 +885,20 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             // Skip automatic switching for manual-only rules
             return
         }
-        const decryptedAuthKey = decrypt(rule.auth_key, FALLBACK_KEYS)
-        const decryptedChainStr = decrypt(rule.priority_chain, FALLBACK_KEYS)
+        const decryptedAuthKey = decryptRuleField(rule, 'auth_key')
+        const decryptedChainStr = decryptRuleField(rule, 'priority_chain')
         const hasConnectionTarget = !!rule.connection_id && !!rule.platform && rule.platform !== 'stremio'
         if (!decryptedChainStr || (!decryptedAuthKey && !hasConnectionTarget)) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Failed to decrypt rule data. Skipping.`)
             await recordRuleDecryptFailure(rule)
             return
         }
-        const decryptedActiveUrl = decrypt(rule.active_url, FALLBACK_KEYS) || rule.active_url
+        const decryptedActiveUrl = decryptRuleField(rule, 'active_url') || rule.active_url
+        // Stabilization stays UNMEMOIZED: heartbeat writes update it in
+        // autopilot_rule_stats without bumping autopilot_rules.updated_at, so a
+        // version-keyed entry could serve a stale health picture.
         const decryptedStabilizationStr = rule.stabilization ? decrypt(rule.stabilization, FALLBACK_KEYS) : null
-        const decryptedAddonListStr = rule.addon_list ? decrypt(rule.addon_list, FALLBACK_KEYS) : null
+        const decryptedAddonListStr = rule.addon_list ? decryptRuleField(rule, 'addon_list') : null
         let shouldUpdateNotificationTime = false
 
         let chain = []
@@ -701,6 +915,10 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
 
         chain = (await Promise.all(chain.map(async url => (await isSafeUrlResolved(url)) ? url : null))).filter(Boolean)
+
+        // Other rules of this account own the other chains; never write their state from
+        // this rule's snapshot — it is stale from the moment they swap.
+        const siblingPlans = await siblingChainPlans(rule.account_id, rule.id, chain)
 
         if (!Array.isArray(chain) || chain.length === 0) {
             fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] No valid priority chain. Skipping.`)
@@ -728,7 +946,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
             const raw = rule.custom_check_urls
             let parsed = null
             if (typeof raw === 'string' && raw.length > 0) {
-                const decrypted = decrypt(raw, FALLBACK_KEYS)
+                const decrypted = decryptRuleField(rule, 'custom_check_urls')
                 if (decrypted && decrypted.startsWith('[')) {
                     parsed = JSON.parse(decrypted)
                 } else if (raw.startsWith('[')) {
@@ -840,11 +1058,28 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
         const decryptedNormalizedActive = currentActiveNorm
         let normalizedTarget = normalizeAddonUrl(targetActiveUrl).toLowerCase()
+        // Publish this cycle's decision so sibling rules derive this chain from it, not from
+        // the persisted active_url (written only after the whole account batch). The entry
+        // snapshots the row as seen here (persisted value + updated_at); siblingChainPlans
+        // retires it once any writer — our own batch commit or a manual edit — touches the row.
+        cycleTargets.set(rule.id, {
+            target: normalizedTarget,
+            persisted: normalizeAddonUrl(decryptedActiveUrl || '').toLowerCase(),
+            updatedAt: rule.updated_at ?? null,
+        })
         const normalizedChain = normalizedChainUrls
         const normalizedChainSet = new Set(normalizedChain)
 
-        // Every writer must derive identical one-active flags via the shared helper.
-        const { list: updatedAddonList, violationDetected } = applyOneActiveFlags(addonList, normalizedChain, normalizedTarget)
+        // Every writer must derive identical one-active flags via the shared helper — for every
+        // chain this account manages, not only this rule's (applyAccountChainFlags), otherwise
+        // the writer publishes its stale copy of the sibling chains. Chains this list cannot
+        // express are handed to the write-time mirror instead, so the derivation (this rule's
+        // decided targets) always outranks the platform's not-yet-updated member set.
+        const ownChain = applyOneActiveFlags(addonList, normalizedChain, normalizedTarget)
+        const violationDetected = ownChain.violationDetected
+        const folded = siblingPlans.length > 0 ? applyAccountChainFlags(ownChain.list, siblingPlans) : { list: ownChain.list, skipped: [] }
+        const updatedAddonList = folded.list
+        const mirrorChainUrls = folded.skipped.flatMap(p => p.urls)
 
         let hasChanged = normalizedTarget !== decryptedNormalizedActive
 
@@ -874,6 +1109,10 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     const auditReference = canonicalTarget ?? currentActiveNorm
 
                     const liveAddons = await stremioDriver.readAddons(decryptedAuthKey)
+                    // R4: members deliberately excluded from stremio by destination
+                    // policy are intentionally absent/disabled there — never drift.
+                    const auditConnectionId = await resolveStremioConnectionId(rule.account_id, rule.owner_sync_user, decryptedAuthKey, rule.connection_id)
+                    const auditStremioExcluded = stremioExcludedUrlsFromPolicy(await loadCanonicalDestinations(rule.account_id, rule.owner_sync_user), auditConnectionId)
                     const liveIdCounts = new Map()
                     liveAddons.forEach(a => {
                         if (a.manifest?.id) liveIdCounts.set(a.manifest.id, (liveIdCounts.get(a.manifest.id) || 0) + 1)
@@ -886,10 +1125,12 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     })
                     deepAuditDrift = liveAddons.some(a => {
                         const normUrl = normalizeAddonUrl(a.transportUrl).toLowerCase()
+                        if (auditStremioExcluded.has(normUrl)) return false
                         const effectiveUrl = normalizedChainSet.has(normUrl)
                             ? normUrl
                             : (a.manifest?.id && liveChainIdMap.has(a.manifest.id) ? liveChainIdMap.get(a.manifest.id) : null)
                         if (!effectiveUrl) return false
+                        if (auditStremioExcluded.has(effectiveUrl)) return false
                         return (a.flags?.enabled !== false) !== (effectiveUrl === auditReference)
                     })
                     if (deepAuditDrift) {
@@ -914,14 +1155,28 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (auditTargets.length > 0) {
                         const auditCanonical = updatedAddonList.filter(a => a?.flags?.enabled !== false)
                         const audits = await reconciler.auditConnections(rule.account_id, auditTargets, auditCanonical)
+                        // R4: per-connection destination policy — a member this login
+                        // deliberately excludes is intentionally absent there, and an
+                        // excluded ACTIVE tier means the correct steady state is "no
+                        // enabled chain member on this connection", never a forced backup.
+                        const auditPolicyByUrl = await loadCanonicalDestinations(rule.account_id, rule.owner_sync_user)
                         for (const audit of audits) {
                             if (!Array.isArray(audit.addons)) continue
+                            const excludedForConn = new Set()
+                            for (const [url, destinations] of auditPolicyByUrl) {
+                                if (isExcludedFromDestinations(destinations, { platform: audit.platform, connectionId: audit.connectionId || audit.id })) excludedForConn.add(url)
+                            }
                             const enabledChain = new Set()
                             for (const live of audit.addons) {
                                 const norm = normalizeAddonUrl(live.transportUrl || live.url || '').toLowerCase()
+                                if (excludedForConn.has(norm)) continue
                                 if (normalizedChainSet.has(norm) && (live.flags?.enabled ?? live.enabled) !== false) enabledChain.add(norm)
                             }
-                            if (!(enabledChain.size === 1 && enabledChain.has(normalizedTarget))) {
+                            const targetExcludedHere = excludedForConn.has(normalizedTarget)
+                            const steady = targetExcludedHere
+                                ? enabledChain.size === 0
+                                : (enabledChain.size === 1 && enabledChain.has(normalizedTarget))
+                            if (!steady) {
                                 deepAuditDrift = true
                                 fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Deep audit (connection) found live collection drift from the one-active chain state on ${audit.platform}. Forcing enforcement.`)
                                 break
@@ -944,20 +1199,21 @@ export function createAutopilotEngine(fastify, reconciler = null) {
 
             try {
                 if (!decryptedAuthKey) {
-                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList, chain, targetActiveUrl)
+                    const { synced } = await enforceConnectionOnly(rule, updatedAddonList, chain, targetActiveUrl, siblingPlans, mirrorChainUrls)
                     if (synced.length === 0) throw new Error('Connection enforcement failed')
                     reconciledList = updatedAddonList
                     syncSucceeded = true
                     fastify.log.info({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Synced ${truncateUrl(normalizedTarget)} to ${synced.join(', ')}.`)
                 } else if (isUnifiedEnforcement() && reconciler?.enforceAccount) {
                     const built = await buildReconciledList(decryptedAuthKey, chain, targetActiveUrl, rule.account_id, rule.id, updatedAddonList, hasChanged)
+                    built.canonical = await withCurrentDestinations(built.canonical, rule.account_id, rule.owner_sync_user)
                     reconciledList = built.canonical
 
                     const stremioConn = { id: `${rule.account_id}:stremio`, platform: 'stremio', accountId: rule.account_id, enabled: true, status: 'active', credentials: { authKey: decryptedAuthKey }, capabilities: ['addons'], consecutiveFailures: 0 }
                     const connectionTargets = hasChanged ? (await reconciler.resolveConnections(rule.account_id, rule.owner_sync_user)).filter(c => c.platform !== 'stremio') : []
                     const stremioWriter = async (conn) => {
                         try {
-                            await writeStremioCollection(conn.credentials.authKey, built.canonical, { remoteAddons: built.remoteAddons, normalizedActive: built.normalizedActive, accountId: rule.account_id })
+                            await writeStremioCollection(conn.credentials.authKey, built.canonical, { remoteAddons: built.remoteAddons, normalizedActive: built.normalizedActive, accountId: rule.account_id, syncUser: rule.owner_sync_user, connectionId: conn.id })
                         } catch (err) {
                             if (err.status === 401) {
                                 fastify.log.error({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Auth Key Expired (401). Disabling rule.`)
@@ -1017,7 +1273,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                     if (isRecovery || cooldownPassed) {
                         // Resolution order: decrypted per-rule webhook -> owner's global
                         // webhook (the UI's "Use global webhook" default) -> none.
-                        let webhookUrl = rule.webhook_url ? decrypt(rule.webhook_url, FALLBACK_KEYS) : null
+                        let webhookUrl = rule.webhook_url ? decryptRuleField(rule, 'webhook_url') : null
                         let webhookSource = 'rule'
                         if (rule.webhook_url && !webhookUrl) {
                             fastify.log.warn({ category: 'Autopilot' }, `[${maskContext(rule.account_id)}] Per-rule webhook blob present but undecryptable; falling back to the global webhook.`)
@@ -1100,6 +1356,7 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         }
 
         serverState.isWorkerRunning = true
+        cycleTargets.clear()
         serverState.lastWorkerRun = Date.now()
 
         fastify.log.debug({ category: 'Autopilot' }, `Autonomous Engine: Starting budgeted scaling-aware scan.`)
@@ -1335,7 +1592,22 @@ export function createAutopilotEngine(fastify, reconciler = null) {
                 ruleCacheStats.bytesSaved = 0
                 ruleCacheStats.windowStart = Date.now()
             }
+
+            if (Date.now() - ruleDecryptCacheStats.windowStart >= 5 * 60 * 1000) {
+                const totalDecrypt = ruleDecryptCacheStats.hits + ruleDecryptCacheStats.misses
+                if (totalDecrypt > 0) {
+                    const hitPct = Math.round((ruleDecryptCacheStats.hits / totalDecrypt) * 100)
+                    fastify.log.info({ category: 'Autopilot' }, `Rule decrypt cache: ${ruleDecryptCacheStats.hits} hits / ${ruleDecryptCacheStats.misses} misses (${hitPct}% hit), ~${(ruleDecryptCacheStats.bytesSaved / 1048576).toFixed(1)}MB of repeated AES-GCM decrypts avoided on steady rules`)
+                }
+                ruleDecryptCacheStats.hits = 0
+                ruleDecryptCacheStats.misses = 0
+                ruleDecryptCacheStats.bytesSaved = 0
+                ruleDecryptCacheStats.evictions = 0
+                ruleDecryptCacheStats.windowStart = Date.now()
+            }
+
         } finally {
+            cycleTargets.clear()
             serverState.isWorkerRunning = false
         }
     }
@@ -1374,6 +1646,11 @@ export function createAutopilotEngine(fastify, reconciler = null) {
         clearAccountRuleRuntimeState,
         runAutopilot,
         startAutopilotWorker,
-        stopAutopilotWorker
+        stopAutopilotWorker,
+        getRuleDecryptCacheStats: () => ({
+            ...ruleDecryptCacheStats,
+            entries: ruleDecryptCache.size,
+            bytes: ruleDecryptCacheBytes,
+        }),
     }
 }

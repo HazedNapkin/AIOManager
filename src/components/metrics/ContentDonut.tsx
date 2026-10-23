@@ -1,5 +1,5 @@
 import { useMemo, type ComponentProps } from 'react'
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, DefaultTooltipContent } from 'recharts'
 import { CHART_PALETTE } from '@/lib/chart-colors'
 
 interface ContentDonutProps {
@@ -26,7 +26,7 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
     const total = data.reduce((sum, d) => sum + d.value, 0)
 
     if (loading) {
-        return <div className="h-[180px] animate-pulse rounded-xl bg-muted/30" />
+        return <div data-theme-part="skeleton" className="h-[180px] animate-pulse rounded-xl bg-muted/30" />
     }
 
     if (data.length === 0) {
@@ -59,14 +59,11 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
                             ))}
                         </Pie>
                         <Tooltip
-                            contentStyle={{
-                                backgroundColor: 'hsl(var(--card))',
-                                border: '1px solid hsl(var(--border))',
-                                borderRadius: '0.75rem',
-                                fontSize: '12px',
-                                zIndex: 100,
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                            }}
+                            content={props => (
+                                <div data-theme-part="tooltip" className="rounded-xl border border-border bg-card p-2.5 text-xs text-card-foreground shadow-lg">
+                                    <DefaultTooltipContent {...props} contentStyle={{ background: 'transparent', border: 'none', padding: 0, color: 'inherit', fontSize: 'inherit' }} itemStyle={{ color: 'inherit' }} />
+                                </div>
+                            )}
                             wrapperStyle={{ zIndex: 100, outline: 'none' }}
                             formatter={tooltipFormatter}
                         />
@@ -81,7 +78,7 @@ export function ContentDonut({ typeCounts, loading }: ContentDonutProps) {
             </div>
             <div className="space-y-2">
                 {data.map((entry) => (
-                    <div key={entry.name} className="flex items-center justify-between rounded-2xl border border-border/35 bg-muted/15 px-3 py-2">
+                    <div key={entry.name} data-theme-part="panel" className="flex items-center justify-between rounded-2xl border border-border/35 bg-muted/15 px-3 py-2">
                         <span className="flex items-center gap-2 text-sm font-medium">
                             <span className="h-2.5 w-2.5 rounded-full" style={{ background: entry.color }} />
                             {entry.name}

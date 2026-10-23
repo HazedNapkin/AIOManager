@@ -1,3 +1,5 @@
+import type { SavedEpisodesSummary } from '../../../types/activity'
+
 export interface DetailItem {
     itemId: string
     type: string
@@ -12,6 +14,10 @@ export interface DetailItem {
     description?: string
     backdrop?: string
     accountId?: string
+    sourceConnectionId?: string
+    /** Imported saved watch state: no watch dates; episodes are inspectable but not dated. */
+    importedSavedState?: boolean
+    savedEpisodes?: SavedEpisodesSummary
 }
 
 export interface TmdbPersonSearchResponse {

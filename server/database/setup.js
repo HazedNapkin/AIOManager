@@ -343,6 +343,7 @@ export async function initializeDatabase(fastify) {
         auth_key TEXT NOT NULL,
         updated_at BIGINT,
         connection_id TEXT,
+        canonical_connection_id TEXT,
         credential_type TEXT DEFAULT 'stremio'
       );
     `, [
@@ -357,6 +358,7 @@ export async function initializeDatabase(fastify) {
         account_name: 'ALTER TABLE server_credentials ADD COLUMN account_name TEXT',
         updated_at: 'ALTER TABLE server_credentials ADD COLUMN updated_at BIGINT',
         connection_id: 'ALTER TABLE server_credentials ADD COLUMN connection_id TEXT',
+        canonical_connection_id: 'ALTER TABLE server_credentials ADD COLUMN canonical_connection_id TEXT',
         credential_type: 'ALTER TABLE server_credentials ADD COLUMN credential_type TEXT DEFAULT \'stremio\'',
     }, ['id'])
 

@@ -6,6 +6,7 @@ function Skeleton({
 }: React.HTMLAttributes<HTMLDivElement>) {
     return (
         <div
+            data-theme-part="skeleton"
             className={cn(
                 'animate-pulse rounded-md bg-muted/60',
                 className
@@ -17,7 +18,7 @@ function Skeleton({
 
 function AccountCardSkeleton() {
     return (
-        <div className="rounded-lg border bg-card p-4 space-y-3">
+        <div data-theme-part="card" className="rounded-lg border bg-card p-4 space-y-3">
             <div className="flex items-center gap-3">
                 <Skeleton className="h-10 w-10 rounded-full" />
                 <div className="space-y-2 flex-1">
@@ -37,7 +38,7 @@ function AccountCardSkeleton() {
 
 function StatCardSkeleton() {
     return (
-        <div className="rounded-lg border bg-card p-4 space-y-3">
+        <div data-theme-part="card" className="rounded-lg border bg-card p-4 space-y-3">
             <Skeleton className="h-3 w-24" />
             <Skeleton className="h-8 w-32" />
             <Skeleton className="h-3 w-20" />
@@ -47,7 +48,7 @@ function StatCardSkeleton() {
 
 function ActivityItemSkeleton() {
     return (
-        <div className="flex items-center gap-4 rounded-lg border bg-card p-3">
+        <div data-theme-part="card" className="flex items-center gap-4 rounded-lg border bg-card p-3">
             <Skeleton className="h-16 w-12 rounded-md flex-shrink-0" />
             <div className="space-y-2 flex-1 min-w-0">
                 <Skeleton className="h-4 w-3/4" />
@@ -83,7 +84,7 @@ function MetricsPageSkeleton() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="rounded-lg border bg-card p-4 space-y-3">
+                    <div data-theme-part="card" key={i} className="rounded-lg border bg-card p-4 space-y-3">
                         <Skeleton className="h-12 w-12 rounded-full mx-auto" />
                         <Skeleton className="h-4 w-24 mx-auto" />
                         <Skeleton className="h-3 w-32 mx-auto" />

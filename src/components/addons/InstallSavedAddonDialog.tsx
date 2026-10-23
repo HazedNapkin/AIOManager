@@ -181,10 +181,10 @@ export function InstallSavedAddonDialog({
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+              <span data-theme-part="badge" className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
                 {filteredAddons.length} shown
               </span>
-              <span className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
+              <span data-theme-part="badge" className="rounded-full border border-border/40 bg-background/70 px-2.5 py-1 font-semibold tabular-nums">
                 {installedSavedCount} installed
               </span>
             </div>
@@ -193,7 +193,7 @@ export function InstallSavedAddonDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <aside className="shrink-0 border-b border-border/40 bg-card/40 p-4 lg:border-b-0 lg:border-r">
+          <aside data-theme-part="panel" className="shrink-0 border-b border-border/40 bg-card/40 p-4 lg:border-b-0 lg:border-r">
             <div className="grid gap-2 sm:grid-cols-2 lg:sticky lg:top-0 lg:block lg:space-y-3">
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filter Library</p>
@@ -252,11 +252,13 @@ export function InstallSavedAddonDialog({
                   {allFilteredSelected ? "Deselect" : "Select All"}
                 </Button>
 
-                <div className="flex items-center rounded-xl border border-border/40 bg-background/70 p-0.5">
+                <div data-theme-part="tabs-list" className="flex items-center rounded-xl border border-border/40 bg-background/70 p-0.5">
                   <Tooltip content="Grid View" side="top">
                     <Button
                       variant="ghost"
                       size="sm"
+                      data-theme-part="tab"
+                      data-state={viewMode === 'grid' ? 'active' : 'inactive'}
                       className={`h-8 w-8 rounded-lg p-0 ${viewMode === 'grid' ? 'bg-muted shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                       onClick={() => setViewMode('grid')}
                       aria-label="Grid view"
@@ -268,6 +270,8 @@ export function InstallSavedAddonDialog({
                     <Button
                       variant="ghost"
                       size="sm"
+                      data-theme-part="tab"
+                      data-state={viewMode === 'list' ? 'active' : 'inactive'}
                       className={`h-8 w-8 rounded-lg p-0 ${viewMode === 'list' ? 'bg-muted shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                       onClick={() => setViewMode('list')}
                       aria-label="List view"
@@ -278,7 +282,7 @@ export function InstallSavedAddonDialog({
                 </div>
               </div>
 
-              <div className="hidden rounded-2xl border border-border/35 bg-background/35 p-3 text-xs text-muted-foreground sm:block lg:block">
+              <div data-theme-part="panel" className="hidden rounded-2xl border border-border/35 bg-background/35 p-3 text-xs text-muted-foreground sm:block lg:block">
                 <div className="flex justify-between gap-2">
                   <span>Selected</span>
                   <span className="font-semibold tabular-nums text-foreground">{selectedSavedAddonIds.size}</span>
@@ -309,6 +313,7 @@ export function InstallSavedAddonDialog({
                   return (
                     <div
                       key={addon.id}
+                      data-theme-part="addon-card"
                       className={cn(
                         "group relative cursor-pointer border transition-[transform,opacity,box-shadow] hover:border-primary/45 hover:shadow-md",
                         viewMode === 'grid'
@@ -355,7 +360,7 @@ export function InstallSavedAddonDialog({
                       )}>
                         <div className="flex flex-wrap justify-end gap-1">
                           {(() => { const p = extractAddonParams(addon.installUrl).params; if (!p.tag && !p.variant) return null; return (
-                            <span className="inline-flex min-w-0 max-w-[140px] items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
+                            <span data-theme-part="badge" className="inline-flex min-w-0 max-w-[140px] items-center gap-0.5 rounded-full bg-primary/10 px-1.5 text-[11px] font-medium text-primary">
                               {p.tag ? <Tag className="h-2.5 w-2.5 shrink-0" /> : <Layers className="h-2.5 w-2.5 shrink-0" />}
                               <span className="truncate">{p.tag || p.variant}</span>
                             </span>
@@ -385,7 +390,7 @@ export function InstallSavedAddonDialog({
 
         <div className="px-4 pb-4 pt-2">
           {selectedSavedAddonIds.size > 0 && (
-            <div className="mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-3 shadow-sm">
+            <div data-theme-part="panel" className="mb-4 rounded-2xl border border-primary/20 bg-primary/10 p-3 shadow-sm">
               <p className="text-sm font-medium">Ready to install</p>
               <p className="text-xs text-muted-foreground">
                 {selectedSavedAddonIds.size} addon{selectedSavedAddonIds.size !== 1 ? 's' : ''} will be installed to {accountId === 'all' ? 'all accounts' : 'this account'}.
@@ -394,14 +399,14 @@ export function InstallSavedAddonDialog({
           )}
 
           {error && (
-            <div className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+            <div data-theme-tone="status" data-theme-part="panel" className="mb-4 flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
               <AlertCircle className="h-4 w-4" />
               {error}
             </div>
           )}
 
           {success && (
-            <div className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success/10 p-3 text-sm text-success">
+            <div data-theme-tone="status" data-theme-part="panel" className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success/10 p-3 text-sm text-success">
               <Check className="h-4 w-4" />
               Installation successful!
             </div>

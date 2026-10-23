@@ -92,12 +92,12 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-3 py-3">
-                    <div className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-muted/25 px-3 py-2">
+                    <div data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-muted/25 px-3 py-2">
                         <div>
                             <p className="text-sm font-semibold">{allTags.length} tag{allTags.length !== 1 ? 's' : ''}</p>
                             <p className="text-xs text-muted-foreground">Changes apply across the whole library.</p>
                         </div>
-                        <span className="rounded-full border border-border/45 bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
+                        <span data-theme-part="badge" className="rounded-full border border-border/45 bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
                             Global
                         </span>
                     </div>
@@ -122,7 +122,7 @@ export function TagManagerDialog({ isOpen, onClose }: TagManagerDialogProps) {
                             <p className="text-center text-sm text-muted-foreground py-8">No tags match your search</p>
                         )}
                         {filteredTags.map(({ name: tag, count }) => (
-                            <div key={tag} className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-card/80 p-2.5 transition-colors hover:bg-muted/30">
+                            <div key={tag} data-theme-part="panel" className="flex items-center justify-between gap-3 rounded-xl border border-border/45 bg-card/80 p-2.5 transition-colors hover:bg-muted/30">
                                 {editingTag === tag ? (
                                     <div className="flex min-w-0 flex-1 items-center gap-2">
                                         <Input

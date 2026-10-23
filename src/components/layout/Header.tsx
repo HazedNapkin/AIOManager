@@ -3,6 +3,7 @@ import { useMemo, useState, useCallback, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTheme } from '@/contexts/ThemeContext'
+import { BrandLogo } from '@/components/common/BrandLogo'
 import { useSyncStore } from '@/store/syncStore'
 import { useFailoverStore } from '@/store/failoverStore'
 import { LogOut, Users, Package, Activity, BarChart3, Settings, HelpCircle, KeyRound, StickyNote, MoreHorizontal, X, Search, CloudOff, RefreshCw, Cloud, Zap, ZapOff } from 'lucide-react'
@@ -45,6 +46,9 @@ interface MobileMoreTriggerProps {
 function MobileMoreTrigger({ moreOpen, setMoreOpen, isMoreActive }: MobileMoreTriggerProps) {
   return (
     <button
+      data-theme-part="nav-item"
+      data-state={isMoreActive || moreOpen ? 'active' : 'inactive'}
+      aria-expanded={moreOpen}
       onClick={() => setMoreOpen(v => !v)}
       className={`relative flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isMoreActive || moreOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
       aria-label="More options"
@@ -73,12 +77,15 @@ export function MobileBottomNav() {
   const isMoreActive = MORE_NAV.some(item => item.match(location.pathname))
 
   return (
-    <div className="md:hidden flex-shrink-0 relative z-50 bg-card/95 backdrop-blur-lg border-t border-border/40 flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
+    <div data-theme-part="mobile-nav" className="md:hidden flex-shrink-0 relative z-50 bg-card/95 backdrop-blur-lg border-t border-border/40 flex items-center justify-around min-h-[80px] pb-[calc(env(safe-area-inset-bottom,0px)+10px)] shadow-[0_-10px_40px_hsl(var(--background)/0.8)]">
       {PRIMARY_NAV.map((item) => {
         const isActive = item.match(location.pathname)
         const Icon = item.icon
         return (
           <Link
+            data-theme-part="nav-item"
+            data-state={isActive ? 'active' : 'inactive'}
+            aria-current={isActive ? 'page' : undefined}
             key={item.to}
             to={item.to}
             className={`relative flex flex-col items-center justify-center pt-3 pb-1 px-1 w-full transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
@@ -107,6 +114,7 @@ export function MobileBottomNav() {
           {moreOpen && (
             <>
               <motion.div
+                data-theme-part="dialog-overlay"
                 className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -114,6 +122,7 @@ export function MobileBottomNav() {
                 onClick={() => setMoreOpen(false)}
               />
               <motion.div
+                data-theme-part="menu"
                 className="fixed bottom-[80px] left-0 right-0 z-40 bg-card/95 backdrop-blur-lg rounded-t-3xl border border-b-0 border-border/40 shadow-[0_-10px_40px_hsl(var(--background)/0.8)]"
                 initial={{ y: 420 }}
                 animate={{ y: 0 }}
@@ -132,6 +141,9 @@ export function MobileBottomNav() {
                         const Icon = item.icon
                         return (
                             <Link
+                                data-theme-part="nav-item"
+                                data-state={isActive ? 'active' : 'inactive'}
+                                aria-current={isActive ? 'page' : undefined}
                                 key={item.to}
                                 to={item.to}
                                 onClick={() => setMoreOpen(false)}
@@ -176,7 +188,7 @@ function TabBadge({ count, dotColor, isActive, glow }: { count?: number; dotColo
   const { isLight } = useTheme()
   if (count !== undefined) {
     return (
-      <span className={cn(
+      <span data-theme-part="badge" className={cn(
         'ml-0.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-md px-1 text-xs font-semibold tabular-nums',
         isLight
           ? (isActive || glow ? 'bg-muted text-foreground' : 'bg-muted/60 text-muted-foreground')
@@ -241,6 +253,13 @@ export function Header() {
     return lastError && (Date.now() - new Date(lastError.timestamp).getTime()) < 5 * 60 * 1000 ? lastError : null
   }, [syncHistory])
 
+  // Expose existing app state for reactive CSS themes without running theme scripts.
+  const syncState = !auth.isAuthenticated ? 'offline'
+    : isSyncing ? 'syncing'
+    : isRefreshingFromCloud ? 'refreshing'
+    : recentSyncError ? 'error'
+    : latestSyncAt === null ? 'idle' : 'synced'
+
   const syncDotColor = useMemo(() => {
     const isOnline = auth.isAuthenticated
     if (!isOnline || (!isSyncing && !isRefreshingFromCloud && latestSyncAt === null)) return 'bg-red-500'
@@ -285,18 +304,12 @@ export function Header() {
 
   return (
     <>
-    <header className="flex-shrink-0 relative z-50 md:sticky md:top-0 pointer-events-none">
+    <header data-sync-state={syncState} className="flex-shrink-0 relative z-50 md:sticky md:top-0 pointer-events-none">
 
-      <div className={`relative z-[60] pointer-events-auto border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header backdrop-blur-xl'}`}>
+      <div data-theme-part="app-header" className={`relative z-[60] pointer-events-auto border-b border-border/40 ${isLight ? 'bg-card/92 backdrop-blur-xl' : 'glass-header backdrop-blur-xl'}`}>
         <div className="max-w-[1800px] mx-auto w-full px-4 h-12 flex items-center gap-3">
-          <Link to="/" className="flex items-center gap-2 shrink-0 hover:opacity-90 transition-opacity">
-            <img
-              src={logoUrl || "/logo.png"}
-              alt="AIOManager"
-              loading="lazy"
-              onError={(e) => { if (e.currentTarget.src !== window.location.origin + '/logo.png') e.currentTarget.src = '/logo.png' }}
-              className={`h-6 w-6 object-contain transition-[transform,opacity,box-shadow] ${!logoUrl && isLight ? 'invert' : ''}`}
-            />
+          <Link to="/" className="flex items-center gap-2 shrink-0 text-foreground hover:opacity-90 transition-opacity">
+            <BrandLogo logoUrl={logoUrl} label="" className="h-6 w-6" />
             <span className="text-[13px] font-bold tracking-tight text-foreground/90">AIOManager</span>
           </Link>
 
@@ -316,19 +329,24 @@ export function Header() {
 
           <div className="hidden md:flex items-center gap-2 ml-auto">
             <button
+              data-theme-part="button"
+              data-variant="outline"
               onClick={openCommandPalette}
               className="h-8 w-72 rounded-lg bg-muted/40 hover:bg-muted/60 border border-border/40 flex items-center px-2.5 gap-2 transition-colors"
               aria-label="Search"
             >
               <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className="text-[12px] text-muted-foreground flex-1 text-left">Search accounts, addons, keys...</span>
-              <kbd className="text-xs px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground/60 shrink-0">⌘K</kbd>
+              <span className="min-w-0 truncate text-[12px] text-muted-foreground flex-1 text-left">Search accounts, addons, keys...</span>
+              <kbd data-theme-part="badge" className="text-xs px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground/60 shrink-0">⌘K</kbd>
             </button>
 
-            <div className="relative flex items-center h-8 rounded-lg bg-muted/30 border border-border/40">
+            <div data-theme-part="header-status" className="relative flex items-stretch h-8 rounded-lg bg-muted/30 border border-border/40">
               <DropdownMenu open={vaultOpen} onOpenChange={setVaultOpen}>
                 <DropdownMenuTrigger asChild>
                   <button
+                    data-theme-part="button"
+                    data-theme-segment="vault"
+                    data-variant="ghost"
                     className="flex items-center gap-1.5 px-2.5 h-full rounded-l-lg hover:bg-muted/20 transition-colors"
                     aria-label="Vault keys"
                   >
@@ -385,6 +403,7 @@ export function Header() {
                         const dotColor = isExpired ? 'bg-destructive' : isExpiring ? 'bg-warning' : h?.status === 'active' ? 'bg-success' : 'bg-muted-foreground/30'
                         return (
                           <button
+                            data-theme-part="menu-item"
                             key={key.id}
                             type="button"
                             className="flex items-center gap-3 w-full px-4 py-3 text-left transition-[transform,opacity,box-shadow] hover:bg-primary/5 group"
@@ -394,7 +413,7 @@ export function Header() {
                             }}
                           >
                             <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-                            <div className="h-8 w-8 rounded-lg bg-muted/50 border border-border/40 flex items-center justify-center text-xs font-bold text-muted-foreground group-hover:border-primary/30 group-hover:text-primary transition-colors">
+                            <div data-theme-part="badge" className="h-8 w-8 rounded-lg bg-muted/50 border border-border/40 flex items-center justify-center text-xs font-bold text-muted-foreground group-hover:border-primary/30 group-hover:text-primary transition-colors">
                               {getKeyAbbr(key)}
                             </div>
                             <div className="flex-1 min-w-0">
@@ -424,7 +443,7 @@ export function Header() {
                 }
                 side="bottom"
               >
-                <div className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full cursor-default">
+                <div data-theme-part="autopilot-status" data-theme-segment="autopilot" data-status={autopilotStatus.toLowerCase()} className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full cursor-default">
                   {autopilotStatus === 'Live' && (
                     <span className="relative flex w-1.5 h-1.5">
                       <span className="absolute inline-flex w-full h-full rounded-full bg-warning opacity-60 animate-ping" />
@@ -450,6 +469,9 @@ export function Header() {
                   : `Synced ${syncTimeAgo}`
               } side="bottom">
                 <button
+                  data-theme-part="sync-status"
+                  data-theme-segment="sync"
+                  data-status={syncState}
                   onClick={() => auth.isAuthenticated && syncToRemote(false)}
                   className="border-l border-border/30 flex items-center gap-1.5 px-2.5 h-full rounded-r-lg hover:bg-muted/20 transition-colors"
                   aria-label="Sync status"
@@ -471,7 +493,7 @@ export function Header() {
             {auth.isAuthenticated && (
               <div className="flex items-center gap-1.5">
                 <Tooltip content={auth.id} side="bottom">
-                  <div className="h-7 w-7 overflow-hidden rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary cursor-default">
+                  <div data-theme-part="avatar" className="h-7 w-7 overflow-hidden rounded-full bg-primary/20 border border-primary/25 flex items-center justify-center text-xs font-bold text-primary cursor-default">
                     {auth.avatar ? (
                       <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
                     ) : (
@@ -496,7 +518,7 @@ export function Header() {
         </div>
       </div>
 
-      <div className="md:hidden relative z-50 pointer-events-auto flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
+      <div data-theme-part="mobile-status" className="md:hidden relative z-50 pointer-events-auto flex items-center justify-center gap-4 h-8 border-b border-border/30 bg-card/60 backdrop-blur-sm text-muted-foreground">
         <span className="flex items-center gap-1 text-xs">
           <KeyRound className="h-3 w-3" />
           <span className="font-semibold tabular-nums">{providerKeys.length}</span>
@@ -515,7 +537,7 @@ export function Header() {
       <div className="hidden md:block pointer-events-none">
         <div className="max-w-[1800px] mx-auto w-full px-4">
           <nav className="flex justify-center mt-1.5">
-            <div className={cn(
+            <div data-theme-part="app-nav" className={cn(
               'pointer-events-auto inline-flex h-auto w-fit max-w-[calc(100%-1rem)] flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card/92 p-1.5 text-muted-foreground shadow-sm backdrop-blur-xl',
               !isLight && 'border-white/10 bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
             )}>
@@ -527,6 +549,9 @@ export function Header() {
 
                 return (
                   <Link
+                    data-theme-part="nav-item"
+                    data-state={isActive ? 'active' : 'inactive'}
+                    aria-current={isActive ? 'page' : undefined}
                     key={item.to}
                     to={item.to}
                     onClick={() => setVaultOpen(false)}

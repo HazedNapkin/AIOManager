@@ -33,6 +33,7 @@ export const SubscriberCard = memo(function SubscriberCard({ subscriber, onRemov
 
     return (
         <div
+            data-theme-part="card"
             className={cn(
                 'group rounded-2xl border border-border/40 bg-card text-card-foreground shadow-sm',
                 'transition-[background-color,border-color,box-shadow,transform] duration-200',

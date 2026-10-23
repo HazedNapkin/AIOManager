@@ -105,6 +105,7 @@ export const CastSection = memo(function CastSection({
                         <div className="flex items-center gap-1">
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => scrollCastRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
                                 aria-label="Scroll cast left"
                                 className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
@@ -113,6 +114,7 @@ export const CastSection = memo(function CastSection({
                             </button>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => scrollCastRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
                                 aria-label="Scroll cast right"
                                 className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
@@ -160,6 +162,7 @@ export const CastSection = memo(function CastSection({
                         <div className="flex items-center gap-1">
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => scrollCrewRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
                                 aria-label="Scroll crew left"
                                 className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
@@ -168,6 +171,7 @@ export const CastSection = memo(function CastSection({
                             </button>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => scrollCrewRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
                                 aria-label="Scroll crew right"
                                 className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"

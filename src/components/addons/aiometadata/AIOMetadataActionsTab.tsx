@@ -189,7 +189,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
             {useCustomUrl ? (
                 <div className="space-y-1.5">
                     <Input placeholder="https://your-instance.com" value={customUrl} onChange={e => setCustomUrl(e.target.value)} className="h-11 font-mono text-sm" />
-                    <button type="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">Known instance</button>
+                    <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">Known instance</button>
                 </div>
             ) : (
                 <div className="space-y-1.5">
@@ -199,7 +199,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                             {selectOptions.map(o => <SelectItem key={o.value} value={o.value}><span className="font-mono text-xs truncate max-w-[250px]">{o.label}</span></SelectItem>)}
                         </SelectContent>
                     </Select>
-                    <button type="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">Custom URL…</button>
+                    <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">Custom URL…</button>
                 </div>
             )}
         </div>
@@ -216,7 +216,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
         <div className="space-y-6">
             <div className="flex items-center gap-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase">User creation tools</p>
-                <button type="button" onClick={() => setBatchMode(!batchMode)} className="text-xs text-primary hover:underline ml-auto">
+                <button type="button" data-theme-part="button" onClick={() => setBatchMode(!batchMode)} className="text-xs text-primary hover:underline ml-auto">
                     {batchMode ? 'Single user' : 'Batch create'}
                 </button>
             </div>
@@ -243,7 +243,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                     </label>
 
                     {createError && (
-                        <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
+                        <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{createError}
                         </div>
                     )}
@@ -254,7 +254,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                     </Button>
 
                     {createResult && (
-                        <div className="bg-success/5 border border-success/20 rounded-2xl p-4 space-y-3">
+                        <div data-theme-tone="status" data-theme-part="panel" className="bg-success/5 border border-success/20 rounded-2xl p-4 space-y-3">
                             <div className="flex items-center gap-2"><Check className="w-4 h-4 text-success" /><p className="text-xs font-bold text-success">User created</p></div>
                             <div className="space-y-2">
                                 <div className="space-y-0.5">
@@ -273,7 +273,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                                     const isAdded = addedAccountIds.has(acc.id)
                                     const isAdding = addingToAccount === acc.id
                                     return (
-                                        <button key={acc.id} type="button" onClick={() => !isAdded && !isAdding && handleAddToAccount(acc.id)} disabled={isAdding || isAdded}
+                                        <button key={acc.id} type="button" data-theme-part="button" onClick={() => !isAdded && !isAdding && handleAddToAccount(acc.id)} disabled={isAdding || isAdded}
                                             className={cn('w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left text-xs transition-colors',
                                                 isAdded ? 'bg-success/10 border-success/20 text-success' : 'border-border/30 hover:bg-muted/20')}>
                                             {isAdded ? <Check className="w-3.5 h-3.5" /> : isAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5 text-muted-foreground" />}
@@ -310,7 +310,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <label className="text-xs font-medium text-muted-foreground uppercase">Accounts ({batchSelected.size} selected)</label>
-                            <button type="button" onClick={() => setBatchSelected(batchSelected.size === accounts.length ? new Set() : new Set(accounts.map(a => a.id)))} className="text-xs text-primary hover:underline">
+                            <button type="button" data-theme-part="button" onClick={() => setBatchSelected(batchSelected.size === accounts.length ? new Set() : new Set(accounts.map(a => a.id)))} className="text-xs text-primary hover:underline">
                                 {batchSelected.size === accounts.length ? 'Deselect all' : 'Select all'}
                             </button>
                         </div>
@@ -318,12 +318,12 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                             {accounts.map(acc => {
                                 const selected = batchSelected.has(acc.id)
                                 return (
-                                    <button key={acc.id} type="button" role="checkbox" aria-checked={selected}
+                                    <button key={acc.id} type="button" role="checkbox" aria-checked={selected} data-theme-part="button" data-state={selected ? 'active' : 'inactive'}
                                         aria-label={`${selected ? 'Deselect' : 'Select'} ${acc.name || acc.email || acc.id}`}
                                         onClick={() => toggleBatchAccount(acc.id)}
                                         className={cn('w-full flex items-center gap-2.5 px-3 py-2 rounded-lg border text-left text-xs transition-colors',
                                             selected ? 'border-primary/30 bg-primary/5' : 'border-border/30 hover:bg-muted/20')}>
-                                        <div className={cn('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border/40')}>
+                                        <div data-theme-part="checkbox" className={cn('w-4 h-4 rounded border flex items-center justify-center shrink-0', selected ? 'bg-primary border-primary' : 'border-border/40')}>
                                             {selected && <Check className="w-2.5 h-2.5 text-primary-foreground" strokeWidth={3} />}
                                         </div>
                                         <span className="font-semibold truncate">{acc.name || acc.email || acc.id}</span>
@@ -337,7 +337,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
                         <div className="space-y-1.5">
                             <p className="text-xs font-medium text-muted-foreground uppercase">Results</p>
                             {batchResults.map((r, i) => (
-                                <div key={i} className={cn('flex items-center gap-2 px-3 py-2 rounded-lg border text-xs', r.success ? 'bg-success/5 border-success/20' : 'bg-destructive/5 border-destructive/20')}>
+                                <div data-theme-tone="status" key={i} data-theme-part="panel" className={cn('flex items-center gap-2 px-3 py-2 rounded-lg border text-xs', r.success ? 'bg-success/5 border-success/20' : 'bg-destructive/5 border-destructive/20')}>
                                     <span className={r.success ? 'text-success' : 'text-destructive'}>{r.success ? '✓' : '✗'}</span>
                                     <span className="font-semibold truncate">{r.accountName}</span>
                                     {r.uuid && <span className="text-muted-foreground font-mono truncate">{r.uuid.slice(0, 8)}…</span>}
@@ -360,7 +360,7 @@ export function AIOMetadataActionsTab({ sourceConfig, baseUrl, targetOptions, re
             )}
 
             <div className="border-t border-border/10 pt-6">
-                <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/20 border border-border/30 rounded-xl px-3 py-2.5">
+                <div data-theme-part="panel" className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/20 border border-border/30 rounded-xl px-3 py-2.5">
                     <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <p>AIOMetadata has no delete API. To remove a user, delete it from the AIOMetadata configure page; removing the addon here only detaches it from the account.</p>
                 </div>

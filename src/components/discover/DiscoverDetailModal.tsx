@@ -181,7 +181,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
       <DialogContent
         className={cn(
           '!grid-cols-none !gap-0 !p-0 flex flex-col overflow-hidden',
-          '!max-w-full sm:!max-w-4xl sm:!rounded-2xl bg-card text-card-foreground shadow-2xl ring-1 ring-border/30 max-h-[90vh]',
+          '!max-w-full sm:!max-w-4xl sm:rounded-2xl bg-card text-card-foreground shadow-2xl ring-1 ring-border/30 max-h-[90vh]',
         )}
         hideClose
       >
@@ -190,6 +190,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           {navStack.length > 0 && (
             <button
               type="button"
+              data-theme-part="button"
               onClick={() => navigateTo(navStack.length - 1)}
               className="absolute left-2 top-2 sm:left-3 sm:top-3 z-30 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/60 px-3 py-1 sm:px-4 sm:py-1.5 text-xs font-bold text-white shadow-xl backdrop-blur-md transition-all hover:bg-black/80 hover:scale-105 active:scale-95"
             >
@@ -226,6 +227,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           {/* Close button */}
           <button
             type="button"
+            data-theme-part="button"
             onClick={() => onOpenChange(false)}
             aria-label="Close"
             className="absolute right-3 top-3 z-30 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/50 text-white/90 shadow-lg backdrop-blur-sm transition-all hover:bg-black/75 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
@@ -244,18 +246,18 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
 
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-amber-500/90 px-2 py-0.5 text-[11px] font-black text-black shadow flex items-center gap-1">
+                <span data-theme-part="badge" className="rounded-md bg-amber-500/90 px-2 py-0.5 text-[11px] font-black text-black shadow flex items-center gap-1">
                   <Star className="h-3 w-3 fill-black text-black" />
                   {(view.stars ?? 0).toLocaleString()}
                 </span>
                 {needsConfig && (
-                  <span className="rounded-md bg-warning/90 px-2 py-0.5 text-[11px] font-extrabold text-black shadow flex items-center gap-1">
+                  <span data-theme-part="badge" className="rounded-md bg-warning/90 px-2 py-0.5 text-[11px] font-extrabold text-black shadow flex items-center gap-1">
                     <Settings2 className="h-3 w-3" />
                     Needs Config
                   </span>
                 )}
                 {resources.slice(0, 3).map((r) => (
-                  <span key={r} className="rounded-md border border-white/20 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-md">
+                  <span key={r} data-theme-part="badge" className="rounded-md border border-white/20 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-white backdrop-blur-md">
                     {RESOURCE_LABELS[r] ?? r}
                   </span>
                 ))}
@@ -275,7 +277,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
             <div className="space-y-1.5">
               <p className={cn('text-xs sm:text-sm leading-relaxed text-foreground/90 font-medium', !descExpanded && 'line-clamp-4')}>{description}</p>
               {description.length > 280 && (
-                <button type="button" className="text-xs font-bold text-primary hover:underline" onClick={() => setDescExpanded((v) => !v)}>
+                <button type="button" data-theme-part="button" className="text-xs font-bold text-primary hover:underline" onClick={() => setDescExpanded((v) => !v)}>
                   {descExpanded ? 'Show less' : 'Show more'}
                 </button>
               )}
@@ -285,7 +287,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           {view.categories?.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {view.categories.map((c) => (
-                <span key={c.slug} className="rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 sm:px-3 sm:py-1 text-xs font-bold text-muted-foreground">
+                <span key={c.slug} data-theme-part="badge" className="rounded-full border border-border/50 bg-muted/40 px-2 py-0.5 sm:px-3 sm:py-1 text-xs font-bold text-muted-foreground">
                   {c.name}
                 </span>
               ))}
@@ -295,9 +297,10 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
           {loading && <Skeleton className="h-20 w-full rounded-xl" />}
 
           {documentation && (
-            <div className="rounded-2xl border border-border/40 bg-card/60 backdrop-blur-md overflow-hidden">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/60 backdrop-blur-md overflow-hidden">
               <button
                 type="button"
+                data-theme-part="button"
                 className="flex w-full items-center justify-between gap-2 px-3 py-2 sm:px-4 sm:py-3 text-xs font-bold uppercase tracking-widest text-muted-foreground/80 hover:text-foreground"
                 onClick={() => setDocsExpanded((v) => !v)}
               >
@@ -330,7 +333,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                   const instConfigUrl = getConfigureUrl(inst)
                   const instNeedsConfig = requiresConfiguration(inst)
                   return (
-                    <div key={inst.uuid} className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/40 p-2 sm:gap-3 sm:p-3 shadow-sm transition-all hover:border-primary/40">
+                    <div key={inst.uuid} data-theme-part="panel" className="flex items-center gap-2 rounded-xl border border-border/40 bg-card/40 p-2 sm:gap-3 sm:p-3 shadow-sm transition-all hover:border-primary/40">
                       <AddonLogo src={inst.manifest?.logo} name={instName} className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-xl" letterClassName="text-xs" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-bold text-foreground">{instName}</p>
@@ -405,6 +408,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                     <div className="absolute -top-7 right-0 flex items-center gap-1">
                       <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => scrollSimilar(-1)}
                         className="flex h-6 w-6 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                       >
@@ -412,6 +416,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                       </button>
                       <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => scrollSimilar(1)}
                         className="flex h-6 w-6 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                       >
@@ -424,7 +429,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
                       const sName = s.manifest?.name?.trim() || s.slug || 'Unknown addon'
                       const sDesc = s.manifest?.description?.trim() || ''
                       return (
-                        <div key={s.uuid} className="flex w-40 sm:w-48 md:w-52 shrink-0 cursor-pointer flex-col gap-1.5 sm:gap-2 rounded-xl border border-border/40 bg-card/50 p-2 sm:p-3 shadow-sm transition-all hover:border-primary/40 hover:shadow-md" onClick={() => handleInternalNav(s)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleInternalNav(s) } }}>
+                        <div key={s.uuid} data-theme-part="addon-card" className="flex w-40 sm:w-48 md:w-52 shrink-0 cursor-pointer flex-col gap-1.5 sm:gap-2 rounded-xl border border-border/40 bg-card/50 p-2 sm:p-3 shadow-sm transition-all hover:border-primary/40 hover:shadow-md" onClick={() => handleInternalNav(s)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleInternalNav(s) } }}>
                           <div className="flex items-center gap-2.5 min-w-0">
                             <AddonLogo src={s.manifest?.logo} name={sName} className="h-8 w-8 rounded-lg" letterClassName="text-xs" />
                             <div className="min-w-0 flex-1">
@@ -456,7 +461,7 @@ export function DiscoverDetailModal({ addon, open, onOpenChange, saved, isSaved,
         </div>
 
         {/* Footer Actions */}
-        <div className="flex flex-wrap items-center gap-2 p-3 sm:gap-3 sm:p-4 border-t border-border/40 bg-muted/20">
+        <div data-theme-part="toolbar" className="flex flex-wrap items-center gap-2 p-3 sm:gap-3 sm:p-4 border-t border-border/40 bg-muted/20">
           {isViewSaved ? (
             <Button variant="subtle" className="flex-1 gap-2 rounded-xl font-bold" disabled>
               <Check className="h-4 w-4" />

@@ -1,4 +1,5 @@
 import { threeWayMergeCanonical, type CanonicalAddon } from '@/lib/canonical-merge'
+import { filterResurrected, mergeAddonDeletionState } from '@/lib/addon-tombstones'
 import { getCanonicalBase } from '@/lib/canonical-base'
 import { fetchCanonical } from '@/api/hydra-providers'
 import { serverHasStremioCredential } from '@/lib/canonical-visibility'
@@ -12,6 +13,7 @@ import {
 } from '../accountStore'
 import type { AccountStore } from '../accountStore'
 import type { AddonDescriptor } from '@/types/addon'
+import { captureSyncOwnership, type SyncOwnership } from '../sync-store-helpers'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
 
@@ -33,20 +35,23 @@ async function getStore(): Promise<StoreRef> {
  *
  * @returns true if any Hub changed (the caller may want to ensure a push follows).
  */
-export async function reconcileInboundCanonical(): Promise<boolean> {
+export async function reconcileInboundCanonical(ownership: SyncOwnership = captureSyncOwnership()): Promise<boolean> {
     const store = await getStore()
+    ownership.assert()
     const targets = store.getState().accounts
     if (targets.length === 0) return false
 
     let remote: Record<string, { addons: AddonDescriptor[]; updatedAt: number }>
     try {
         const result = await fetchCanonical()
+        ownership.assert()
         remote = result.canonical
         learnServerCredentialedAccounts(result.serverStremioCredentialedAccounts)
     } catch {
         return false // best-effort; never block the push on it
     }
     const { useSyncStore } = await import('../syncStore')
+    ownership.assert()
     const serverCredentialed = useSyncStore.getState().serverStremioCredentialedAccounts
 
     let anyChanged = false
@@ -55,7 +60,11 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
         if (serverHasStremioCredential(account.id, serverCredentialed, !!getStremioAuthKey(account))) continue
         const remoteAddons = (remote[account.id]?.addons || []) as unknown as CanonicalAddon[]
 
-        while (syncMutexes.has(account.id)) { await syncMutexes.get(account.id) }
+        while (syncMutexes.has(account.id)) {
+            await syncMutexes.get(account.id)
+            ownership.assert()
+        }
+        ownership.assert()
         let release!: () => void
         syncMutexes.set(account.id, new Promise<void>(r => { release = r }))
         let didChange = false
@@ -64,15 +73,29 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
             const current = getAccountById(store.getState().accounts, account.id)
             if (!current) continue
             const base = getCanonicalBase(account.id) as unknown as CanonicalAddon[] | null
-            const local = (current.addons || []) as unknown as CanonicalAddon[]
-            const { addons: merged, changed } = threeWayMergeCanonical(base, local, remoteAddons)
+            const deletionState = mergeAddonDeletionState(current.deletedAddons, undefined, current.restoredAddons, undefined)
+            const local = filterResurrected((current.addons || []) as unknown as CanonicalAddon[], [], deletionState.deletedAddons)
+            const survivingRemote = filterResurrected(remoteAddons, [], deletionState.deletedAddons)
+            const { addons: merged, changed } = threeWayMergeCanonical(base, local, survivingRemote)
             mergedCount = merged.length
-            if (!changed) continue
+            const localSuppressed = local.length !== (current.addons || []).length
+            if (!changed && !localSuppressed) continue
             if (merged.length > 0 && local.length === 0) markFoldedHub(account.id)
-            const updated = { ...current, addons: merged as unknown as AddonDescriptor[], lastSync: new Date() }
+            const mergedAddons = merged as unknown as AddonDescriptor[]
+            const updated = {
+                ...current,
+                addons: mergedAddons,
+                ...deletionState,
+                profiles: current.profiles
+                    ? current.profiles.map(profile => profile.id === (current.activeProfileId || 'default')
+                        ? { ...profile, addons: structuredClone(mergedAddons) }
+                        : profile)
+                    : current.profiles,
+                lastSync: new Date(),
+            }
             const next = store.getState().accounts.map(a => (a.id === account.id ? updated : a))
             store.setState({ accounts: next })
-            persistAccounts(next)
+            persistAccounts(next, ownership)
             anyChanged = true
             didChange = true
         } finally {
@@ -83,7 +106,9 @@ export async function reconcileInboundCanonical(): Promise<boolean> {
 
         if (didChange) {
             import('./accountAddonOps')
-                .then(({ pushToConnections }) => pushToConnections(account.id))
+                .then(({ pushToConnections }) => {
+                    if (ownership.current()) return pushToConnections(account.id, { ownership })
+                })
                 .catch(() => { })
         }
     }

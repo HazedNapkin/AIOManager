@@ -17,6 +17,8 @@ export function Toaster() {
           return (
             <motion.div
               key={toast.id}
+              data-theme-part="toast"
+              data-variant={toast.variant ?? 'default'}
               layout
               initial={{ opacity: 0, y: -16, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -27,9 +29,9 @@ export function Toaster() {
                 toast.className
               )}
             >
-              <div className="flex items-start gap-3 px-4 py-3.5">
-                <div className={cn(
-                  "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
+              <div className="flex items-center gap-3 px-4 py-3.5">
+                <div data-theme-part="badge" className={cn(
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm",
                   isDestructive
                     ? "border-destructive/20 bg-destructive/10 text-destructive"
                     : isWarning
@@ -45,18 +47,20 @@ export function Toaster() {
                     </p>
                   )}
                   <p className={cn(
-                    "text-sm font-semibold leading-snug",
+                    "line-clamp-2 text-sm font-semibold leading-snug [overflow-wrap:anywhere]",
                     isDestructive && "text-destructive"
                   )}>
                     {toast.title}
                   </p>
                   {toast.description && (
-                    <p className="mt-0.5 text-sm leading-snug text-muted-foreground">
+                    <p className="mt-0.5 line-clamp-3 text-sm leading-snug text-muted-foreground [overflow-wrap:anywhere]">
                       {toast.description}
                     </p>
                   )}
                 </div>
                 <button
+                  data-theme-part="button"
+                  data-variant="ghost"
                   onClick={() => dismiss(toast.id)}
                   className="shrink-0 rounded-full p-1 text-muted-foreground/60 transition-colors hover:bg-muted/70 hover:text-foreground"
                 >

@@ -8,6 +8,7 @@ import { displayStatus, tokenExpiry } from '@/lib/connection-format'
 import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
 
 function getHintText(conn: Connection): string {
+    if (conn.platform === 'jellyfin') return 'Media server · Jellyfin API'
     if (conn.connectionType === 'hydra-outbound') return 'API configuration'
     if (conn.platform === 'nuvio') return 'Plugins, Profiles, Library & more'
     return 'Session management'
@@ -22,7 +23,10 @@ interface ConnectionCardProps {
     onEdit: () => void
     onToggle: () => void
     email?: string
+    contextLabel?: string
     badge?: React.ReactNode
+    addonCount?: number
+    /** Which truth the count represents: the account's recorded collection or the count recorded at the connection's last sync. */
 }
 
 export const ConnectionCard = memo(function ConnectionCard({
@@ -34,7 +38,9 @@ export const ConnectionCard = memo(function ConnectionCard({
     onEdit,
     onToggle,
     email,
+    contextLabel,
     badge,
+    addonCount,
 }: ConnectionCardProps) {
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
@@ -60,6 +66,7 @@ export const ConnectionCard = memo(function ConnectionCard({
         <div
             role="button"
             tabIndex={0}
+            data-theme-part="card"
             onClick={onEdit}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit() } }}
             className={cn(
@@ -88,8 +95,13 @@ export const ConnectionCard = memo(function ConnectionCard({
                     {email && (
                         <p className="text-xs text-muted-foreground truncate">{email}</p>
                     )}
+                    {contextLabel && <p className="truncate text-xs text-muted-foreground">{contextLabel}</p>}
                     <p className="line-clamp-1 text-xs text-muted-foreground">
-                        {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}Synced {lastSync ? timeAgo(lastSync) : 'never'}
+                        {connection.connectionType === 'hydra-outbound' ? 'Outbound \u00b7 ' : ''}
+                        {addonCount !== undefined ? `${addonCount} account addon${addonCount === 1 ? '' : 's'} \u00b7 ` : ''}
+                        {connection.platform === 'jellyfin'
+                            ? `Verified ${connection.mediaServer?.lastCheckedAt ? timeAgo(connection.mediaServer.lastCheckedAt) : 'never'}`
+                            : `Synced ${lastSync ? timeAgo(lastSync) : 'never'}`}
                     </p>
                     {lastError && (
                         <p className="line-clamp-1 text-xs text-destructive">{lastError}</p>
@@ -107,6 +119,7 @@ export const ConnectionCard = memo(function ConnectionCard({
                         onCheckedChange={() => { setEnabled(v => !v); onToggle() }}
                         className="scale-90"
                         aria-label={`${enabled ? 'Disable' : 'Enable'} ${name}`}
+                        disabled={syncing}
                     />
                     <ChevronRight className="h-4 w-4 text-muted-foreground/40 mt-1" />
                 </div>

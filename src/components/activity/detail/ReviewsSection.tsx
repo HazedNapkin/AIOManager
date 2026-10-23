@@ -31,9 +31,11 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
                     Audience Reviews & Discussions ({reviews.length})
                 </h3>
 
-                <div className="flex items-center gap-1 rounded-full border border-border/40 bg-muted/40 p-0.5 text-[11px] font-bold">
+                <div data-theme-part="tabs-list" className="flex items-center gap-1 rounded-full border border-border/40 bg-muted/40 p-0.5 text-[11px] font-bold">
                     <button
                         type="button"
+                        data-theme-part="tab"
+                        data-state={selectedReviewSource === 'all' ? 'active' : 'inactive'}
                         onClick={() => setSelectedReviewSource('all')}
                         className={cn(
                             'rounded-full px-2.5 py-0.5 transition-all',
@@ -45,6 +47,8 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
                     {traktCount > 0 && (
                         <button
                             type="button"
+                            data-theme-part="tab"
+                            data-state={selectedReviewSource === 'Trakt' ? 'active' : 'inactive'}
                             onClick={() => setSelectedReviewSource('Trakt')}
                             className={cn(
                                 'rounded-full px-2.5 py-0.5 transition-all',
@@ -57,6 +61,8 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
                     {tmdbCount > 0 && (
                         <button
                             type="button"
+                            data-theme-part="tab"
+                            data-state={selectedReviewSource === 'TMDB' ? 'active' : 'inactive'}
                             onClick={() => setSelectedReviewSource('TMDB')}
                             className={cn(
                                 'rounded-full px-2.5 py-0.5 transition-all',
@@ -79,6 +85,7 @@ export function ReviewsSection({ reviews }: ReviewsSectionProps) {
                 <div className="flex justify-center pt-2">
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setShowAllReviews(prev => !prev)}
                         className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-6 py-2 text-xs font-bold text-primary shadow transition-all hover:bg-primary/20 hover:scale-105 active:scale-95"
                     >

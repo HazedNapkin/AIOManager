@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { SquircleOverlay } from '@/components/ui/squircle-overlay'
 import { Tooltip } from '@/components/ui/tooltip'
 import { Account } from '@/types/account'
 import { cn } from '@/lib/utils'
@@ -7,7 +6,7 @@ import { cn } from '@/lib/utils'
 type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 interface AccountAvatarProps {
-    account: Pick<Account, 'name' | 'email' | 'emoji' | 'avatar' | 'status'>
+    account: Pick<Account, 'name' | 'email' | 'emoji' | 'avatar'> & Partial<Pick<Account, 'status'>>
     size?: Size
     showStatus?: boolean
     pulse?: boolean
@@ -51,8 +50,19 @@ export function AccountAvatar({
     const showAvatar = !!account.avatar && !avatarFailed
 
     return (
-        <div className={cn('relative shrink-0 flex items-center justify-center', dim.box, className)}>
-            <SquircleOverlay />
+        <div
+            data-theme-part="account-avatar"
+            className={cn('relative shrink-0 flex items-center justify-center rounded-xl', dim.box, className)}
+        >
+            {/* Same muted backdrop the global SquircleOverlay paints, kept local so skins
+                can suppress the fixed squircle clip with --theme-avatar-filter and apply
+                the theme radius instead. Inner-surface radius comes from the shared theme
+                STATE_DETAILS (border-radius: inherit) via the account-avatar-* hooks. */}
+            <div
+                data-theme-part="account-avatar-surface"
+                className="absolute inset-0 rounded-[inherit] bg-muted"
+                style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
+            />
             {showAvatar ? (
                 <img
                     src={account.avatar}
@@ -60,8 +70,9 @@ export function AccountAvatar({
                     loading="lazy"
                     decoding="async"
                     onError={() => setAvatarFailed(true)}
-                    className="absolute inset-0 h-full w-full object-cover z-10"
-                    style={{ filter: 'url(#squircle)' }}
+                    data-theme-part="account-avatar-image"
+                    className="absolute inset-0 h-full w-full rounded-[inherit] object-cover z-10"
+                    style={{ filter: 'var(--theme-avatar-filter, url(#squircle))' }}
                 />
             ) : (
                 <span className={cn('relative z-10 leading-none', dim.emoji)}>

@@ -46,10 +46,10 @@ export function FloatingActionBar({
                         className
                     )}
                 >
-                    <div className="pointer-events-auto overflow-hidden rounded-[1.75rem] border border-border/50 bg-card/95 shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                    <div data-theme-part="toolbar" className="pointer-events-auto overflow-hidden rounded-[1.75rem] border border-border/50 bg-card/95 shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl">
                         <div className="flex items-center justify-between gap-3 border-b border-border/35 px-3 py-2.5 sm:px-4">
                             <div className="flex items-center gap-2">
-                                <span className="min-w-[1.75rem] rounded-full bg-primary px-2 py-1 text-center text-xs font-bold tabular-nums text-primary-foreground shadow-sm">
+                                <span data-theme-part="badge" className="min-w-[1.75rem] rounded-full bg-primary px-2 py-1 text-center text-xs font-bold tabular-nums text-primary-foreground shadow-sm">
                                     {selectedCount}
                                 </span>
                                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -58,6 +58,8 @@ export function FloatingActionBar({
                             </div>
                             <Tooltip content="Clear selection" side="top">
                                 <button
+                                    data-theme-part="button"
+                                    data-variant="ghost"
                                     onClick={onClearSelection}
                                     className="rounded-full border border-border/30 bg-muted/25 p-1.5 text-muted-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
                                     aria-label="Clear selection"

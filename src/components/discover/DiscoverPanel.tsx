@@ -4,7 +4,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AlertCircle, ArrowLeft, Clock, Flame, Heart, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { TabsTrigger } from '@/components/ui/tabs'
+import { WorkspaceTabs } from '@/components/ui/workspace-tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAddonStore } from '@/store/addonStore'
 import { useAccountStore } from '@/store/accountStore'
@@ -17,6 +18,7 @@ import {
   fetchDiscoverCategories,
   getAddonResources,
   getConfigureUrl,
+  invalidateDiscoverCache,
   type DiscoverAddon,
   type DiscoverCategory,
   type DiscoverSortBy,
@@ -135,7 +137,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const [trending, setTrending] = useState<DiscoverAddon[]>([])
   const [newest, setNewest] = useState<DiscoverAddon[]>([])
   const [storeLoading, setStoreLoading] = useState(true)
+  const [storeRefreshing, setStoreRefreshing] = useState(false)
   const [storeError, setStoreError] = useState(false)
+  const [storeRefreshFailed, setStoreRefreshFailed] = useState(false)
+  const [storeUpdatedAt, setStoreUpdatedAt] = useState<number | null>(null)
   const [storeReloadKey, setStoreReloadKey] = useState(0)
   const [categories, setCategories] = useState<DiscoverCategory[]>([])
   const [categoryShelves, setCategoryShelves] = useState<{ category: DiscoverCategory; addons: DiscoverAddon[] }[]>([])
@@ -160,6 +165,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   const requestRef = useRef(0)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
+  const storeHasContentRef = useRef(false)
 
   const isFiltering = debouncedSearch.trim() !== '' || selectedCategories.length > 0 || selectedResources.length > 0 || selectedTypes.length > 0
   const gridMode = isFiltering || forceGrid
@@ -218,8 +224,11 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
 
   useEffect(() => {
     const ac = new AbortController()
-    setStoreLoading(true)
+    const hasContent = storeHasContentRef.current
+    if (hasContent) setStoreRefreshing(true)
+    else setStoreLoading(true)
     setStoreError(false)
+    setStoreRefreshFailed(false)
     const nsfw = showAdult ? undefined : 'exclude'
     Promise.all([
       fetchDiscoverAddons({ sortBy: 'stars', order: 'desc', nsfw, limit: TRENDING_SIZE }, ac.signal).catch(() => null),
@@ -229,10 +238,25 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         if (ac.signal.aborted) return
         if (top) setTrending(top.addons)
         if (fresh) setNewest(fresh.addons)
-        if (!top && !fresh) setStoreError(true)
+        if (top || fresh) {
+          storeHasContentRef.current = true
+          setStoreUpdatedAt(Date.now())
+        } else if (hasContent) {
+          setStoreRefreshFailed(true)
+        } else {
+          setStoreError(true)
+        }
       })
-      .catch(() => { if (!ac.signal.aborted) setStoreError(true) })
-      .finally(() => { if (!ac.signal.aborted) setStoreLoading(false) })
+      .catch(() => {
+        if (ac.signal.aborted) return
+        if (hasContent) setStoreRefreshFailed(true)
+        else setStoreError(true)
+      })
+      .finally(() => {
+        if (ac.signal.aborted) return
+        setStoreLoading(false)
+        setStoreRefreshing(false)
+      })
     return () => ac.abort()
   }, [showAdult, storeReloadKey])
 
@@ -276,7 +300,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
     runQuery(1, ac.signal)
     return () => ac.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gridMode, debouncedSearch, sortBy, categoryKey, showAdult])
+  }, [gridMode, debouncedSearch, sortBy, categoryKey, showAdult, storeReloadKey])
 
   // Infinite scroll: auto-load the next page when the sentinel nears the viewport. The visible
   // "Load more" button remains as a manual fallback.
@@ -520,6 +544,15 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   }
   const clearFilters = () => { setSearch(''); setDebouncedSearch(''); setSelectedCategories([]); setSelectedResources([]); setSelectedTypes([]) }
 
+  const refreshDirectory = () => {
+    if (storeLoading || storeRefreshing) return
+    setStoreRefreshFailed(false)
+    if (storeHasContentRef.current) setStoreRefreshing(true)
+    else setStoreLoading(true)
+    invalidateDiscoverCache()
+    setStoreReloadKey((key) => key + 1)
+  }
+
   const seeAll = (sort: DiscoverSortBy) => { setSortBy(sort); setForceGrid(true) }
   const seeAllCategory = (slug: string) => { setSelectedCategories([slug]); setSortBy('stars') }
   const backToStore = () => { setForceGrid(false); setSortBy('stars'); setSelectedResources([]); setSelectedTypes([]) }
@@ -537,13 +570,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)}>
-        <TabsList>
+    <WorkspaceTabs value={viewMode} panelValue={viewMode} onValueChange={(v) => setViewMode(v as DiscoverViewMode)} label="Discover views" contentClassName="space-y-5" tabs={<>
           <TabsTrigger value="store">Browse</TabsTrigger>
           <TabsTrigger value="deck">Deck</TabsTrigger>
-        </TabsList>
-      </Tabs>
+    </>}>
 
       {viewMode === 'deck' && (
           <DiscoverDeck
@@ -578,6 +608,10 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           showSort={gridMode}
           compact={compact}
           onToggleCompact={() => setCompact((v) => !v)}
+          refreshing={storeLoading || storeRefreshing}
+          refreshStatus={storeUpdatedAt ? `Checked ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(storeUpdatedAt)}` : null}
+          refreshFailed={storeRefreshFailed}
+          onRefresh={refreshDirectory}
         />
       )}
 
@@ -600,7 +634,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
             <Card className="border-destructive">
               <CardContent className="flex flex-col items-start gap-3 pt-6">
                 <p className="text-destructive">Could not reach the addon directory. Check your connection and try again.</p>
-                <Button variant="outline" size="sm" onClick={() => setStoreReloadKey((k) => k + 1)}>Retry</Button>
+                <Button variant="outline" size="sm" onClick={refreshDirectory}>Retry</Button>
               </CardContent>
             </Card>
           )}
@@ -648,7 +682,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
           {!storeLoading && !storeError && (
             <>
               <DiscoverRow
-                title="Trending This Week"
+                title="Popular"
                 icon={<Flame className="h-4 w-4 text-warning" />}
                 addons={trendingThisWeek}
                 isSaved={isSaved}
@@ -658,7 +692,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
                 {...cardCallbacks}
               />
               <DiscoverRow
-                title="Recently Updated"
+                title="Popular Updates"
                 icon={<RefreshCw className="h-4 w-4 text-primary" />}
                 addons={recentlyUpdated}
                 isSaved={isSaved}
@@ -668,7 +702,7 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
                 {...cardCallbacks}
               />
               <DiscoverRow
-                title="New & Noteworthy"
+                title="New Arrivals"
                 icon={<Sparkles className="h-4 w-4 text-primary" />}
                 addons={newest}
                 isSaved={isSaved}
@@ -821,6 +855,6 @@ export function DiscoverPanel({ replayKey = 0 }: { replayKey?: number }) {
         instances={aioStreamsInstances}
         onConfirm={handleInjectConfirm}
       />
-    </div>
+    </WorkspaceTabs>
   )
 }

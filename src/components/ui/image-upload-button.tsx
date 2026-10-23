@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Upload, Loader2 } from 'lucide-react'
 import { processImageFile, formatFileSize, type ProcessImageOptions } from '@/lib/image-upload'
 import { toast } from '@/hooks/use-toast'
+import { Tooltip } from '@/components/ui/tooltip'
 
 interface ImageUploadButtonProps {
     onUploaded: (dataUrl: string) => void
@@ -46,15 +47,17 @@ export function ImageUploadButton({ onUploaded, options, className, label, child
                     e.target.value = ''
                 }}
             />
-            <button
-                type="button"
-                disabled={processing}
-                onClick={() => inputRef.current?.click()}
-                className={className}
-                title={label || 'Upload image'}
-            >
-                {processing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : children || <Upload className="h-3.5 w-3.5" />}
-            </button>
+            <Tooltip content={label || 'Upload image'} side="top">
+                <button data-theme-part="button"
+                    type="button"
+                    disabled={processing}
+                    onClick={() => inputRef.current?.click()}
+                    className={className}
+                    aria-label={label || 'Upload image'}
+                >
+                    {processing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : children || <Upload className="h-3.5 w-3.5" />}
+                </button>
+            </Tooltip>
         </>
     )
 }

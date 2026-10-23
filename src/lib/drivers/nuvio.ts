@@ -2,6 +2,7 @@ const DEFAULT_BASE_URL = 'https://api.nuvio.tv'
 const DEFAULT_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgxNTIxMzQ2LCJleHAiOjE5MzkyMDEzNDZ9.tmQaj682pwzehpqlgCDMnySOqiUvpgRbrE43T4VJpDI'
 const REST_PATH = '/rest/v1'
 const RPC_PATH = `${REST_PATH}/rpc`
+export { DEFAULT_BASE_URL, DEFAULT_PUBLISHABLE_KEY }
 const RPC_TIMEOUT_MS = 30000
 const REST_TIMEOUT_MS = 15000
 

@@ -203,7 +203,7 @@ export function RuleConfidenceLayer({ rule, isAutopilotLive, lastCycle, activeAd
     const latencyLabel = typeof activeEntry.latencyMs === 'number' ? `Latency ${Math.round(activeEntry.latencyMs)}ms` : null
 
     return (
-        <div className="mx-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2.5">
+        <div data-theme-part="panel" className="mx-2 rounded-xl border border-border/40 bg-muted/20 px-3 py-2.5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <StatusChip variant={confidence.variant} size="sm">

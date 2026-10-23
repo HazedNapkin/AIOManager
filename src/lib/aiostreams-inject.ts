@@ -85,7 +85,9 @@ export async function performInjection(
 ): Promise<{ success: boolean; alreadyExists: boolean; error?: string }> {
     try {
         const { fetchAIOStreamsUser, updateAIOStreamsUser, sanitizeAIOStreamsConfigForUpdate } = await import('./aiostreams-utils')
-        const { userData } = await fetchAIOStreamsUser(baseUrl, uuid, password)
+        // Raw view: the injected preset must land in the child's own config
+        // without baking inherited parent values into it.
+        const { userData } = await fetchAIOStreamsUser(baseUrl, uuid, password, { raw: true })
         
         if (presetManifestExists(userData, manifestUrl)) {
             return { success: true, alreadyExists: true }

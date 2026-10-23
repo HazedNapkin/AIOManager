@@ -50,6 +50,9 @@ function FilterButton({
     <Button
       variant="ghost"
       ripple={false}
+      data-theme-part="nav-item"
+      data-state={active ? 'active' : 'inactive'}
+      aria-pressed={active}
       className={cn(
         'relative h-auto w-full justify-start gap-2.5 rounded-xl border px-2.5 py-2 text-left text-sm font-medium transition-colors [&_svg]:!size-3.5',
         active
@@ -173,7 +176,7 @@ export function LibrarySidebar({
   return (
     <>
       <div className="hidden md:block md:w-[260px] flex-shrink-0">
-        <div className="flex max-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-card p-2.5 shadow-sm">
+        <div data-theme-part="panel" className="flex max-h-[calc(100vh-14rem)] flex-col overflow-hidden rounded-2xl border border-border/40 bg-card p-2.5 shadow-sm">
           <div className="shrink-0 space-y-1">
             <div className="mb-1 flex items-center justify-between px-2 py-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Profiles</span>
@@ -261,7 +264,7 @@ export function LibrarySidebar({
 
       {showMobileFilters && (
         <div className="flex md:hidden flex-col gap-3">
-          <div className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
+          <div data-theme-part="panel" className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
             <div className="mb-1 flex items-center justify-between px-2 py-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Profiles</span>
               <div className="flex items-center gap-1">
@@ -303,7 +306,7 @@ export function LibrarySidebar({
             )}
           </div>
           {allTags.length > 0 && (
-            <div className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
+            <div data-theme-part="panel" className="space-y-1 rounded-[1.75rem] border border-border/45 bg-card/80 p-3 shadow-sm">
               <div className="mb-1 flex items-center justify-between px-2 py-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</span>
                 <Button

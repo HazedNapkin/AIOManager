@@ -226,7 +226,7 @@ export function PublishToPmdbDialog({ open, onOpenChange, scope, scopeLabel, rai
                                 ? Math.min(100, Math.round((info.processed / info.total) * 100))
                                 : 0
                             return (
-                                <div
+                                <div data-theme-part="panel" data-theme-tone="status"
                                     key={rail.railKey}
                                     className={cn(
                                         'flex flex-col gap-2 rounded-lg border border-border/40 px-3 py-2.5 transition-colors',

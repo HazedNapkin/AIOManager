@@ -1,6 +1,6 @@
 import { type Account } from '@/types/account'
 import { type Connection } from '@/types/connection'
-import { getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountById, persistAccounts, sanitizeAddonManifest } from '@/store/accountStore'
+import { getStremioAuthKey, getStremioConnection, getCachedAuthKey, getEncryptionKey, getAccountById, persistAccounts, sanitizeAddonManifest } from '@/store/accountStore'
 import { getAddons } from '@/api/addons'
 import { fetchConnectionToken } from '@/api/connection'
 import { nuvioDriverFor, realStreamDriverFor } from '@/lib/drivers/factory'
@@ -21,6 +21,18 @@ async function getStore(): Promise<StoreRef> {
 
 export type SoT = { type: 'stremio-native' } | { type: 'connection'; conn: Connection }
 
+/** A native Stremio login (own sealed authKey) - not a hydra-outbound push target. */
+function isNativeStremioLogin(c: Connection): boolean {
+    return c.platform === 'stremio' && (c.connectionType == null || c.connectionType === 'native')
+}
+
+/** The Stremio login the SoT is read from, if the SoT is Stremio at all. */
+function sotStremioLoginId(account: Account, sot: SoT): string | undefined {
+    if (sot.type === 'connection' && isNativeStremioLogin(sot.conn)) return sot.conn.id
+    if (sot.type === 'stremio-native' || sot.conn.platform === 'stremio') return getStremioConnection(account)?.id
+    return undefined
+}
+
 export function determineSourceOfTruth(account: Account): SoT | null {
     if (account.sourceOfTruth) {
         if (account.sourceOfTruth === 'stremio-native' && getStremioAuthKey(account)) return { type: 'stremio-native' }
@@ -31,8 +43,8 @@ export function determineSourceOfTruth(account: Account): SoT | null {
     const nuvioConn = account.connections?.find(c => c.enabled && c.platform === 'nuvio')
     if (nuvioConn) return { type: 'connection', conn: nuvioConn }
     
-    const stremioConn = account.connections?.find(c => c.enabled && c.platform === 'stremio')
-    if (stremioConn) return { type: 'connection', conn: stremioConn }
+    const stremioConn = getStremioConnection(account)
+    if (stremioConn?.enabled) return { type: 'connection', conn: stremioConn }
     
     if (getStremioAuthKey(account)) return { type: 'stremio-native' }
     
@@ -44,7 +56,11 @@ export function determineSourceOfTruth(account: Account): SoT | null {
 
 export async function fetchSoTAddons(account: Account, sot: SoT, forceRefresh: boolean): Promise<AddonDescriptor[]> {
     if (sot.type === 'stremio-native' || (sot.type === 'connection' && sot.conn.platform === 'stremio')) {
-        const authKey = getStremioAuthKey(account)
+        // A specific Stremio login as SoT must be read with ITS OWN sealed key; falling
+        // back to the canonical key would silently read a different Stremio account.
+        const authKey = sot.type === 'connection' && isNativeStremioLogin(sot.conn)
+            ? sot.conn.credentials?.authKey
+            : getStremioAuthKey(account)
         if (!authKey) throw new Error('No Stremio auth key')
         const decryptedKey = await getCachedAuthKey(authKey, getEncryptionKey())
         return getAddons(decryptedKey, account.id, forceRefresh)
@@ -242,11 +258,11 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
     
     const needsSoTPush = finalFingerprint !== sotFingerprint || protectedAddonRestored
 
+    // Native Stremio logins are written client-side below (each with its own sealed
+    // key), so they are kept out of the server reconciliation to avoid double writes.
     const pushConnections = (updatedAccount.connections || []).filter(c => {
-        if (!needsSoTPush) {
-            if (sot.type === 'connection' && c.id === sot.conn.id) return false
-            if (sot.type === 'stremio-native' && c.platform === 'stremio') return false
-        }
+        if (isNativeStremioLogin(c)) return false
+        if (!needsSoTPush && sot.type === 'connection' && c.id === sot.conn.id) return false
         return c.enabled
     })
     
@@ -259,18 +275,20 @@ export async function syncExternalAddonManagement(id: string, forceRefresh: bool
         }
     }
     
-    const stremioKey = getStremioAuthKey(updatedAccount)
-    const shouldPushStremio = stremioKey && (
-        needsSoTPush || (sot.type !== 'stremio-native' && !(sot.type === 'connection' && sot.conn.platform === 'stremio'))
-    )
-    if (shouldPushStremio) {
-        try {
-            const { updateAddons } = await import('@/api/addons')
-            const decryptedKey = await getCachedAuthKey(stremioKey, getEncryptionKey())
-            await updateAddons(decryptedKey, finalAddons, id, { previousCollection: account.addons })
-        } catch (e) {
-            console.warn('[ExternalAddonSync] Push to Stremio failed', e)
+    // Fan out to EVERY enabled Stremio login bound to the account. The login the SoT
+    // was read from is skipped when it already matches the final list.
+    const sotLoginId = sotStremioLoginId(updatedAccount, sot)
+    try {
+        const { pushAddonsToStremioConnections } = await import('@/lib/account-compat')
+        const result = await pushAddonsToStremioConnections(updatedAccount, finalAddons, {
+            previousCollection: account.addons,
+            skipConnectionIds: !needsSoTPush && sotLoginId ? [sotLoginId] : [],
+        })
+        for (const failure of result.failed) {
+            console.warn(`[ExternalAddonSync] Push to Stremio login ${failure.connectionId} failed`, failure.error)
         }
+    } catch (e) {
+        console.warn('[ExternalAddonSync] Push to Stremio failed', e)
     }
     
     return { changed: true, authKeyRefreshed: false }

@@ -80,7 +80,11 @@ export const isSafeUrl = (url) => {
 // the common case and cheap to trust briefly; failures resolve again sooner.
 const DNS_CACHE_TTL_POSITIVE_MS = 30 * 1000
 const DNS_CACHE_TTL_FAILURE_MS = 30 * 1000
+// Replace pending DNS lookups after 30 seconds; existing callers keep their original promise.
+const PENDING_ADMISSION_TTL_MS = 30 * 1000
 const dnsCache = new Map()
+
+const inFlightLookups = new Map()
 
 export const resolveAndValidateHost = async (hostname) => {
     if (ALLOW_PRIVATE) return true
@@ -90,7 +94,16 @@ export const resolveAndValidateHost = async (hostname) => {
     const cached = dnsCache.get(host)
     if (cached && Date.now() - cached.at < cached.ttl) return cached.safe
 
+    const pending = inFlightLookups.get(host)
+    if (pending && Date.now() - pending.admittedAt < PENDING_ADMISSION_TTL_MS) return pending.promise
+
+    // A replaced lookup must not overwrite its successor's cache or pending entry.
+    const entry = { promise: null, admittedAt: Date.now(), superseded: false }
+    if (pending) pending.superseded = true
+    inFlightLookups.set(host, entry)
+
     const settle = (safe, ttl) => {
+        if (entry.superseded) return safe
         dnsCache.set(host, { safe, at: Date.now(), ttl })
         if (dnsCache.size > 2000) {
             const oldest = dnsCache.keys().next().value
@@ -99,17 +112,21 @@ export const resolveAndValidateHost = async (hostname) => {
         return safe
     }
 
-    try {
-        const records = await lookup(host, { all: true })
-        if (!Array.isArray(records) || records.length === 0) {
+    entry.promise = (async () => {
+        try {
+            const records = await lookup(host, { all: true })
+            if (!Array.isArray(records) || records.length === 0) {
+                return settle(true, DNS_CACHE_TTL_FAILURE_MS)
+            }
+            return settle(!records.some(r => isPrivateIp(r.address)), DNS_CACHE_TTL_POSITIVE_MS)
+        } catch {
+            // Preserve the existing fail-open DNS policy after literal URL validation.
             return settle(true, DNS_CACHE_TTL_FAILURE_MS)
+        } finally {
+            if (inFlightLookups.get(host) === entry) inFlightLookups.delete(host)
         }
-        return settle(!records.some(r => isPrivateIp(r.address)), DNS_CACHE_TTL_POSITIVE_MS)
-    } catch {
-        // Fail open to the literal check per the contract above; only hostnames that
-        // resolve to private ranges are rejected. Do not "harden" this to fail-closed.
-        return settle(true, DNS_CACHE_TTL_FAILURE_MS)
-    }
+    })()
+    return entry.promise
 }
 
 export const isSafeUrlResolved = async (url) => {

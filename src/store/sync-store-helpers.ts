@@ -1,15 +1,21 @@
 import { clearSessionSyncToken } from '@/lib/session-sync-token'
+import { getActiveWorkspaceId } from '@/lib/workspace-persistence'
 
-// Shared mutable sync runtime state. Lives here so the store and any extracted
-// sync modules mutate one instance instead of reaching across modules.
-// Cloud-side watch-event tombstones as of the last pull. The push serialisation merges local
-// stale local map can never erase fresher cloud deletes.
+// Shared runtime for sync operations and their async continuations.
 export const syncRuntime = {
     appReady: false,
     lastPushedHash: null as string | null,
     corruptRestoreInFlight: false,
+    // Monotonic generation for pulls, mirrors, and session invalidation.
+    pullSeq: 0,
+    // A same-account 304 can adopt pending pull work without rewinding pullSeq.
+    adoptedSeq: null as number | null,
+    // A 304 may certify only completed hydration; mirror work is never adoptable.
+    hydration: null as { seq: number; id: string; status: 'pending' | 'ok' | 'failed'; kind: 'pull' | 'mirror' } | null,
     lastPulledDeletedWatchEvents: null as Record<string, number> | null,
     lastPulledNotesTrash: null as import('./notesStore').Note[] | null,
+    // Preserve cloud notes until the local notes store has hydrated.
+    lastPulledNotes: null as import('./notesStore').Note[] | null,
     lastPulledVaultTombstones: null as import('./vaultStore').VaultTombstone[] | null,
     // Preserved on push when this device has no avatar; mirrors the pull's upgrade-only identity rule.
     lastPulledCloudAvatar: null as string | null,
@@ -18,6 +24,40 @@ export const syncRuntime = {
     lastSyncedAccountCount: null as number | null,
     onlineHandler: null as (() => void) | null,
     syncBC: null as BroadcastChannel | null,
+}
+
+export class SyncOwnershipLostError extends Error {
+    constructor(
+        public readonly expectedWorkspace: string,
+        public readonly expectedSeq: number,
+        public readonly activeWorkspace: string,
+        public readonly activeSeq: number,
+    ) {
+        super(`Sync ownership lost: expected workspace ${expectedWorkspace} @ ${expectedSeq}, active is ${activeWorkspace} @ ${activeSeq}`)
+        this.name = 'SyncOwnershipLostError'
+    }
+}
+
+export interface SyncOwnership {
+    readonly workspace: string
+    readonly seq: number
+    current: () => boolean
+    assert: () => void
+}
+
+// Capture workspace and generation before awaiting. Recheck before storage dispatches
+// or state publication; only an explicitly adopted sequence remains valid after a newer pull.
+export function captureSyncOwnership(seq: number = syncRuntime.pullSeq): SyncOwnership {
+    const workspace = getActiveWorkspaceId()
+    const current = () =>
+        getActiveWorkspaceId() === workspace &&
+        (syncRuntime.pullSeq === seq || syncRuntime.adoptedSeq === seq)
+    const assert = () => {
+        if (!current()) {
+            throw new SyncOwnershipLostError(workspace, seq, getActiveWorkspaceId(), syncRuntime.pullSeq)
+        }
+    }
+    return { workspace, seq, current, assert }
 }
 
 export async function computeHash(data: string): Promise<string> {

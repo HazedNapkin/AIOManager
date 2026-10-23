@@ -6,6 +6,7 @@ import type { AddonDescriptor } from '@/types/addon'
 // resolvable under the node:test runner, which does not map path aliases.
 import { getHostnameIdentifier } from './addon-identifier.ts'
 import { normalizeAddonUrl as _normalizeAddonUrl } from './addon-url.ts'
+import { mergeDestinationsPolicy } from './addon-destinations.ts'
 import { trace } from './trace.ts'
 import { claimInstanceRemotes } from './addon-instance-identity.ts'
 
@@ -272,9 +273,17 @@ export function hasFallbackAddonIdentity(addon: Pick<AddonDescriptor, 'transport
 /**
  * Helper: Merge remote addons with local addons, preserving order and flags.
  * Source of Truth: Remote presence determines "enabled" status, but local flags and metadata are preserved.
+ *
+ * Destination policy: both rows' policies combine via `mergeDestinationsPolicy` — LWW
+ * on the policy revision with a deterministic content tie — so a deliberate clear on
+ * one device propagates, while an absent remote side (platform reads, pre-revision
+ * rows) still has no authority to touch local policy. `keepMissingLocalUrls` is the E4
+ * read-side protection: URLs listed there survive even when `keepMissingLocal` is false
+ * (their absence from the source is EXPECTED — the row is deliberately excluded from
+ * that source).
  */
 
-export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean; instanceMatch?: 'adopt-remote-url' | 'keep-local-url' } = {}) {
+export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonDescriptor[], options: { keepMissingLocal?: boolean; keepMissingLocalUrls?: Set<string>; instanceMatch?: 'adopt-remote-url' | 'keep-local-url' } = {}) {
   trace('merge', 'enter', { local: localAddons.length, remote: remoteAddons.length, keepMissingLocal: !!options.keepMissingLocal })
   let merged = 0, netNew = 0, keptMissingLocal = 0, keptSpecial = 0, dropped = 0, instanceMatched = 0
   const remoteAddonMap = new Map<string, AddonDescriptor>()
@@ -360,6 +369,9 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
         metadata: mergedMetadata,
         catalogOverrides: localAddon.catalogOverrides,
         note: localAddon.note,
+        // Destination policy: LWW merge on the policy revision (see
+        // mergeDestinationsPolicy) — stale sides lose, deliberate clears propagate.
+        destinations: mergeDestinationsPolicy(localAddon.destinations, matchedRemote.destinations),
       })
 
       processedRemoteNormUrls.add(normalizeAddonUrl(matchedRemote.transportUrl))
@@ -377,7 +389,7 @@ export function mergeAddons(localAddons: AddonDescriptor[], remoteAddons: AddonD
       } else if (isRecentLocalChange || hasCustomizations || isProtected || hasNote) {
         finalAddons.push({ ...localAddon })
         keptSpecial++
-      } else if (options.keepMissingLocal) {
+      } else if (options.keepMissingLocal || options.keepMissingLocalUrls?.has(normLocal)) {
         finalAddons.push({ ...localAddon })
         keptMissingLocal++
       } else {
@@ -537,6 +549,9 @@ export function saveUnresolvedImdbIds(unresolved: Record<string, number>): void 
 
 export function sanitizePosterUrl(url: string | undefined): string | undefined {
     if (!url || typeof url !== 'string') return url
+    // Direct poster hosts have no wrapper parameters to unwrap. Keep every
+    // other URL on the parser path, including queried URLs on these hosts.
+    if ((url.startsWith('https://images.metahub.space/') || url.startsWith('https://image.tmdb.org/')) && !url.includes('?')) return url
     try {
         const parsed = new URL(url)
         const fb = parsed.searchParams.get('fallback')

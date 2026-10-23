@@ -73,12 +73,12 @@ function tint(group: string) {
 function ProviderButton({ p, onSelect }: { p: RegistryProvider; onSelect: (p: RegistryProvider) => void }) {
     const c = tint(p.group)
     return (
-        <button
+        <button data-theme-part="button"
             type="button"
             onClick={() => onSelect(p)}
             className="flex items-center gap-3 rounded-xl border border-border/40 bg-muted/10 px-3 py-3 text-left transition-colors hover:border-border/70 hover:bg-muted/25"
         >
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-xs font-bold ${c.bg} ${c.text}`}>
+            <span data-theme-part="badge" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-xs font-bold ${c.bg} ${c.text}`}>
                 {entryAbbr(p)}
             </span>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
@@ -216,7 +216,7 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
             <DialogContent className="sm:max-w-[560px]">
                 <DialogHeader>
                     <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-muted/30 text-muted-foreground">
+                        <div data-theme-part="badge" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-muted/30 text-muted-foreground">
                             <KeyRound className="h-4 w-4" />
                         </div>
                         <div className="min-w-0 space-y-0.5 text-left">
@@ -232,9 +232,10 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
 
                 {showPicker ? (
                     <div className="space-y-4 py-1">
-                        <div className="flex h-9 items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 transition-colors focus-within:border-border">
+                        <div data-theme-part="field" className="flex h-9 items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-2.5 transition-colors focus-within:border-border">
                             <Search className="h-3.5 w-3.5 text-muted-foreground" />
                             <input
+                                data-theme-part="inline-input"
                                 ref={searchRef}
                                 value={providerSearch}
                                 onChange={(e) => setProviderSearch(e.target.value)}
@@ -243,14 +244,14 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                             />
                             {providerSearch && (
-                                <button type="button" onClick={() => setProviderSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
+                                <button data-theme-part="button" type="button" onClick={() => setProviderSearch('')} className="text-muted-foreground hover:text-foreground" aria-label="Clear search">
                                     <X className="h-3 w-3" />
                                 </button>
                             )}
                         </div>
 
                         {pickerCategory && !providerSearch && (
-                            <button
+                            <button data-theme-part="button"
                                 type="button"
                                 onClick={() => setPickerCategory(null)}
                                 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
@@ -289,13 +290,13 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                                         const Icon = CATEGORY_ICONS[group] || Wrench
                                         const c = tint(group)
                                         return (
-                                            <button
+                                            <button data-theme-part="button"
                                                 key={group}
                                                 type="button"
                                                 onClick={() => setPickerCategory(group)}
                                                 className="flex items-center gap-3 rounded-xl border border-border/40 bg-muted/10 px-3 py-3.5 text-left transition-colors hover:border-border/70 hover:bg-muted/25"
                                             >
-                                                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border/40 ${c.bg} ${c.text}`}>
+                                                <span data-theme-part="badge" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border/40 ${c.bg} ${c.text}`}>
                                                     <Icon className="h-[18px] w-[18px]" />
                                                 </span>
                                                 <span className="min-w-0 flex-1">
@@ -312,8 +313,8 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                     </div>
                 ) : (
                     <form onSubmit={handleSubmit} className="space-y-4 py-1">
-                        <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-muted/20 p-3">
-                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-xs font-bold ${tint(selected.group).bg} ${tint(selected.group).text}`}>
+                        <div data-theme-part="panel" className="flex items-center gap-3 rounded-xl border border-border/40 bg-muted/20 p-3">
+                            <span data-theme-part="badge" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/40 text-xs font-bold ${tint(selected.group).bg} ${tint(selected.group).text}`}>
                                 {entryAbbr(selected)}
                             </span>
                             <div className="min-w-0 flex-1">
@@ -328,14 +329,14 @@ export function VaultKeyDialog({ open, onOpenChange, editingKey, defaultGroup }:
                         </div>
 
                         {selected.description && (
-                            <div className="flex gap-3 rounded-xl border border-border/40 bg-muted/25 p-3 text-xs leading-relaxed text-muted-foreground">
+                            <div data-theme-part="panel" className="flex gap-3 rounded-xl border border-border/40 bg-muted/25 p-3 text-xs leading-relaxed text-muted-foreground">
                                 <Info className="mt-0.5 h-4 w-4 shrink-0" />
                                 <p>{selected.description}</p>
                             </div>
                         )}
 
                         {selected.setup && (
-                            <div className="space-y-2 rounded-xl border border-border/40 bg-muted/15 p-3">
+                            <div data-theme-part="panel" className="space-y-2 rounded-xl border border-border/40 bg-muted/15 p-3">
                                 <div className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">
                                     How to get your {selected.credentialLabel.toLowerCase()}
                                 </div>

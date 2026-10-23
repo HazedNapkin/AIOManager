@@ -2,7 +2,8 @@ import { Button } from "@/components/ui/button"
 import { StatusChip } from "@/components/ui/status-chip"
 import { ToolbarShell } from "@/components/ui/toolbar-shell"
 import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TabsContent, TabsTrigger } from "@/components/ui/tabs"
+import { WorkspaceTabs } from "@/components/ui/workspace-tabs"
 import { useAccountStore } from "@/store/accountStore"
 import { useFailoverStore } from "@/store/failoverStore"
 import type { FailoverRule } from "@/store/failoverStore"
@@ -312,19 +313,7 @@ export function FailoverManager({
 
     return (
         <div className="space-y-6">
-            <Tabs value={activeFailoverTab} onValueChange={handleFailoverTabChange} className="space-y-6">
-                {showViewTabs && (
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                        <div>
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
-                                <ActiveFailoverIcon className="w-5 h-5" />
-                                {activeFailoverMeta.title}
-                            </h3>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                {activeFailoverMeta.description}
-                            </p>
-                        </div>
-                        <TabsList className="shrink-0">
+            <WorkspaceTabs value={activeFailoverTab} onValueChange={handleFailoverTabChange} label="Autopilot views" contentClassName="space-y-5" tabs={showViewTabs ? <>
                             <TabsTrigger
                                 value="rules"
                                 className="gap-2"
@@ -346,9 +335,8 @@ export function FailoverManager({
                                 <Webhook className="w-4 h-4" />
                                 Webhooks
                             </TabsTrigger>
-                        </TabsList>
-                    </div>
-                )}
+            </> : null}>
+                {showViewTabs && <div><h3 className="flex items-center gap-2 text-lg font-semibold"><ActiveFailoverIcon className="h-5 w-5" />{activeFailoverMeta.title}</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">{activeFailoverMeta.description}</p></div>}
 
                 <TabsContent value="webhooks" className="space-y-6">
                     <WebhooksPanel
@@ -388,7 +376,7 @@ export function FailoverManager({
                         )}
 
                         {accountRules.length === 0 ? (
-                            <div className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm">
+                            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-5 shadow-sm">
                                 <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
                                     <div className="flex flex-col justify-between gap-6">
                                         <div className="space-y-4">
@@ -444,7 +432,7 @@ export function FailoverManager({
                                             )}
                                         </div>
                                     </div>
-                                    <div className="rounded-2xl border border-dashed border-border/50 bg-muted/10 p-4">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-dashed border-border/50 bg-muted/10 p-4">
                                         <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Flow</p>
                                         <div className="mt-4 space-y-3">
                                             {['Primary addon stays active', 'Fallbacks wait in priority order', 'Recovery switches back automatically'].map((step, index) => (
@@ -562,11 +550,11 @@ export function FailoverManager({
                                         const primaryAddonName = getAddonNameForUrl(rule.priorityChain[0])
                                         return (
                                             <SortableRuleWrapper key={rule.id} id={rule.id}>
-                                                <div className="bg-card border border-border/40 rounded-2xl p-5 pl-8 flex flex-col gap-5 shadow-sm min-w-0">
+                                                <div data-theme-part="panel" className="bg-card border border-border/40 rounded-2xl p-5 pl-8 flex flex-col gap-5 shadow-sm min-w-0">
                                         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                                             <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 <Tooltip content={rule.name || `RULE ${rule.id.slice(0, 8)}`}>
-                                                    <div className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0">
+                                                    <div data-theme-part="badge" className="font-mono text-xs font-semibold text-foreground/60 uppercase bg-muted/50 border border-border/40 px-2.5 py-1 rounded-lg truncate min-w-0">
                                                         {rule.name || `RULE ${rule.id.slice(0, 8)}`}
                                                     </div>
                                                 </Tooltip>
@@ -689,7 +677,7 @@ export function FailoverManager({
                                         />
 
                                         {simulatingRuleId === rule.id && (
-                                            <div className="mx-2 p-4 rounded-xl bg-primary/5 border-primary/25 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                                            <div data-theme-part="panel" className="mx-2 p-4 rounded-xl bg-primary/5 border-primary/25 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
                                                 <div className="flex items-center justify-between">
                                                     <div className="flex items-center gap-2 text-primary">
                                                         <FlaskConical className="w-4 h-4" />
@@ -850,7 +838,7 @@ export function FailoverManager({
                 <TabsContent value="history">
                     <FailoverHistory addons={addons} accountId={accountId} />
                 </TabsContent>
-            </Tabs>
+            </WorkspaceTabs>
 
             <ConfirmationDialog
                 open={!!ruleToDelete}

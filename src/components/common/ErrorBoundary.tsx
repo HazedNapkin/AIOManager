@@ -68,13 +68,13 @@ export class ErrorBoundary extends Component<Props, State> {
     public render() {
         if (this.state.hasError) {
             return (
-                <div className="min-h-screen bg-background flex items-center justify-center p-4">
-                    <section
+                <div data-theme-part="app-shell" className="min-h-screen bg-background flex items-center justify-center p-4">
+                    <section data-theme-part="panel"
                         className="max-w-lg w-full rounded-xl border border-border/40 bg-card p-6 text-center shadow-sm animate-in fade-in zoom-in-95 duration-300 sm:p-8"
                         aria-labelledby="error-boundary-title"
                     >
                         <div className="flex justify-center">
-                            <div className="flex h-16 w-16 items-center justify-center rounded-full border border-destructive/20 bg-destructive/10">
+                            <div data-theme-part="badge" className="flex h-16 w-16 items-center justify-center rounded-full border border-destructive/20 bg-destructive/10">
                                 <AlertTriangle className="h-7 w-7 text-destructive" />
                             </div>
                         </div>
@@ -90,7 +90,7 @@ export class ErrorBoundary extends Component<Props, State> {
                         </div>
 
                         {this.state.error && (
-                            <div className="mt-6 space-y-3 overflow-hidden rounded-lg border border-border/40 bg-muted/20 p-4 text-left">
+                            <div data-theme-part="field" className="mt-6 space-y-3 overflow-hidden rounded-lg border border-border/40 bg-muted/20 p-4 text-left">
                                 <div className="flex items-center justify-between gap-2">
                                     <p className="text-xs font-medium text-muted-foreground uppercase">Error detail</p>
                                     <Button

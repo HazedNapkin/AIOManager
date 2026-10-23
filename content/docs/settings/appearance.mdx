@@ -1,11 +1,13 @@
 ---
 title: Appearance & Themes
-description: Customise AIOManager's look with 50+ built-in themes or build your own.
+description: Customise AIOManager's colors, typography, textures and controls, or build a complete CSS theme.
 ---
 
 ## Built-in Themes
 
 AIOManager ships with 50+ built-in themes. Select any from **Settings > Appearance**. A quick dark/light toggle is available at the top of the Appearance tab.
+
+**Special Themes** groups designs with distinctive shapes, textures and animation, including Pip-Boy, Retro Desktop, Comic Book+, Matrix Rain and Neon Arcade. Use the **Special** filter to browse them together. The **Light**, **Dark** and **OLED** filters also include matching special themes. Clone any preset to customize it in the editor.
 
 **Dark themes** (selection):
 
@@ -35,17 +37,112 @@ AIOManager ships with 50+ built-in themes. Select any from **Settings > Appearan
 
 <Tip>The full theme list is in **Settings > Appearance**. Scroll the theme picker to see all 50+.</Tip>
 
+**CSS starter themes:** Comic Book+ adds halftone paper, inked panels and offset shadows. Retro Desktop uses beveled controls, system fonts and a teal desktop. CRT Terminal brings phosphor green, scanlines and glow. Blueprint Live uses a cyan grid and scans the header during sync. Liquid Chrome has brushed metal panels and a moving title-bar sheen. Select any of these in the built-in picker, or clone one to remix its full palette and commented CSS. Their motion respects your system's reduced-motion preference.
+
+**Inspired themes:** Pip-Boy brings Fallout-inspired green phosphor, instrument bezels, scanlines and a slow CRT sweep. Clone it to change the palette and CSS together.
+
+**Animated examples:** Matrix Rain embeds its falling-code artwork directly in the CSS, with bright trail heads and two layers falling at different speeds. Neon Arcade combines hot-pink selections, cyan frames and a scrolling grid. The moving scenery uses viewport-sized transform layers rather than repainting the entire page's background positions. Both are available in the picker and can be cloned into the editor. Their animations pause for reduced-motion preferences; the artwork and CSS travel with exported themes. If an animated theme appears still, check your operating system's reduced-motion setting. Software rendering can still cost CPU time; motion preferences and reduced transparency remain useful on constrained devices.
+
 ## Custom Theme Editor
 
 Build your own theme in **Settings > Appearance > Create Custom Theme**.
 
 **Accent Color:** Pick a hue and saturation using the colour wheel or paste a hex code. AIOManager automatically derives the full palette (background, card, border, text, muted) from your accent. The Live Preview updates in real time.
 
-**Dark / Light base:** Choose whether your theme is built on a dark or light foundation.
+**Base & Tint:** Choose a light, dark or OLED foundation, then pick a neutral, subtle or vibrant background tint.
 
-**Fine-Tune Individual Colors:** Expand the fine-tune panel to adjust lightness for each colour role independently using sliders. Reset returns all sliders to the accent-derived defaults.
+**Fine-Tune Colors:** Select a colour swatch to edit that role with a colour picker or hex code. Reset returns the colours to the accent-derived defaults for your selected base.
 
 **Name & Emoji:** Give your theme a name and optional emoji that appears in the theme picker.
+
+## Go Beyond Colors
+
+The **CSS** tab accepts ordinary browser CSS: typography, backgrounds and textures, gradients, borders, shadows, spacing, responsive layouts, pseudo-elements, animations, custom properties and font faces. There is no selector allowlist or fixed list of visual effects. Fonts and images can use URLs, subject to your browser's normal loading rules.
+
+The live sample renders both your palette and CSS in a separate document using the app's actual buttons, inputs and cards. Page-wide selectors such as `body`, `:root`, `*`, media queries and keyframes stay inside the sample while you edit. Saving applies the CSS across the app while that theme is active. The sample is a small addon screen; check other pages and phone layouts after saving. Contrast checks measure palette colors, so CSS overrides can change the final contrast.
+
+Use these theme hooks instead of depending on generated utility class names:
+
+| Selector | What it styles |
+|----------|----------------|
+| `[data-theme-part="app-shell"]` | Main application background |
+| `[data-theme-part="app-header"]` | Visible application header surface |
+| `[data-theme-part="app-nav"]`, `[data-theme-part="nav-item"]` | Desktop navigation and its links |
+| `[data-theme-part="mobile-nav"]`, `[data-theme-part="mobile-status"]` | Mobile navigation and status strip |
+| `[data-theme-part="app-footer"]`, `[data-theme-part="footer-nav"]` | Footer surface and links |
+| `[data-theme-part="panel"]`, `[data-theme-part="toolbar"]` | Shared page containers and action bars |
+| `[data-theme-part="card"]` | Shared card components |
+| `[data-theme-part="addon-card"]` | Installed and saved addon cards, list rows and sample addons |
+| `[data-theme-part="button"]` | Shared buttons, including link buttons |
+| `[data-theme-part="inline-action"]` | Text actions such as copying the build identifier, without a button frame |
+| `[data-theme-part="input"]` | Shared text inputs |
+| `[data-theme-part="textarea"]` | Shared multiline inputs |
+| `[data-theme-part="field"]` | Static source URLs, code boxes and compound input containers |
+| `[data-theme-part="inline-input"]` | Borderless input inside an already themed field |
+| `[data-theme-part="select-trigger"]` | Shared select controls |
+| `[data-theme-part="badge"]` | Shared badges |
+| `[data-theme-part="brand-logo"]` | Application mark, following the text color of its surface; custom artwork keeps its colors |
+| `[data-theme-part="account-avatar"]`, `[data-theme-part="image-tile"]` | Account avatars and addon preview tiles |
+| `[data-theme-part="tabs-list"]`, `[data-theme-part="tab"]`, `[data-theme-part="tab-panel"]` | Shared and custom tab controls and content |
+| `[data-theme-part="dialog"]`, `[data-theme-part="dialog-overlay"]` | Dialog panels and backdrops |
+| `[data-theme-part="menu"]`, `[data-theme-part="menu-item"]` | Dropdown panels and actions |
+| `[data-theme-part="popover"]` | Popover panels |
+| `[data-theme-part="select-content"]`, `[data-theme-part="select-item"]` | Select dropdowns and options |
+| `[data-theme-part="checkbox"]`, `[data-theme-part="switch"]`, `[data-theme-part="switch-thumb"]` | Selection controls |
+| `[data-theme-part="slider"]` | Native preference and graph range sliders |
+| `[data-theme-part="progress"]`, `[data-theme-part="progress-indicator"]` | Progress tracks and fills |
+| `[data-theme-part="tooltip"]`, `[data-theme-part="toast"]` | Tooltips and notifications |
+| `[data-theme-part="scroll-area"]`, `[data-theme-part="scrollbar"]`, `[data-theme-part="scroll-thumb"]` | Shared scroll areas |
+| `[data-theme-part="avatar"]`, `[data-theme-part="avatar-fallback"]`, `[data-theme-part="skeleton"]` | Shared avatars and loading placeholders |
+
+Buttons and badges also expose `data-variant`, such as `default`, `outline` or `destructive`. These hooks cover shared components and custom page surfaces, including saved addon cards, filters, provider forms, notes and vault panels. Other elements can be targeted with normal CSS selectors. Style the outer `field` when an `inline-input` sits inside it to avoid drawing two borders.
+
+Status callouts expose `data-theme-tone="status"`. The built-in skins style their frames while preserving warning, error, success and information fills.
+
+Elements with `data-theme-inset` belong to a larger surface, such as a note editor's toolbar or sidebar list rows. Built-in skins preserve their existing spacing and geometry instead of drawing another standalone panel around each one. The `inline-input` hook keeps document titles and full-page editors frameless.
+
+Navigation links and tabs expose `data-state="active"`; current page links also carry `aria-current="page"`. Radix controls keep their existing `data-state`, `data-highlighted` and ARIA states. Theme the selected, checked, open, focused and disabled states as well as the default appearance. The built-in CSS treatments cover these shared surfaces; branded images, charts and other purpose-specific content keep their own visual meaning. Docs exclude theme CSS and use an isolated dark palette; Replay keeps its dedicated layout.
+
+Some custom segmented controls include a moving `[data-theme-part="tab-indicator"]`. If your CSS paints the selected tab directly, make that indicator's background transparent so it does not cover the selected color.
+
+```css
+/* Theme colors contain HSL channels, so wrap them in hsl(). */
+[data-theme-part="card"] {
+  border-radius: 24px;
+  box-shadow: 0 0 28px hsl(var(--primary) / .2);
+}
+
+body { font-family: Georgia, serif; }
+
+[data-theme-part="button"][data-variant="default"] {
+  border-radius: 999px;
+  letter-spacing: .03em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-theme-part="card"] { transition: box-shadow .2s ease; }
+}
+```
+
+CSS can rearrange and decorate existing elements. New working widgets, data sources, routes and application behavior require application code; themes do not execute JavaScript. Prefer loading a different palette or editing color tokens for palette changes: runtime palette variables are set directly on the document root, so stylesheet overrides of those same variables require `!important`.
+
+## Dynamic Themes
+
+Themes can animate gradients, sheen, glow and textures with CSS keyframes, and react to hover, focus, selection, checked controls, open menus, screen size and system preferences. Put decorative motion inside `@media (prefers-reduced-motion: no-preference)` so it stops when the reader requests less motion.
+
+The application header exposes `data-sync-state`: `offline`, `idle`, `syncing`, `refreshing`, `synced` or `error`. Its desktop sync control also exposes `[data-theme-part="sync-status"][data-status="..."]`. These reflect existing app state; CSS does not initiate syncing. For example:
+
+```css
+/* A live glow while the app syncs. No theme JavaScript required. */
+[data-theme-part="app-shell"]:has([data-sync-state="syncing"])
+  [data-theme-part="app-nav"] {
+  box-shadow: 0 0 22px hsl(var(--primary) / .45);
+}
+```
+
+In the editor sample, open **More controls** and toggle **Simulate syncing** to try a reactive theme. This affects the sample only. Clock time, weather, audio analysis and continuous pointer coordinates would need additional app-provided signals or application code; CSS cannot fetch those values by itself. Motion and geometry that the app controls through inline styles can also take precedence over theme styles.
+
+Paste CSS into the **CSS** tab, or import a complete theme `.json` from Appearance. A theme JSON includes the palette and its `customCss` string. HTML and JavaScript are not theme formats, and the editor does not currently upload standalone `.css` files.
 
 <Tip>Custom themes sync to all your devices via Cloud Sync automatically. Build it once, use it everywhere.</Tip>
 
@@ -53,4 +150,4 @@ Build your own theme in **Settings > Appearance > Create Custom Theme**.
 
 Any custom theme can be exported as a `.json` file or copied to your clipboard as a code string. Share it in Discord or with friends; they paste or load it and it applies instantly.
 
-<Note>The share format includes the full palette so the recipient doesn't need to recreate it from scratch.</Note>
+<Note>The share format includes the full palette, custom CSS and optional header logo. Older palette-only exports still import. The editor's JSON tab also preserves CSS and the logo alongside its palette.</Note>

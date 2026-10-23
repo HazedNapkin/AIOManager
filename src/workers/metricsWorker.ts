@@ -14,6 +14,10 @@ interface ActivityItem {
     season?: number
     episode?: number
     video_id?: string
+    /** No real watch date (bitfield recovery / undated external import); excluded from time-based stats. */
+    backfill?: boolean
+    /** Imported saved watch state; same exclusion as backfill. */
+    importedSavedState?: boolean
 }
 const subDays = (d: Date, n: number) => new Date(d.getTime() - n * 864e5)
 const isSeriesType = (t: string) => t === 'series' || t === 'anime' || t === 'episode'
@@ -360,8 +364,11 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[]; rollups?: EventRollup
     }
     totalDurationMinutes += rollupMinutesTotal
 
-    // Binge Logic
-    const chronoHistory = [...normalizedItems].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    // Binge Logic. Rows without a real watch date (backfill/importedSavedState) are
+    // excluded first: their synthetic timestamps cluster at sync time and would
+    // otherwise chain a whole large-library import into one fake giant session.
+    const bingeEligible = normalizedItems.filter(h => !h.backfill && !h.importedSavedState)
+    const chronoHistory = [...bingeEligible].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     const tempBingeTracker: Record<string, { currentChain: ActivityItem[], lastTime: Date }> = {}
     const userBinges: Record<string, { duration: number; items: ActivityItem[] }> = {}
 
@@ -550,7 +557,9 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[]; rollups?: EventRollup
         weeklyRhythm[dow]++
     })
 
-    const chronoForSessions = [...normalizedItems].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    // Session depths use the same eligibility rule as binge chains: synthetic
+    // timestamps never lengthen a "session".
+    const chronoForSessions = [...bingeEligible].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     let sessionCount = 0
     let lastSessionTime: Date | null = null
     chronoForSessions.forEach((h: ActivityItem) => {
@@ -580,10 +589,17 @@ self.onmessage = (e: MessageEvent<{ items: ActivityItem[]; rollups?: EventRollup
         if (bucket) bucket.count++
     })
 
+    // Group once; scanning all history for every repeated title makes this pass quadratic.
+    const playsByItemId = new Map<string, ActivityItem[]>()
+    for (const item of normalizedItems) {
+        const plays = playsByItemId.get(item.itemId)
+        if (plays) plays.push(item)
+        else playsByItemId.set(item.itemId, [item])
+    }
     const comebackTitles: { name: string; gap: number; poster: string }[] = []
     Object.values(contentStats).forEach(cs => {
         if (cs.count < 2) return
-        const plays = normalizedItems.filter(h => h.itemId === cs.item.itemId).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+        const plays = (playsByItemId.get(cs.item.itemId) || []).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
         for (let i = 1; i < plays.length; i++) {
             const gapDays = (plays[i].timestamp.getTime() - plays[i - 1].timestamp.getTime()) / 864e5
             if (gapDays >= 14) {

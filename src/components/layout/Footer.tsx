@@ -35,13 +35,15 @@ export function Footer({ className }: { className?: string }) {
 
   return (
     <footer className={cn("mt-auto px-3 pt-5 sm:px-4", className)}>
-      <div className="glass-header mx-auto w-full max-w-[1800px] rounded-t-3xl border border-b-0 border-border/40 px-4 py-4 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06),0_-18px_60px_hsl(var(--background)/0.35)]">
+      <div data-theme-part="app-footer" className="glass-header mx-auto w-full max-w-[1800px] rounded-t-3xl border border-b-0 border-border/40 px-4 py-4 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06),0_-18px_60px_hsl(var(--background)/0.35)]">
         <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
           <nav
+            data-theme-part="footer-nav"
             aria-label="Footer links"
             className="inline-flex w-full flex-wrap items-center justify-center gap-1 rounded-2xl border border-border/40 bg-white/[0.04] p-1.5 shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)] md:w-auto"
           >
             <a
+              data-theme-part="nav-item"
               href="https://torbox.app/subscription?referral=a7aecfd0-57c8-48fa-9e49-2904f09d57d2"
               target="_blank"
               rel="noopener noreferrer"
@@ -51,6 +53,7 @@ export function Footer({ className }: { className?: string }) {
               TorBox
             </a>
             <a
+              data-theme-part="nav-item"
               href="https://github.com/sonicx161/AIOManager"
               target="_blank"
               rel="noopener noreferrer"
@@ -60,6 +63,7 @@ export function Footer({ className }: { className?: string }) {
               Source
             </a>
             <Link
+              data-theme-part="nav-item"
               to="/kronorium/project/credits"
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
             >
@@ -67,6 +71,7 @@ export function Footer({ className }: { className?: string }) {
               Credits
             </Link>
             <Link
+              data-theme-part="nav-item"
               to="/kronorium/project/support"
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
             >
@@ -75,9 +80,9 @@ export function Footer({ className }: { className?: string }) {
             </Link>
           </nav>
 
-          <div className="inline-flex max-w-full flex-wrap items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-white/[0.04] text-xs font-semibold uppercase tracking-[0.05em] shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)]">
+          <div data-theme-part="panel" className="inline-flex max-w-full flex-wrap items-center justify-center overflow-hidden rounded-xl border border-border/40 bg-white/[0.04] text-xs font-semibold uppercase tracking-[0.05em] shadow-[inset_0_0.5px_0_hsl(0_0%_100%/0.06)]">
             <Tooltip content="Developer GitHub Profile" side="top">
-              <a
+              <a data-theme-part="nav-item"
                 href="https://github.com/sonicx161"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -89,6 +94,8 @@ export function Footer({ className }: { className?: string }) {
             <span className="h-4 w-px bg-border/70" />
             <Tooltip content="View release notes" side="top">
               <button
+                data-theme-part="button"
+                data-variant="ghost"
                 onClick={() => useUIStore.getState().setWhatsNewOpen(true)}
                 className="inline-flex h-8 items-center gap-1.5 px-3 font-mono text-muted-foreground transition-colors hover:text-primary"
               >
@@ -107,7 +114,7 @@ export function Footer({ className }: { className?: string }) {
             {updateAvailable && (
               <>
                 <span className="h-4 w-px bg-border/70" />
-                <a
+                <a data-theme-part="nav-item"
                   href="https://github.com/sonicx161/AIOManager/releases"
                   target="_blank"
                   rel="noopener noreferrer"

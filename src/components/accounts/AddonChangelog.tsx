@@ -46,7 +46,7 @@ export function AddonChangelog({ accountId }: AddonChangelogProps) {
     }
 
     return (
-        <div className="rounded-2xl border border-border/40 overflow-hidden flex flex-col bg-card/50 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 overflow-hidden flex flex-col bg-card/50 shadow-sm">
             <div className="flex items-center justify-between gap-3 border-b border-border/30 px-3 py-2">
                 <div>
                     <p className="text-sm font-semibold">{accountId ? 'Account Changelog' : 'Changelog'}</p>
@@ -85,7 +85,7 @@ export function AddonChangelog({ accountId }: AddonChangelogProps) {
                             const addonName = currentAddon?.metadata?.customName || entry.addonName
                             const addonLogo = currentAddon?.metadata?.customLogo || entry.addonLogo
                             return (
-                            <div key={entry.id} className="flex items-center justify-between gap-3 text-sm bg-card border border-border/40 rounded-xl px-3 py-2.5 shadow-sm hover:shadow-md hover:border-border transition-[transform,opacity,box-shadow]">
+                            <div key={entry.id} data-theme-part="panel" className="flex items-center justify-between gap-3 text-sm bg-card border border-border/40 rounded-xl px-3 py-2.5 shadow-sm hover:shadow-md hover:border-border transition-[transform,opacity,box-shadow]">
                                 <div className="flex gap-3 items-center min-w-0">
                                     <div className="relative shrink-0">
                                         <AddonIcon
@@ -109,7 +109,7 @@ export function AddonChangelog({ accountId }: AddonChangelogProps) {
                                             <p className="font-semibold truncate leading-none">
                                                 {addonName}
                                             </p>
-                                            <span className={`text-xs font-bold px-1 py-0.5 rounded uppercase ${entry.action === 'installed' ? 'bg-success/10 text-success' :
+                                            <span data-theme-part="badge" className={`text-xs font-bold px-1 py-0.5 rounded uppercase ${entry.action === 'installed' ? 'bg-success/10 text-success' :
                                                 entry.action === 'removed' ? 'bg-destructive/10 text-destructive' :
                                                     entry.action === 'replaced' ? 'bg-warning/10 text-warning' : 'bg-primary/12 text-primary'
                                                 }`}>

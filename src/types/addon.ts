@@ -28,6 +28,19 @@ export interface AddonManifest {
   }
 }
 
+// Per-addon destination policy (deny-list) — see AddonDescriptor.destinations.
+export interface AddonDestinations {
+  excludedPlatforms?: string[]
+  excludedConnections?: string[]
+  // LWW clock for cross-device convergence (see lib/addon-destinations.ts). Assigned on
+  // every deliberate policy WRITE from the picker (set or clear) via nextPolicyRevision,
+  // so it never regresses even under clock skew; imports/merges never bump it. A policy
+  // cleared of every exclusion survives as the tombstone { revision } so the clear
+  // itself can propagate — behaviorally identical to an absent policy. Absent on rows
+  // written by pre-revision clients (treated as 0).
+  revision?: number
+}
+
 export interface AddonDescriptor {
   transportUrl: string
   transportName?: string
@@ -37,6 +50,12 @@ export interface AddonDescriptor {
     protected?: boolean
     enabled?: boolean
   }
+  // Per-addon destination policy (deny-list). Absent = sync everywhere. Platform
+  // entries cover every login of that platform, present and future; connection ids
+  // are exact stable login ids. Never removed from the hub: exclusion means the
+  // target's next sync removes its copy, nothing more. Pure helpers live in
+  // src/lib/addon-destinations.ts; the server twin is server/utils/addon-destinations.js.
+  destinations?: AddonDestinations
   metadata?: {
     customName?: string
     customLogo?: string

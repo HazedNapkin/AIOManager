@@ -50,6 +50,7 @@ import { useSavedAddonLibraryData } from './hooks/useSavedAddonLibraryData'
 import { useSavedAddonSyncActions } from './hooks/useSavedAddonSyncActions'
 import { useSavedAddonSelectionActions } from './hooks/useSavedAddonSelectionActions'
 import { useScrollRestoration } from '@/hooks/use-scroll-restoration'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 export function SavedAddonLibrary() {
   useScrollRestoration('saved-addons')
@@ -126,14 +127,10 @@ export function SavedAddonLibrary() {
   const [showInjectDialog, setShowInjectDialog] = useState(false)
   const [injectAddons, setInjectAddons] = useState<SavedAddon[]>([])
   const [showMobileFilters, setShowMobileFilters] = useState(false)
-  const [libraryTab, setLibraryTab] = useState<'library' | 'discover' | 'sync'>(() => {
-    const hash = window.location.hash.replace('#', '')
-    const legacy = new URLSearchParams(window.location.search).get('tab')
-    const tab = hash || legacy
-    if (tab === 'sync') return 'sync'
-    if (tab === 'discover') return 'discover'
-    return 'library'
-  })
+  const location = useLocation()
+  const navigate = useNavigate()
+  const tab = location.hash.slice(1) || new URLSearchParams(location.search).get('tab')
+  const libraryTab = tab === 'sync' ? 'sync' : tab === 'discover' ? 'discover' : 'library'
 
   // Latch: once Discover is opened, keep it mounted (hidden when inactive) so
   // switching back is instant, with no remount, refetch, or animation replay.
@@ -142,7 +139,10 @@ export function SavedAddonLibrary() {
   // without remounting the panel, so no refetch.
   const [discoverReplayKey, setDiscoverReplayKey] = useState(0)
   useEffect(() => {
-    if (libraryTab === 'discover') setDiscoverVisited(true)
+    if (libraryTab === 'discover') {
+      setDiscoverVisited(true)
+      setDiscoverReplayKey((k) => k + 1)
+    }
   }, [libraryTab])
 
   const toggleProfile = (id: string) => {
@@ -480,13 +480,11 @@ export function SavedAddonLibrary() {
 
   const handleLibraryTabChange = (value: string) => {
     const nextTab = value === 'sync' ? 'sync' : value === 'discover' ? 'discover' : 'library'
-    if (nextTab === 'discover') setDiscoverReplayKey((k) => k + 1)
-    setLibraryTab(nextTab)
-
-    const url = new URL(window.location.href)
-    url.search = ''
-    url.hash = nextTab === 'library' ? '' : nextTab
-    window.history.replaceState(null, '', `${url.pathname}${url.hash}`)
+    const currentTab = window.location.hash.slice(1) || new URLSearchParams(window.location.search).get('tab') || 'library'
+    if (nextTab === currentTab) return
+    const params = new URLSearchParams(location.search)
+    params.delete('tab')
+    navigate({ pathname: location.pathname, search: params.toString(), hash: nextTab === 'library' ? '' : `#${nextTab}` }, { preventScrollReset: true })
   }
 
   const handleDeleteProfile = async () => {
@@ -521,7 +519,7 @@ export function SavedAddonLibrary() {
               <Link2 className="h-3.5 w-3.5" />
               Sync
               {syncOverviewData.length > 0 && (
-                <span className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
+                <span data-theme-part="badge" className={cn("flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-xs font-bold leading-none", libraryTab === 'sync' ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground")}>{syncOverviewData.length}</span>
               )}
             </TabsTrigger>
           </TabsList>
@@ -587,15 +585,17 @@ export function SavedAddonLibrary() {
         <FloatingActionBar
           open={selectedIds.size > 0}
           selectedCount={selectedIds.size}
-                totalCount={filteredAddons.length}
+                totalCount={selectedIds.size > filteredAddons.length ? undefined : filteredAddons.length}
           onClearSelection={clearSelection}
           actions={[
             {
-              label: selectedIds.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect All' : 'Select All',
+              label: filteredAddons.length > 0 && filteredAddons.every(a => selectedIds.has(a.id)) ? 'Deselect Visible' : 'Select Visible',
               onClick: handleSelectAll,
               variant: 'outline',
               icon: <Check className="h-4 w-4" />,
-              tooltip: selectedIds.size === filteredAddons.length && filteredAddons.length > 0 ? 'Deselect all addons' : 'Select all addons',
+              tooltip: filteredAddons.length > 0 && filteredAddons.every(a => selectedIds.has(a.id))
+                ? 'Deselect the addons matching the current filters; other selections are kept'
+                : 'Select the addons matching the current filters; existing selections are kept',
             },
             {
               label: 'Deploy',
@@ -679,7 +679,7 @@ export function SavedAddonLibrary() {
             enablingSyncIds={enablingSyncIds}
             disablingSyncIds={disablingSyncIds}
             profiles={profiles}
-            onBackToLibrary={() => setLibraryTab('library')}
+            onBackToLibrary={() => handleLibraryTabChange('library')}
             onPushAllUpdates={handlePushAllSyncUpdates}
             onPushAddonUpdate={handlePushSyncAddonUpdate}
             onDisableSync={handleDisableSync}
@@ -757,7 +757,7 @@ export function SavedAddonLibrary() {
                 />
               )}
 
-              <div className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
+              <div data-theme-part="panel" className="flex items-start gap-2.5 rounded-xl border border-border/40 bg-muted/25 px-3.5 py-2.5 text-xs text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                 <p>
                   <span className="font-medium text-foreground/80">Version numbers are informational.</span>{' '}

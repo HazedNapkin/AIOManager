@@ -1,10 +1,13 @@
 import { useState, useMemo, useCallback, useRef, useEffect, memo, useDeferredValue, useReducer } from 'react'
 import {
     Sun, Moon, Monitor, ArrowLeft,
-    Trash2, Sparkles, Smile, Search, RotateCcw, Undo2, Redo2, Copy, Check
+    Trash2, Sparkles, Smile, Search, RotateCcw, Undo2, Redo2, Copy, Check,
+    Upload
 } from 'lucide-react'
-import { Theme, CompactPalette, ThemePalette, ThemePreview, ThemeOption } from '@/data/themes'
-import { expand, derivePreview, hslToHex } from '@/data/themes'
+import { Theme, CompactPalette, ThemePalette, ThemeOption } from '@/data/themes'
+import { expand, hslToHex } from '@/data/themes'
+import { ThemeLivePreview } from './ThemeLivePreview'
+import { createCustomThemeId, parseThemePalette } from '@/lib/theme-utils'
 import { EMOJI_GROUPS } from '@/lib/emoji-data'
 import { ColorPicker } from '@/components/ui/color-picker'
 import { Input } from '@/components/ui/input'
@@ -171,105 +174,6 @@ function makeDefaultState(t?: CustomThemeData | null): EditorState {
     }
 }
 
-const AppMockup = memo(function AppMockup({ preview }: { preview: ThemePreview }) {
-    const a = preview.accent
-    const bg = preview.background
-    const surf = preview.surface
-    const tx = preview.text
-    const mu = preview.textMuted
-
-    return (
-        <div className="w-full rounded-xl overflow-hidden shadow-2xl" style={{ border: `1px solid ${mu}20`, background: bg }}>
-
-            <div className="flex items-center gap-2.5 px-3 h-11 shrink-0" style={{ background: surf, borderBottom: `1px solid ${mu}18` }}>
-                <div className="w-5 h-5 rounded-lg shrink-0 flex items-center justify-center" style={{ background: `${a}28` }}>
-                    <div className="w-2.5 h-2 rounded-sm" style={{ background: a }} />
-                </div>
-                <div className="h-2 w-16 rounded-full" style={{ background: tx, opacity: 0.4 }} />
-                <div className="ml-auto flex items-center gap-2">
-                    <div className="h-6 w-32 rounded-lg flex items-center px-2 gap-1.5" style={{ background: bg, border: `1px solid ${mu}20` }}>
-                        <div className="w-2 h-2 rounded" style={{ background: mu, opacity: 0.28 }} />
-                        <div className="h-1.5 flex-1 rounded-full" style={{ background: mu, opacity: 0.15 }} />
-                        <div className="h-3.5 px-1 rounded flex items-center" style={{ background: `${mu}15` }}>
-                            <div className="h-1 w-3 rounded-full" style={{ background: mu, opacity: 0.3 }} />
-                        </div>
-                    </div>
-                    <div className="h-6 px-2.5 rounded-lg flex items-center gap-1.5" style={{ background: bg, border: `1px solid ${mu}20` }}>
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ background: a, opacity: 0.7 }} />
-                        <div className="h-1.5 w-8 rounded-full" style={{ background: mu, opacity: 0.22 }} />
-                        <div className="w-px h-3 mx-0.5" style={{ background: `${mu}28` }} />
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#22c55e', opacity: 0.7 }} />
-                        <div className="h-1.5 w-5 rounded-full" style={{ background: mu, opacity: 0.22 }} />
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex justify-center py-2" style={{ background: bg }}>
-                <div className="inline-flex items-center gap-0.5 px-1.5 h-10 rounded-2xl" style={{ background: surf, border: `1px solid ${mu}14` }}>
-                    {[
-                        { w: 42, active: true },
-                        { w: 34, active: false },
-                        { w: 28, active: false },
-                        { w: 36, active: false },
-                        { w: 32, active: false },
-                        { w: 30, active: false },
-                    ].map(({ w, active }, i) => (
-                        <div key={i} className="flex items-center px-2.5 h-8 rounded-xl" style={{
-                            background: active ? `${a}18` : 'transparent',
-                            border: active ? `1px solid ${a}28` : '1px solid transparent',
-                        }}>
-                            <div className="h-1.5 rounded-full" style={{ width: w, background: active ? a : mu, opacity: active ? 0.75 : 0.28 }} />
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            <div className="px-3 pb-3 space-y-1.5">
-                <div className="flex items-center gap-2 py-1">
-                    <div className="h-3 w-20 rounded-full" style={{ background: tx, opacity: 0.65 }} />
-                    <div className="h-5 px-2 rounded-full flex items-center" style={{ background: `${a}15`, border: `1px solid ${a}22` }}>
-                        <div className="h-1.5 w-4 rounded-full" style={{ background: a, opacity: 0.55 }} />
-                    </div>
-                    <div className="ml-auto h-7 px-3 rounded-lg flex items-center" style={{ background: a }}>
-                        <div className="h-1.5 w-12 rounded-full" style={{ background: '#fff', opacity: 0.82 }} />
-                    </div>
-                </div>
-
-                {[
-                    { nameW: 48, subW: 28, active: true },
-                    { nameW: 38, subW: 22, active: false },
-                    { nameW: 56, subW: 32, active: false },
-                    { nameW: 32, subW: 18, active: false },
-                ].map((row, i) => (
-                    <div key={i} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl" style={{
-                        background: row.active ? `${a}08` : surf,
-                        border: `1px solid ${row.active ? a + '1a' : mu + '12'}`,
-                    }}>
-                        <div className="w-8 h-8 rounded-xl shrink-0" style={{
-                            background: row.active ? `${a}22` : `${mu}12`,
-                            border: `1px solid ${row.active ? a + '28' : mu + '10'}`,
-                        }} />
-                        <div className="flex-1 min-w-0">
-                            <div className="h-2 rounded-full mb-1.5" style={{ width: `${row.nameW}%`, background: tx, opacity: 0.6 }} />
-                            <div className="h-1.5 rounded-full" style={{ width: `${row.subW}%`, background: mu, opacity: 0.28 }} />
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            <div className="h-5 px-2 rounded-full flex items-center" style={{ background: `${mu}10`, border: `1px solid ${mu}15` }}>
-                                <div className="h-1.5 w-5 rounded-full" style={{ background: mu, opacity: 0.32 }} />
-                            </div>
-                            <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: `${mu}08` }}>
-                                <div className="flex flex-col gap-0.5">
-                                    {[0,1,2].map(j => <div key={j} className="w-0.5 h-0.5 rounded-full" style={{ background: mu, opacity: 0.4 }} />)}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    )
-})
-
 const TokenColorRow = memo(function TokenColorRow({ label, hexValue, onChange }: { label: string; hexValue: string; onChange: (hex: string) => void }) {
     const [open, setOpen] = useState(false)
     const onChangeRef = useRef(onChange)
@@ -280,6 +184,7 @@ const TokenColorRow = memo(function TokenColorRow({ label, hexValue, onChange }:
             <PopoverTrigger asChild>
                 <button
                     type="button"
+                    data-theme-part="button"
                     className="flex items-center gap-3 w-full text-left px-3 py-2 rounded-xl bg-muted/10 border border-border/20 hover:border-primary/30 hover:bg-muted/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring group"
                 >
                     <div className="w-6 h-6 rounded-lg ring-1 ring-black/5 shadow-sm shrink-0 group-hover:scale-110 transition-transform" style={{ background: hexValue }} />
@@ -313,6 +218,9 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     const [activeTab, setActiveTab] = useState<'edit' | 'import' | 'css'>('edit')
     const [rawPaletteText, setRawPaletteText] = useState('')
     const [rawPaletteError, setRawPaletteError] = useState('')
+    const [fxDuration, setFxDuration] = useState('7')
+    const [fxDensity, setFxDensity] = useState('170')
+    const [fxDepth, setFxDepth] = useState('16')
 
     const [editorState, dispatch] = useReducer(editorReducer, makeDefaultState(editingTheme))
 
@@ -401,12 +309,16 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
 
     const applyPreset = useCallback((option: ThemeOption) => {
         const parts = option.palette.primary.split(' ').map(v => parseFloat(v))
-        setBase(parseFloat(option.palette.background.split(' ')[2]) < 50 ? 'dark' : 'light')
+        const lightness = parseHsl(option.palette.background).l
+        const nextBase = option.subcategory ?? (lightness === 0 ? 'oled' : lightness < 50 ? 'dark' : 'light')
+        prevBaseRef.current = nextBase
+        setBase(nextBase)
         setEmoji(option.emoji)
+        setLogoUrl(option.logoUrl ?? '')
         if (!name.trim()) setName(`${option.label} (Custom)`)
         batchWithUndo({
-            hue: Math.round(parts[0] || 220),
-            saturation: Math.round(parts[1] || 70),
+            hue: Math.round(parts[0] ?? 220),
+            saturation: Math.round(parts[1] ?? 70),
             bgTint: detectBgTint(option.palette),
             bgLightness: parseHsl(option.palette.background).l,
             cardLightness: parseHsl(option.palette.card).l,
@@ -415,7 +327,8 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
             textLightness: parseHsl(option.palette.cardForeground).l,
             mutedLightness: parseHsl(option.palette.mutedForeground).l,
             destructiveHue: parseHsl(option.palette.destructive).h,
-            rawPalette: null,
+            rawPalette: { ...option.palette } as Record<string, string>,
+            customCss: option.customCss ?? '',
         })
     }, [batchWithUndo, name])
 
@@ -441,16 +354,16 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
             return {
                 ...fallback,
                 ...Object.fromEntries(Object.entries(rp).filter(([, v]) => v != null && v !== '')),
-                input: rp.border ?? fallback.border,
-                ring: rp.primary ?? fallback.primary,
+                input: rp.input ?? rp.border ?? fallback.input,
+                ring: rp.ring ?? rp.primary ?? fallback.ring,
             }
         }
         return null
     }, [editorState.rawPalette, compact])
 
     const palette = useMemo(() => effectivePaletteForPreview ?? expand(compact), [effectivePaletteForPreview, compact])
-    const previewColors = useMemo(() => derivePreview(palette), [palette])
-    const deferredPreviewColors = useDeferredValue(previewColors)
+    const deferredPalette = useDeferredValue(palette)
+    const deferredCustomCss = useDeferredValue(editorState.customCss)
 
     const hexColors = useMemo(() => ({
         background:     hslToHex(palette.background),
@@ -478,7 +391,10 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
             const rounded = Math.round(ratio * 10) / 10
             const status = ratio >= 7 ? 'pass' as const : ratio >= 4.5 ? 'warn' as const : 'fail' as const
             const word = ratio >= 7 ? 'Great' : ratio >= 4.5 ? 'OK' : 'Poor'
-            return { label: p.label, desc: p.desc, rounded, status, word }
+            return {
+                label: p.label, desc: p.desc, rounded, status, word,
+                chipFg: `hsl(${p.fg})`, chipBg: `hsl(${p.bg})`, chipBorder: `hsl(${p.fg} / 0.15)`,
+            }
         })
     }, [palette.cardForeground, palette.card, palette.primary, palette.background, palette.mutedForeground])
 
@@ -509,26 +425,42 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         })
     }, [batchWithUndo, base])
 
+    const applyFxKnobs = useCallback(() => {
+        const entries: string[] = []
+        if (fxDuration.trim()) entries.push(`--fx-duration: ${fxDuration.trim()}s`)
+        if (fxDensity.trim()) entries.push(`--fx-density: ${fxDensity.trim()}px`)
+        if (fxDepth.trim()) entries.push(`--fx-depth: ${fxDepth.trim()}px`)
+        if (!entries.length) return
+        const block = `:root { ${entries.join('; ')}; }`
+        const css = editorStateRef.current.customCss
+        pushUndo()
+        // Upsert: refresh an existing --fx- root block in place, else prepend one.
+        const existing = css.match(/:root\s*\{[^}]*--fx-[^}]*\}/)
+        dispatch({ type: 'SET', key: 'customCss', value: existing ? css.replace(existing[0], block) : `${block}\n${css}` })
+    }, [fxDuration, fxDensity, fxDepth, pushUndo])
+
     const handleRawPaletteApply = () => {
         try {
             const parsed = JSON.parse(rawPaletteText)
             const required = ['background', 'card', 'primary', 'cardForeground', 'mutedForeground', 'muted', 'destructive', 'border']
             const missing = required.filter(k => !parsed[k])
             if (missing.length > 0) { setRawPaletteError(`Missing keys: ${missing.join(', ')}`); return }
+            const importedPalette = parseThemePalette(parsed)
+            if (!importedPalette) { setRawPaletteError('Use HSL channel values such as 220 70% 50% for palette colors.'); return }
             batchWithUndo({
-                rawPalette: parsed,
-                bgLightness: parseHsl(parsed.background).l,
-                cardLightness: parseHsl(parsed.card).l,
-                borderLightness: parseHsl(parsed.border).l,
-                primaryLightness: parseHsl(parsed.primary).l,
-                textLightness: parseHsl(parsed.cardForeground).l,
-                mutedLightness: parseHsl(parsed.mutedForeground).l,
-                destructiveHue: parseHsl(parsed.destructive).h,
-                hue: Math.round((parsed.primary.split(' ').map(parseFloat))[0] || 220),
-                saturation: Math.round((parsed.primary.split(' ').map(parseFloat))[1] || 70),
+                rawPalette: importedPalette as unknown as Record<string, string>,
+                bgLightness: parseHsl(importedPalette.background).l,
+                cardLightness: parseHsl(importedPalette.card).l,
+                borderLightness: parseHsl(importedPalette.border).l,
+                primaryLightness: parseHsl(importedPalette.primary).l,
+                textLightness: parseHsl(importedPalette.cardForeground).l,
+                mutedLightness: parseHsl(importedPalette.mutedForeground).l,
+                destructiveHue: parseHsl(importedPalette.destructive).h,
+                hue: Math.round(parseHsl(importedPalette.primary).h),
+                saturation: Math.round(parseHsl(importedPalette.primary).s),
                 ...(typeof parsed.customCss === 'string' ? { customCss: parsed.customCss } : {}),
-        ...(typeof parsed.logoUrl === 'string' ? { logoUrl: parsed.logoUrl } : {}),
             })
+            if (typeof parsed.logoUrl === 'string') setLogoUrl(parsed.logoUrl)
             setRawPaletteError('')
             setActiveTab('edit')
         } catch {
@@ -541,26 +473,19 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
         const out: Record<string, string> = {}
         for (const [k, v] of Object.entries(palette)) { if (typeof v === 'string') out[k] = v }
         if (editorState.customCss?.trim()) out.customCss = editorState.customCss
+        if (logoUrl.trim()) out.logoUrl = logoUrl.trim()
         navigator.clipboard.writeText(JSON.stringify(out, null, 2)).then(() => {
             setCopiedJson(true); setTimeout(() => setCopiedJson(false), 2000)
         }).catch(() => {})
-    }, [palette, editorState.customCss])
+    }, [palette, editorState.customCss, logoUrl])
 
     const isValid = name.trim().length > 0
     const isEditing = !!editingTheme && customThemes.some(ct => ct.id === editingTheme.id)
 
     const handleSave = () => {
         if (!isValid) return
-        const id: Theme = isEditing ? editingTheme!.id : `custom-${crypto.randomUUID().slice(0, 8)}` as Theme
-        const basePalette = expand(compact)
-        const finalPalette: ThemePalette = editorState.rawPalette
-            ? {
-                ...basePalette,
-                ...Object.fromEntries(Object.entries(editorState.rawPalette).filter(([, v]) => v != null && v !== '')),
-                input: editorState.rawPalette.border ?? basePalette.border,
-              }
-            : palette
-        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette: finalPalette, customCss: editorState.customCss.trim() || undefined, logoUrl: logoUrl.trim() || undefined }
+        const id: Theme = isEditing ? editingTheme!.id : createCustomThemeId()
+        const data: CustomThemeData = { id, label: name.trim(), description: description.trim(), emoji, base, hue: editorState.hue, saturation: editorState.saturation, palette, customCss: editorState.customCss.trim() || undefined, logoUrl: logoUrl.trim() || undefined }
         if (isEditing) {
             updateCustomTheme(id, data)
         } else {
@@ -577,51 +502,69 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
     }
 
     return (
-        <div className="flex flex-col gap-4 md:flex-row md:gap-6 md:h-[calc(100vh-16rem)] md:min-h-[600px]">
+        <div className="flex flex-col gap-5">
 
-            <div className="flex flex-col w-full md:w-[440px] md:shrink-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden">
-
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-border/30 shrink-0">
-                    <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0">
+            {/* Page header: back, title, and save/delete actions span the full width */}
+            <div className="flex flex-wrap items-center gap-3">
+                <Tooltip content="Back to appearance settings" side="top">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={onClose}
+                        aria-label="Back to appearance settings"
+                        className="h-9 w-9 text-muted-foreground hover:text-foreground shrink-0"
+                    >
                         <ArrowLeft className="h-4 w-4" />
                     </Button>
-                    <div className="min-w-0">
-                        <h1 className="text-base font-semibold leading-tight">
-                            {isEditing ? 'Edit Theme' : 'Create Theme'}
-                        </h1>
-                        <p className="text-xs text-muted-foreground">
-                            {isEditing ? `Editing "${editingTheme?.label}"` : 'Design your own color scheme'}
-                        </p>
-                    </div>
-                    <div className="ml-auto flex items-center gap-2 shrink-0">
-                        {isEditing && (
-                            <Button variant="outline" size="sm" onClick={handleDelete} className="h-8 gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10">
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>Delete</span>
-                            </Button>
-                        )}
-                        <Button onClick={handleSave} disabled={!isValid} className="h-8 px-5 gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5" />
-                            {isEditing ? 'Update' : 'Create'}
-                        </Button>
-                    </div>
+                </Tooltip>
+                <div className="min-w-0">
+                    <h1 className="text-lg font-semibold leading-tight">
+                        {isEditing ? 'Edit Theme' : 'Create Theme'}
+                    </h1>
+                    <p className="text-xs text-muted-foreground">
+                        {isEditing ? `Editing "${editingTheme?.label}"` : 'Design your own colors, typography and CSS'}
+                    </p>
                 </div>
+                <div className="ml-auto flex items-center gap-2 shrink-0">
+                    {isEditing && (
+                        <Button variant="outline" size="sm" onClick={handleDelete} className="h-9 gap-1.5 text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10">
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                        </Button>
+                    )}
+                    <Button onClick={handleSave} disabled={!isValid} className="h-9 px-5 gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        {isEditing ? 'Update' : 'Create'}
+                    </Button>
+                </div>
+            </div>
 
-                <div className="flex items-center gap-1 px-5 py-2 border-b border-border/30 shrink-0">
-                    <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
-                        <Undo2 className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
-                        <Redo2 className="w-3.5 h-3.5" />
-                    </Button>
-                    <div className="w-px h-4 bg-border mx-1.5 shrink-0" />
+            {/* Work area: controls take the wider share, preview sticks beside them */}
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,58fr)_minmax(0,42fr)] gap-5 lg:items-start">
+
+            <div data-theme-part="card" className="@container flex flex-col w-full min-w-0 bg-card border border-border/40 rounded-2xl shadow-sm overflow-hidden">
+
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-5 py-3 border-b border-border/30">
+                    <div className="flex items-center gap-1 shrink-0">
+                        <Tooltip content="Undo" side="top">
+                            <Button variant="ghost" size="icon" onClick={handleUndo} disabled={undoCount === 0} aria-label="Undo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                                <Undo2 className="w-3.5 h-3.5" />
+                            </Button>
+                        </Tooltip>
+                        <Tooltip content="Redo" side="top">
+                            <Button variant="ghost" size="icon" onClick={handleRedo} disabled={redoCount === 0} aria-label="Redo" className="h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground">
+                                <Redo2 className="w-3.5 h-3.5" />
+                            </Button>
+                        </Tooltip>
+                    </div>
+                    <div className="w-px h-4 bg-border shrink-0" />
                     {/* @ts-expect-error Radix Select secretly accepts modal false */}
                     <Select modal={false} onValueChange={(val) => {
                         const opt = presetOptions.find(o => o.id === val)
                         if (opt) applyPreset(opt)
                     }}>
-                        <SelectTrigger className="h-7 text-xs bg-background/50 border-muted w-40">
-                            <SelectValue placeholder="Base preset..." />
+                        <SelectTrigger className="h-8 text-xs bg-background/50 border-muted min-w-[170px] flex-1 sm:max-w-[240px]">
+                            <SelectValue placeholder="Start from a preset..." />
                         </SelectTrigger>
                         <SelectContent className="max-h-[300px]">
                             {presetOptions.map(opt => (
@@ -634,8 +577,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                             ))}
                         </SelectContent>
                     </Select>
-                    <div className="flex-1" />
-                    <div className="flex gap-1 rounded-xl border border-border/40 bg-card p-1 shadow-sm">
+                    <div data-theme-part="tabs-list" className="flex gap-1 rounded-xl border border-border/40 bg-card p-1 shadow-sm ml-auto shrink-0">
                         {([
                             { id: 'edit',   label: 'Edit'   },
                             { id: 'import', label: 'JSON' },
@@ -643,6 +585,8 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                         ] as const).map(({ id, label }) => (
                             <button
                                 key={id}
+                                data-theme-part="tab"
+                                data-state={activeTab === id ? 'active' : 'inactive'}
                                 onClick={() => setActiveTab(id)}
                                 className={cn(
                                     "relative inline-flex items-center justify-center rounded-lg border px-3 py-1 text-xs font-medium transition-[transform,opacity,box-shadow] whitespace-nowrap",
@@ -657,26 +601,31 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+                <div>
 
                     {activeTab === 'edit' && (
                         <div className="divide-y divide-border/30">
                             <div className="px-5 py-4">
                                 <div className="flex gap-3 items-start">
-                                    <div className="flex items-center gap-1.5 shrink-0">
+                                    <div className="flex flex-col gap-1.5 shrink-0">
+                                        <span className="text-xs font-medium text-muted-foreground">Icon</span>
+                                        <div className="flex items-center gap-1.5">
                                         <Input
                                             value={emoji}
                                             onChange={(e) => setEmoji(e.target.value)}
                                             placeholder="🎨"
+                                            aria-label="Theme emoji"
                                             className="w-12 h-12 text-center text-2xl p-0 rounded-xl bg-background/50 border-muted shadow-inner"
                                             maxLength={4}
                                         />
                                         <Popover>
-                                            <PopoverTrigger asChild>
-                                                <Button type="button" variant="subtle" className="h-12 w-8 rounded-xl flex items-center justify-center group">
-                                                    <Smile className="h-3.5 w-3.5 opacity-40 group-hover:opacity-80 transition-opacity" />
-                                                </Button>
-                                            </PopoverTrigger>
+                                            <Tooltip content="Browse emojis" side="top">
+                                                <PopoverTrigger asChild>
+                                                    <Button type="button" variant="subtle" aria-label="Browse emojis" className="h-12 w-8 rounded-xl flex items-center justify-center group">
+                                                        <Smile className="h-3.5 w-3.5 opacity-40 group-hover:opacity-80 transition-opacity" />
+                                                    </Button>
+                                                </PopoverTrigger>
+                                            </Tooltip>
                                             <PopoverContent className="w-[min(320px,90vw)] p-0 border-white/10 shadow-2xl overflow-hidden rounded-xl" align="start">
                                                 <div className="flex flex-col h-[360px] bg-popover">
                                                     <div className="p-3 border-b border-border/10 bg-muted/20">
@@ -714,146 +663,157 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                                 </div>
                                             </PopoverContent>
                                         </Popover>
-                                    </div>
-                                    <div className="flex-1 space-y-2">
-                                        <Input
-                                            value={name}
-                                            onChange={e => setName(e.target.value)}
-                                            placeholder="Theme Name"
-                                            maxLength={30}
-                                            className="h-10 px-4 text-sm font-semibold bg-background/50 border-muted"
-                                        />
-                                        <Input
-                                            value={description}
-                                            onChange={e => setDescription(e.target.value)}
-                                            placeholder="Optional description..."
-                                            className="h-8 text-xs"
-                                            maxLength={80}
-                                        />
-                                        <div className="flex gap-2">
-                                            <Input
-                                                value={logoUrl.startsWith('data:') ? '\u2713 Uploaded image' : logoUrl}
-                                                onChange={e => setLogoUrl(e.target.value)}
-                                                placeholder="Header logo URL (replaces AIOManager logo)..."
-                                                className="h-8 text-xs"
-                                                readOnly={logoUrl.startsWith('data:')}
-                                            />
-                                            <ImageUploadButton
-                                                onUploaded={setLogoUrl}
-                                                options={{ maxDimension: 256, square: false, quality: 0.85 }}
-                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
-                                                label="Upload logo"
-                                            />
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-
-                            <div className="px-5 py-4 space-y-5">
-                                <div className="space-y-2.5">
-                                    <p className="text-sm font-medium text-muted-foreground">Base Mode</p>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {([
-                                            { mode: 'light' as const, Icon: Sun,     label: 'Light', desc: 'Bright' },
-                                            { mode: 'dark'  as const, Icon: Moon,    label: 'Dark',  desc: 'Comfort' },
-                                            { mode: 'oled'  as const, Icon: Monitor, label: 'OLED',  desc: 'Black' },
-                                        ]).map(({ mode, Icon, label, desc }) => (
-                                            <button
-                                                key={mode}
-                                                onClick={() => setBase(mode)}
-                                                className={cn(
-                                                    'relative flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 transition-[transform,opacity,box-shadow]',
-                                                    base === mode
-                                                        ? 'border-border/40 bg-background text-foreground shadow-sm'
-                                                        : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                                                )}
-                                            >
-                                                <div className="relative z-10 flex items-center gap-1.5">
-                                                    <Icon className="w-3.5 h-3.5" />
-                                                    <span className="text-xs font-semibold">{label}</span>
-                                                </div>
-                                                <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="space-y-2.5">
-                                    <p className="text-sm font-medium text-muted-foreground">Background Tint</p>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {([
-                                            { label: 'Neutral', value: 0,   desc: 'Pure' },
-                                            { label: 'Subtle',  value: 0.4, desc: 'Slight' },
-                                            { label: 'Vibrant', value: 1,   desc: 'Full' },
-                                        ] as const).map(({ label, value, desc }) => (
-                                            <button
-                                                key={label}
-                                                type="button"
-                                                onClick={() => batchWithUndo({ bgTint: value, rawPalette: null })}
-                                                className={cn(
-                                                    'relative flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 transition-[transform,opacity,box-shadow]',
-                                                    editorState.bgTint === value
-                                                        ? 'border-border/40 bg-background text-foreground shadow-sm'
-                                                        : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                                                )}
-                                            >
-                                                <span className="relative z-10 text-xs font-semibold">{label}</span>
-                                                <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="px-5 py-4 space-y-4">
-                                <p className="text-sm font-medium text-muted-foreground">Accent Color</p>
-                                <ColorPicker
-                                    value={accentHex}
-                                    onChange={(hex) => {
-                                        const hsl = hexToHsl(hex)
-                                        if (hsl) batchWithUndo({ hue: hsl.h, saturation: hsl.s, primaryLightness: hsl.l, rawPalette: null })
-                                    }}
-                                />
-                            </div>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                            <div className="px-5 py-4 space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <p className="text-sm font-medium text-muted-foreground">Fine-Tune Colors</p>
-                                    <Button onClick={handleResetAdvanced} variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 h-6 px-2">
-                                        <RotateCcw className="w-3 h-3" /> Reset
-                                    </Button>
-                                </div>
-                                <div className="space-y-4">
-                                    {TOKEN_GROUPS.map(group => (
-                                        <div key={group.label} className="space-y-1.5">
-                                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{group.label}</p>
-                                            <div className="space-y-1">
-                                                {group.tokens.map(({ key, label }) => (
-                                                    <TokenColorRow
-                                                        key={key}
-                                                        label={label}
-                                                        hexValue={deferredHexColors[key as keyof typeof deferredHexColors] || '#000000'}
-                                                        onChange={(hex) => handleTokenColorChange(key, hex)}
-                                                    />
-                                                ))}
+                                    <div className="flex-1 min-w-0 space-y-3">
+                                        <div className="space-y-1.5">
+                                            <label htmlFor="custom-theme-name" className="block text-xs font-medium text-muted-foreground">Name</label>
+                                            <Input
+                                                id="custom-theme-name"
+                                                value={name}
+                                                onChange={e => setName(e.target.value)}
+                                                placeholder="Theme name"
+                                                maxLength={30}
+                                                className="h-10 px-4 text-sm font-semibold bg-background/50 border-muted"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label htmlFor="custom-theme-description" className="block text-xs font-medium text-muted-foreground">Description</label>
+                                            <Input
+                                                id="custom-theme-description"
+                                                value={description}
+                                                onChange={e => setDescription(e.target.value)}
+                                                placeholder="Optional description shown in the theme list"
+                                                className="h-8 text-xs"
+                                                maxLength={80}
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label htmlFor="custom-theme-logo" className="block text-xs font-medium text-muted-foreground">Header logo</label>
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    id="custom-theme-logo"
+                                                    value={logoUrl.startsWith('data:') ? '\u2713 Uploaded image' : logoUrl}
+                                                    onChange={e => setLogoUrl(e.target.value)}
+                                                    placeholder="Logo URL shown in the app header"
+                                                    className="h-8 text-xs"
+                                                    readOnly={logoUrl.startsWith('data:')}
+                                                />
+                                                <ImageUploadButton
+                                                    onUploaded={setLogoUrl}
+                                                    options={{ maxDimension: 256, square: false, quality: 0.85 }}
+                                                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                                                    label="Upload logo"
+                                                >
+                                                    <Upload className="h-3.5 w-3.5" />
+                                                    <span className="sr-only">Upload logo image</span>
+                                                </ImageUploadButton>
                                             </div>
                                         </div>
-                                    ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="px-5 py-4 space-y-3">
+                                <p className="text-sm font-medium text-muted-foreground">Base &amp; Tint</p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Base mode</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {([
+                                                { mode: 'light' as const, Icon: Sun,     label: 'Light', desc: 'Bright' },
+                                                { mode: 'dark'  as const, Icon: Moon,    label: 'Dark',  desc: 'Comfort' },
+                                                { mode: 'oled'  as const, Icon: Monitor, label: 'OLED',  desc: 'Black' },
+                                            ]).map(({ mode, Icon, label, desc }) => (
+                                                <button
+                                                    key={mode}
+                                                    data-theme-part="tab"
+                                                    data-state={base === mode ? 'active' : 'inactive'}
+                                                    onClick={() => setBase(mode)}
+                                                    className={cn(
+                                                        'relative flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 transition-[transform,opacity,box-shadow]',
+                                                        base === mode
+                                                            ? 'border-border/40 bg-background text-foreground shadow-sm'
+                                                            : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                                                    )}
+                                                >
+                                                    <div className="relative z-10 flex items-center gap-1.5">
+                                                        <Icon className="w-3.5 h-3.5" />
+                                                        <span className="text-xs font-semibold">{label}</span>
+                                                    </div>
+                                                    <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Background tint</p>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {([
+                                                { label: 'Neutral', value: 0,   desc: 'Pure' },
+                                                { label: 'Subtle',  value: 0.4, desc: 'Slight' },
+                                                { label: 'Vibrant', value: 1,   desc: 'Full' },
+                                            ] as const).map(({ label, value, desc }) => (
+                                                <button
+                                                    key={label}
+                                                    type="button"
+                                                    data-theme-part="tab"
+                                                    data-state={editorState.bgTint === value ? 'active' : 'inactive'}
+                                                    onClick={() => batchWithUndo({ bgTint: value, rawPalette: null })}
+                                                    className={cn(
+                                                        'relative flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 transition-[transform,opacity,box-shadow]',
+                                                        editorState.bgTint === value
+                                                            ? 'border-border/40 bg-background text-foreground shadow-sm'
+                                                            : 'border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+                                                    )}
+                                                >
+                                                    <span className="relative z-10 text-xs font-semibold">{label}</span>
+                                                    <span className="relative z-10 text-xs text-muted-foreground">{desc}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 @min-[600px]:grid-cols-[220px_minmax(0,1fr)] gap-6 px-5 py-4">
+                                <div className="space-y-3">
+                                    <p className="text-sm font-medium text-muted-foreground">Accent Color</p>
+                                    <div className="max-w-[250px]">
+                                        <ColorPicker
+                                            value={accentHex}
+                                            onChange={(hex) => {
+                                                const hsl = hexToHsl(hex)
+                                                if (hsl) batchWithUndo({ hue: hsl.h, saturation: hsl.s, primaryLightness: hsl.l, rawPalette: null })
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-medium text-muted-foreground">Fine-Tune Colors</p>
+                                        <Button onClick={handleResetAdvanced} variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 h-6 px-2">
+                                            <RotateCcw className="w-3 h-3" /> Reset
+                                        </Button>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {TOKEN_GROUPS.map(group => (
+                                            <div key={group.label} className="space-y-1.5">
+                                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{group.label}</p>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                    {group.tokens.map(({ key, label }) => (
+                                                        <TokenColorRow
+                                                            key={key}
+                                                            label={label}
+                                                            hexValue={deferredHexColors[key as keyof typeof deferredHexColors] || '#000000'}
+                                                            onChange={(hex) => handleTokenColorChange(key, hex)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -864,17 +824,38 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                             <div>
                                 <p className="text-sm font-medium">Custom CSS</p>
                                 <p className="text-xs text-muted-foreground mt-1">
-                                    Add custom CSS that applies when this theme is active. Use CSS variables like <span className="font-mono text-xs bg-muted/40 px-1 rounded-lg">var(--primary)</span> to reference theme colors. This enables unique effects like custom borders, backgrounds, shadows, and animations.
+                                    Style fonts, textures, controls, layout and animation. Changes appear in the live sample. Use <code>hsl(var(--primary))</code> for palette colors and <code>[data-theme-part="card"]</code> for panels. Load a preset to remix its commented CSS.
                                 </p>
                             </div>
+                            <div className="flex flex-wrap items-end gap-2 rounded-xl border border-border/30 bg-muted/10 p-3">
+                                <p className="w-full text-[11px] font-medium text-muted-foreground">
+                                    FX knobs — retune themes that expose <code>--fx-duration</code> (motion speed), <code>--fx-density</code> (texture density) and <code>--fx-depth</code> (glow/shadow depth). Writes a <code>:root</code> block into the CSS below.
+                                </p>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Duration (s)</span>
+                                    <Input aria-label="FX duration in seconds" className="h-7 w-20 font-mono text-xs" value={fxDuration} onChange={e => setFxDuration(e.target.value)} />
+                                </label>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Density (px)</span>
+                                    <Input aria-label="FX density in pixels" className="h-7 w-20 font-mono text-xs" value={fxDensity} onChange={e => setFxDensity(e.target.value)} />
+                                </label>
+                                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                                    <span>Depth (px)</span>
+                                    <Input aria-label="FX depth in pixels" className="h-7 w-20 font-mono text-xs" value={fxDepth} onChange={e => setFxDepth(e.target.value)} />
+                                </label>
+                                <Button variant="outline" size="sm" className="h-7 px-3 text-xs" onClick={applyFxKnobs}>Apply to CSS</Button>
+                            </div>
                             <textarea
+                                aria-label="Custom CSS"
+                                data-theme-part="textarea"
                                 className="w-full h-48 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 resize-y focus:outline-none focus:ring-1 focus:ring-primary/40"
-                                placeholder={'/* Example: thick black borders like comic books */\n* {\n  border-radius: 2px !important;\n  border-width: 2px !important;\n}\n\n/* Or a subtle glow on cards */\n.card {\n  box-shadow: 0 0 20px hsl(var(--primary) / 0.15);\n}'}
+                                placeholder={'/* Try a glowing addon card */\n[data-theme-part="addon-card"] {\n  border-radius: 24px;\n  box-shadow: 0 0 24px hsl(var(--primary) / .3);\n}\n\n/* Change typography across the app */\nbody { font-family: Georgia, serif; }'}
                                 value={editorState.customCss}
+                                onFocus={pushUndo}
                                 onChange={e => dispatch({ type: 'SET', key: 'customCss', value: e.target.value })}
                             />
                             <p className="text-xs text-muted-foreground">
-                                CSS is scoped globally when the theme is active. Be careful with <span className="font-mono text-xs">!important</span> overrides.
+                                The sample is isolated from the editor. Saved CSS applies across the app while the theme is active. Target <code>app-nav</code> and <code>nav-item</code> for navigation, or <code>card</code>, <code>button</code> and other shared parts. Open More controls in the sample to simulate syncing. <a href="/kronorium/settings/appearance" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">Theme reference</a>
                             </p>
                         </div>
                     )}
@@ -887,8 +868,8 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                     {copiedJson ? <><Check className="w-3 h-3 text-success" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
                                 </Button>
                             </div>
-                            <pre className="w-full h-44 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 overflow-auto resize-y text-foreground/80">
-                                {JSON.stringify({ ...Object.fromEntries(Object.entries(palette).filter(([_k, v]) => typeof v === 'string')), ...(editorState.customCss?.trim() ? { customCss: editorState.customCss } : {}) }, null, 2)}
+                            <pre data-theme-part="field" className="w-full h-44 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 overflow-auto resize-y text-foreground/80">
+                                {JSON.stringify({ ...Object.fromEntries(Object.entries(palette).filter(([_k, v]) => typeof v === 'string')), ...(editorState.customCss?.trim() ? { customCss: editorState.customCss } : {}), ...(logoUrl.trim() ? { logoUrl: logoUrl.trim() } : {}) }, null, 2)}
                             </pre>
                             <div className="border-t border-border/30 pt-4 space-y-3">
                                 <p className="text-xs font-medium text-muted-foreground uppercase">Import Palette</p>
@@ -896,6 +877,7 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                                     Paste a palette JSON with HSL values. Required: <span className="font-mono text-xs bg-muted/40 px-1 rounded-lg">background, card, primary, cardForeground, mutedForeground, muted, destructive, border</span>
                                 </p>
                                 <textarea
+                                    data-theme-part="textarea"
                                     className="w-full h-32 font-mono text-xs bg-background/50 border border-border/40 rounded-lg p-3 resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"
                                     placeholder={'{\n  "background": "34 60% 92%",\n  "card": "34 70% 86%",\n  ...\n}'}
                                     value={rawPaletteText}
@@ -909,39 +891,48 @@ export function CustomThemeEditor({ editingTheme, onClose }: CustomThemeEditorPr
                 </div>
             </div>
 
-            <div className="hidden md:flex flex-1 min-h-0 bg-card border border-border/40 rounded-2xl flex-col overflow-hidden min-w-0 shadow-sm">
-
-                <div className="px-5 py-4 border-b border-border/30 shrink-0 flex items-center gap-4 flex-wrap">
-                    <div className="flex items-center gap-2">
-                        {[
-                            { hex: deferredHexColors.background,      label: 'BG' },
-                            { hex: deferredHexColors.card,            label: 'Card' },
-                            { hex: deferredHexColors.primary,         label: 'Accent' },
-                            { hex: deferredHexColors.cardForeground,  label: 'Text' },
-                            { hex: deferredHexColors.mutedForeground, label: 'Muted' },
-                        ].map(({ hex, label }) => (
-                            <div key={label} className="flex items-center gap-1.5">
-                                <div className="w-5 h-5 rounded-md border border-white/10 shadow-sm" style={{ background: hex }} />
-                                <span className="text-xs font-medium text-muted-foreground hidden sm:inline">{label}</span>
-                            </div>
-                        ))}
+            {/* Preview column: content-sized, sticks near the top while controls scroll */}
+            <div className="hidden lg:block min-w-0 [@media(min-height:820px)]:sticky top-16">
+                <div data-theme-part="card" className="rounded-2xl border border-border/40 bg-card shadow-sm overflow-hidden">
+                    <div className="px-5 py-4 border-b border-border/30">
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-sm font-semibold">Live preview</h2>
+                            <span data-theme-part="badge" className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">Sample</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">Your palette and CSS on a sample of the app.</p>
                     </div>
-                    <div className="ml-auto flex items-center gap-3">
+                    <div className="px-4 py-4 sm:px-5">
+                        <ThemeLivePreview palette={deferredPalette} customCss={deferredCustomCss} logoUrl={logoUrl.trim()} />
+                    </div>
+                    <div className="px-5 py-4 border-t border-border/30 space-y-2.5">
+                        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contrast checks</p>
+                            <p className="text-[10px] text-muted-foreground">7:1 and up is Great, 4.5:1 and up is OK</p>
+                        </div>
                         {contrastPairs.map(p => (
-                            <div key={p.label} className="flex items-center gap-1.5 text-xs">
+                            <div key={p.label} className="flex items-center gap-3">
+                                <div className="h-8 w-12 rounded-lg shrink-0 flex items-center justify-center border" style={{ background: p.chipBg, color: p.chipFg, borderColor: p.chipBorder }}>
+                                    <span className="text-sm font-semibold">Aa</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <span className="text-xs font-medium text-foreground">{p.label}</span>{' '}
+                                    <span className="text-xs text-muted-foreground">{p.desc}</span>
+                                </div>
+                                <span className="text-xs font-medium tabular-nums text-muted-foreground">{p.rounded}:1</span>
                                 <span className={cn(
-                                    'font-semibold',
+                                    'text-xs font-semibold w-10 text-right shrink-0',
                                     p.status === 'pass' ? 'text-green-600' : p.status === 'warn' ? 'text-amber-600' : 'text-red-600'
                                 )}>{p.word}</span>
-                                <span className="text-muted-foreground">{p.label}</span>
                             </div>
                         ))}
+                        {editorState.customCss?.trim() && (
+                            <p className="text-[11px] text-muted-foreground pt-2 border-t border-border/20">
+                                Contrast checks measure palette colors. CSS effects can change the final appearance.
+                            </p>
+                        )}
                     </div>
                 </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto p-5 scrollbar-hide">
-                    <AppMockup preview={deferredPreviewColors} />
-                </div>
+            </div>
             </div>
 
         </div>

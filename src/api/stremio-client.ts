@@ -524,6 +524,35 @@ export class StremioClient {
     }
   }
 
+  // Results preserve request order; null slots require a full per-account fetch.
+  async getLibraryMetaBatch(entries: Array<{ authKey: string; accountContext?: string }>): Promise<Array<Array<[string, number]> | null>> {
+    const out: Array<Array<[string, number]> | null> = []
+    const CHUNK = 25
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const chunk = entries.slice(i, i + CHUNK)
+      const start = Date.now()
+      const data = await serverPost('/api/stremio-meta-batch', {
+        requests: chunk.map(e => ({ authKey: e.authKey, accountContext: e.accountContext })),
+      })
+      trace('stremio', 'api-call', { method: 'DatastoreMetaBatch', timing: Date.now() - start, accounts: chunk.length })
+      if (data?.error) {
+        const e = data.error as Record<string, unknown>
+        throw new Error((e.message as string) || 'Failed to get library meta batch')
+      }
+      const result = data?.result as unknown
+      if (!Array.isArray(result) || result.length !== chunk.length) {
+        throw new Error('Malformed batch meta response')
+      }
+      for (const row of result) {
+        const valid = Array.isArray(row) && row.every(item =>
+          Array.isArray(item) && item.length === 2 && typeof item[0] === 'string'
+          && typeof item[1] === 'number' && Number.isFinite(item[1]))
+        out.push(valid ? (row as Array<[string, number]>) : null)
+      }
+    }
+    return out
+  }
+
   async testCORS(): Promise<boolean> {
     try {
       await fetch(`${API_BASE}/api/addonCollectionGet`, {

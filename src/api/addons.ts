@@ -34,6 +34,14 @@ interface UpdateAddonOptions {
   bypassEmptyGuard?: boolean
   allowCollectionShrink?: boolean
   previousCollection?: AddonDescriptor[]
+  /**
+   * Normalized transport URLs that destination policy deliberately removes from
+   * THIS write target. A blocked shrink (or empty) is allowed to proceed only when
+   * every removed URL is in this set — a policy-authorized clear, never a blanket
+   * shrink bypass (R2). Fail closed: without a previousCollection to diff against,
+   * removals cannot be verified and the anti-wipe guard stands.
+   */
+  authorizedRemovals?: Set<string>
 }
 
 export async function getAddons(authKey: string, accountContext: string = 'Unknown', force: boolean = false): Promise<AddonDescriptor[]> {
@@ -174,30 +182,48 @@ export async function updateAddons(authKey: string, addons: AddonDescriptor[], a
   }
 
   const allowCollectionShrink = options?.allowCollectionShrink || options?.bypassEmptyGuard
-  const knownCount = knownAddonCounts.get(authKey) || 0
-  const shrinkDecision = shouldBlockShrink(preparedAddons.length, knownCount, !!allowCollectionShrink)
-  trace('updateAddons', 'shrink-decision', { accountId: accountContext, inputCount: (addons || []).length, preparedCount: preparedAddons.length, knownCount, allowCollectionShrink: !!allowCollectionShrink, blocked: shrinkDecision.blocked, reason: shrinkDecision.reason, addons: briefAddons(preparedAddons) })
-  if (shrinkDecision.blocked && shrinkDecision.reason === 'empty') {
-    throw new Error(`Anti-wipe guard: refusing to push empty addon collection (${knownCount} addon${knownCount !== 1 ? 's' : ''} previously seen)`)
-  }
-  if (shrinkDecision.blocked && shrinkDecision.reason === 'shrink') {
-    throw new Error(`Anti-wipe guard: refusing to shrink addon collection from ${knownCount} to ${preparedAddons.length}.`)
-  }
-
   const cachedBeforeUpdate = addonCollectionCache.get(authKey)
   const optionPreviousCollection = options?.previousCollection
     ? prepareAddonCollectionForStremio(options.previousCollection)
     : undefined
-  const previousCollection = cachedBeforeUpdate && Date.now() - cachedBeforeUpdate.ts < COLLECTION_CACHE_TTL
+  let previousCollection = cachedBeforeUpdate && Date.now() - cachedBeforeUpdate.ts < COLLECTION_CACHE_TTL
     ? cachedBeforeUpdate.data
     : optionPreviousCollection && optionPreviousCollection.length > 0
       ? optionPreviousCollection
       : undefined
-  invalidateAddonCache(authKey)
-  await stremioClient.setAddonCollection(authKey, preparedAddons, accountContext, { allowCollectionShrink, previousCollection })
-  trace('push', 'sent', { accountId: accountContext, prepared: preparedAddons.length, allowCollectionShrink: !!allowCollectionShrink })
+  // A cold secondary login has no collection cache. Read that login before
+  // authorizing a policy removal; a sibling's collection is not evidence.
+  if (!previousCollection && options?.authorizedRemovals?.size && !allowCollectionShrink) {
+    previousCollection = await getAddons(authKey, accountContext)
+  }
+  const knownCount = Math.max(knownAddonCounts.get(authKey) || 0, previousCollection?.length || 0)
+  const shrinkDecision = shouldBlockShrink(preparedAddons.length, knownCount, !!allowCollectionShrink)
+  trace('updateAddons', 'shrink-decision', { accountId: accountContext, inputCount: (addons || []).length, preparedCount: preparedAddons.length, knownCount, allowCollectionShrink: !!allowCollectionShrink, blocked: shrinkDecision.blocked, reason: shrinkDecision.reason, addons: briefAddons(preparedAddons) })
 
-  if (preparedAddons.length > 0 || allowCollectionShrink) {
+  // Policy-authorized shrink (R2): a blocked empty/shrink may proceed ONLY when every
+  // removed URL is a deliberate destination exclusion for THIS target. The caller
+  // computes the set from the unfiltered source list (excludedUrlsFor); matching here
+  // is on normalized URLs against the previous collection (cache or caller-supplied).
+  let policyAuthorizedShrink = false
+  if (options?.authorizedRemovals?.size && previousCollection && previousCollection.length > 0) {
+    const preparedUrls = new Set(preparedAddons.map(a => normalizeAddonUrl(a.transportUrl)))
+    const removedUrls = [...new Set(previousCollection.map(a => normalizeAddonUrl(a.transportUrl)).filter(Boolean))].filter(u => !preparedUrls.has(u))
+    policyAuthorizedShrink = removedUrls.length > 0 && removedUrls.every(u => options?.authorizedRemovals?.has(u))
+    trace('updateAddons', 'policy-shrink-check', { accountId: accountContext, removed: removedUrls.length, authorized: policyAuthorizedShrink, authorizedCount: options?.authorizedRemovals?.size ?? 0 })
+  }
+  const writeAuthorized = !shrinkDecision.blocked || policyAuthorizedShrink
+  if (!writeAuthorized && shrinkDecision.reason === 'empty') {
+    throw new Error(`Anti-wipe guard: refusing to push empty addon collection (${knownCount} addon${knownCount !== 1 ? 's' : ''} previously seen)`)
+  }
+  if (!writeAuthorized && shrinkDecision.reason === 'shrink') {
+    throw new Error(`Anti-wipe guard: refusing to shrink addon collection from ${knownCount} to ${preparedAddons.length}.`)
+  }
+
+  invalidateAddonCache(authKey)
+  await stremioClient.setAddonCollection(authKey, preparedAddons, accountContext, { allowCollectionShrink: allowCollectionShrink || policyAuthorizedShrink, previousCollection })
+  trace('push', 'sent', { accountId: accountContext, prepared: preparedAddons.length, allowCollectionShrink: !!allowCollectionShrink, policyAuthorizedShrink })
+
+  if (preparedAddons.length > 0 || allowCollectionShrink || policyAuthorizedShrink) {
     knownAddonCounts.set(authKey, preparedAddons.length)
     addonCollectionCache.set(authKey, { data: preparedAddons, ts: Date.now() })
   }

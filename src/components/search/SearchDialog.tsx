@@ -246,7 +246,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
             onClick={() => handleResultClick(result)}
             className="group flex flex-col gap-1.5 text-left"
         >
-            <div className="relative aspect-[2/3] overflow-hidden rounded-xl border border-border/40 bg-muted shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
+            <div data-theme-part="card" className="relative aspect-[2/3] overflow-hidden rounded-xl border border-border/40 bg-muted shadow-sm transition-[transform,opacity,box-shadow] duration-200 group-hover:border-primary/50 group-hover:shadow-lg">
                 <Poster
                     src={result.poster}
                     itemId={result.id}
@@ -264,7 +264,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                 </div>
                 {typeof result.voteAverage === 'number' && result.voteAverage > 0 && (
                     <div className="absolute bottom-1.5 right-1.5">
-                        <span className="flex items-center gap-0.5 rounded-full bg-black/75 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white/90 backdrop-blur-sm">
+                        <span data-theme-part="badge" className="flex items-center gap-0.5 rounded-full bg-black/75 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-white/90 backdrop-blur-sm">
                             <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" />
                             {result.voteAverage.toFixed(1)}
                         </span>
@@ -284,6 +284,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                 <div className="relative flex items-center gap-3 border-b border-border/40 px-3 py-2 sm:px-4 sm:py-3">
                     <Search className="h-5 w-5 shrink-0 text-muted-foreground" />
                     <input
+                        data-theme-part="input"
                         ref={inputRef}
                         type="text"
                         value={query}
@@ -292,7 +293,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                         className="min-w-0 flex-1 bg-transparent text-sm font-medium text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
                     />
                     {query && (
-                        <button
+                        <button data-theme-part="button"
                             type="button"
                             onClick={() => setQuery('')}
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -306,7 +307,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                     {showPersonView && (
                         <>
                             <div className="mb-3 flex items-center gap-3">
-                                <button
+                                <button data-theme-part="button"
                                     type="button"
                                     onClick={() => setSelectedPerson(null)}
                                     className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
@@ -322,7 +323,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                                             className="h-8 w-8 rounded-full object-cover border border-border/40"
                                         />
                                     ) : (
-                                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted border border-border/40">
+                                        <div data-theme-part="avatar" className="flex h-8 w-8 items-center justify-center rounded-full bg-muted border border-border/40">
                                             <User className="h-4 w-4 text-muted-foreground/50" />
                                         </div>
                                     )}
@@ -387,7 +388,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                                         onClick={() => setSelectedPerson(person)}
                                         className="group flex w-16 shrink-0 flex-col items-center gap-1.5 text-center"
                                     >
-                                        <div className="relative h-16 w-16 overflow-hidden rounded-full border-2 border-border/40 bg-muted transition-all group-hover:border-primary/50 group-hover:scale-105">
+                                        <div data-theme-part="avatar" className="relative h-16 w-16 overflow-hidden rounded-full border-2 border-border/40 bg-muted transition-all group-hover:border-primary/50 group-hover:scale-105">
                                             {person.profile ? (
                                                 <img
                                                     src={person.profile}
@@ -417,7 +418,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                                         { id: 'movie', label: 'Movies', count: categorized.movie.length },
                                         { id: 'series', label: 'TV Shows', count: categorized.series.length },
                                     ] as const).filter(cat => cat.count > 0).map(cat => (
-                                        <button
+                                        <button data-theme-part="nav-item" data-state={activeCategory === cat.id ? "active" : "inactive"} aria-pressed={activeCategory === cat.id}
                                             key={cat.id}
                                             type="button"
                                             onClick={() => setActiveCategory(cat.id)}
@@ -429,7 +430,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                                             )}
                                         >
                                             {cat.label}
-                                            <span className={cn(
+                                            <span data-theme-part="badge" className={cn(
                                                 'rounded-full px-1.5 text-[10px]',
                                                 activeCategory === cat.id ? 'bg-black/20' : 'bg-muted/60'
                                             )}>
@@ -452,7 +453,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
                                             Loading more...
                                         </div>
                                     ) : (
-                                        <button
+                                        <button data-theme-part="button"
                                             type="button"
                                             onClick={loadMore}
                                             className="flex items-center gap-1.5 rounded-full bg-muted/40 px-4 py-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
@@ -479,7 +480,7 @@ export function SearchDialog({ open, onOpenChange, onResultClick }: SearchDialog
 
                     {showInitial && (
                         <div className="flex flex-col items-center justify-center py-12 sm:py-16 text-center">
-                            <div className="mb-3 sm:mb-4 flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-full bg-muted/40">
+                            <div data-theme-part="badge" className="mb-3 sm:mb-4 flex h-12 w-12 sm:h-14 sm:w-14 items-center justify-center rounded-full bg-muted/40">
                                 <Search className="h-6 w-6 text-muted-foreground/40" />
                             </div>
                             <p className="text-sm font-semibold text-muted-foreground">Start typing to search</p>

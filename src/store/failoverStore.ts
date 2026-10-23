@@ -11,6 +11,7 @@ import { resilientFetch } from '@/lib/api-resilience'
 import { useAuthStore } from '@/store/authStore'
 import { toast } from '@/hooks/use-toast'
 import { isSyncEligibleConnection } from '@/types/connection'
+import { captureSyncOwnership, type SyncOwnership } from './sync-store-helpers'
 
 const STORAGE_KEY = 'aioman:failover-rules'
 
@@ -83,8 +84,8 @@ interface FailoverStore {
     testRule: (ruleId: string) => Promise<{ primary: unknown, backup: unknown }>
     startAutomation: () => void
     stopAutomation: () => void
-    importRules: (data: unknown, strategy?: 'merge' | 'mirror', isSilent?: boolean) => Promise<void>
-    importWebhook: (config: WebhookConfig, isSilent?: boolean) => Promise<void>
+    importRules: (data: unknown, strategy?: 'merge' | 'mirror', isSilent?: boolean, ownership?: SyncOwnership) => Promise<void>
+    importWebhook: (config: WebhookConfig, isSilent?: boolean, ownership?: SyncOwnership) => Promise<void>
     syncRulesForAccount: (accountId: string) => Promise<void>
     removeUrlFromRules: (accountId: string, url: string) => Promise<void>
     replaceUrlInRules: (oldUrl: string, newUrl: string, accountId?: string) => Promise<void>
@@ -1106,7 +1107,8 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
         set({ isMonitoring: false })
     },
 
-    importRules: async (data: unknown, strategy: 'merge' | 'mirror' = 'merge', isSilent: boolean = false) => {
+    importRules: async (data: unknown, strategy: 'merge' | 'mirror' = 'merge', isSilent: boolean = false, ownership?: SyncOwnership) => {
+        const own = ownership ?? captureSyncOwnership()
         if (!data) return
         let scavengedRules: FailoverRule[] = []
         let scavengedWebhook: WebhookConfig | null = null
@@ -1142,8 +1144,11 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 try {
                     const parsed = new URL(scavengedWebhook.url)
                     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Invalid scheme')
-                    set({ webhook: scavengedWebhook })
+                    // Persist under the ownership fence before publishing state.
+                    own.assert()
                     await localforage.setItem(STORAGE_KEY + ':webhook', scavengedWebhook)
+                    own.assert()
+                    set({ webhook: scavengedWebhook })
                 } catch {
                     if (import.meta.env.DEV) console.warn('[Failover] Skipping invalid webhook URL from import:', scavengedWebhook.url)
                 }
@@ -1243,18 +1248,23 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
             }
         })
         if (updatedCount > 0 || addedCount > 0) {
-            set({ rules: currentRules })
+            // Persist under the ownership fence before publishing state.
+            own.assert()
             await localforage.setItem(STORAGE_KEY, currentRules)
+            own.assert()
+            set({ rules: currentRules })
 
             if (!isSilent) {
+                own.assert()
                 await syncRulesToServerBatch(currentRules)
                 triggerSync()
             }
         }
     },
 
-    importWebhook: async (incoming, isSilent = false) => {
+    importWebhook: async (incoming, isSilent = false, ownership?: SyncOwnership) => {
         if (!incoming) return
+        const own = ownership ?? captureSyncOwnership()
         const current = get().webhook
         const incomingTs = incoming.updatedAt || 0
         const currentTs = current.updatedAt || 0
@@ -1289,9 +1299,6 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 }
             }
 
-            if (import.meta.env.DEV) console.log(`[Failover] Updating webhook (Incoming: ${incomingTs}, Local: ${currentTs})`)
-            set({ webhook: processedWebhook })
-
             let configToStore = processedWebhook
             try {
                 const sessionKey = await loadSessionKey()
@@ -1303,7 +1310,13 @@ export const useFailoverStore = create<FailoverStore>((set, get) => ({
                 if (import.meta.env.DEV) console.error('[Failover] Re-encryption failed during importWebhook:', e)
             }
 
+            // Persist under the ownership fence before publishing state.
+            own.assert()
             await localforage.setItem(STORAGE_KEY + ':webhook', configToStore)
+            own.assert()
+            set({ webhook: processedWebhook })
+
+            if (import.meta.env.DEV) console.log(`[Failover] Updating webhook (Incoming: ${incomingTs}, Local: ${currentTs})`)
 
             if (!isSilent) {
                 triggerSync()

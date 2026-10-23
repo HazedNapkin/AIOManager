@@ -19,6 +19,7 @@ export function BulkAccountPicker({
         <div className="mt-1">
             <button
                 type="button"
+                data-theme-part="button"
                 onClick={() => onExpandedChange(!expanded)}
                 disabled={disabled}
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"

@@ -282,7 +282,7 @@ export function AIOStreamsDiffTab({
 
     return (
         <div className="space-y-5">
-            <div className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-4">
+            <div data-theme-part="panel" className="p-5 rounded-2xl border border-border/40 bg-card/50 shadow-sm space-y-4">
                 <div className="space-y-1.5">
                     <Label htmlFor="diff-target" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                         Compare against
@@ -364,7 +364,7 @@ export function AIOStreamsDiffTab({
                 </div>
 
                 {error && (
-                    <div className="flex items-start gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
+                    <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-lg border border-destructive/20" role="alert">
                         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                         <p className="min-w-0">{error}</p>
                     </div>
@@ -412,7 +412,7 @@ export function AIOStreamsDiffTab({
                     )}
 
                     {hasAnyResults && !hasDifferences && (
-                        <div className="p-5 rounded-2xl border border-success/25 bg-success/5 shadow-sm flex items-center gap-3">
+                        <div data-theme-tone="status" data-theme-part="panel" className="p-5 rounded-2xl border border-success/25 bg-success/5 shadow-sm flex items-center gap-3">
                             <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
                             <div className="min-w-0">
                                 <p className="text-sm font-semibold">Presets match</p>
@@ -426,6 +426,7 @@ export function AIOStreamsDiffTab({
                             {counts.match > 0 && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={() => setShowMatches(v => !v)}
                                     className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5"
                                 >
@@ -488,7 +489,7 @@ function DiffStatCard({ value, label, tone }: {
         success: 'text-success',
     }
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
             <p className={cn('text-xl font-semibold tabular-nums', toneClasses[tone])}>{value}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
         </div>
@@ -509,7 +510,7 @@ function DiffGroup({ title, description, tone, entries }: {
         success: 'border-success/25',
     }
     return (
-        <div className={cn('rounded-2xl border bg-card/40 shadow-sm overflow-hidden', accentClasses[tone])}>
+        <div data-theme-part="panel" className={cn('rounded-2xl border bg-card/40 shadow-sm overflow-hidden', accentClasses[tone])}>
             <div className="px-4 py-3 border-b border-border/30 bg-muted/5">
                 <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
@@ -570,7 +571,7 @@ function DiffRow({ entry }: { entry: DiffEntry }) {
 
 function StateBadge({ label, enabled }: { label: string; enabled: boolean }) {
     return (
-        <span className={cn(
+        <span data-theme-part="badge" className={cn(
             'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide',
             enabled ? 'bg-success/10 text-success' : 'bg-muted/35 text-muted-foreground'
         )}>

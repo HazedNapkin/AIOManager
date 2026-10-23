@@ -29,27 +29,29 @@ export function NumberTicker({
     stiffness: 100,
   })
   const isInView = useInView(ref, { once: true, margin: '0px' })
+  const formatter = useMemo(() => Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimalPlaces,
+    maximumFractionDigits: decimalPlaces,
+  }), [decimalPlaces])
 
   useEffect(() => {
     if (isInView) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         motionValue.set(direction === 'down' ? startValue : value)
       }, delay * 1000)
+      return () => clearTimeout(timer)
     }
   }, [motionValue, isInView, delay, value, direction, startValue])
 
-  useEffect(
-    () =>
-      springValue.on('change', (latest) => {
-        if (ref.current) {
-          ref.current.textContent = Intl.NumberFormat('en-US', {
-            minimumFractionDigits: decimalPlaces,
-            maximumFractionDigits: decimalPlaces,
-          }).format(Number(latest.toFixed(decimalPlaces)))
-        }
-      }),
-    [springValue, decimalPlaces],
-  )
+  useEffect(() => {
+    const update = (latest: number) => {
+      if (ref.current) {
+        ref.current.textContent = formatter.format(Number(latest.toFixed(decimalPlaces)))
+      }
+    }
+    update(springValue.get())
+    return springValue.on('change', update)
+  }, [springValue, decimalPlaces, formatter])
 
   return (
     <span
@@ -58,6 +60,8 @@ export function NumberTicker({
         className,
       )}
       ref={ref}
-    />
+    >
+      {formatter.format(initialValue)}
+    </span>
   )
 }

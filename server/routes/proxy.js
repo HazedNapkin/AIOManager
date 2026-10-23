@@ -1,6 +1,6 @@
 import { addonManifestUrl } from '../utils/addon-endpoint-url.js'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { AIOSTREAMS_USER_API_THROTTLE_MS, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, VERSION } from '../config.js'
+import { AIOSTREAMS_USER_API_THROTTLE_MS, DATASTORE_META_BATCH_CONCURRENCY, DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS, DATASTORE_META_BATCH_MAX, IMAGE_CACHE_MAX_BYTES, IMAGE_CACHE_MAX_ITEM_BYTES, IMAGE_CACHE_TTL_MS, IMAGE_PROXY_QUEUE_LIMIT, IMAGE_PROXY_THROTTLE_MS, IMAGE_PROXY_TIMEOUT_MS, STREMIO_API, VERSION } from '../config.js'
 import { requireProxyAuth, verifyAuth } from '../auth.js'
 import { enqueueProxyRequest } from '../proxy-queue.js'
 import { isSafeUrlResolved } from '../utils/ssrf.js'
@@ -603,7 +603,9 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
             })
         }
 
-        const MAX_RETRIES = 2
+        // A library replacement may have landed before a timeout or upstream error.
+        // Its caller must read back the saved row before deciding whether to retry.
+        const MAX_RETRIES = type === 'DatastorePut' ? 0 : 2
         let lastError = null
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -635,7 +637,16 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 clearTimeout(timeoutId)
 
                 if (!response.ok && response.status >= 500 && attempt < MAX_RETRIES) {
+                    await response.body?.cancel().catch(() => {})
                     continue
+                }
+
+                if (!response.ok && ['DatastoreGet', 'DatastorePut', 'DatastoreMeta', 'GetUser'].includes(type)) {
+                    const retryAfter = response.headers.get('retry-after')
+                    if (retryAfter) reply.header('Retry-After', retryAfter)
+                    reply.status(response.status)
+                    await response.body?.cancel().catch(() => {})
+                    return { error: 'Stremio request failed' }
                 }
 
                 let data
@@ -743,6 +754,69 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         return { error: 'Stremio API Proxy Failed', details: 'Internal error' }
     })
 
+    // Batch library metadata reads; failed entries return null for per-account fallback.
+    // The 12/minute batch limit bounds upstream fan-out separately from single requests.
+    fastify.post('/api/stremio-meta-batch', {
+        bodyLimit: 256 * 1024,
+        config: { rateLimit: { max: 12, timeWindow: '1 minute' } },
+        schema: {
+            body: {
+                type: 'object',
+                required: ['requests'],
+                properties: { requests: { type: 'array' } },
+                additionalProperties: true
+            }
+        }
+    }, async (request, reply) => {
+        const authResult = await requireProxyAuth(request, reply)
+        if (authResult) return authResult
+
+        const accountContext = request.headers['x-account-context'] || 'Unknown'
+        const masked = maskContext(accountContext)
+        const requests = Array.isArray(request.body.requests) ? request.body.requests : []
+        if (requests.length === 0) {
+            reply.status(400)
+            return { error: 'stremio-meta-batch requires a non-empty requests array' }
+        }
+        if (requests.length > DATASTORE_META_BATCH_MAX) {
+            reply.status(400)
+            return { error: `stremio-meta-batch accepts at most ${DATASTORE_META_BATCH_MAX} requests` }
+        }
+
+        fastify.log.info({ category: 'Sync' }, `[${masked}] Batch Checking Library Changes (${requests.length} accounts)...`)
+        const results = new Array(requests.length).fill(null)
+        let nextIndex = 0
+        const workers = Array.from({ length: Math.min(DATASTORE_META_BATCH_CONCURRENCY, requests.length) }, async () => {
+            while (nextIndex < requests.length) {
+                const i = nextIndex++
+                const entry = requests[i]
+                const authKey = entry && typeof entry === 'object' ? entry.authKey : entry
+                if (typeof authKey !== 'string' || !authKey) continue
+                const controller = new AbortController()
+                const timeout = setTimeout(() => controller.abort(), DATASTORE_META_BATCH_ENTRY_TIMEOUT_MS)
+                try {
+                    const res = await fetch(`${STREMIO_API}/datastoreMeta`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'DatastoreMeta', authKey, collection: 'libraryItem' }),
+                        signal: controller.signal
+                    })
+                    if (!res.ok) continue
+                    const data = await res.json()
+                    if (Array.isArray(data?.result)) results[i] = data.result
+                } catch {
+                    // Leave failed slots null so callers can fall back.
+                } finally {
+                    // Abort unread response bodies before releasing the worker slot.
+                    controller.abort()
+                    clearTimeout(timeout)
+                }
+            }
+        })
+        await Promise.all(workers)
+        return { result: results }
+    })
+
     fastify.post('/api/aiostreams-proxy/user', {
         bodyLimit: 1024 * 1024,
         config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
@@ -753,16 +827,22 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                 properties: {
                     baseUrl: { type: 'string' },
                     uuid: { type: 'string' },
-                    password: { type: 'string' }
+                    password: { type: 'string' },
+                    // Raw view = the stored child config, so edits do not bake
+                    // inherited parent values into the child. Default stays the
+                    // merged (effective) view used for display.
+                    raw: { type: 'boolean' }
                 }
             }
         }
     }, async (request, reply) => {
-        const { baseUrl, uuid, password } = request.body
+        const { baseUrl, uuid, password, raw } = request.body
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
-        const url = `${baseUrl}/api/v1/user`
+        const url = raw === true
+            ? `${baseUrl}/api/v1/user?raw=true`
+            : `${baseUrl}/api/v1/user`
         if (!(await isSafeUrlResolved(url))) {
             reply.status(403); return { error: 'Access Denied: Unsafe URL' }
         }
@@ -1022,8 +1102,6 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         }
     })
 
-
-
     const aiometadataConfigUrl = (baseUrl, path) => `${baseUrl.replace(/\/+$/, '')}/api/config${path}`
 
     fastify.post('/api/aiometadata-proxy/load', {
@@ -1121,12 +1199,17 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
                     uuid: { type: 'string' },
                     password: { type: 'string' },
                     config: { type: 'object', additionalProperties: true },
-                    addonPassword: { type: 'string' }
+                    addonPassword: { type: 'string' },
+                    // Loaded-config version: the instance replies 409
+                    // CONFIG_CHANGED when its stored config is newer. The 409
+                    // body passes through untouched so the client can surface
+                    // a typed conflict. `force` is deliberately not accepted.
+                    baseVersion: { type: 'number' }
                 }
             }
         }
     }, async (request, reply) => {
-        const { baseUrl, uuid, password, config, addonPassword } = request.body
+        const { baseUrl, uuid, password, config, addonPassword, baseVersion } = request.body
         const authUser = await verifyAuth(request)
         if (!authUser) { reply.status(401); return { error: 'Unauthorized' } }
 
@@ -1134,11 +1217,15 @@ export function registerProxyRoutes(fastify, { checkAddonHealthInternal }) {
         if (!(await isSafeUrlResolved(url))) {
             reply.status(403); return { error: 'Access Denied: Unsafe URL' }
         }
+        const upstreamBody = { config, password, addonPassword }
+        if (typeof baseVersion === 'number' && Number.isFinite(baseVersion)) {
+            upstreamBody.baseVersion = baseVersion
+        }
         try {
             const { response, json } = await fetchAIOStreamsJson(url, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ config, password, addonPassword }),
+                body: JSON.stringify(upstreamBody),
             })
             if (response.status >= 300 && response.status < 400) {
                 reply.status(403); return { error: 'Access Denied: Redirect not allowed' }

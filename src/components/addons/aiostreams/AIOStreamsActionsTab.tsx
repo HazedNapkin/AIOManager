@@ -276,6 +276,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                 <p className="text-xs font-medium text-muted-foreground uppercase">Advanced user tools</p>
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={() => setBatchMode(!batchMode)}
                     className="text-xs text-primary hover:underline ml-auto"
                 >
@@ -295,7 +296,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                     onChange={e => setCustomUrl(e.target.value)}
                                     className="bg-background/50 border-muted h-11 font-mono text-sm"
                                 />
-                                <button type="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">
+                                <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">
                                     Known instance
                                 </button>
                             </div>
@@ -313,7 +314,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         ))}
                                     </SelectContent>
                                 </Select>
-                                <button type="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">
+                                <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">
                                     Custom URL…
                                 </button>
                             </div>
@@ -350,7 +351,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                     </label>
 
                     {createError && (
-                        <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
+                        <div data-theme-tone="status" data-theme-part="panel" className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-xl px-3 py-2">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                             {createError}
                         </div>
@@ -366,7 +367,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                     </Button>
 
                     {createResult && (
-                        <div className="bg-success/5 border border-success/20 rounded-2xl p-4 space-y-3">
+                        <div data-theme-tone="status" data-theme-part="panel" className="bg-success/5 border border-success/20 rounded-2xl p-4 space-y-3">
                             <div className="flex items-center gap-2">
                                 <Check className="w-4 h-4 text-success" />
                                 <p className="text-xs font-bold text-success">User created</p>
@@ -399,6 +400,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         <button
                                             key={acc.id}
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => !isAdded && !isAdding && handleAddToAccount(acc.id)}
                                             disabled={isAdding || isAdded}
                                             className={cn(
@@ -430,7 +432,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                     onChange={e => setCustomUrl(e.target.value)}
                                     className="bg-background/50 border-muted h-11 font-mono text-sm"
                                 />
-                                <button type="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">
+                                <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(false)} className="text-xs text-primary hover:underline">
                                     Known instance
                                 </button>
                             </div>
@@ -448,7 +450,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         ))}
                                     </SelectContent>
                                 </Select>
-                                <button type="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">
+                                <button type="button" data-theme-part="button" onClick={() => setUseCustomUrl(true)} className="text-xs text-primary hover:underline">
                                     Custom URL…
                                 </button>
                             </div>
@@ -491,6 +493,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                             </label>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => {
                                     setBatchSelectedAccounts(
                                         batchSelectedAccounts.size === accounts.length
@@ -512,6 +515,8 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                         type="button"
                                         role="checkbox"
                                         aria-checked={selected}
+                                        data-theme-part="button"
+                                        data-state={selected ? 'active' : 'inactive'}
                                         aria-label={`${selected ? 'Deselect' : 'Select'} ${acc.name || acc.email || acc.id}`}
                                         onClick={() => toggleBatchAccount(acc.id)}
                                         className={cn(
@@ -521,7 +526,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                                                 : 'border-border/30 hover:bg-muted/20'
                                         )}
                                     >
-                                        <div className={cn(
+                                        <div data-theme-part="checkbox" className={cn(
                                             'w-4 h-4 rounded border flex items-center justify-center shrink-0',
                                             selected ? 'bg-primary border-primary' : 'border-border/40'
                                         )}>
@@ -538,7 +543,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
                         <div className="space-y-1.5">
                             <p className="text-xs font-medium text-muted-foreground uppercase">Results</p>
                             {batchResults.map((r, i) => (
-                                <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${
+                                <div data-theme-tone="status" key={i} data-theme-part="panel" className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${
                                     r.success ? 'bg-success/5 border-success/20' : 'bg-destructive/5 border-destructive/20'
                                 }`}>
                                     <span className={r.success ? 'text-success' : 'text-destructive'}>
@@ -578,7 +583,7 @@ export function AIOStreamsActionsTab({ sourceConfig, baseUrl, uuid, targetOption
             <div className="border-t border-border/10 pt-6 space-y-4">
                 <p className="text-xs font-medium text-destructive/70 uppercase">Danger Zone</p>
 
-                <div className="flex items-start gap-2 text-xs text-destructive/60 bg-destructive/5 border border-destructive/10 rounded-xl px-3 py-2.5">
+                <div data-theme-tone="status" data-theme-part="panel" className="flex items-start gap-2 text-xs text-destructive/60 bg-destructive/5 border border-destructive/10 rounded-xl px-3 py-2.5">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <p>Permanently deletes <span className="font-mono font-bold">{uuid.slice(0, 8)}…</span> and all configuration.</p>
                 </div>

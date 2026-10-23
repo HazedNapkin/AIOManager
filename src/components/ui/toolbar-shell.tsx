@@ -9,6 +9,7 @@ const ToolbarShell = React.forwardRef<HTMLDivElement, ToolbarShellProps>(
   ({ className, contentClassName, children, ...props }, ref) => (
     <div
       ref={ref}
+      data-theme-part="toolbar"
       className={cn('bg-card border border-border/40 rounded-2xl p-3 shadow-sm', className)}
       {...props}
     >

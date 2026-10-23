@@ -23,7 +23,7 @@ export function DropOffPoint({ avgEpisodes, loading }: DropOffPointProps) {
     const fillCount = Math.min(Math.round(avgEpisodes), maxEps)
 
     return (
-        <div ref={ref} className="rounded-2xl border border-border/35 bg-muted/15 p-4 space-y-3">
+        <div ref={ref} data-theme-part="panel" className="rounded-2xl border border-border/35 bg-muted/15 p-4 space-y-3">
             <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl shrink-0" style={{ background: color + '22' }}>
                     <TrendingDown className="h-4 w-4" style={{ color }} />

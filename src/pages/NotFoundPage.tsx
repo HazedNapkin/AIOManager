@@ -1,27 +1,23 @@
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/contexts/ThemeContext'
+import { BrandLogo } from '@/components/common/BrandLogo'
 import { ArrowLeft, Home } from 'lucide-react'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { cn } from '@/lib/utils'
 
 export function NotFoundPage() {
   useDocumentTitle('404')
-  const { isLight } = useTheme()
+  const { logoUrl } = useTheme()
   const location = useLocation()
 
   return (
     <div className="min-h-[70vh] flex items-center justify-center p-4">
       <section
+        data-theme-part="card"
         className="w-full max-w-lg rounded-xl border border-border/40 bg-card p-6 text-center shadow-sm animate-in fade-in zoom-in-95 duration-300 sm:p-8"
         aria-labelledby="not-found-title"
       >
-        <img
-          src="/logo.png"
-          alt="AIOManager"
-          loading="lazy"
-          className={cn('mx-auto h-20 w-20 object-contain', isLight && 'invert')}
-        />
+        <BrandLogo logoUrl={logoUrl} className="mx-auto h-20 w-20 text-foreground" />
 
         <div className="mt-6 space-y-3">
           <p className="text-xs font-medium text-muted-foreground uppercase">404</p>
@@ -31,7 +27,7 @@ export function NotFoundPage() {
           <p className="mx-auto max-w-sm text-sm text-muted-foreground">
             The link may have moved, expired, or never existed.
           </p>
-          <p className="mx-auto max-w-sm truncate rounded-lg border border-border/40 bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground">
+          <p data-theme-part="field" className="mx-auto max-w-sm truncate rounded-lg border border-border/40 bg-muted/20 px-3 py-2 font-mono text-xs text-muted-foreground">
             {location.pathname}
           </p>
         </div>

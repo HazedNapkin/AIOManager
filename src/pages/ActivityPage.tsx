@@ -1,5 +1,6 @@
 import { triggerSync } from '@/lib/sync-trigger'
 import { ActivityFeed } from '@/components/activity/ActivityFeed'
+import { MediaDeleteScope } from '@/components/activity/MediaDeleteScope'
 import { ActivityDetailModal } from '@/components/activity/ActivityDetailModal'
 import { ForYouPage } from '@/components/for-you/ForYouPage'
 import { AccountDetailPage } from '@/components/for-you/AccountDetailPage'
@@ -10,10 +11,12 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AccountSwitcher } from '@/components/common/AccountSwitcher'
 import { ActivityItem, LibraryItem } from '@/types/activity'
-import { useAccountStore, getStremioAuthKey, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
+import { useAccountStore, getStremioAuthKey, getStremioConnection, getAccountEmail, hasPlatformConnection } from '@/store/accountStore'
 import { useDiscoveryPrefs, useDiscoveryStore, CONTINUE_WATCHING_CONTEXT } from '@/store/discoveryStore'
 import { useLibraryCache } from '@/store/libraryCache'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
+import { isReadOnlyMediaActivity } from '@/lib/jellyfin/activity'
+import { deleteJellyfinWatchItems } from '@/lib/jellyfin/delete-history'
 import { stremioClient } from '@/api/stremio-client'
 import { decrypt } from '@/lib/crypto'
 import { useAuthStore } from '@/store/authStore'
@@ -21,7 +24,9 @@ import { useSyncStore } from '@/store/syncStore'
 import { useWatchEventStore } from '@/store/watchEventStore'
 import { useUIStore } from '@/store/uiStore'
 import { ActivityItemSkeleton } from '@/components/ui/skeleton'
-import { historyEntryToActivityItem, nuvioProgressKey, fetchCinemetaDetail, getCachedCinemetaName } from '@/lib/activity-utils'
+import { historyEntryToActivityItem, nuvioProgressKey, getCachedCinemetaName, watchContextKey, peerLoginLabel } from '@/lib/activity-utils'
+import { isUnresolvedActivityName } from '@/lib/activity-metadata-overlay'
+import { useActivityMetadata } from '@/hooks/useActivityMetadata'
 import { planEpisodeBitfieldDelete } from '@/lib/episode-bitfield-delete'
 import { isEpisodeScopedDelete, isBareAnchoredEpisode } from '@/lib/activity-delete-routing'
 import { fetchSeriesVideos } from '@/lib/watched-episodes'
@@ -60,87 +65,158 @@ import { trace } from '@/lib/trace'
 const ACTIVITY_ACCOUNT_DELETE_CONCURRENCY = 4
 const ACTIVITY_ITEM_DELETE_CONCURRENCY = 5
 
-function platformsPhrase(sources: Set<string>): string {
-    const names = Array.from(sources).map(s => (s && s !== 'stremio' ? getPlatformEntry(s)?.name ?? s : 'Stremio'))
-    if (names.length === 0) return 'Stremio'
-    if (names.length === 1) return names[0]
-    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+/**
+ * The sealed Stremio key + request context a delete/writeback must use for one item:
+ * the EXACT connection the watch came from when the item carries attribution, the
+ * canonical/legacy login otherwise. A secondary whose connection no longer exists
+ * resolves to nothing — its rows are never routed through another login's key.
+ */
+function resolveStremioDeleteTarget(account: Account, origin: { sourceConnectionId?: string }): { sealedKey?: string; ctx: string } {
+    if (origin.sourceConnectionId) {
+        const conn = (account.connections || []).find(c => c.id === origin.sourceConnectionId && c.platform === 'stremio')
+        if (!conn?.credentials?.authKey) return { ctx: watchContextKey(account.id, origin.sourceConnectionId) }
+        return { sealedKey: conn.credentials.authKey, ctx: watchContextKey(account.id, origin.sourceConnectionId) }
+    }
+    return { sealedKey: getStremioAuthKey(account) || undefined, ctx: account.id }
 }
 
+// platformsPhrase retired in favor of originTargetsSummary: bulk-delete copy names the
+// exact logins, not just the platforms, so grouped same-platform users see their targets.
+
 function includesWholeShowSeriesDelete(items: ActivityItem[]): boolean {
-    return items.some(item => item.source !== 'nuvio' && item.source !== 'realstream'
+    return items.some(item => !isReadOnlyMediaActivity(item) && item.source !== 'jellyfin' && item.source !== 'nuvio' && item.source !== 'realstream'
         && (item.type === 'series' || item.type === 'anime')
         && (item.season == null || item.episode == null))
 }
 
-async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): Promise<boolean> {
+/** Masked summary of the exact logins a bulk delete will touch, so grouped users see the targets. */
+function originTargetsSummary(items: ActivityItem[], accountById: Map<string, Account>, privacyLevel: number, emailPrivacyLevel: number): { text: string; count: number } | null {
+    const labels = new Map<string, string>()
+    for (const item of items) {
+        const account = accountById.get(item.accountId)
+        const unlinked = item.sourceConnectionId && !account?.connections?.some(connection => connection.id === item.sourceConnectionId)
+        const raw = (unlinked ? 'Unlinked connection' : peerLoginLabel(account, item.sourceConnectionId))
+            ?? (account ? (account.name && !account.name.includes('@') ? account.name : getAccountEmail(account)) : undefined)
+            ?? (item.source ? (getPlatformEntry(item.source)?.name ?? item.source) : 'Stremio')
+        const masked = raw.includes('@') ? (maskEmailLevel(raw, emailPrivacyLevel) || raw) : maskNameLevel(raw, privacyLevel)
+        labels.set(`${watchContextKey(item.accountId, item.sourceConnectionId)}|${masked}`, masked)
+    }
+    if (labels.size === 0) return null
+    const list = Array.from(labels.values())
+    return { text: list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} +${list.length - 3} more`, count: list.length }
+}
+
+async function deleteNuvioWatchItems(account: Account, items: ActivityItem[]): Promise<{ ok: boolean; keptItems: ActivityItem[] }> {
     const nuvioConns = (account.connections || []).filter(c => c.enabled && c.platform === 'nuvio')
-    if (nuvioConns.length === 0) return false
+    if (nuvioConns.length === 0) return { ok: false, keptItems: items }
     const [{ fetchConnectionToken }, { nuvioDriverFor }, { getCachedNuvioToken, setCachedNuvioToken, invalidateNuvioToken }] = await Promise.all([
         import('@/api/connection'),
         import('@/lib/drivers/factory'),
         import('@/lib/nuvio-token-cache'),
     ])
-    const historyKeys = items.map(i => {
-        const k: { content_id: string; season?: number; episode?: number } = { content_id: i.itemId }
-        if (i.episode != null) { k.season = i.season ?? 1; k.episode = i.episode }
-        return k
-    })
-    const progressKeys = items.map(i => nuvioProgressKey(i.itemId, i.season, i.episode))
 
-    let failed = false
-    for (const conn of nuvioConns) {
+    // Route by EXACT origin: an attributed item is deleted only through the login it came
+    // from — never broadcast to sibling logins (a broad loop would erase the same title
+    // across every Nuvio account bound here). Unattributed (legacy) items route through
+    // the single unambiguous login; with several logins and no attribution they are kept.
+    const groups = new Map<string, { conn?: typeof nuvioConns[number]; items: ActivityItem[] }>()
+    const keptItems: ActivityItem[] = []
+    for (const item of items) {
+        if (!item.sourceConnectionId) {
+            if (nuvioConns.length !== 1) { keptItems.push(item); continue }
+            const group = groups.get('') ?? { conn: nuvioConns[0], items: [] }
+            group.items.push(item)
+            groups.set('', group)
+            continue
+        }
+        const conn = nuvioConns.find(c => c.id === item.sourceConnectionId)
+        if (!conn) { keptItems.push(item); continue }
+        const group = groups.get(conn.id) ?? { conn, items: [] }
+        group.items.push(item)
+        groups.set(conn.id, group)
+    }
+
+    let ok = true
+    for (const group of groups.values()) {
+        if (!group.conn || group.items.length === 0) continue
+        const historyKeys = group.items.map(i => {
+            const k: { content_id: string; season?: number; episode?: number } = { content_id: i.itemId }
+            if (i.episode != null) { k.season = i.season ?? 1; k.episode = i.episode }
+            return k
+        })
+        const progressKeys = group.items.map(i => nuvioProgressKey(i.itemId, i.season, i.episode))
         try {
-            let token = getCachedNuvioToken(conn.id)
+            let token = getCachedNuvioToken(group.conn.id)
             if (!token) {
-                token = await fetchConnectionToken(account.id, conn.id, 'nuvio')
-                setCachedNuvioToken(conn.id, token)
+                token = await fetchConnectionToken(account.id, group.conn.id, 'nuvio')
+                setCachedNuvioToken(group.conn.id, token)
             }
-            const driver = nuvioDriverFor(conn)
-            const profileId = token.profileId ?? conn.credentials?.profileId
+            const driver = nuvioDriverFor(group.conn)
+            const profileId = token.profileId ?? group.conn.credentials?.profileId
             await driver.deleteWatchHistory(token.accessToken, historyKeys, profileId)
             await driver.deleteWatchProgress(token.accessToken, progressKeys, profileId)
-            trace('activityDelete', 'nuvio.connection.ok', { accountId: account.id, connectionId: conn.id, historyKeys: historyKeys.length, progressKeys: progressKeys.length })
+            trace('activityDelete', 'nuvio.connection.ok', { accountId: account.id, connectionId: group.conn.id, historyKeys: historyKeys.length, progressKeys: progressKeys.length })
         } catch (e) {
             if (import.meta.env.DEV) console.error('[Activity] Nuvio delete failed:', e)
-            trace('activityDelete', 'nuvio.connection.error', { accountId: account.id, connectionId: conn.id, status: (e as { status?: number })?.status, error: (e as Error)?.message })
-            invalidateNuvioToken(conn.id)
-            failed = true
+            trace('activityDelete', 'nuvio.connection.error', { accountId: account.id, connectionId: group.conn.id, status: (e as { status?: number })?.status, error: (e as Error)?.message })
+            invalidateNuvioToken(group.conn.id)
+            ok = false
+            keptItems.push(...group.items)
         }
     }
-    return !failed
+    return { ok, keptItems }
 }
 
-async function deleteRealStreamWatchItems(account: Account, items: ActivityItem[]): Promise<boolean> {
+async function deleteRealStreamWatchItems(account: Account, items: ActivityItem[]): Promise<{ ok: boolean; keptItems: ActivityItem[] }> {
     const rsConns = (account.connections || []).filter(c => c.enabled && c.platform === 'realstream')
-    if (rsConns.length === 0) return false
+    if (rsConns.length === 0) return { ok: false, keptItems: items }
     const [{ fetchConnectionToken }, { realStreamDriverFor }] = await Promise.all([
         import('@/api/connection'),
         import('@/lib/drivers/factory'),
     ])
-    const entries = items.map(i => ({
-        videoId: i.uniqueItemId || i.itemId,
-        contentId: i.itemId.startsWith('tt') ? i.itemId : undefined,
-        season: i.season ?? null,
-        episode: i.episode ?? null,
-    }))
 
-    let failed = false
-    for (const conn of rsConns) {
+    // Same exact-origin rule as Nuvio: one login's delete never touches a sibling's copy.
+    const groups = new Map<string, { conn?: typeof rsConns[number]; items: ActivityItem[] }>()
+    const keptItems: ActivityItem[] = []
+    for (const item of items) {
+        if (!item.sourceConnectionId) {
+            if (rsConns.length !== 1) { keptItems.push(item); continue }
+            const group = groups.get('') ?? { conn: rsConns[0], items: [] }
+            group.items.push(item)
+            groups.set('', group)
+            continue
+        }
+        const conn = rsConns.find(c => c.id === item.sourceConnectionId)
+        if (!conn) { keptItems.push(item); continue }
+        const group = groups.get(conn.id) ?? { conn, items: [] }
+        group.items.push(item)
+        groups.set(conn.id, group)
+    }
+
+    let ok = true
+    for (const group of groups.values()) {
+        if (!group.conn || group.items.length === 0) continue
+        const entries = group.items.map(i => ({
+            videoId: i.uniqueItemId || i.itemId,
+            contentId: i.itemId.startsWith('tt') ? i.itemId : undefined,
+            season: i.season ?? null,
+            episode: i.episode ?? null,
+        }))
         try {
-            const userId = conn.credentials?.userId || ''
+            const userId = group.conn.credentials?.userId || ''
             if (!userId) throw new Error('RealStream user ID missing; re-authenticate this connection')
-            const token = await fetchConnectionToken(account.id, conn.id, 'realstream')
-            const driver = realStreamDriverFor(conn)
+            const token = await fetchConnectionToken(account.id, group.conn.id, 'realstream')
+            const driver = realStreamDriverFor(group.conn)
             await driver.deleteWatchProgress(token.accessToken, userId, entries)
-            trace('activityDelete', 'realstream.connection.ok', { accountId: account.id, connectionId: conn.id, entries: entries.length })
+            trace('activityDelete', 'realstream.connection.ok', { accountId: account.id, connectionId: group.conn.id, entries: entries.length })
         } catch (e) {
             if (import.meta.env.DEV) console.error('[Activity] RealStream delete failed:', e)
-            trace('activityDelete', 'realstream.connection.error', { accountId: account.id, connectionId: conn.id, error: (e as Error)?.message })
-            failed = true
+            trace('activityDelete', 'realstream.connection.error', { accountId: account.id, connectionId: group.conn.id, error: (e as Error)?.message })
+            ok = false
+            keptItems.push(...group.items)
         }
     }
-    return !failed
+    return { ok, keptItems }
 }
 
 // Minimal ActivityItem for deep links (?detail=<id>): the watch-history
@@ -183,29 +259,29 @@ export function ActivityPage() {
     const liveActivity = useUIStore(s => s.liveActivity)
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
+    const privacyLevelEmail = useUIStore(s => s.privacyLevelEmail)
     const privacyLevel = isPrivacyModeEnabled ? privacyLevelNames : 0
+    const emailPrivacyLevel = isPrivacyModeEnabled ? privacyLevelEmail : 0
     const { dismissedItems: dismissedContinueWatching } = useDiscoveryPrefs(CONTINUE_WATCHING_CONTEXT)
 
-    const { history: watchHistory, inProgress } = useWatchHistory()
+    const { history: watchHistory, inProgress, refreshMedia, mediaIssues } = useWatchHistory()
 
     const [activeView, setActiveView] = useState<'feed' | 'foryou'>('feed')
     const [forYouAccountId, setForYouAccountId] = useState<string | null>(null)
 
-    const [resolvedNames, setResolvedNames] = useState<Map<string, { name: string; poster?: string; genres?: string[] }>>(new Map())
-
     // Convert to ActivityItem[] for existing feed components. Backfilled episodes (recovered from the
     // watched-bitfield) have no real per-episode time, so they are kept out of the chronological feed
-    // -- they still power Replay totals/discoveries and the per-show "seen" state.
-    const history: ActivityItem[] = useMemo(
+    // -- they still power Replay totals/discoveries and the per-show "seen" state. The one exception
+    // is imported SAVED state (bitfield-aggregate series, flagged-only movies): those rows carry no
+    // watch dates at all, so they are kept for the dedicated imported group below instead of leaking
+    // into the dated chronology as a phantom watch on the import date.
+    const sourceHistory: ActivityItem[] = useMemo(
         () => {
-            const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill)
-
-            const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
-            const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
+            const items = watchHistory.map(historyEntryToActivityItem).filter(item => !item.backfill || item.importedSavedState)
 
             const bestByItemId = new Map<string, { name: string; poster?: string; genres?: string[] }>()
             for (const item of items) {
-                if (isBadName(item.name)) continue
+                if (isUnresolvedActivityName(item.name)) continue
                 const existing = bestByItemId.get(item.itemId)
                 if (!existing || item.name.length > existing.name.length) {
                     bestByItemId.set(item.itemId, { name: item.name, poster: item.poster || undefined, genres: item.genres })
@@ -215,14 +291,14 @@ export function ActivityPage() {
             if (bestByItemId.size > 0) {
                 let enriched = 0
                 for (let i = 0; i < items.length; i++) {
-                    if (!isBadName(items[i].name)) continue
+                    if (!isUnresolvedActivityName(items[i].name)) continue
                     const best = bestByItemId.get(items[i].itemId)
                     if (best) {
                         items[i] = {
                             ...items[i],
                             name: best.name,
                             poster: items[i].poster || best.poster || items[i].poster,
-                            genres: items[i].genres || best.genres,
+                            genres: items[i].genres?.length ? items[i].genres : best.genres,
                         }
                         enriched++
                     }
@@ -230,65 +306,26 @@ export function ActivityPage() {
                 if (import.meta.env.DEV && enriched > 0) console.log('[ActivityPage] Cross-source name enrichment:', enriched, 'items')
             }
 
-            if (resolvedNames.size > 0) {
-                for (let i = 0; i < items.length; i++) {
-                    if (!isBadName(items[i].name)) continue
-                    const resolved = resolvedNames.get(items[i].itemId)
-                    if (resolved) {
-                        items[i] = {
-                            ...items[i],
-                            name: resolved.name,
-                            poster: items[i].poster || resolved.poster || items[i].poster,
-                            genres: items[i].genres || resolved.genres,
-                        }
-                    }
-                }
-            }
-
             return items
         },
-        [watchHistory, resolvedNames]
+        [watchHistory]
     )
+    const history = useActivityMetadata(sourceHistory)
 
-    useEffect(() => {
-        const BAD_NAME_RE = /^(tt\d{7,}|kitsu:\d+|mv:\d+|show:\d+|tmdb:\d+|mal:\d+|anilist:\d+|anidb:\d+|tvdb:\d+)$/i
-        const isBadName = (n: string) => !n || n === 'Unknown Title' || BAD_NAME_RE.test(n)
-        const badIds = new Set<string>()
-        for (const item of history) {
-            if (isBadName(item.name) && item.itemId.startsWith('tt') && !resolvedNames.has(item.itemId)) {
-                badIds.add(item.itemId)
-            }
-        }
-        if (badIds.size === 0) return
-        let active = true
-        const resolutions = new Map<string, { name: string; poster?: string; genres?: string[] }>()
-        Promise.all(Array.from(badIds).slice(0, 10).map(async (itemId) => {
-            const meta = await fetchCinemetaDetail(itemId)
-            if (!meta?.name) return
-            const genres = meta.genre ? meta.genre.split(',').map((g: string) => g.trim()).filter(Boolean) : undefined
-            resolutions.set(itemId, {
-                name: meta.name,
-                poster: meta.poster || undefined,
-                genres: genres && genres.length > 0 ? genres : undefined,
-            })
-        })).then(() => {
-            if (!active || resolutions.size === 0) return
-            setResolvedNames(prev => {
-                const next = new Map(prev)
-                for (const [k, v] of resolutions) next.set(k, v)
-                return next
-            })
-        })
-        return () => { active = false }
-    }, [history, resolvedNames])
+    // Split for presentation only: the dated chronology and day metrics see genuinely dated
+    // watches, while imported saved state (no watch dates) renders in its own group. Deletion,
+    // deep links and bulk flows keep operating on the full `history` list with unchanged ids.
+    const datedHistory = useMemo(() => history.filter(item => !item.importedSavedState), [history])
+    const importedSummaries = useMemo(() => history.filter(item => item.importedSavedState), [history])
 
     // Map useLibraryCache functions to original names for UI compatibility
     const fetchActivity = useCallback(async (silent = false) => {
         if (!silent) {
+            refreshMedia()
             invalidate()
             await ensureLoaded(accounts)
         }
-    }, [accounts, ensureLoaded, invalidate])
+    }, [accounts, ensureLoaded, invalidate, refreshMedia])
 
     const [searchInput, setSearchInput] = useState('')
     const [searchTerm, setSearchTerm] = useState('')
@@ -341,6 +378,9 @@ export function ActivityPage() {
     const [userFilter, setUserFilter] = useState(() => {
         try { return localStorage.getItem('aio-activity-user-filter') || 'all' } catch { return 'all' }
     })
+    const scopedMediaIssues = mediaIssues.filter(issue => userFilter === 'all' || issue.accountId === userFilter)
+    const mediaReadWarnings = scopedMediaIssues.filter(issue => issue.kind !== 'limit' && issue.kind !== 'source-count')
+    const mediaHistoryLimits = scopedMediaIssues.filter(issue => issue.kind === 'limit')
     const [timeFilter, setTimeFilter] = useState(() => {
         try { return localStorage.getItem('activity-time-filter') || 'all' } catch { return 'all' }
     })
@@ -357,7 +397,7 @@ export function ActivityPage() {
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null)
     const [isDeletingPending, setIsDeletingPending] = useState(false)
-    const [pendingWholeShow, setPendingWholeShow] = useState<Array<{ accountId: string; itemId: string; id: string }> | null>(null)
+    const [pendingWholeShow, setPendingWholeShow] = useState<Array<{ accountId: string; itemId: string; id: string; sourceConnectionId?: string }> | null>(null)
     const [isDeletingWholeShow, setIsDeletingWholeShow] = useState(false)
     const [isBulkMode, setIsBulkMode] = useState(false)
     const [detailItem, setDetailItem] = useState<ActivityItem | null>(null)
@@ -428,16 +468,28 @@ export function ActivityPage() {
         avatar: account.avatar,
     })), [accounts])
 
+    const matchesAccountAndSearch = useCallback((item: ActivityItem) => {
+        if (userFilter !== 'all' && item.accountId !== userFilter) return false
+        if (!searchTerm.trim()) return true
+        const haystack = [
+            item.name || '',
+            item.itemId || '',
+            item.source || '',
+            getCachedCinemetaName(item.itemId) || '',
+            item.season !== undefined ? `S${item.season}` : '',
+            item.episode !== undefined ? `E${item.episode}` : '',
+        ].join(' ').toLowerCase()
+        return haystack.includes(searchTerm.toLowerCase())
+    }, [userFilter, searchTerm])
+
     const filteredHistory = useMemo(() => {
         const now = new Date().getTime()
         const oneDay = 24 * 60 * 60 * 1000
         const sevenDays = 7 * oneDay
         const thirtyDays = 30 * oneDay
 
-        return history.filter(item => {
-            if (userFilter !== 'all' && item.accountId !== userFilter) {
-                return false
-            }
+        return datedHistory.filter(item => {
+            if (!matchesAccountAndSearch(item)) return false
             const itemTime = new Date(item.timestamp).getTime()
             if (timeFilter === '24h' && now - itemTime > oneDay) return false
             if (timeFilter === '7d' && now - itemTime > sevenDays) return false
@@ -447,21 +499,16 @@ export function ActivityPage() {
                 if (itemTime < sinceTime) return false
             }
 
-            if (searchTerm.trim()) {
-                const searchLower = searchTerm.toLowerCase()
-                const haystack = [
-                    item.name || '',
-                    item.itemId || '',
-                    item.source || '',
-                    getCachedCinemetaName(item.itemId) || '',
-                    item.season !== undefined ? `S${item.season}` : '',
-                    item.episode !== undefined ? `E${item.episode}` : '',
-                ].join(' ').toLowerCase()
-                return haystack.includes(searchLower)
-            }
             return true
         })
-    }, [history, userFilter, searchTerm, timeFilter, customStartDate])
+    }, [datedHistory, matchesAccountAndSearch, timeFilter, customStartDate])
+
+    // The imported group follows the same account/search filters, but never the time filters:
+    // those describe watch dates, and saved state deliberately has none.
+    const importedSummaryItems = useMemo(() => {
+        if (timeFilter !== 'all') return []
+        return importedSummaries.filter(matchesAccountAndSearch)
+    }, [importedSummaries, matchesAccountAndSearch, timeFilter])
 
     const handleUserFilterChange = useCallback((id: string) => {
         setUserFilter(id)
@@ -478,11 +525,11 @@ export function ActivityPage() {
         const now = new Date().getTime()
         const oneDay = 24 * 60 * 60 * 1000
 
-        const watchedToday = history
+        const watchedToday = datedHistory
             .filter(item => now - new Date(item.timestamp).getTime() < oneDay)
             .reduce((acc, item) => acc + (item.watched || 0), 0)
 
-        const watchedYesterday = history
+        const watchedYesterday = datedHistory
             .filter(item => {
                 const diff = now - new Date(item.timestamp).getTime()
                 return diff > oneDay && diff < 2 * oneDay
@@ -493,7 +540,7 @@ export function ActivityPage() {
             todayHrs: Math.round(watchedToday / 3600000 * 10) / 10,
             isUp: watchedToday >= watchedYesterday,
         }
-    }, [history])
+    }, [datedHistory])
 
     const handleViewModeChange = useCallback((mode: 'grid' | 'list') => {
         setViewMode(mode)
@@ -503,7 +550,8 @@ export function ActivityPage() {
 
 
     const handleToggleSelect = useCallback((itemId: string | string[]) => {
-        const ids = Array.isArray(itemId) ? itemId : [itemId]
+        const mutable = new Set(history.filter(item => !isReadOnlyMediaActivity(item)).map(item => item.id))
+        const ids = (Array.isArray(itemId) ? itemId : [itemId]).filter(id => mutable.has(id))
         setSelectedItems(prev => {
             const newSet = new Set(prev)
             const allSelected = ids.every(id => newSet.has(id))
@@ -514,10 +562,10 @@ export function ActivityPage() {
             }
             return newSet
         })
-    }, [])
+    }, [history])
 
     const handleSelectAll = useCallback(() => {
-        setSelectedItems(new Set(filteredHistory.map((item: ActivityItem) => item.id)))
+        setSelectedItems(new Set(filteredHistory.filter(item => !isReadOnlyMediaActivity(item)).map((item: ActivityItem) => item.id)))
     }, [filteredHistory])
 
     const handleDeselectAll = useCallback(() => {
@@ -532,18 +580,20 @@ export function ActivityPage() {
 
     const handleFeedDelete = useCallback((id: string | string[]) => {
         const ids = Array.isArray(id) ? id : [id]
-        setPendingDeleteIds(ids)
-    }, [])
+        const mutable = new Set(history.filter(item => !isReadOnlyMediaActivity(item)).map(item => item.id))
+        const allowed = ids.filter(itemId => mutable.has(itemId))
+        if (allowed.length) setPendingDeleteIds(allowed)
+    }, [history])
 
     const pendingSources = useMemo(() => {
         if (!pendingDeleteIds) return new Set<string>()
         const idSet = new Set(pendingDeleteIds)
-        return new Set(history.filter(h => idSet.has(h.id)).map(h => h.source || 'stremio'))
+        return new Set(history.filter(h => idSet.has(h.id)).flatMap(h => [h.source || 'stremio', ...(h.mediaTargets?.length ? ['jellyfin'] : [])]))
     }, [pendingDeleteIds, history])
 
     const selectedSources = useMemo(() => {
         if (selectedItems.size === 0) return new Set<string>()
-        return new Set(history.filter(h => selectedItems.has(h.id)).map(h => h.source || 'stremio'))
+        return new Set(history.filter(h => selectedItems.has(h.id)).flatMap(h => [h.source || 'stremio', ...(h.mediaTargets?.length ? ['jellyfin'] : [])]))
     }, [selectedItems, history])
 
     const selectedHasWholeShowSeries = useMemo(
@@ -583,45 +633,93 @@ export function ActivityPage() {
         })
     }, [detailParamId, history, searchParams])
 
-    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string>; keptReasons: Map<string, number>; noVideos: Array<{ accountId: string; itemId: string; id: string }> }> => {
+    const deletePlatformItems = useCallback(async (items: ActivityItem[]): Promise<{ failed: boolean; keptIds: Set<string>; keptReasons: Map<string, number>; noVideos: Array<{ accountId: string; itemId: string; id: string; sourceConnectionId?: string }> }> => {
         if (items.length === 0) return { failed: false, keptIds: new Set<string>(), keptReasons: new Map<string, number>(), noVideos: [] }
         const byAccount: Record<string, ActivityItem[]> = {}
         for (const item of items) {
+            if (isReadOnlyMediaActivity(item)) continue
             (byAccount[item.accountId] ||= []).push(item)
         }
-        const keptIds = new Set<string>()
+        const keptIds = new Set<string>(items.filter(isReadOnlyMediaActivity).map(item => item.id))
         const keptReasons = new Map<string, number>()
-        const noVideos: Array<{ accountId: string; itemId: string; id: string }> = []
+        if (keptIds.size) keptReasons.set('This source does not support deleting history.', keptIds.size)
+        const noVideos: Array<{ accountId: string; itemId: string; id: string; sourceConnectionId?: string }> = []
         const countKeep = (reason: string, n: number = 1) => keptReasons.set(reason, (keptReasons.get(reason) || 0) + n)
         let failed = false
         await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, accItems]) => {
             const account = accountById.get(accountId)
-            if (!account || !hasPlatformConnection(account)) return
+            if (!account) {
+                for (const item of accItems) keptIds.add(item.id)
+                countKeep('account-error', accItems.length)
+                failed = true
+                return
+            }
 
-            const nuvioItems = accItems.filter(i => i.source === 'nuvio')
-            const realstreamItems = accItems.filter(i => i.source === 'realstream')
-            const stremioItems = accItems.filter(i => i.source !== 'nuvio' && i.source !== 'realstream')
+            const mediaItems = accItems.filter(item => item.source === 'jellyfin' || item.mediaTargets?.length)
+            if (mediaItems.length) {
+                const key = useAuthStore.getState().encryptionKey
+                const mediaKept = key
+                    ? await deleteJellyfinWatchItems(account, mediaItems, value => decrypt(value, key))
+                    : new Set(mediaItems.map(item => item.id))
+                if (mediaKept.size) {
+                    for (const id of mediaKept) keptIds.add(id)
+                    countKeep('media-error', mediaKept.size)
+                    failed = true
+                }
+            }
+            if (!hasPlatformConnection(account)) return
+
+            const nuvioItems = accItems.filter(i => !keptIds.has(i.id) && i.source === 'nuvio')
+            const realstreamItems = accItems.filter(i => !keptIds.has(i.id) && i.source === 'realstream')
+            const stremioItems = accItems.filter(i => !keptIds.has(i.id) && !isReadOnlyMediaActivity(i) && i.source !== 'jellyfin' && i.source !== 'nuvio' && i.source !== 'realstream')
 
             if (stremioItems.length > 0) {
                 const { encryptionKey } = useAuthStore.getState()
-                const stremioKey = getStremioAuthKey(account)
-                if (encryptionKey && stremioKey) {
+                // Group by exact remote origin: attributed items resolve their own
+                // connection's sealed key; unattributed (legacy) rows keep the canonical
+                // route. A secondary whose connection is gone is KEPT, never re-routed
+                // through the canonical login's key (that would delete the wrong user's copy).
+                const groups = new Map<string, { connectionId?: string; sealedKey?: string; ctx: string; items: ActivityItem[] }>()
+                for (const item of stremioItems) {
+                    const target = resolveStremioDeleteTarget(account, item)
+                    if (!target.sealedKey) {
+                        keptIds.add(item.id)
+                        countKeep(item.sourceConnectionId ? 'connection-missing' : 'no-auth-key')
+                        failed = true
+                        trace('activityDelete', 'stremio.item.kept', { accountId, itemId: item.itemId, connectionId: item.sourceConnectionId, reason: item.sourceConnectionId ? 'connection-missing' : 'no-auth-key' })
+                        continue
+                    }
+                    const groupKey = item.sourceConnectionId ?? ''
+                    const existing = groups.get(groupKey)
+                    if (existing) existing.items.push(item)
+                    else groups.set(groupKey, { connectionId: item.sourceConnectionId, sealedKey: target.sealedKey, ctx: target.ctx, items: [item] })
+                }
+                for (const group of groups.values()) {
+                    const gAuthKey = encryptionKey ? await decrypt(group.sealedKey!, encryptionKey).catch(() => null) : null
+                    if (!encryptionKey || !gAuthKey) {
+                        trace('activityDelete', 'stremio.account.skipped', { accountId, connectionId: group.connectionId, items: group.items.length, reason: encryptionKey ? 'no-auth-key' : 'locked' })
+                        for (const item of group.items) keptIds.add(item.id)
+                        countKeep('account-error', group.items.length)
+                        failed = true
+                        continue
+                    }
                     try {
-                        const authKey = await decrypt(stremioKey, encryptionKey)
+                        const authKey = gAuthKey
+                        const ctx = group.ctx
 
-                        const episodeItems = stremioItems.filter(i => isEpisodeScopedDelete(i))
+                        const episodeItems = group.items.filter(i => isEpisodeScopedDelete(i))
                         const rowsById = new Map<string, LibraryItem>()
                         let rowsFetchFailed = false
                         if (episodeItems.length > 0) {
                             const rowIds = Array.from(new Set(episodeItems.map(i => i.itemId)))
                             try {
-                                for (const row of await stremioClient.getLibraryItemsByIds(authKey, rowIds, account.id)) {
+                                for (const row of await stremioClient.getLibraryItemsByIds(authKey, rowIds, ctx)) {
                                     rowsById.set(row._id, row)
                                 }
                             } catch (e) {
                                 // A failed rows fetch must not degrade into destructive per-item fallbacks.
                                 rowsFetchFailed = true
-                                trace('activityDelete', 'stremio.rows.error', { accountId, rows: rowIds.length, error: (e as Error)?.message })
+                                trace('activityDelete', 'stremio.rows.error', { accountId, connectionId: group.connectionId, rows: rowIds.length, error: (e as Error)?.message })
                                 for (const item of episodeItems) keptIds.add(item.id)
                                 countKeep('rows-unavailable', episodeItems.length)
                                 failed = true
@@ -637,10 +735,10 @@ export function ActivityPage() {
                             return next
                         }
 
-                        await mapConcurrent(stremioItems, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
+                        await mapConcurrent(group.items, ACTIVITY_ITEM_DELETE_CONCURRENCY, async (item) => {
                             const wholeShowDelete = async () => {
-                                await stremioClient.removeLibraryItem(authKey, item.itemId, account.id)
-                                trace('activityDelete', 'stremio.item.ok', { accountId, itemId: item.itemId, mode: 'whole-show' })
+                                await stremioClient.removeLibraryItem(authKey, item.itemId, ctx)
+                                trace('activityDelete', 'stremio.item.ok', { accountId, connectionId: group.connectionId, itemId: item.itemId, mode: 'whole-show' })
                             }
                             try {
                                 // Movies (even with season 0/episode 0) and rows without real
@@ -669,19 +767,19 @@ export function ActivityPage() {
                                         keptIds.add(item.id)
                                         countKeep(plan.reason)
                                         failed = true
-                                        if (plan.reason === 'no-videos') noVideos.push({ accountId, itemId: item.itemId, id: item.id })
-                                        trace('activityDelete', 'stremio.item.kept', { accountId, itemId: item.itemId, reason: plan.reason })
+                                        if (plan.reason === 'no-videos') noVideos.push({ accountId, itemId: item.itemId, id: item.id, sourceConnectionId: group.connectionId })
+                                        trace('activityDelete', 'stremio.item.kept', { accountId, connectionId: group.connectionId, itemId: item.itemId, reason: plan.reason })
                                         return
                                     }
                                     if (plan.kind === 'skip') {
-                                        trace('activityDelete', 'stremio.item.skip', { accountId, itemId: item.itemId, reason: 'no-row' })
+                                        trace('activityDelete', 'stremio.item.skip', { accountId, connectionId: group.connectionId, itemId: item.itemId, reason: 'no-row' })
                                         return
                                     }
                                     if (plan.kind === 'remove-row') {
                                         await wholeShowDelete()
                                         return
                                     }
-                                    await stremioClient.upsertLibraryItem(authKey, plan.rewritten, account.id)
+                                    await stremioClient.upsertLibraryItem(authKey, plan.rewritten, ctx)
                                     rowsById.set(item.itemId, plan.rewritten)
                                     touchedShows.add(item.itemId)
                                     // The rewrite preserves the row mtime, so the watcher inference
@@ -691,52 +789,50 @@ export function ActivityPage() {
                                         video_id: plan.rewritten.state?.video_id,
                                         season: plan.rewritten.state?.season,
                                         episode: plan.rewritten.state?.episode,
-                                    })
-                                    trace('activityDelete', 'stremio.item.ok', { accountId, itemId: item.itemId, mode: 'per-episode', season: item.season, episode: item.episode, remaining: plan.rewritten.state?.timesWatched })
+                                    }, group.connectionId ? { contextKey: ctx } : undefined)
+                                    trace('activityDelete', 'stremio.item.ok', { accountId, connectionId: group.connectionId, itemId: item.itemId, mode: 'per-episode', season: item.season, episode: item.episode, remaining: plan.rewritten.state?.timesWatched })
                                 })
                             } catch (e) {
                                 if (import.meta.env.DEV) console.error(`Failed to remove ${item.itemId}:`, e)
-                                trace('activityDelete', 'stremio.item.error', { accountId, itemId: item.itemId, error: (e as Error)?.message })
+                                trace('activityDelete', 'stremio.item.error', { accountId, connectionId: group.connectionId, itemId: item.itemId, error: (e as Error)?.message })
                                 keptIds.add(item.id)
                                 countKeep('item-error')
                                 failed = true
                             }
                         })
                         if (touchedShows.size > 0) {
-                            useLibraryCache.getState().dropMetaRows(accountId, Array.from(touchedShows))
+                            useLibraryCache.getState().dropMetaRows(ctx, Array.from(touchedShows))
                         }
-                        trace('activityDelete', 'stremio.account.done', { accountId, items: stremioItems.length })
+                        trace('activityDelete', 'stremio.account.done', { accountId, connectionId: group.connectionId, items: group.items.length })
                     } catch (e) {
                         if (import.meta.env.DEV) console.error(`Failed to process deletions for account ${accountId}:`, e)
-                        trace('activityDelete', 'stremio.account.error', { accountId, items: stremioItems.length, error: (e as Error)?.message })
-                        for (const item of stremioItems) keptIds.add(item.id)
-                        countKeep('account-error', stremioItems.length)
+                        trace('activityDelete', 'stremio.account.error', { accountId, connectionId: group.connectionId, items: group.items.length, error: (e as Error)?.message })
+                        for (const item of group.items) keptIds.add(item.id)
+                        countKeep('account-error', group.items.length)
                         failed = true
                     }
-                } else {
-                    trace('activityDelete', 'stremio.account.skipped', { accountId, items: stremioItems.length, reason: encryptionKey ? 'no-auth-key' : 'locked' })
                 }
             }
 
             if (nuvioItems.length > 0) {
                 trace('activityDelete', 'nuvio.account.start', { accountId, items: nuvioItems.length })
-                const ok = await deleteNuvioWatchItems(account, nuvioItems)
-                trace('activityDelete', 'nuvio.account.done', { accountId, items: nuvioItems.length, ok })
-                if (!ok) {
-                    failed = true
-                    countKeep('platform-error', nuvioItems.length)
-                    for (const item of nuvioItems) keptIds.add(item.id)
+                const outcome = await deleteNuvioWatchItems(account, nuvioItems)
+                trace('activityDelete', 'nuvio.account.done', { accountId, items: nuvioItems.length, ok: outcome.ok, kept: outcome.keptItems.length })
+                if (!outcome.ok || outcome.keptItems.length > 0) {
+                    failed = failed || !outcome.ok
+                    countKeep(outcome.ok ? 'ambiguous-origin' : 'platform-error', outcome.keptItems.length)
+                    for (const item of outcome.keptItems) keptIds.add(item.id)
                 }
             }
 
             if (realstreamItems.length > 0) {
                 trace('activityDelete', 'realstream.account.start', { accountId, items: realstreamItems.length })
-                const ok = await deleteRealStreamWatchItems(account, realstreamItems)
-                trace('activityDelete', 'realstream.account.done', { accountId, items: realstreamItems.length, ok })
-                if (!ok) {
-                    failed = true
-                    countKeep('platform-error', realstreamItems.length)
-                    for (const item of realstreamItems) keptIds.add(item.id)
+                const outcome = await deleteRealStreamWatchItems(account, realstreamItems)
+                trace('activityDelete', 'realstream.account.done', { accountId, items: realstreamItems.length, ok: outcome.ok, kept: outcome.keptItems.length })
+                if (!outcome.ok || outcome.keptItems.length > 0) {
+                    failed = failed || !outcome.ok
+                    countKeep(outcome.ok ? 'ambiguous-origin' : 'platform-error', outcome.keptItems.length)
+                    for (const item of outcome.keptItems) keptIds.add(item.id)
                 }
             }
         })
@@ -752,7 +848,9 @@ export function ActivityPage() {
         'rows-unavailable': 'watch history rows unavailable',
         'account-error': 'account sync error',
         'item-error': 'Stremio API error',
+        'connection-missing': 'the login this watch came from was removed; reconnect it to delete its history',
         'platform-error': 'platform sync error',
+        'media-error': 'media-server watched state or progress could not be cleared; check the connection and retry',
     }
 
     const keptReasonSummary = (keptReasons: Map<string, number>): string => {
@@ -764,15 +862,27 @@ export function ActivityPage() {
 
     const purgeLocalActivity = useCallback((items: ActivityItem[], feedIds: string[]) => {
         const liveIds = new Set<string>(feedIds)
-        for (const i of items) {
-            const cacheId = i.source === 'nuvio' ? `${i.accountId}:nuvio:${i.uniqueItemId}`
+        // Canonical-origin items carry attribution for exact-key deletes, but their
+        // events/snapshot live under the LEGACY bare scope — strip the connection from
+        // the local-drop payload so tombstones hit the identities those events use.
+        const normalized = items.map(i => {
+            if (!i.sourceConnectionId) return i
+            const owner = accountById.get(i.accountId)
+            const canonicalId = owner ? getStremioConnection(owner)?.id : undefined
+            return canonicalId && i.sourceConnectionId === canonicalId ? { ...i, sourceConnectionId: undefined } : i
+        })
+        for (const i of normalized) {
+            const cacheId = i.sourceConnectionId
+                ? `${i.accountId}:${i.source || 'stremio'}:${i.sourceConnectionId}:${i.uniqueItemId}`
+                : i.source === 'nuvio' ? `${i.accountId}:nuvio:${i.uniqueItemId}`
                 : i.source === 'realstream' ? `${i.accountId}:realstream:${i.uniqueItemId}`
                 : `${i.accountId}:${i.uniqueItemId}`
             liveIds.add(cacheId)
         }
         removeItems(Array.from(liveIds))
-        useWatchEventStore.getState().removeEvents(items)
-    }, [removeItems])
+        useWatchEventStore.getState().removeEvents(normalized)
+        refreshMedia()
+    }, [accountById, removeItems, refreshMedia])
 
     const handleDeleteSelected = async () => {
         if (selectedItems.size === 0) return
@@ -793,7 +903,7 @@ export function ActivityPage() {
         }
 
         if (failed) {
-            toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
+            toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be fully removed from their source platforms and remain in your history. Retry to finish clearing them.${keptReasonSummary(keptReasons)}` })
         } else {
             toast({
                 title: 'Items Deleted',
@@ -824,7 +934,7 @@ export function ActivityPage() {
             }
 
             if (failed) {
-                toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be removed from their source platform and were left completely untouched in your history.${keptReasonSummary(keptReasons)}` })
+                toast({ variant: 'destructive', title: 'Partial Deletion', description: `Some items could not be fully removed from their source platforms and remain in your history. Retry to finish clearing them.${keptReasonSummary(keptReasons)}` })
             } else {
                 toast({
                     title: ids.length > 1 ? 'Episodes Deleted' : 'Item Deleted',
@@ -845,7 +955,7 @@ export function ActivityPage() {
         setIsDeletingWholeShow(true)
         try {
             const { encryptionKey } = useAuthStore.getState()
-            const deleted: Array<{ accountId: string; itemId: string; id: string }> = []
+            const deleted: Array<{ accountId: string; itemId: string; id: string; sourceConnectionId?: string }> = []
             const byAccount: Record<string, typeof pendingWholeShow> = {}
             for (const entry of pendingWholeShow) {
                 (byAccount[entry.accountId] ||= []).push(entry)
@@ -853,20 +963,19 @@ export function ActivityPage() {
             await mapConcurrent(Object.entries(byAccount), ACTIVITY_ACCOUNT_DELETE_CONCURRENCY, async ([accountId, entries]) => {
                 const account = accountById.get(accountId)
                 if (!account || !encryptionKey) return
-                const stremioKey = getStremioAuthKey(account)
-                if (!stremioKey) return
-                try {
-                    const authKey = await decrypt(stremioKey, encryptionKey)
-                    for (const entry of entries) {
-                        try {
-                            await stremioClient.removeLibraryItem(authKey, entry.itemId, accountId)
-                            deleted.push(entry)
-                        } catch {
-                            // A failed whole-show removal leaves the entry in history for a retry.
-                        }
+                // Whole-show deletes resolve the same per-origin keys as item deletes: the
+                // entry's own connection when attributed, the canonical login otherwise.
+                for (const entry of entries) {
+                    const sealedKey = resolveStremioDeleteTarget(account, entry).sealedKey
+                    if (!sealedKey) continue
+                    try {
+                        const authKey = await decrypt(sealedKey, encryptionKey)
+                        const ctx = entry.sourceConnectionId ? watchContextKey(accountId, entry.sourceConnectionId) : accountId
+                        await stremioClient.removeLibraryItem(authKey, entry.itemId, ctx)
+                        deleted.push(entry)
+                    } catch {
+                        // A failed whole-show removal leaves the entry in history for a retry.
                     }
-                } catch {
-                    // Auth key decrypt failure: entries stay in history.
                 }
             })
             if (deleted.length > 0) {
@@ -883,6 +992,9 @@ export function ActivityPage() {
 
     const isSelecting = selectedItems.size > 0 || isBulkMode
     const isLoading = loading || isRefreshingFromCloud
+    // Refresh the current feed in place. These are the live, scoped hook
+    // results, so removals and account changes still take effect immediately.
+    const showFeedSkeleton = isLoading && history.length === 0 && inProgress.length === 0
 
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
@@ -940,6 +1052,7 @@ export function ActivityPage() {
                     />
                     {searchInput && (
                         <button
+                            data-theme-part="button"
                             onClick={() => handleSearchChange('')}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             aria-label="Clear search"
@@ -1024,11 +1137,13 @@ export function ActivityPage() {
                     </Button>
 
                     {/* Grid / List toggle */}
-                    <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
+                    <div data-theme-part="tabs-list" className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/40 gap-0.5 shrink-0">
                         <Tooltip content="Grid view" side="bottom">
                         <Button
                             variant="ghost"
                             size="sm"
+                            data-theme-part="tab"
+                            data-state={viewMode === 'grid' ? 'active' : 'inactive'}
                             onClick={() => handleViewModeChange('grid')}
                             className={cn(
                                 'h-8 w-8 rounded-lg p-0',
@@ -1045,6 +1160,8 @@ export function ActivityPage() {
                         <Button
                             variant="ghost"
                             size="sm"
+                            data-theme-part="tab"
+                            data-state={viewMode === 'list' ? 'active' : 'inactive'}
                             onClick={() => handleViewModeChange('list')}
                             className={cn(
                                 'h-8 w-8 rounded-lg p-0',
@@ -1076,16 +1193,31 @@ export function ActivityPage() {
             )}
 
             {/* Continue Watching Rail */}
+            {[
+                { title: 'Some media updates are unavailable or incomplete', issues: mediaReadWarnings },
+                { title: 'Activity history limits', issues: mediaHistoryLimits },
+            ].filter(group => group.issues.length > 0).map(group => (
+                <details key={group.title} data-theme-part="panel" className="rounded-xl border border-border/40 bg-card p-3 text-xs text-muted-foreground">
+                    <summary className="cursor-pointer font-medium">{group.title}</summary>
+                    <ul className="mt-2 space-y-1.5">
+                        {group.issues.map(issue => (
+                            <li key={`${issue.accountId}:${issue.connectionId}:${issue.label}`}><span className="font-medium text-foreground">{issue.productName} · {issue.label}:</span> {issue.message}</li>
+                        ))}
+                    </ul>
+                </details>
+            ))}
             {(() => {
               const filteredInProgress = (userFilter === 'all' ? inProgress : inProgress.filter(item => item.accountId === userFilter))
-                .filter(item => !dismissedContinueWatching.includes(`${item.accountId}:${item.itemId}`))
+                // Per-origin dismissal: the key carries the connection scope so removing
+                // one login's copy never hides a sibling's copy of the same title.
+                .filter(item => !dismissedContinueWatching.includes(`${watchContextKey(item.accountId, item.sourceConnectionId)}:${item.itemId}`))
               if (filteredInProgress.length === 0 || searchTerm) return null
               return (
                 <ContentRail
                     title="Continue Watching"
-                    subtitle="Resume in-progress streams from the latest account sync."
+                    subtitle="Latest saved progress and reported playback from connected platforms."
                     count={filteredInProgress.length}
-                    countLabel="active"
+                    countLabel="in progress"
                 >
                             {filteredInProgress.slice(0, 24).map((item, i) => {
                                 const account = accountById.get(item.accountId)
@@ -1100,11 +1232,12 @@ export function ActivityPage() {
                                     >
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             aria-label={`Remove ${item.name} from Continue Watching`}
                                             className="absolute -top-1.5 -right-1.5 z-10 flex h-5.5 w-5.5 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground opacity-0 shadow-sm transition-all hover:bg-destructive hover:text-destructive-foreground focus-visible:opacity-100 group-hover:opacity-100"
                                             onClick={(e) => {
                                                 e.stopPropagation()
-                                                useDiscoveryStore.getState().dismissItem(CONTINUE_WATCHING_CONTEXT, `${item.accountId}:${item.itemId}`)
+                                                useDiscoveryStore.getState().dismissItem(CONTINUE_WATCHING_CONTEXT, `${watchContextKey(item.accountId, item.sourceConnectionId)}:${item.itemId}`)
                                             }}
                                         >
                                             <X className="h-3 w-3" />
@@ -1119,7 +1252,7 @@ export function ActivityPage() {
                                                 loading="lazy"
                                             />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />
-                                            {item.source && <PlatformSourceBadge source={item.source} className="top-1.5 right-1.5" />}
+                                            {item.source && <PlatformSourceBadge source={item.source} label={item.mediaObservation?.productName} mediaSources={item.mediaSources} className="top-1.5 right-1.5" />}
                                             <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
                                                 <div className="h-full bg-primary" style={{ width: `${item.progress}%` }} />
                                             </div>
@@ -1133,6 +1266,11 @@ export function ActivityPage() {
                                                     {Math.round(item.progress)}%
                                                 </span>
                                             </div>
+                                            {item.mediaObservation?.kind === 'live' && (
+                                                <span className="absolute bottom-2 left-1.5 rounded-full bg-black/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                                    {item.mediaObservation.isPaused ? 'Paused' : 'Playing'}
+                                                </span>
+                                            )}
                                             {account && (
                                                 <div className="absolute top-1.5 left-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-black/65 overflow-hidden">
                                                     {account.avatar ? (
@@ -1161,8 +1299,16 @@ export function ActivityPage() {
                                                     </span>
                                                     <span className="truncate text-xs text-muted-foreground/60">{account.name && !account.name.includes('@')
                                                         ? maskNameLevel(account.name, privacyLevel)
-                                                        : (maskEmailLevel(getAccountEmail(account) || '', privacyLevel) || account.name)}
+                                                        : (maskEmailLevel(getAccountEmail(account) || '', emailPrivacyLevel) || account.name)}
                                                     </span>
+                                                    {(() => {
+                                                        // Same-account peer logins must be distinguishable on identical
+                                                        // cards: the masked origin label names the exact connection.
+                                                        const raw = peerLoginLabel(account, item.sourceConnectionId)
+                                                        if (!raw) return null
+                                                        const masked = raw.includes('@') ? maskEmailLevel(raw, emailPrivacyLevel) : maskNameLevel(raw, privacyLevel)
+                                                        return <span className="ml-0.5 shrink-0 truncate text-[10px] text-muted-foreground/80" title={`Watched on ${masked}`}>· {masked}</span>
+                                                    })()}
                                                 </>
                                             )}
                                         </div>
@@ -1173,7 +1319,7 @@ export function ActivityPage() {
               )
             })()}
 
-            {isLoading ? (
+            {showFeedSkeleton ? (
                 <div className="space-y-3">
                     {Array.from({ length: 6 }).map((_, i) => (
                         <ActivityItemSkeleton key={i} />
@@ -1182,6 +1328,9 @@ export function ActivityPage() {
             ) : (
                 <ActivityFeed
                     history={filteredHistory}
+                    allHistory={history}
+                    importedSummaries={importedSummaryItems}
+                    currentActivity={inProgress}
                     viewMode={viewMode}
                     todayHours={sessionComparison.todayHrs}
                     todayTrend={sessionComparison.isUp ? 'up' : 'down'}
@@ -1200,8 +1349,12 @@ export function ActivityPage() {
                         <AlertDialogDescription asChild>
                             <div className="space-y-3">
                                 <p>
-                                    This will permanently remove {selectedItems.size} item(s) from your {platformsPhrase(selectedSources)} watch history. This cannot be undone.
+                                    This will permanently remove {selectedItems.size} item(s) from the selected connections' watch history{(() => {
+                                        const summary = originTargetsSummary(history.filter(item => selectedItems.has(item.id)), accountById, privacyLevel, emailPrivacyLevel)
+                                        return summary ? ` — ${summary.text}${summary.count > 1 ? ` (${summary.count} logins)` : ''}` : ''
+                                    })()}. This cannot be undone.
                                 </p>
+                                {selectedSources.has('jellyfin') && <MediaDeleteScope items={history.filter(item => selectedItems.has(item.id))} accountById={accountById} />}
                                 {selectedHasWholeShowSeries && (
                                     <p className="text-sm text-destructive">
                                         Deleting a series removes its entire watch history for the show.
@@ -1237,8 +1390,12 @@ export function ActivityPage() {
                 description={(
                     <>
                         <p>
-                            This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from your {platformsPhrase(pendingSources)} watch history.
+                            This will permanently remove {pendingDeleteIds?.length ?? 1} item{(pendingDeleteIds?.length ?? 1) > 1 ? 's' : ''} from the selected connections' watch history{(() => {
+                                const summary = originTargetsSummary(history.filter(item => pendingDeleteIds?.includes(item.id)), accountById, privacyLevel, emailPrivacyLevel)
+                                return summary ? ` — ${summary.text}${summary.count > 1 ? ` (${summary.count} logins)` : ''}` : ''
+                            })()}.
                         </p>
+                        {pendingSources.has('jellyfin') && <MediaDeleteScope items={history.filter(item => pendingDeleteIds?.includes(item.id))} accountById={accountById} />}
                         {pendingHasWholeShowSeries && (
                             <p className="text-sm text-destructive">
                                 Deleting a series removes its entire watch history for the show.

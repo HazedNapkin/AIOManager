@@ -1,11 +1,15 @@
 import { mergeAddons } from '@/lib/utils'
-import { mergeTombstones, filterResurrected, reconcileTombstones, isResurrectionAdopted } from '@/lib/addon-tombstones'
+import { mergeAddonDeletionState, filterResurrected } from '@/lib/addon-tombstones'
+import { normalizeDestinations } from '@/lib/addon-destinations'
+import { deleteAccountIds, mergeAccountMembership, readAccountImport, restoreAccountIds, type AccountListImport } from '@/lib/account-membership'
 import { readSyncedSettings } from '@/lib/synced-settings'
 import { decrypt, encrypt } from '@/lib/crypto'
 import { AddonDescriptor, AddonManifest } from '@/types/addon'
 import { getHostnameIdentifier } from '@/lib/addon-identifier'
 import { Account } from '@/types/account'
 import type { Connection } from '@/types/connection'
+import { exportJellyfinCredentials, importJellyfinCredentials, openJellyfinSecret, sealJellyfinSecret, recoverJellyfinConnection } from '@/lib/jellyfin/connection-data'
+import { mergeConnections, resolvePrimaryConnectionId } from '@/lib/connection-merge'
 import { useProfileStore } from '@/store/profileStore'
 import localforage from 'localforage'
 import { triggerSync } from '@/lib/sync-trigger'
@@ -15,8 +19,9 @@ import {
     getEncryptionKey,
     sanitizeAddonManifest,
     safeUUID,
-    persistAccounts,
+    persistAccountMembership,
     acquireSyncMutex,
+    ACCOUNT_MEMBERSHIP_MUTEX,
     STORAGE_KEY,
     CHANGELOG_KEY,
     BACKUP_KEY,
@@ -25,85 +30,90 @@ import {
     clearAllAccountLoading,
 } from '../accountStore'
 import type { AccountStore } from '../accountStore'
+import { captureSyncOwnership } from '../sync-store-helpers'
 
 type StoreRef = { getState: () => AccountStore; setState: (partial: Partial<AccountStore> | ((state: AccountStore) => Partial<AccountStore>)) => void }
-
-let _lastPushedAt: number | null = null
-
-export function setLastPushedAt(ts: number | null) {
-    _lastPushedAt = ts
-}
 
 async function getStore(): Promise<StoreRef> {
     const { useAccountStore } = await import('../accountStore')
     return useAccountStore
 }
 
-// Sync incoming connections carry metadata only (credentials live server-side), so local
-// credentials must be preserved. Backup imports carry credentials, which take precedence.
-function mergeConnections(
-    local: Connection[] | undefined,
-    incoming: Partial<Connection>[] | undefined,
-    mode: 'merge' | 'mirror',
-): Connection[] | undefined {
-    if (!incoming) return local
-    const localById = new Map((local || []).map(c => [c.id, c]))
-    const merged: Connection[] = incoming
-        .filter(inc => inc.id && inc.platform)
-        .map(inc => {
-            const existing = localById.get(inc.id as string)
-            return {
-                status: 'active',
-                lastSync: 0,
-                lastKnownAddonCount: 0,
-                consecutiveFailures: 0,
-                ...(existing || {}),
-                ...inc,
-                credentials: { ...(existing?.credentials || {}), ...(inc.credentials || {}) },
-            } as Connection
-        })
-    if (mode === 'merge') {
-        const incomingIds = new Set(merged.map(c => c.id))
-        const mergedPlatforms = new Set(merged.map(c => c.platform))
-        for (const c of local || []) {
-            if (incomingIds.has(c.id)) continue
-            if (mergedPlatforms.has(c.platform)) continue
-            merged.push(c)
+// Sync exports deduplicate manifests in the envelope; manual backups embed them.
+export function shapeExportAddon(
+    addon: AddonDescriptor,
+    manifestMap: Record<string, AddonDescriptor['manifest']>,
+    forSync: boolean,
+): Record<string, unknown> {
+    const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
+    let exportAddon = addon
+    if (addon.metadata?.customName) {
+        const hostName = getHostnameIdentifier(addon.transportUrl)
+        if (hostName && addon.metadata.customName === hostName) {
+            const { customName: _cn, ...restMeta } = addon.metadata
+            exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
         }
     }
-    return merged
+    const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
+    const key = getManifestKey(sanitized)
+    if (!manifestMap[key]) manifestMap[key] = sanitized
+    return {
+        transportUrl: exportAddon.transportUrl,
+        transportName: exportAddon.transportName,
+        manifestId: key,
+        ...(forSync ? {} : { manifest: sanitized }),
+        flags: exportAddon.flags,
+        metadata: exportAddon.metadata,
+        catalogOverrides: exportAddon.catalogOverrides,
+        syncToLibrary: exportAddon.syncToLibrary,
+        note: exportAddon.note,
+        // Destination policy must survive export/import and the cloud-sync blob —
+        // without this the policy silently dies on every sync push (design §4.5.13).
+        destinations: exportAddon.destinations,
+    }
+}
+
+// One damaged media credential must not fail the whole export or sync push: isolate the
+// failure per connection, keep the metadata, and mark the record pending so an import
+// requests a fresh sign-in for that connection only.
+async function exportConnectionForBackup(c: Connection, includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
+    const record: Record<string, unknown> = {
+        id: c.id,
+        platform: c.platform,
+        connectionType: c.connectionType,
+        driverType: c.driverType,
+        enabled: c.enabled,
+        profileMapping: c.profileMapping,
+        capabilities: c.capabilities,
+        pluginList: c.pluginList,
+        driverConfig: c.driverConfig,
+        displayName: c.displayName,
+        mediaServer: c.mediaServer,
+    }
+    if (c.platform !== 'jellyfin') {
+        return { ...record, credentials: includeCredentialsValue ? c.credentials : {} }
+    }
+    if (!includeCredentialsValue && !forSync) {
+        return { ...record, credentials: {}, status: 'pending' }
+    }
+    try {
+        const credentials = await exportJellyfinCredentials(c, value => decrypt(value, getEncryptionKey()!))
+        return credentials.jellyfinExport
+            ? { ...record, credentials }
+            : { ...record, credentials: {}, status: 'pending' }
+    } catch {
+        // Never log the failure detail: it could carry the private server address or token.
+        if (import.meta.env.DEV) console.warn('[Export] A media connection requires sign-in on import; its credentials could not be exported')
+        return { ...record, credentials: {}, status: 'pending' }
+    }
 }
 
 async function buildExportData(includeCredentialsValue: boolean, forSync: boolean): Promise<Record<string, unknown>> {
     const store = await getStore()
     const manifestMap: Record<string, AddonDescriptor['manifest']> = {}
-    const getManifestKey = (m: AddonDescriptor['manifest']) => `${m.id}:${m.version}`
 
     const processAddons = (addons: AddonDescriptor[]) => {
-        return addons.map((addon: AddonDescriptor) => {
-            let exportAddon = addon
-            if (addon.metadata?.customName) {
-                const hostName = getHostnameIdentifier(addon.transportUrl)
-                if (hostName && addon.metadata.customName === hostName) {
-                    const { customName: _cn, ...restMeta } = addon.metadata
-                    exportAddon = { ...addon, metadata: restMeta as AddonDescriptor['metadata'] }
-                }
-            }
-            const sanitized = sanitizeAddonManifest(exportAddon.manifest, exportAddon.transportUrl)
-            const key = getManifestKey(sanitized)
-            if (!manifestMap[key]) manifestMap[key] = sanitized
-            return {
-                transportUrl: exportAddon.transportUrl,
-                transportName: exportAddon.transportName,
-                manifestId: key,
-                manifest: sanitized,
-                flags: exportAddon.flags,
-                metadata: exportAddon.metadata,
-                catalogOverrides: exportAddon.catalogOverrides,
-                syncToLibrary: exportAddon.syncToLibrary,
-                note: exportAddon.note,
-            }
-        })
+        return addons.map((addon: AddonDescriptor) => shapeExportAddon(addon, manifestMap, forSync))
     }
 
     const exportedAccounts = await Promise.all(
@@ -123,20 +133,9 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
             profiles: acc.profiles,
             activeProfileId: acc.activeProfileId,
             deletedAddons: acc.deletedAddons,
+            restoredAddons: acc.restoredAddons,
             addons: processAddons(acc.addons),
-            connections: (acc.connections || []).map(c => ({
-                id: c.id,
-                platform: c.platform,
-                connectionType: c.connectionType,
-                driverType: c.driverType,
-                enabled: c.enabled,
-                credentials: includeCredentialsValue ? c.credentials : {},
-                profileMapping: c.profileMapping,
-                capabilities: c.capabilities,
-                pluginList: c.pluginList,
-                driverConfig: c.driverConfig,
-                displayName: c.displayName,
-            })),
+            connections: await Promise.all((acc.connections || []).map(c => exportConnectionForBackup(c, includeCredentialsValue, forSync))),
             primaryConnectionId: acc.primaryConnectionId,
             apiKey: includeCredentialsValue ? acc.apiKey : undefined,
             createdAt: acc.createdAt,
@@ -159,9 +158,11 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
 
     if (forSync) {
         return {
-            version: '2.0.0',
+            version: '2.1.0',
             manifests: manifestMap,
             accounts: exportedAccounts,
+            deletedAccounts: store.getState().deletedAccounts,
+            restoredAccounts: store.getState().restoredAccounts,
             apiKeys,
             accountStates: useAddonStore.getState().accountStates,
             changelog: store.getState().changelog.slice(0, 100),
@@ -181,10 +182,12 @@ async function buildExportData(includeCredentialsValue: boolean, forSync: boolea
     const notesTrash = useNotesStore.getState().trash || []
 
     const data: Record<string, unknown> = {
-        version: '2.0.0',
+        version: '2.1.0',
         exportedAt: new Date().toISOString(),
         manifests: manifestMap,
         accounts: exportedAccounts,
+        deletedAccounts: store.getState().deletedAccounts,
+        restoredAccounts: store.getState().restoredAccounts,
         apiKeys,
         profiles: useProfileStore.getState().profiles.map((p) => ({
             ...p,
@@ -237,14 +240,25 @@ export async function exportAccountsForSync(): Promise<Record<string, unknown>> 
     }
 }
 
-export async function importAccounts(json: string, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null) {
+// Accept file JSON or a parsed sync envelope. Ownership fences cover imports, rollback,
+// and deferred persistence so superseded work cannot change the replacement session.
+export async function importAccounts(json: string | Record<string, unknown>, isSilent = false, mode: 'merge' | 'mirror' = 'merge', localDecryptionKey?: CryptoKey | null, ownership?: import('../sync-store-helpers').SyncOwnership, accountList: AccountListImport = 'merge') {
+    const own = ownership ?? captureSyncOwnership()
     const store = await getStore()
+    own.assert()
+    if (!store.getState().hydrated) {
+        await store.getState().initialize()
+        own.assert()
+        if (!store.getState().hydrated) throw new Error('Accounts could not be loaded; import was not applied')
+    }
     store.setState({ error: null })
     setAccountLoading('__import__')
-    let mutexReleases: Array<() => void> = []
-    let restorePreImport: (() => void) | null = null
+    const mutexReleases: Array<() => void> = []
+    let restorePreImport: (() => Promise<void>) | null = null
     try {
-        mutexReleases = await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id)))
+        mutexReleases.push(await acquireSyncMutex(ACCOUNT_MEMBERSHIP_MUTEX))
+        mutexReleases.push(...await Promise.all(store.getState().accounts.map(a => acquireSyncMutex(a.id))))
+        own.assert()
         let data: Record<string, unknown>
         if (!json) throw new Error('No data provided to import')
         try {
@@ -252,6 +266,12 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         } catch (e) {
             throw new Error('Invalid JSON format for import')
         }
+        if (!data || typeof data !== 'object') throw new Error('Invalid backup format')
+        const accountsToImport = readAccountImport(data)
+        if (accountList === 'sync' && accountsToImport === undefined) throw new Error('Cloud data is missing accounts')
+        // A file merge is additive. Sync/restore retain deletion history;
+        // explicit imports acknowledge deletions for the selected accounts.
+        let membership = mergeAccountMembership(store.getState(), accountList !== 'merge' ? data : {})
 
         const manifestMap = (data.manifests || {}) as Record<string, unknown>
 
@@ -272,6 +292,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
         const willImportNotes = Array.isArray(data.notes) && (data.notes as unknown[]).length > 0
         const preImport = {
             accounts: willImportAccounts ? structuredClone(store.getState().accounts) : null,
+            membership: willImportAccounts ? mergeAccountMembership(store.getState()) : null,
             changelog: willImportAccounts ? structuredClone(store.getState().changelog) : null,
             addonLibrary: structuredClone(useAddonStore.getState().library),
             addonAccountStates: structuredClone(useAddonStore.getState().accountStates),
@@ -287,12 +308,9 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             notesTrash: willImportNotes ? structuredClone(useNotesStore.getState().trash) : null,
             settings: readSyncedSettings(),
         }
-        // Memory-first (infallible), then best-effort disk re-persist: the sub-imports below
-        // persist each slice to localforage as they run, so a late throw + reload would
-        // otherwise resurrect the partial import. A failed persist self-heals on that
-        // store's next action since memory already holds the restored state.
-        restorePreImport = () => {
-            if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, changelog: preImport.changelog ?? undefined })
+        // Restore memory first, then re-persist under the same ownership fence.
+        restorePreImport = async () => {
+            if (preImport.accounts !== null) store.setState({ accounts: preImport.accounts, ...preImport.membership, changelog: preImport.changelog ?? undefined })
             useAddonStore.setState({ library: preImport.addonLibrary, accountStates: preImport.addonAccountStates })
             useFailoverStore.setState({ rules: preImport.failoverRules, webhook: preImport.failoverWebhook })
             useProfileStore.setState({ profiles: preImport.profiles })
@@ -300,64 +318,81 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             if (preImport.watchEvents !== null) useWatchEventStore.setState({ events: preImport.watchEvents ?? undefined, snapshot: preImport.watchSnapshot ?? undefined, deletedEventKeys: preImport.watchDeleted ?? undefined })
             if (preImport.notesIndex !== null) useNotesStore.setState({ notes: preImport.notesIndex ?? undefined, trash: preImport.notesTrash ?? undefined })
             applySyncedSettings(preImport.settings, true)
-            void (async () => {
-                const { default: localforage } = await import('localforage')
-                const { persistAccounts } = await import('../accountStore')
-                const notesModule = await import('@/store/notesStore')
-                const results = await Promise.allSettled([
-                    preImport.accounts !== null ? persistAccounts(store.getState().accounts) : Promise.resolve(),
-                    localforage.setItem('aioman:addon-library', useAddonStore.getState().library),
-                    localforage.setItem('aioman:account-addons', useAddonStore.getState().accountStates),
-                    localforage.setItem('aioman:failover-rules', useFailoverStore.getState().rules),
-                    localforage.setItem('aioman:profiles', useProfileStore.getState().profiles),
-                    preImport.watchEvents !== null
-                        ? localforage.setItem('aio_watch_events_v2', { events: useWatchEventStore.getState().events, snapshot: useWatchEventStore.getState().snapshot })
-                        : Promise.resolve(),
-                    preImport.changelog !== null ? localforage.setItem(CHANGELOG_KEY, store.getState().changelog) : Promise.resolve(),
-                    preImport.notesIndex !== null ? localforage.setItem(notesModule.NOTES_INDEX_KEY, useNotesStore.getState().notes) : Promise.resolve(),
-                    preImport.notesTrash !== null ? localforage.setItem(notesModule.NOTES_TRASH_KEY, useNotesStore.getState().trash) : Promise.resolve(),
-                    (async () => {
-                        const { useAuthStore } = await import('@/store/authStore')
-                        const { encrypt } = await import('@/lib/crypto')
-                        const key = useAuthStore.getState().encryptionKey
-                        if (!key) return
-                        await localforage.setItem('aioman:key-vault', await encrypt(JSON.stringify(useVaultStore.getState().keys), key))
-                        await localforage.setItem('aioman:key-vault:tombstones', useVaultStore.getState().tombstones)
-                        await localforage.setItem('aioman:failover-rules:webhook', await encrypt(JSON.stringify(useFailoverStore.getState().webhook), key))
-                    })(),
-                ])
-                const failed = results.filter(r => r.status === 'rejected').length
-                if (failed > 0 && import.meta.env.DEV) console.warn(`[Import] Rollback re-persist: ${failed} slice(s) failed (memory state is correct)`)
+            await (async () => {
+                try {
+                    const { default: localforage } = await import('localforage')
+                    const notesModule = await import('@/store/notesStore')
+                    own.assert()
+                    const results = await Promise.allSettled([
+                        preImport.accounts !== null && preImport.membership !== null ? persistAccountMembership(preImport.accounts, preImport.membership, own) : Promise.resolve(),
+                        localforage.setItem('aioman:addon-library', useAddonStore.getState().library),
+                        localforage.setItem('aioman:account-addons', useAddonStore.getState().accountStates),
+                        localforage.setItem('aioman:failover-rules', useFailoverStore.getState().rules),
+                        localforage.setItem('aioman:profiles', useProfileStore.getState().profiles),
+                        preImport.watchEvents !== null
+                            ? localforage.setItem('aio_watch_events_v2', { events: useWatchEventStore.getState().events, snapshot: useWatchEventStore.getState().snapshot })
+                            : Promise.resolve(),
+                        preImport.changelog !== null ? localforage.setItem(CHANGELOG_KEY, store.getState().changelog) : Promise.resolve(),
+                        preImport.notesIndex !== null ? localforage.setItem(notesModule.NOTES_INDEX_KEY, useNotesStore.getState().notes) : Promise.resolve(),
+                        preImport.notesTrash !== null ? localforage.setItem(notesModule.NOTES_TRASH_KEY, useNotesStore.getState().trash) : Promise.resolve(),
+                        (async () => {
+                            const { useAuthStore } = await import('@/store/authStore')
+                            const { encrypt } = await import('@/lib/crypto')
+                            const key = useAuthStore.getState().encryptionKey
+                            if (!key) return
+                            // Capture rollback ciphertexts before awaiting writes; fence every subsequent dispatch.
+                            const vaultCiphertext = await encrypt(JSON.stringify(useVaultStore.getState().keys), key)
+                            const webhookCiphertext = await encrypt(JSON.stringify(useFailoverStore.getState().webhook), key)
+                            own.assert()
+                            await localforage.setItem('aioman:key-vault', vaultCiphertext)
+                            own.assert()
+                            await localforage.setItem('aioman:key-vault:tombstones', useVaultStore.getState().tombstones)
+                            own.assert()
+                            await localforage.setItem('aioman:failover-rules:webhook', webhookCiphertext)
+                        })(),
+                    ])
+                    const failed = results.filter(r => r.status === 'rejected').length
+                    if (failed > 0 && import.meta.env.DEV) console.warn(`[Import] Rollback re-persist: ${failed} slice(s) failed (memory state is correct)`)
+                } catch (e) {
+                    // A rollback that lost its session mid-writer stops quietly.
+                    if ((e as Error)?.name !== 'SyncOwnershipLostError' && import.meta.env.DEV) {
+                        console.warn('[Import] Rollback re-persist abandoned:', e)
+                    }
+                }
             })()
         }
 
-        await useAddonStore.getState().importLibrary(data as Record<string, unknown>, mode === 'merge', false, true)
+        await useAddonStore.getState().importLibrary(data as Record<string, unknown>, mode === 'merge', false, true, own)
 
         if (data.accountStates) {
-            await useAddonStore.getState().importAccountStates(data.accountStates as Record<string, import('@/types/saved-addon').AccountAddonState>)
+            await useAddonStore.getState().importAccountStates(data.accountStates as Record<string, import('@/types/saved-addon').AccountAddonState>, own)
         }
 
-        await useFailoverStore.getState().importRules(data, mode, true)
+        await useFailoverStore.getState().importRules(data, mode, true, own)
 
         let scavengedProfiles = data.profiles || data['stremio-manager:profiles']
         if (scavengedProfiles && !Array.isArray(scavengedProfiles) && typeof scavengedProfiles === 'object') {
             scavengedProfiles = Object.values(scavengedProfiles)
         }
         if (Array.isArray(scavengedProfiles) && scavengedProfiles.length > 0) {
-            await useProfileStore.getState().importProfiles(scavengedProfiles)
+            own.assert()
+            await useProfileStore.getState().importProfiles(scavengedProfiles, own)
         }
 
         if (data.settings) {
+            own.assert()
             applySyncedSettings(data.settings, mode === 'mirror')
         }
 
         if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
+            own.assert()
             applySyncedSettings({ customThemes: data.customThemes }, true)
         }
 
         if (Array.isArray(data.vault) || Array.isArray(data.vaultTombstones)) {
-            await useVaultStore.getState().initialize()
-            await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('@/store/vaultStore').VaultTombstone[])
+            own.assert()
+            await useVaultStore.getState().initialize(own)
+            await useVaultStore.getState().importVault((data.vault || []) as import('@/types/vault').VaultKey[], (data.vaultTombstones || []) as import('@/store/vaultStore').VaultTombstone[], own)
         }
 
         if (Array.isArray(data.changelog) && data.changelog.length > 0) {
@@ -369,6 +404,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             const sorted = merged.sort((a, b) =>
                 new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
             ).slice(0, 100)
+            own.assert()
             store.setState({ changelog: sorted })
             localforage.setItem(CHANGELOG_KEY, sorted).catch(e => { if (import.meta.env.DEV) console.error(e) })
         }
@@ -394,6 +430,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             const currentIds = new Set(current.map(e => e.id))
             const newEvents = incomingEvents.filter((e) => !currentIds.has(e.id as string))
             if (newEvents.length > 0 || tombstonesChanged) {
+                own.assert()
                 const merged = [...current, ...newEvents] as Record<string, unknown>[]
                 const deduped = Array.from(new Map(merged.map((e) => [e.id as string, e])).values())
                 const sorted = deduped.sort((a, b) => ((b as Record<string, unknown>).event_ts as number) - ((a as Record<string, unknown>).event_ts as number))
@@ -404,18 +441,18 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
 
         if (Array.isArray(data.notes) && data.notes.length > 0) {
             const { useNotesStore } = await import('@/store/notesStore')
-            await useNotesStore.getState().importNotes(data.notes as import('@/store/notesStore').Note[])
+            own.assert()
+            await useNotesStore.getState().importNotes(data.notes as import('@/store/notesStore').Note[], own)
             if (Array.isArray(data.notesTrash)) {
-                await useNotesStore.getState().importTrash(data.notesTrash as import('@/store/notesStore').Note[])
+                await useNotesStore.getState().importTrash(data.notesTrash as import('@/store/notesStore').Note[], own)
             }
         }
 
-        let accountsToImport = data.accounts || []
-        if (!Array.isArray(accountsToImport) && typeof accountsToImport === 'object') {
-            accountsToImport = (accountsToImport as Record<string, unknown>).accounts as unknown[] || []
+        if (accountsToImport === undefined) {
+            own.assert()
+            if (!isSilent) triggerSync()
+            return
         }
-
-        if (!Array.isArray(accountsToImport)) accountsToImport = []
 
         const normalizedAccounts = (accountsToImport as Record<string, unknown>[]).map((acc) => {
             return {
@@ -428,6 +465,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 profiles: acc.profiles as import('@/types/account').AccountProfile[] | undefined,
                 activeProfileId: acc.activeProfileId as string | undefined,
                 deletedAddons: acc.deletedAddons as Record<string, number> | undefined,
+                restoredAddons: acc.restoredAddons as Record<string, number> | undefined,
                 addons: Array.isArray(acc.addons)
                     ? (acc.addons as Record<string, unknown>[]).map((ad: Record<string, unknown>) => {
                         const transportUrl = String(ad.transportUrl || '')
@@ -450,6 +488,11 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                             metadata: cleanedMetadata,
                             catalogOverrides: ad.catalogOverrides as AddonDescriptor['catalogOverrides'],
                             syncToLibrary: ad.syncToLibrary as boolean | undefined,
+                            // Sanitize inbound policy per entry: valid entries survive
+                            // verbatim (never widened), junk entries are dropped
+                            // individually; a wholly-invalid field collapses to absent
+                            // policy (= default allow, same as any pre-feature row).
+                            destinations: normalizeDestinations(ad.destinations as AddonDescriptor['destinations']),
                             manifest: sanitizeAddonManifest((ad.manifest || manifestMap[ad.manifestId as string]) as AddonManifest, transportUrl || undefined),
                         }
                     })
@@ -474,7 +517,18 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
 
         const getReadEncryptionKey = () => localDecryptionKey ?? getEncryptionKey()
         const getWriteEncryptionKey = () => getEncryptionKey()
-        const currentAccounts = [...store.getState().accounts]
+        // A cloud restore can replace the local vault key. Rewrap browser-only media
+        // credentials before metadata-only connection merges preserve the local record.
+        const currentAccounts = await Promise.all(store.getState().accounts.map(async account => {
+            if (!localDecryptionKey) return account
+            return { ...account, connections: await Promise.all((account.connections || []).map(async connection => {
+                if (connection.platform !== 'jellyfin' || !connection.credentials?.jellyfin) return connection
+                return recoverJellyfinConnection(connection, async c => {
+                    const secret = await openJellyfinSecret(c, value => decrypt(value, localDecryptionKey))
+                    return { ...c, credentials: await sealJellyfinSecret(secret, value => encrypt(value, getWriteEncryptionKey())) }
+                })
+            })) }
+        }))
 
         const localDecrypted = await Promise.all(
             currentAccounts.map(async (acc) => {
@@ -520,19 +574,34 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
 
         const reconciledAccounts: Account[] = []
         const processedLocalIds = new Set<string>()
+        const incomingIds = new Set(normalizedAccounts.map(a => a.id))
 
         for (const ra of normalizedAccounts) {
-            let matchedAccount = currentAccounts.find((a) => a.id === ra.id)
+            if (accountList === 'sync' && Object.hasOwn(membership.deletedAccounts, ra.id)) continue
+            if (ra.connections) {
+                // The opener validates legacy same-key ciphertext; anything that cannot be
+                // decrypted, parsed and matched to the record's user becomes pending.
+                ra.connections = await Promise.all(ra.connections.map(c => recoverJellyfinConnection(c,
+                    value => importJellyfinCredentials(
+                        value,
+                        text => encrypt(text, getWriteEncryptionKey()),
+                        text => decrypt(text, getReadEncryptionKey()),
+                    ))))
+            }
+            const availableAccounts = currentAccounts.filter(a => !processedLocalIds.has(a.id)
+                && (a.id === ra.id || !incomingIds.has(a.id))
+                && (accountList !== 'sync' || !Object.hasOwn(membership.deletedAccounts, a.id)))
+            let matchedAccount = availableAccounts.find((a) => a.id === ra.id)
 
             if (!matchedAccount && ra.rawKey) {
-                const found = localDecrypted.find((ld) => ld.key === ra.rawKey)
-                if (found) matchedAccount = currentAccounts.find((a) => a.id === found.id)
+                const found = localDecrypted.find((ld) => ld.key === ra.rawKey && availableAccounts.some(a => a.id === ld.id))
+                if (found) matchedAccount = availableAccounts.find((a) => a.id === found.id)
             }
 
             const raHasCredentials = !!ra.rawKey || (ra.connections || []).some(c => c.credentials)
 
             if (!matchedAccount && ra.email) {
-                matchedAccount = currentAccounts.find((a) => {
+                matchedAccount = availableAccounts.find((a) => {
                     if (a.email?.toLowerCase() !== ra.email?.toLowerCase()) return false
                     const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
                     return raHasCredentials === aHasCredentials
@@ -540,7 +609,7 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             }
 
             if (!matchedAccount && ra.apiKey) {
-                matchedAccount = currentAccounts.find((a) => {
+                matchedAccount = availableAccounts.find((a) => {
                     if (a.apiKey !== ra.apiKey) return false
                     const aHasCredentials = !!localSecretsById.get(a.id)?.key || (a.connections || []).some(c => c.credentials)
                     return raHasCredentials === aHasCredentials
@@ -603,65 +672,67 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                     })(),
                     activeProfileId: matchedAccount.activeProfileId ?? ra.activeProfileId,
                     ...(() => {
-                        // Union both devices' tombstones, suppress resurrected addons (a delete on
-                        // either device wins), then self-heal the set against the merged result.
-                        const tombstones = mergeTombstones(matchedAccount.deletedAddons, ra.deletedAddons)
-                        for (const adoptedKey of Object.keys(tombstones)) {
-                            if (isResurrectionAdopted(adoptedKey)) delete tombstones[adoptedKey]
-                        }
+                        // Resolve explicit reinstalls before either device's list can enter the merge.
+                        const deletionState = mergeAddonDeletionState(
+                            matchedAccount.deletedAddons, ra.deletedAddons,
+                            matchedAccount.restoredAddons, ra.restoredAddons,
+                        )
+                        const localAddons = filterResurrected(matchedAccount.addons, [], deletionState.deletedAddons)
+                        const remoteAddons = filterResurrected(ra.addons, [], deletionState.deletedAddons)
                         const mergedAddons = mode === 'mirror'
-                            ? filterResurrected(ra.addons, [], tombstones)
-                            : mergeAddons(matchedAccount.addons, filterResurrected(ra.addons, matchedAccount.addons, tombstones), { instanceMatch: 'adopt-remote-url' })
-                        return { addons: mergedAddons, deletedAddons: reconcileTombstones(tombstones, mergedAddons) }
+                            ? remoteAddons
+                            : mergeAddons(localAddons, remoteAddons, { keepMissingLocal: true, instanceMatch: 'adopt-remote-url' })
+                        return { addons: mergedAddons, ...deletionState }
                     })(),
-                    connections: mergeConnections(matchedAccount.connections, ra.connections, mode) ?? matchedAccount.connections,
-                    primaryConnectionId: ra.primaryConnectionId ?? matchedAccount.primaryConnectionId,
+                    ...(() => {
+                        // Re-point primaries that referred to media or removed connections.
+                        const mergedConnections = mergeConnections(matchedAccount.connections, ra.connections, mode) ?? matchedAccount.connections
+                        return {
+                            connections: mergedConnections,
+                            primaryConnectionId: resolvePrimaryConnectionId(mergedConnections, ra.primaryConnectionId ?? matchedAccount.primaryConnectionId),
+                        }
+                    })(),
                     lastSync: ra.lastSync || new Date(),
                     status: 'active' as const,
                 }
                 reconciledAccounts.push(updated)
                 processedLocalIds.add(matchedAccount.id)
             } else {
-                const importedTombstones = mergeTombstones(undefined, ra.deletedAddons)
-                for (const adoptedKey of Object.keys(importedTombstones)) {
-                    if (isResurrectionAdopted(adoptedKey)) delete importedTombstones[adoptedKey]
-                }
-                const importedAddons = filterResurrected(ra.addons, [], importedTombstones)
+                const deletionState = mergeAddonDeletionState(undefined, ra.deletedAddons, undefined, ra.restoredAddons)
+                const importedAddons = filterResurrected(ra.addons, [], deletionState.deletedAddons)
+                const importedConnections = mergeConnections(undefined, ra.connections, mode)
                 const importedAccount = {
                     ...ra,
                     addons: importedAddons,
-                    deletedAddons: reconcileTombstones(importedTombstones, importedAddons),
+                    ...deletionState,
                     authKey: ra.rawKey ? await encrypt(ra.rawKey, getWriteEncryptionKey()) : '',
                     password: ra.password ? await encrypt(ra.password, getWriteEncryptionKey()) : undefined,
-                    connections: mergeConnections(undefined, ra.connections, mode),
+                    connections: importedConnections,
+                    primaryConnectionId: resolvePrimaryConnectionId(importedConnections, ra.primaryConnectionId),
                     apiKey: ra.apiKey ?? safeUUID(),
                 } as Account
                 reconciledAccounts.push(importedAccount)
             }
         }
 
+        if (accountList !== 'sync') {
+            membership = restoreAccountIds(membership, [...normalizedAccounts.map(a => a.id), ...reconciledAccounts.map(a => a.id)])
+        }
+        if (accountList === 'restore') {
+            membership = deleteAccountIds(membership, currentAccounts.filter(a => !processedLocalIds.has(a.id)).map(a => a.id))
+        }
         const localOnlyAccounts =
-            mode === 'mirror'
+            accountList === 'restore'
                 ? []
                 : await Promise.all(
                     currentAccounts
-                        .filter((a) => !processedLocalIds.has(a.id))
+                        .filter((a) => !processedLocalIds.has(a.id) && !Object.hasOwn(membership.deletedAccounts, a.id))
                         .map(migrateLocalAccountSecrets)
                 )
 
-        const lastPushMs = _lastPushedAt
-        const freshLocalAccounts = mode === 'mirror'
-            ? currentAccounts.filter(a =>
-                !processedLocalIds.has(a.id) &&
-                a.createdAt !== undefined &&
-                (lastPushMs === null || a.createdAt > lastPushMs))
-            : []
-
         let finalAccounts: typeof currentAccounts
-        if (mode === 'mirror') {
-            finalAccounts = freshLocalAccounts.length > 0
-                ? [...reconciledAccounts, ...freshLocalAccounts]
-                : reconciledAccounts
+        if (accountList === 'restore' || mode === 'mirror') {
+            finalAccounts = [...reconciledAccounts, ...localOnlyAccounts]
         } else {
             const reconciledById = new Map(reconciledAccounts.map(a => [a.id, a]))
             const localById = new Map(localOnlyAccounts.map(a => [a.id, a]))
@@ -674,7 +745,6 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
                 const local = localById.get(id)
                 if (reconciled) ordered.push(reconciled)
                 else if (local) ordered.push(local)
-                else ordered.push(existing)
             }
             for (const acc of reconciledAccounts) {
                 if (!seenIds.has(acc.id)) { ordered.push(acc); seenIds.add(acc.id) }
@@ -685,75 +755,39 @@ export async function importAccounts(json: string, isSilent = false, mode: 'merg
             finalAccounts = ordered
         }
 
-        if (freshLocalAccounts.length > 0) {
-            console.warn(`[Import] Mirror merge spared ${freshLocalAccounts.length} account(s) created after the last confirmed push (never synced, so the cloud cannot have seen them): ${freshLocalAccounts.map(a => `${a.name} (${a.id})`).join(', ')}`)
-        }
-
-        if (currentAccounts.length > 0 && finalAccounts.length < currentAccounts.length) {
-            if (import.meta.env.DEV) console.warn(`[Import] Would reduce accounts from ${currentAccounts.length} to ${finalAccounts.length}. Aborting write and pushing local state.`)
-            setTimeout(() => triggerSync(), 500)
-            clearAllAccountLoading()
-            return
-        }
-
-        if (finalAccounts.length === 0) {
-            const backup = await localforage.getItem<Account[]>(BACKUP_KEY)
-            if (backup && backup.length > 0) {
-                if (import.meta.env.DEV) console.warn(`[Import] Final accounts would be empty but backup has ${backup.length}. Restoring from backup.`)
-                const restoredBackup = localDecryptionKey
-                    ? await Promise.all(backup.map(async (account) => {
-                        try {
-                            const rawAuthKey = await decrypt(getStremioAuthKey(account), getReadEncryptionKey())
-                            const rawPassword = account.password ? await decrypt(account.password, getReadEncryptionKey()).catch(() => undefined) : undefined
-                            return {
-                                ...account,
-                                authKey: await encrypt(rawAuthKey, getWriteEncryptionKey()),
-                                password: rawPassword ? await encrypt(rawPassword, getWriteEncryptionKey()) : account.password,
-                            }
-                        } catch {
-                            return account
-                        }
-                    }))
-                    : backup
-                store.setState({ accounts: restoredBackup })
-                await localforage.setItem(STORAGE_KEY, restoredBackup)
-                setTimeout(() => triggerSync(), 500)
-                clearAllAccountLoading()
-                return
-            }
-        }
-
         if (finalAccounts.length > 0) {
             const diskData = await localforage.getItem<Account[]>(STORAGE_KEY)
             if (diskData && Array.isArray(diskData) && diskData.length > 0) {
+                own.assert()
                 await localforage.setItem(BACKUP_KEY, diskData)
             }
         }
 
-        const apiKeysMap = data.apiKeys as Record<string, string> | undefined
-        if (apiKeysMap && typeof apiKeysMap === 'object') {
-            finalAccounts = finalAccounts.map(a => ({
-                ...a,
-                apiKey: apiKeysMap[a.id] || a.apiKey,
-            }))
+        own.assert()
+        if (accountList === 'restore' && (finalAccounts.length !== accountsToImport.length || new Set(finalAccounts.map(a => a.id)).size !== finalAccounts.length)) {
+            throw new Error('The backup account list could not be restored exactly; no account changes were saved')
         }
-
-        store.setState({ accounts: finalAccounts, hydrated: true })
-        persistAccounts(finalAccounts)
+        await persistAccountMembership(finalAccounts, membership, own)
+        store.setState({ accounts: finalAccounts, ...membership, hydrated: true })
 
         if (!isSilent) {
             triggerSync()
             toast({ title: 'Import Successful' })
         }
-        store.getState().syncAllAccounts().catch(e => { if (import.meta.env.DEV) console.error(e) })
+        if (own.current()) {
+            store.getState().syncAllAccounts().catch(e => { if (import.meta.env.DEV) console.error(e) })
+        }
     } catch (error) {
-        try { restorePreImport?.() } catch (rollbackErr) {
+        // A superseded import must not roll back or publish errors into the replacement session.
+        if (!own.current()) throw error
+        try { await restorePreImport?.() } catch (rollbackErr) {
             if (import.meta.env.DEV) console.error('[Import] Rollback to pre-import state failed:', rollbackErr)
         }
+        if (!own.current()) throw error
         store.setState({ error: (error as Error).message })
         throw error
     } finally {
         mutexReleases.forEach(release => release())
-        clearAllAccountLoading()
+        if (own.current()) clearAllAccountLoading()
     }
 }

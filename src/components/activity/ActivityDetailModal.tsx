@@ -6,7 +6,8 @@ import { useTheme } from '@/contexts/ThemeContext'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { Poster } from '@/components/common/Poster'
-import { fetchCinemetaDetail, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
+import { fetchCinemetaDetail, formatSavedEpisodeRanges, type CinemetaMeta, type CinemetaCastMember, type CinemetaReview } from '@/lib/activity-utils'
+import { crossLinkWatcherIndex, watcherMatchesItem, type WatcherItemIdentity } from '@/lib/watcher-identity'
 import { resolveTrailerAsync, type TrailerResult } from '@/lib/trailer-resolver'
 import { fetchTmdbDetailsAsMeta, fetchTmdbImdbId, proxyFetch, fetchSeasonEpisodes, fetchSeasonsList, pickTmdbIdFromFind, type TmdbFindPayload } from '@/api/metadata/adapters/tmdb'
 import { traceAsync } from '@/api/metadata/adapters/shared-fetch'
@@ -20,6 +21,7 @@ import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
+import { buildEpisodeWatcherIndex } from '@/lib/episode-watchers'
 import { Star, Clock, Calendar, Play, ExternalLink, ChevronDown, ChevronUp, Film, Clapperboard, ArrowLeft, User, ChevronLeft, ChevronRight, Tv, Sparkles, Languages, Building2, Layers, Users } from 'lucide-react'
 import { RatingBadge, type ProviderRating } from '@/components/activity/detail/RatingBadge'
 import { fetchAdditionalRatings, mergeRatingsKeepExisting } from '@/lib/ratings'
@@ -95,7 +97,6 @@ async function getPmdbRatingFromImdb(
         return null
     }
 }
-
 
 function getYear(meta: CinemetaMeta | null, item: DetailItem | null): string {
     if (meta?.released) return meta.released.slice(0, 4)
@@ -514,12 +515,14 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     // Refs mirror router/stack state so each sync effect below only reacts to
     // the dependency that actually changed (navStack vs searchParams).
     const searchParamsRef = useRef(searchParams)
+    const setSearchParamsRef = useRef(setSearchParams)
     const navStackRef = useRef(navStack)
     const lastSyncedParamsRef = useRef<URLSearchParams | null>(null)
     const prevStackLenRef = useRef(0)
     const prevOpenRef = useRef(false)
 
     useEffect(() => { searchParamsRef.current = searchParams }, [searchParams])
+    useEffect(() => { setSearchParamsRef.current = setSearchParams }, [setSearchParams])
     useEffect(() => { navStackRef.current = navStack }, [navStack])
 
     const applyPersonResult = useCallback((personName: string, res: PersonFilmographyResult) => {
@@ -613,23 +616,26 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     useEffect(() => {
         const wasOpen = prevOpenRef.current
         prevOpenRef.current = open
-        const grew = navStack.length > prevStackLenRef.current
-        prevStackLenRef.current = navStack.length
         if (!open) {
             prevStackLenRef.current = 0
             if (wasOpen && parseDetailParams(searchParamsRef.current)) {
                 lastSyncedParamsRef.current = null
-                setSearchParams(stripDetailParams(searchParamsRef.current), { replace: true })
+                setSearchParamsRef.current(stripDetailParams(searchParamsRef.current), { replace: true })
             }
             return
         }
+        // Wait for the opening effect to rebuild the stack before updating the URL.
+        if (!wasOpen) return
+        const grew = navStack.length > prevStackLenRef.current
+        prevStackLenRef.current = navStack.length
         const desired = paramsForStack(navStack)
         if (!desired) return
         lastSyncedParamsRef.current = desired
         if (!paramsEqual(searchParamsRef.current, desired)) {
-            setSearchParams(desired, { replace: !grew })
+            setSearchParamsRef.current(desired, { replace: !grew })
         }
-    }, [open, navStack, setSearchParams])
+        // Router callback changes must not write stale modal state over Back/Forward navigation.
+    }, [open, navStack])
 
     // URL → navStack: reconcile external param changes (browser back/forward)
     // back into the stack. Our own writes are recognised via
@@ -676,7 +682,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 seasonNumber: target.season,
                 episodeNumber: target.episode,
                 episodeName: `Episode ${target.episode}`,
-                seriesTmdbId: null,
+                // Reuse metadata only when Forward restores an episode of the same base series.
+                seriesTmdbId: baseEntry?.item.itemId === target.detail ? seriesTmdbId : null,
                 seriesPoster: top.item.poster,
             })
             top = stack[stack.length - 1]
@@ -697,7 +704,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 .then(res => applyPersonResult(personName, res))
                 .catch(() => markPersonLoadFailed(personName))
         }
-    }, [searchParams, open, applyPersonResult, markPersonLoadFailed])
+    }, [searchParams, open, seriesTmdbId, applyPersonResult, markPersonLoadFailed])
 
     // Deep-linked episodes are rebuilt without a TMDB id (the URL only carries
     // item ids); patch the entry once series meta resolves so EpisodeDetailPage
@@ -755,16 +762,22 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
     const renderItem: DetailItem | null = currentEntry?.kind === 'item' ? currentEntry.item : (activeItem ?? item)
 
     const accounts = useAccountStore(state => state.accounts)
-    const { history: allWatchHistory } = useWatchHistory()
+    // The closed shell still handles navigation and exit animation, but does not
+    // need another history derivation or another set of live query observers.
+    const { history: allWatchHistory } = useWatchHistory(undefined, open)
 
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
 
     const otherWatchers = useMemo(() => {
         if (!renderItem?.itemId) return []
+        const showIdentity: WatcherItemIdentity = { itemId: renderItem.itemId, name: renderItem.name, type: renderItem.type }
         const seen = new Map<string, { id: string; name: string; emoji?: string; avatar?: string; lastWatched: Date }>()
         for (const h of allWatchHistory) {
-            if (h.itemId !== renderItem.itemId) continue
+            // Cross-source identity: the same show can be addressed by tt ids on one
+            // account and a platform-scoped id on another, so exact itemId equality
+            // undercounts watchers. watcherMatchesItem falls back to tt and title.
+            if (!watcherMatchesItem({ itemId: h.itemId, name: h.name, type: h.type }, showIdentity)) continue
             if (h.accountId === renderItem?.accountId) continue
             const acc = accounts.find(a => a.id === h.accountId)
             if (!acc || acc.hideLastWatched) continue
@@ -774,10 +787,11 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
             }
         }
         return [...seen.values()].sort((a, b) => b.lastWatched.getTime() - a.lastWatched.getTime())
-    }, [allWatchHistory, renderItem?.itemId, renderItem?.accountId, accounts])
+    }, [allWatchHistory, renderItem?.itemId, renderItem?.name, renderItem?.type, renderItem?.accountId, accounts])
 
     const watchersByItemId = useMemo(() => {
         const map = new Map<string, RailWatcher[]>()
+        const identityByKey = new Map<string, WatcherItemIdentity>()
         for (const h of allWatchHistory) {
             if (!h.itemId) continue
             const acc = accounts.find(a => a.id === h.accountId)
@@ -788,10 +802,64 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                 if (!list.some(w => w.id === watcher.id)) list.push(watcher)
             } else {
                 map.set(h.itemId, [watcher])
+                identityByKey.set(h.itemId, { itemId: h.itemId, name: h.name, type: h.type })
             }
         }
+        // Same show, different source identities (tt vs platform-scoped ids): share watchers.
+        crossLinkWatcherIndex(map, identityByKey)
         return map
     }, [allWatchHistory, accounts])
+
+    // Actually-watched episodes for the rendered series, scoped to the same account/login so
+    // other logins' flags never bleed in. An episode only counts with positive completion
+    // evidence: a verified bitfield recovery (backfill), the per-episode confirmation flag
+    // stamped from the checksum-verified bitfield, or a measured completion of a known
+    // duration (>= 95%). A partial watch — even 20% of a known duration — is NOT a
+    // completion, and watch-time/aggregate counts never qualify (no duration, no count).
+    // Powers the season browser's watched markers — per-episode chronology stays
+    // deliberately unavailable for recovered episodes.
+    const seriesWatchedEpisodes = useMemo(() => {
+        const seriesLike = renderItem?.type === 'series' || renderItem?.type === 'anime' || renderItem?.type === 'episode'
+        if (!renderItem?.itemId || !seriesLike) return undefined
+        const wantedConnection = renderItem.sourceConnectionId ?? undefined
+        const episodes: Array<{ season: number; episode: number }> = []
+        for (const h of allWatchHistory) {
+            if (h.itemId !== renderItem.itemId) continue
+            if (h.season == null || h.episode == null) continue
+            if (!Number.isInteger(h.season) || !Number.isInteger(h.episode) || h.episode < 1) continue
+            if (renderItem.accountId && h.accountId !== renderItem.accountId) continue
+            if ((h.sourceConnectionId ?? undefined) !== wantedConnection) continue
+            const confirmed = h.backfill === true
+                || (h.flaggedWatched ?? 0) > 0
+                || (h.duration > 0 && h.progress >= 95)
+            if (!confirmed) continue
+            episodes.push({ season: h.season, episode: h.episode })
+        }
+        return episodes.length > 0 ? episodes : undefined
+    }, [allWatchHistory, renderItem?.itemId, renderItem?.type, renderItem?.accountId, renderItem?.sourceConnectionId])
+
+    // Who actually watched each episode of the rendered series, household-wide
+    // (every account, every connection, deduped per managed account). Uses the same
+    // evidence bar as seriesWatchedEpisodes above, but answers a different question:
+    // not "is it marked for this login" but "which people completed it". Built in one
+    // history pass plus per-episode ordering; rows use direct lookups and cap their DOM.
+    // Deleted/unowned accounts and hideLastWatched opt-outs never leak in, and names
+    // carry the privacy name level.
+    const seriesEpisodeWatchers = useMemo(() => {
+        const seriesLike = renderItem?.type === 'series' || renderItem?.type === 'anime' || renderItem?.type === 'episode'
+        if (!renderItem?.itemId || !seriesLike) return undefined
+        return buildEpisodeWatcherIndex({
+            itemId: renderItem.itemId,
+            history: allWatchHistory,
+            accounts,
+            privacyLevelNames: isPrivacyModeEnabled ? privacyLevelNames : 0,
+        })
+    }, [allWatchHistory, accounts, renderItem?.itemId, renderItem?.type, isPrivacyModeEnabled, privacyLevelNames])
+
+    const savedEpisodeRanges = useMemo(
+        () => renderItem?.importedSavedState ? formatSavedEpisodeRanges(renderItem.savedEpisodes) : [],
+        [renderItem?.importedSavedState, renderItem?.savedEpisodes],
+    )
 
     const accountFilms = useMemo(() => {
         if (currentEntry?.kind !== 'account') return null
@@ -1289,7 +1357,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                     '!grid-cols-none !gap-0 !p-0',
                     // Structure
                     'flex flex-col overflow-hidden',
-                    '!h-[92vh] !max-h-[92vh] !rounded-t-3xl',
+                    '!h-[92vh] !max-h-[92vh] rounded-t-3xl',
                     'sm:!max-w-6xl sm:!max-h-[92vh] sm:!h-auto text-card-foreground',
                 )}
                 hideClose
@@ -1302,6 +1370,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             {/* Close button — top-right, frosted glass */}
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => onOpenChange(false)}
                                 aria-label="Close"
                                 className={cn('absolute right-4 top-4 z-30 flex h-9 w-9 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 active:scale-95', heroFrostedBtn)}
@@ -1315,6 +1384,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             {previousEntry && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={handleGoBack}
                                     className={cn('mb-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold backdrop-blur-md transition-all active:scale-95', heroGhostBtn)}
                                 >
@@ -1339,7 +1409,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
 
                                 <div className="flex-1 min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <span className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
+                                        <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
                                             {currentEntry.knownFor || currentEntry.role || 'Filmography'}
                                         </span>
                                     </div>
@@ -1368,13 +1438,14 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
 
                             {/* Biography Card */}
                             {currentEntry.biography && (
-                                <div className={cn('mt-4 rounded-xl border p-2.5 sm:p-3.5 text-xs leading-relaxed backdrop-blur-sm sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
+                                <div data-theme-part="panel" className={cn('mt-4 rounded-xl border p-2.5 sm:p-3.5 text-xs leading-relaxed backdrop-blur-sm sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
                                     <p className={cn(!bioExpanded && 'line-clamp-3 sm:line-clamp-4')}>
                                         {currentEntry.biography}
                                     </p>
                                     {currentEntry.biography.length > 220 && (
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => setBioExpanded(!bioExpanded)}
                                             className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"
                                         >
@@ -1393,6 +1464,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 <div className="mt-4 flex items-center gap-2 pt-2 border-t border-white/10">
                                     <button
                                         type="button"
+                                        data-theme-part="tab"
+                                        data-state={currentEntry.activeTab === 'all' ? 'active' : 'inactive'}
                                         onClick={() => handleSetFilmographyTab('all')}
                                         className={cn(
                                             'rounded-full px-4 py-1 text-xs font-bold transition-all',
@@ -1406,6 +1479,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     {currentEntry.movies.length > 0 && (
                                         <button
                                             type="button"
+                                            data-theme-part="tab"
+                                            data-state={currentEntry.activeTab === 'movies' ? 'active' : 'inactive'}
                                             onClick={() => handleSetFilmographyTab('movies')}
                                             className={cn(
                                                 'rounded-full px-4 py-1 text-xs font-bold transition-all',
@@ -1420,6 +1495,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     {currentEntry.series.length > 0 && (
                                         <button
                                             type="button"
+                                            data-theme-part="tab"
+                                            data-state={currentEntry.activeTab === 'series' ? 'active' : 'inactive'}
                                             onClick={() => handleSetFilmographyTab('series')}
                                             className={cn(
                                                 'rounded-full px-4 py-1 text-xs font-bold transition-all',
@@ -1434,6 +1511,8 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     {currentEntry.anime.length > 0 && (
                                         <button
                                             type="button"
+                                            data-theme-part="tab"
+                                            data-state={currentEntry.activeTab === 'anime' ? 'active' : 'inactive'}
                                             onClick={() => handleSetFilmographyTab('anime')}
                                             className={cn(
                                                 'rounded-full px-4 py-1 text-xs font-bold transition-all',
@@ -1533,6 +1612,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                         hasNextSeason={episodeSeasonBounds?.hasNext ?? false}
                         onPersonClick={handlePersonClick}
                         onAccountClick={handleAccountClick}
+                        episodeWatchers={seriesEpisodeWatchers}
                         onGoBack={handleGoBack}
                         onClose={() => onOpenChange(false)}
                         onNavigateEpisode={(season, episode) => {
@@ -1578,6 +1658,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                         <div className={cn('relative shrink-0 border-b border-border/40 px-4 py-4 sm:px-8 sm:py-5', isLight ? 'bg-muted/50 text-foreground' : 'bg-card text-white')}>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => onOpenChange(false)}
                                 aria-label="Close"
                                 className={cn('absolute right-4 top-4 z-30 flex h-9 w-9 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 active:scale-95', heroFrostedBtn)}
@@ -1591,6 +1672,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             {previousEntry && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={handleGoBack}
                                     className={cn('mb-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold backdrop-blur-md transition-all active:scale-95', heroGhostBtn)}
                                 >
@@ -1611,7 +1693,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
 
                                 <div className="flex-1 min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <span className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
+                                        <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
                                             Watch History
                                         </span>
                                     </div>
@@ -1718,6 +1800,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             {previousEntry && (
                                 <button
                                     type="button"
+                                    data-theme-part="button"
                                     onClick={handleGoBack}
                                     className="absolute left-2 top-2 sm:left-3 sm:top-3 z-30 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/60 px-3 py-1 sm:px-4 sm:py-1.5 text-xs font-bold text-white shadow-xl backdrop-blur-md transition-all hover:bg-black/80 hover:scale-105 active:scale-95"
                                 >
@@ -1729,6 +1812,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                             {/* Close button — top-right, frosted glass */}
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 onClick={() => onOpenChange(false)}
                                 aria-label="Close"
                                 className="absolute right-3 top-3 z-30 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/50 text-white/90 shadow-lg backdrop-blur-sm transition-all hover:bg-black/75 hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
@@ -1804,7 +1888,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                     </>
                                                 )}
                                                 {meta?.certification && (
-                                                    <span className={cn('ml-1 rounded-md border px-2 py-0.5 font-mono text-[11px] font-bold shadow-sm backdrop-blur-md', isLight ? 'border-border/40 bg-muted/40 text-foreground' : 'border-white/20 bg-white/10 text-white')}>
+                                                    <span data-theme-part="badge" className={cn('ml-1 rounded-md border px-2 py-0.5 font-mono text-[11px] font-bold shadow-sm backdrop-blur-md', isLight ? 'border-border/40 bg-muted/40 text-foreground' : 'border-white/20 bg-white/10 text-white')}>
                                                         {meta.certification}
                                                     </span>
                                                 )}
@@ -1826,6 +1910,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                 {isStremioFriendlyType(normalizedType) && (
                                                     <button
                                                         type="button"
+                                                        data-theme-part="button"
                                                         className={cn('inline-flex h-11 flex-1 justify-center items-center gap-2.5 rounded-full px-7 text-sm font-bold shadow-xl transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 sm:flex-none sm:w-auto sm:justify-start', heroPrimaryBtn)}
                                                         onClick={() => openStremioDetail(renderItem.type, renderItem.itemId)}
                                                     >
@@ -1898,7 +1983,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
 
                                 {/* Metadata unavailable notice */}
                                 {failed && !loading && !meta && (
-                                    <div className="rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs text-warning">
+                                    <div data-theme-part="panel" data-theme-tone="status" className="rounded-xl border border-warning/25 bg-warning/10 px-3 py-2.5 text-xs text-warning">
                                         Detailed metadata unavailable. Showing basic info.
                                     </div>
                                 )}
@@ -1920,6 +2005,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                         {canCollapse && (
                                             <button
                                                 type="button"
+                                                data-theme-part="button"
                                                 className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
                                                 onClick={() => setDescExpanded(v => !v)}
                                             >
@@ -1938,6 +2024,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                         {genres.map(g => (
                                             <span
                                                 key={g}
+                                                data-theme-part="badge"
                                                 className="rounded-full border border-border/50 bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-foreground/70"
                                             >
                                                 {g}
@@ -1947,9 +2034,26 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 )}
 
                                 {/* ── SEASON / EPISODE BROWSER ─────────────────────────────────── */}
+                                {!loading && renderItem.importedSavedState && (renderItem.type === 'series' || renderItem.type === 'anime' || renderItem.type === 'episode') && (
+                                    <div data-theme-part="panel" className="rounded-xl border border-border/40 bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+                                        <span className="font-semibold text-foreground/80">
+                                            {renderItem.savedEpisodes
+                                                ? `${renderItem.savedEpisodes.episodeCount} episodes saved`
+                                                : 'Saved episode history'}
+                                        </span>
+                                        {savedEpisodeRanges.length > 0 && (
+                                            <span className="ml-2 font-mono font-bold text-muted-foreground/70">
+                                                {savedEpisodeRanges.join(' · ')}
+                                            </span>
+                                        )}
+                                        <span className="ml-2 opacity-70">watch dates unavailable (imported saved state)</span>
+                                    </div>
+                                )}
                                 <SeasonBrowser
                                     seriesTmdbId={seriesTmdbId}
                                     activeItem={activeItem}
+                                    watchedEpisodes={seriesWatchedEpisodes}
+                                    episodeWatchers={seriesEpisodeWatchers}
                                     isLight={isLight}
                                     loading={loading}
                                     onEpisodeClick={handleEpisodeClick}
@@ -1986,6 +2090,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             <div className="flex items-center gap-1">
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollGalleryRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
                                                     aria-label="Scroll gallery left"
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
@@ -1994,6 +2099,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                 </button>
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollGalleryRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
                                                     aria-label="Scroll gallery right"
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95"
@@ -2045,6 +2151,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             {meta?.videoList && meta.videoList.length > 1 && (
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={handleNextTrailer}
                                                     className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground transition-all hover:bg-primary/10 hover:text-primary active:scale-95"
                                                 >
@@ -2074,6 +2181,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                 {meta?.videoList && meta.videoList.length > 1 && (
                                                     <button
                                                         type="button"
+                                                        data-theme-part="button"
                                                         onClick={handleNextTrailer}
                                                         className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"
                                                     >
@@ -2081,6 +2189,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                     </button>
                                                 )}
                                                 <a
+                                                    data-theme-part="button"
                                                     href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${year || ''} trailer`)}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
@@ -2100,6 +2209,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                         <Film className="h-4 w-4 shrink-0 text-muted-foreground/40" />
                                         <span className="text-xs text-muted-foreground">No trailer found.</span>
                                         <a
+                                            data-theme-part="button"
                                             href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${year} trailer`)}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -2122,6 +2232,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             <div className="flex items-center gap-1">
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollTrailersRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                                                 >
@@ -2129,6 +2240,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                 </button>
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollTrailersRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                                                 >
@@ -2186,6 +2298,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                             <div className="flex items-center gap-1">
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollRelatedRef.current?.scrollBy({ left: -320, behavior: 'smooth' })}
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                                                 >
@@ -2193,6 +2306,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                                 </button>
                                                 <button
                                                     type="button"
+                                                    data-theme-part="button"
                                                     onClick={() => scrollRelatedRef.current?.scrollBy({ left: 320, behavior: 'smooth' })}
                                                     className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground hover:text-foreground"
                                                 >
@@ -2234,30 +2348,30 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                 {!loading && (meta?.status || meta?.originalLanguage || (meta?.productionCompanies && meta.productionCompanies.length > 0) || (meta?.networks && meta.networks.length > 0) || meta?.collection) && (
                                     <div className="mt-6 flex flex-wrap items-center gap-2 pt-4 border-t border-border/40">
                                         {meta.collection && (
-                                            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                                            <span data-theme-part="badge" className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                                                 <Layers className="h-3 w-3" />
                                                 {meta.collection.name}
                                             </span>
                                         )}
                                         {meta.status && (
-                                            <span className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
+                                            <span data-theme-part="badge" className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-bold text-primary">
                                                 Status: {meta.status}
                                             </span>
                                         )}
                                         {meta.originalLanguage && (
-                                            <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                                            <span data-theme-part="badge" className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
                                                 <Languages className="h-3 w-3 text-primary" />
                                                 Language: {meta.originalLanguage}
                                             </span>
                                         )}
                                         {meta.networks && meta.networks.length > 0 && (
-                                            <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                                            <span data-theme-part="badge" className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
                                                 <Tv className="h-3 w-3 text-primary" />
                                                 Network: {meta.networks.join(', ')}
                                             </span>
                                         )}
                                         {meta.productionCompanies && meta.productionCompanies.length > 0 && (
-                                            <span className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                                            <span data-theme-part="badge" className="rounded-full border border-border/50 bg-muted/40 px-3 py-1 text-xs font-bold text-muted-foreground flex items-center gap-1.5">
                                                 <Building2 className="h-3 w-3 text-primary" />
                                                 Studio: {meta.productionCompanies.slice(0, 2).join(', ')}
                                             </span>
@@ -2271,7 +2385,7 @@ export function ActivityDetailModal({ open, onOpenChange, item }: ActivityDetail
                                     <div className="flex flex-wrap items-center gap-1.5 py-1">
                                         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/40">Data from</span>
                                         {dataSources.map(src => (
-                                            <span key={src} className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground/60">
+                                            <span key={src} data-theme-part="badge" className="rounded bg-muted/40 px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground/60">
                                                 {src}
                                             </span>
                                         ))}

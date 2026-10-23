@@ -6,7 +6,11 @@ import { buttonVariants } from "@/components/ui/button"
 
 const AlertDialog = AlertDialogPrimitive.Root
 
-const AlertDialogTrigger = AlertDialogPrimitive.Trigger
+const AlertDialogTrigger = React.forwardRef<
+    React.ElementRef<typeof AlertDialogPrimitive.Trigger>,
+    React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Trigger>
+>((props, ref) => <AlertDialogPrimitive.Trigger data-theme-part="button" ref={ref} {...props} />)
+AlertDialogTrigger.displayName = AlertDialogPrimitive.Trigger.displayName
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal
 
@@ -14,6 +18,7 @@ const AlertDialogOverlay = React.forwardRef<
     React.ElementRef<typeof AlertDialogPrimitive.Overlay>,
     React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (<AlertDialogPrimitive.Overlay
+    data-theme-part="dialog-overlay"
     className={cn(
         "fixed inset-0 z-50 bg-black/40 backdrop-blur-sm transition-opacity duration-150 data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className
@@ -29,6 +34,7 @@ const AlertDialogContent = React.forwardRef<
 >(({ className, ...props }, ref) => (<AlertDialogPortal>
     <AlertDialogOverlay />
     <AlertDialogPrimitive.Content
+        data-theme-part="dialog"
         ref={ref}
         className={cn(
             "fixed left-[50%] top-[50%] z-50 grid w-[95vw] sm:w-full max-w-sm translate-x-[-50%] translate-y-[-50%] gap-0 overflow-y-auto max-h-[95vh]",
@@ -96,6 +102,8 @@ const AlertDialogAction = React.forwardRef<
     React.ElementRef<typeof AlertDialogPrimitive.Action>,
     React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action>
 >(({ className, ...props }, ref) => (<AlertDialogPrimitive.Action
+    data-theme-part="button"
+    data-variant="default"
     ref={ref}
     className={cn(buttonVariants(), "h-11 rounded-full", className)}
     {...props}
@@ -106,6 +114,8 @@ const AlertDialogCancel = React.forwardRef<
     React.ElementRef<typeof AlertDialogPrimitive.Cancel>,
     React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Cancel>
 >(({ className, ...props }, ref) => (<AlertDialogPrimitive.Cancel
+    data-theme-part="button"
+    data-variant="subtle"
     ref={ref}
     className={cn(
         buttonVariants({ variant: "subtle" }),

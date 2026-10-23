@@ -275,12 +275,12 @@ export function BulkUrlReplaceDialog({ open, onOpenChange, accountId, accountAdd
                                 <h4 className="text-xs font-medium uppercase text-muted-foreground flex items-center gap-2">
                                     {isExecuting ? 'Running Changes' : 'Before You Run This'}
                                     {previewItems.length > 0 && (
-                                        <span className="bg-primary/12 text-primary px-1.5 py-0.5 rounded-full text-xs">
+                                        <span data-theme-part="badge" className="bg-primary/12 text-primary px-1.5 py-0.5 rounded-full text-xs">
                                             {previewItems.length} matches
                                         </span>
                                     )}
                                     {blockedCount > 0 && (
-                                        <span className="bg-warning/10 text-warning px-1.5 py-0.5 rounded-full text-xs">
+                                        <span data-theme-part="badge" className="bg-warning/10 text-warning px-1.5 py-0.5 rounded-full text-xs">
                                             {blockedCount} cannot run
                                         </span>
                                     )}
@@ -303,7 +303,7 @@ export function BulkUrlReplaceDialog({ open, onOpenChange, accountId, accountAdd
                                             const blockReasonLabel = getBlockReasonLabel(item.blockReason)
 
                                             return (
-                                                <div key={item.id} className={cn(
+                                                <div key={item.id} data-theme-part="addon-card" className={cn(
                                                     "group p-3 rounded-lg border bg-card transition-[transform,opacity,box-shadow] relative overflow-hidden",
                                                     item.blockReason && "border-warning/30 bg-warning/5",
                                                     executionState?.status === 'success' && "border-success/30 bg-success/5",

@@ -168,14 +168,14 @@ export function AddonInstaller() {
           </div>
 
           {previewLoading && (
-            <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <div data-theme-part="panel" className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Checking addon...
             </div>
           )}
 
           {!previewLoading && previewManifest && (
-            <div className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+            <div data-theme-part="panel" className="flex items-center gap-3 rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
               <AddonIcon
                 name={previewManifest.name || 'Addon'}
                 logo={previewManifest.logo}
@@ -198,7 +198,7 @@ export function AddonInstaller() {
           )}
 
           {error && (
-            <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            <div data-theme-tone="status" data-theme-part="panel" className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
               {error}
             </div>
           )}

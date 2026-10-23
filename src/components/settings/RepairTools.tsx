@@ -41,7 +41,7 @@ function ActionRow({
     onClick: () => void
 }) {
     return (
-        <div className="flex flex-col gap-3 rounded-2xl border border-border/35 bg-background/35 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div data-theme-part="panel" className="flex flex-col gap-3 rounded-2xl border border-border/35 bg-background/35 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
                 <div className="relative mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                     <SquircleOverlay />
@@ -200,7 +200,7 @@ export function RepairTools() {
     const pct = progress ? ` ${progress.done}/${progress.total}` : ''
 
     return (
-        <div className="overflow-hidden rounded-[1.75rem] border border-border/45 bg-card/80 shadow-sm">
+        <div data-theme-part="panel" className="overflow-hidden rounded-[1.75rem] border border-border/45 bg-card/80 shadow-sm">
             <div className="flex items-center gap-3 p-4">
                 <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                     <SquircleOverlay />

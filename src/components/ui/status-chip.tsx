@@ -33,6 +33,8 @@ function StatusChip({
 }: StatusChipProps) {
   return (
     <span
+      data-theme-part="badge"
+      data-variant={variant}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border font-medium whitespace-nowrap',
         variantClasses[variant],

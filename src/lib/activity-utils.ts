@@ -3,12 +3,93 @@ import { Account } from '@/types/account'
 import type { HistoryEntry } from '@/hooks/useWatchHistory'
 import { getAccountEmail } from '@/store/accountStore'
 import { sanitizePosterUrl } from '@/lib/utils'
+import { parseCinemetaGenres, fetchCinemetaDetail } from './cinemeta-cache.ts'
+import {
+    isSavedOnlySeriesRow,
+    isFlaggedOnlyMovieRow,
+    isDatelessSavedWatchState,
+    resolveWatchBadgePct,
+    summarizeSavedEpisodes,
+    formatSavedEpisodeRanges,
+} from './imported-watch-state.ts'
 
 export { sanitizePosterUrl }
+export { isSavedOnlySeriesRow, isFlaggedOnlyMovieRow, isDatelessSavedWatchState, resolveWatchBadgePct, summarizeSavedEpisodes, formatSavedEpisodeRanges }
+
+/**
+ * Stable per-connection scope key for watch attribution: a secondary Stremio login's
+ * history lives under `${accountId}::${connectionId}`, while the canonical/legacy
+ * scope stays the bare accountId so every pre-multiplicity row, snapshot and
+ * tombstone keeps resolving exactly as before. Connection ids are uuids, so the
+ * double-colon separator can never occur inside either id.
+ */
+export function watchContextKey(accountId: string, sourceConnectionId?: string): string {
+    return sourceConnectionId ? `${accountId}::${sourceConnectionId}` : accountId
+}
+
+/**
+ * Split a server-side scoped account id (`${accountId}::${connectionId}` for
+ * per-connection rows, bare accountId for canonical/legacy rows) back into the real
+ * account and the originating connection. The connection part is absent for
+ * canonical/legacy history.
+ */
+export function parseScopedAccountId(scopedAccountId: string): { accountId: string; sourceConnectionId?: string } {
+    const raw = String(scopedAccountId || '')
+    const sep = raw.indexOf('::')
+    if (sep < 0) return { accountId: raw }
+    const accountId = raw.slice(0, sep)
+    const sourceConnectionId = raw.slice(sep + 2)
+    if (!accountId || !sourceConnectionId) return { accountId: raw }
+    return { accountId, sourceConnectionId }
+}
+
+/** Cache/feed identity of a Stremio item: canonical keeps the legacy key, secondaries carry their connection. */
+export function stremioActivityItemKey(accountId: string, uniqueItemId: string, sourceConnectionId?: string): string {
+    return sourceConnectionId
+        ? `${accountId}:stremio:${sourceConnectionId}:${uniqueItemId}`
+        : `${accountId}:${uniqueItemId}`
+}
+
+/**
+ * Human label distinguishing same-account peer logins (rail/detail surfaces): the
+ * connection's own email or displayName when known, else a stable per-platform ordinal
+ * ("Login 2"). Returns undefined without attribution or when the platform has only one
+ * login (the account label already covers it). Raw values — callers apply privacy masking.
+ */
+export function peerLoginLabel(
+    account: { connections?: Array<{ id: string; platform: string; enabled?: boolean; displayName?: string; credentials?: Record<string, string> }> } | undefined,
+    sourceConnectionId?: string,
+): string | undefined {
+    if (!account || !sourceConnectionId) return undefined
+    const conns = (account.connections || []).filter(c => c.platform !== 'jellyfin')
+    const conn = conns.find(c => c.id === sourceConnectionId)
+    if (!conn) return undefined
+    const samePlatform = conns.filter(c => c.platform === conn.platform)
+    if (samePlatform.length <= 1) return undefined
+    const email = conn.credentials?.email
+    if (email && email.includes('@')) return email
+    if (conn.displayName) return conn.displayName
+    return `Login ${samePlatform.findIndex(c => c.id === sourceConnectionId) + 1}`
+}
+
+export {
+    fetchCinemetaDetail,
+    getCachedCinemetaName,
+    type CinemetaCastMember,
+    type CinemetaCrewMember,
+    type CinemetaDirectorMember,
+    type CinemetaMeta,
+    type CinemetaRelatedItem,
+    type CinemetaReview,
+    type CinemetaVideo,
+} from './cinemeta-cache.ts'
 
 export function isActuallyWatched(item: LibraryItem): boolean {
     const s = item.state || {}
     if ((s.timesWatched ?? 0) > 0) return true
+    // Stremio's watched flag is a positive watch marker on its own (marked-watched movies,
+    // imported saved state); it must admit the row even when nothing else is accounted.
+    if ((s.flaggedWatched ?? 0) > 0) return true
     if (s.video_id && s.video_id.trim() !== '') return true
     if ((s.timeOffset ?? 0) > 0) return true
     if ((s.timeWatched ?? 0) > 0 || (s.overallTimeWatched ?? 0) > 0) return true
@@ -137,7 +218,8 @@ export function parseStremioDate(dateStr: string | undefined): Date | undefined 
 export function transformLibraryItemToActivityItem(
     item: LibraryItem,
     account: Account,
-    accounts: Account[]
+    accounts: Account[],
+    options?: { connectionId?: string; distinctId?: boolean }
 ): ActivityItem {
     const uniqueItemId = getUniqueItemId(item)
     const timestamp = getWatchTimestamp(item)
@@ -148,6 +230,11 @@ export function transformLibraryItemToActivityItem(
     const overallTimeWatched = item.state?.overallTimeWatched
     const timesWatched = item.state?.timesWatched
     const flaggedWatched = item.state?.flaggedWatched
+    // Imported saved watch state (bitfield-aggregate series / flagged-only movie) carries no
+    // watch dates and no resume: presentation layers must treat it as saved state, never as
+    // a dated, percent-complete watch. Detection is conservative — any real anchor, resume,
+    // accounted time or watch date opts the row out.
+    const importedSavedState = isDatelessSavedWatchState(item)
 
     const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
@@ -158,9 +245,17 @@ export function transformLibraryItemToActivityItem(
     const progress = duration > 0 ? Math.min(100, Math.max(0, (timeOffset / duration) * 100)) : 0
     const isInProgress = (timeOffset > 3000 || progress > 0.5) && progress < 95
     const accountColorIndex = accounts.indexOf(account) % 10
+    // Stable per-origin identity: BOTH canonical and secondary items record which login
+    // they came from (deletes resolve the exact key after a canonical switch/promotion),
+    // but only a SECONDARY tags its id — the canonical keeps the legacy id so cached
+    // feeds, deleted-entry keys and tombstones stay valid, and two logins watching the
+    // same title stay independently visible and independently deletable.
+    const itemId = options?.connectionId && options.distinctId !== false
+        ? stremioActivityItemKey(account.id, uniqueItemId, options.connectionId)
+        : `${account.id}:${uniqueItemId}`
 
     return {
-        id: `${account.id}:${uniqueItemId}`,
+        id: itemId,
         accountId: account.id,
         accountName: account.name || getAccountEmail(account)?.split('@')[0] || account.id || 'Unknown',
         accountColorIndex,
@@ -176,11 +271,13 @@ export function transformLibraryItemToActivityItem(
         progress,
         timesWatched,
         flaggedWatched,
+        importedSavedState,
         isInProgress,
         season,
         episode,
         overallTimeWatched,
         source: 'stremio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
     }
 }
 
@@ -201,217 +298,9 @@ interface NuvioProgressItem {
     episode?: number | null
     position?: number
     duration?: number
+    /** Explicit percentage-only progress from providers without an elapsed time/runtime. */
+    progressPercent?: number
     last_watched?: number
-}
-
-export interface CinemetaCastMember {
-    name?: string
-    character?: string
-    photo?: string
-}
-
-export interface CinemetaDirectorMember {
-    name?: string
-    photo?: string
-}
-
-export interface CinemetaCrewMember {
-    name: string
-    role: string
-    photo?: string
-}
-
-export interface CinemetaVideo {
-    key: string
-    name: string
-    type: string
-    official?: boolean
-}
-
-export interface CinemetaRelatedItem {
-    id: string
-    title: string
-    type: string
-    poster?: string
-    backdrop?: string
-    year?: string
-    voteAverage?: number
-}
-
-export interface CinemetaReview {
-    id?: string
-    author: string
-    avatar?: string
-    rating?: number
-    content: string
-    createdAt?: string
-    source?: string
-}
-
-export interface CinemetaMeta {
-    id?: string
-    type?: string
-    name?: string
-    poster?: string
-    background?: string
-    logo?: string
-    description?: string
-    genre?: string
-    runtime?: string
-    cast?: CinemetaCastMember[]
-    director?: Array<string | CinemetaDirectorMember> | string
-    crew?: CinemetaCrewMember[]
-    imdbRating?: string
-    released?: string
-    year?: string
-    trailers?: Array<{ source: string; type: string }>
-    videoList?: CinemetaVideo[]
-    relatedList?: CinemetaRelatedItem[]
-    reviewsList?: CinemetaReview[]
-    status?: string
-    originalLanguage?: string
-    productionCompanies?: string[]
-    networks?: string[]
-    certification?: string
-    keywords?: number[]
-    collection?: { id: number; name: string }
-    galleryBackdrops?: string[]
-    watchProviders?: Array<{ name: string; logo?: string }>
-    tmdbId?: number
-}
-
-interface CinemetaCacheEntry {
-    meta: CinemetaMeta | null
-    fetchedAt: number
-}
-
-const cinemetaCache = new Map<string, CinemetaCacheEntry>()
-const CINEMETA_TTL = 24 * 60 * 60 * 1000
-const CINEMETA_NULL_TTL = 5 * 60 * 1000
-
-function parseCinemetaGenres(meta: CinemetaMeta | undefined | null): string[] {
-    if (!meta || typeof meta.genre !== 'string' || !meta.genre.trim()) return []
-    return meta.genre.split(',').map(g => g.trim()).filter(Boolean)
-}
-
-export async function fetchCinemetaDetail(imdbId: string, type?: string): Promise<CinemetaMeta | null> {
-    if (!imdbId || !imdbId.startsWith('tt')) return null
-    const cached = cinemetaCache.get(imdbId)
-    if (cached && Date.now() - cached.fetchedAt < (cached.meta ? CINEMETA_TTL : CINEMETA_NULL_TTL)) {
-        return cached.meta
-    }
-    try {
-        const mediaType = type === 'movie' ? 'movie' : 'series'
-        const res = await fetch(`https://cinemeta-live.strem.io/meta/${mediaType}/${imdbId}.json`, { signal: AbortSignal.timeout(8000) })
-        if (!res.ok) {
-            if (import.meta.env?.DEV) console.warn(`[Cinemeta] ${res.status} for ${imdbId} (${mediaType})`)
-            cinemetaCache.set(imdbId, { meta: null, fetchedAt: Date.now() })
-            return null
-        }
-        const data = await res.json()
-        const raw: Record<string, unknown> | null = data?.meta ?? null
-        if (!raw) {
-            cinemetaCache.set(imdbId, { meta: null, fetchedAt: Date.now() })
-            return null
-        }
-
-        const TMDB_IMG = 'https://image.tmdb.org/t/p/w185'
-        const creditsCast = Array.isArray(raw.credits_cast) ? raw.credits_cast : []
-        const cast: CinemetaCastMember[] = creditsCast
-            .filter((c): c is Record<string, unknown> => c && typeof c === 'object')
-            .map(c => ({
-                name: typeof c.name === 'string' ? c.name : undefined,
-                character: typeof c.character === 'string' ? c.character : undefined,
-                photo: typeof c.profile_path === 'string' && c.profile_path ? `${TMDB_IMG}${c.profile_path}` : undefined,
-            }))
-
-        const creditsCrew = Array.isArray(raw.credits_crew) ? raw.credits_crew : []
-        const crew: CinemetaCrewMember[] = creditsCrew
-            .filter((c): c is Record<string, unknown> => c && typeof c === 'object')
-            .map(c => ({
-                name: typeof c.name === 'string' ? c.name : '',
-                role: typeof c.job === 'string' ? c.job : (typeof c.role === 'string' ? c.role : ''),
-                photo: typeof c.profile_path === 'string' && c.profile_path ? `${TMDB_IMG}${c.profile_path}` : undefined,
-            }))
-
-        const rawDirector = raw.director
-        let director: CinemetaMeta['director']
-        if (Array.isArray(rawDirector)) {
-            director = rawDirector.map(d => {
-                if (typeof d === 'string') return d
-                if (d && typeof d === 'object') {
-                    const obj = d as Record<string, unknown>
-                    return { name: String(obj.name ?? ''), photo: typeof obj.profile_path === 'string' && obj.profile_path ? `${TMDB_IMG}${obj.profile_path}` : undefined }
-                }
-                return String(d)
-            })
-        } else if (typeof rawDirector === 'string') {
-            director = rawDirector
-        }
-
-        const trailers = Array.isArray(raw.trailers) ? raw.trailers : []
-        const videoList: CinemetaVideo[] = trailers
-            .filter((t): t is Record<string, unknown> => t && typeof t === 'object')
-            .filter(t => t.type === 'Trailer' || t.type === 'Teaser')
-            .map(t => ({
-                key: String(t.source ?? ''),
-                name: String(t.name ?? t.type ?? 'Trailer'),
-                type: String(t.type ?? 'Trailer'),
-            }))
-            .filter(v => v.key)
-
-        const rawRelated = Array.isArray(raw.related) ? raw.related : []
-        const relatedList: CinemetaRelatedItem[] = rawRelated
-            .filter((r): r is Record<string, unknown> => r && typeof r === 'object')
-            .map(r => ({
-                id: String(r.id ?? ''),
-                title: String(r.name ?? 'Unknown'),
-                type: String(r.type ?? 'movie'),
-                poster: typeof r.poster === 'string' ? r.poster : undefined,
-            }))
-            .filter(r => r.id)
-
-        const meta: CinemetaMeta = {
-            id: typeof raw.id === 'string' ? raw.id : imdbId,
-            type: typeof raw.type === 'string' ? raw.type : mediaType,
-            name: typeof raw.name === 'string' ? raw.name : undefined,
-            poster: typeof raw.poster === 'string' ? raw.poster : undefined,
-            background: typeof raw.background === 'string' ? raw.background : undefined,
-            logo: typeof raw.logo === 'string' ? raw.logo : undefined,
-            description: typeof raw.description === 'string' ? raw.description : undefined,
-            genre: typeof raw.genre === 'string' ? raw.genre : (Array.isArray(raw.genres) ? raw.genres.join(', ') : undefined),
-            runtime: typeof raw.runtime === 'string' ? raw.runtime : undefined,
-            cast: cast.length > 0 ? cast : undefined,
-            director,
-            crew: crew.length > 0 ? crew : undefined,
-            imdbRating: typeof raw.imdbRating === 'string' ? raw.imdbRating : undefined,
-            released: typeof raw.released === 'string' ? raw.released : (typeof raw.releaseInfo === 'string' ? raw.releaseInfo.slice(0, 4) : undefined),
-            year: typeof raw.year === 'string' ? raw.year : (typeof raw.releaseInfo === 'string' ? raw.releaseInfo.slice(0, 4) : undefined),
-            trailers,
-            videoList: videoList.length > 0 ? videoList : undefined,
-            relatedList: relatedList.length > 0 ? relatedList : undefined,
-            reviewsList: Array.isArray(raw.reviews) ? raw.reviews as CinemetaReview[] : undefined,
-            status: typeof raw.status === 'string' ? raw.status : undefined,
-            originalLanguage: typeof raw.language === 'string' ? raw.language : undefined,
-            productionCompanies: Array.isArray(raw.production_companies) ? raw.production_companies.map(String) : undefined,
-            tmdbId: typeof raw.moviedb_id === 'number' ? raw.moviedb_id : undefined,
-        }
-
-        cinemetaCache.set(imdbId, { meta, fetchedAt: Date.now() })
-        return meta
-    } catch (e) {
-        if (import.meta.env?.DEV) console.warn(`[Cinemeta] fetch failed for ${imdbId}:`, e instanceof Error ? e.message : e)
-        cinemetaCache.set(imdbId, { meta: null, fetchedAt: Date.now() })
-        return null
-    }
-}
-
-export function getCachedCinemetaName(imdbId: string): string | null {
-    if (!imdbId || !imdbId.startsWith('tt')) return null
-    const cached = cinemetaCache.get(imdbId)
-    if (!cached || !cached.meta) return null
-    if (Date.now() - cached.fetchedAt > CINEMETA_TTL) return null
-    return cached.meta.name?.trim() || null
 }
 
 async function resolveCinemeta(imdbId: string, type?: string): Promise<{ name: string; poster: string; genres: string[] }> {
@@ -446,10 +335,17 @@ function accountActivityMeta(account: Account, accounts: Account[]) {
     }
 }
 
-export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[]): Promise<ActivityItem> {
+export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedItem, account: Account, accounts: Account[], options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
-    const watchedAt = Number(row.watched_at) || Date.now()
+    // Undated rows must not borrow the sync time as a fake watch date: during a
+    // large-library sync hundreds of them land within minutes of each other and
+    // chain into one giant fake binge session. Observation time still orders the
+    // row in lists, but the backfill marker excludes it from time-based stats,
+    // exactly like Stremio bitfield recoveries.
+    const watchedAtMs = Number(row.watched_at)
+    const undated = !(watchedAtMs > 0)
+    const watchedAt = undated ? Date.now() : watchedAtMs
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
     let name: string
     if (row.episode != null && resolved.name.trim()) {
@@ -461,7 +357,12 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
-        id: `${account.id}:nuvio:${uniqueItemId}`,
+        // Per-origin identity: with several Nuvio logins bound, each copy tags its
+        // connection so same-title watches stay separately visible and separately
+        // deletable; the single-connection shape keeps the legacy id untouched.
+        id: options?.connectionId
+            ? `${account.id}:nuvio:${options.connectionId}:${uniqueItemId}`
+            : `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
         accountName: meta.name,
         accountColorIndex: meta.colorIndex,
@@ -471,6 +372,7 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
         type: row.content_type || 'other',
         poster,
         timestamp: new Date(Math.min(watchedAt, Date.now())),
+        ...(undated ? { backfill: true } : {}),
         duration: 0,
         watched: 0,
         progress: 100,
@@ -478,19 +380,28 @@ export async function transformNuvioWatchedItemToActivityItem(row: NuvioWatchedI
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
         genres,
     }
 }
 
 // Progress rows carry no title (only watched rows do), so the caller can pass a title resolved
 // from the watched-items list for the same content_id to avoid showing a raw id as the name.
-export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string): Promise<ActivityItem> {
+export async function transformNuvioProgressToActivityItem(row: NuvioProgressItem, account: Account, accounts: Account[], titleHint?: string, options?: { connectionId?: string }): Promise<ActivityItem> {
     const uniqueItemId = row.video_id || nuvioUniqueId(row.content_id, row.season, row.episode)
     const meta = accountActivityMeta(account, accounts)
-    const duration = Number(row.duration) || 0
-    const position = Number(row.position) || 0
-    const progress = duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
-    const lastWatched = Number(row.last_watched) || Date.now()
+    const percentOnly = row.progressPercent !== undefined
+    const duration = percentOnly ? 0 : Number(row.duration) || 0
+    const position = percentOnly ? 0 : Number(row.position) || 0
+    const progress = percentOnly
+        ? (Number.isFinite(row.progressPercent) && row.progressPercent! >= 0 && row.progressPercent! <= 100 ? row.progressPercent! : 0)
+        : duration > 0 ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0
+    // Same undated rule as watched rows: no real last_watched means the timestamp
+    // is the sync observation, not a watch date; mark it so binge/session stats
+    // and other time-based metrics exclude it.
+    const lastWatchedMs = Number(row.last_watched)
+    const undated = !(lastWatchedMs > 0)
+    const lastWatched = undated ? Date.now() : lastWatchedMs
     const resolved = await resolveCinemeta(row.content_id, row.content_type)
     let name: string
     if (row.episode != null && resolved.name.trim()) {
@@ -502,7 +413,9 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
     const poster = resolved.poster
     const genres = resolved.genres.length > 0 ? resolved.genres : undefined
     return {
-        id: `${account.id}:nuvio:${uniqueItemId}`,
+        id: options?.connectionId
+            ? `${account.id}:nuvio:${options.connectionId}:${uniqueItemId}`
+            : `${account.id}:nuvio:${uniqueItemId}`,
         accountId: account.id,
         accountName: meta.name,
         accountColorIndex: meta.colorIndex,
@@ -512,6 +425,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
         type: row.content_type || 'other',
         poster,
         timestamp: new Date(Math.min(lastWatched, Date.now())),
+        ...(undated ? { backfill: true } : {}),
         duration,
         watched: position,
         progress,
@@ -519,6 +433,7 @@ export async function transformNuvioProgressToActivityItem(row: NuvioProgressIte
         season: row.season ?? undefined,
         episode: row.episode ?? undefined,
         source: 'nuvio',
+        ...(options?.connectionId ? { sourceConnectionId: options.connectionId } : {}),
         genres,
     }
 }
@@ -540,20 +455,22 @@ export function historyEntryToActivityItem(entry: HistoryEntry): ActivityItem {
         watched: entry.isFromEventLog ? entry.watched : (entry.liveWatched ?? entry.watched),
         progress: Math.min(entry.isFromEventLog ? entry.progress : (entry.liveProgress ?? entry.progress), 100),
         timesWatched: entry.timesWatched,
+        flaggedWatched: entry.flaggedWatched,
         isInProgress: entry.isInProgress,
         season: entry.season,
         episode: entry.episode,
         overallTimeWatched: entry.overallTimeWatched,
         source: entry.source,
+        sourceConnectionId: entry.sourceConnectionId,
         backfill: entry.backfill,
+        importedSavedState: entry.importedSavedState,
+        savedEpisodes: entry.savedEpisodes,
         genres: entry.genres,
+        readOnly: entry.readOnly,
+        mediaObservation: entry.mediaObservation,
+        mediaSources: entry.mediaSources,
+        mediaTargets: entry.mediaTargets,
     }
 }
 
-export function resolveWatchBadgePct(item: ActivityItem): number | undefined {
-    if (item.progress > 0) return Math.round(item.progress)
-    if ((item.timesWatched ?? 0) > 0 || (item.flaggedWatched ?? 0) > 0) return 100
-    const isSeries = item.type === 'series' || item.type === 'anime' || item.type === 'episode'
-    if (!isSeries && (item.overallTimeWatched ?? 0) > 0) return 100
-    return 0
-}
+// Saved-only imported series resolve no watch badge at all (see imported-watch-state.ts).

@@ -30,6 +30,10 @@ export function reconcileRailProgress<T extends RailProgressItem>(
     return liveItems.map(item => {
         const event = latestByKey.get(item.key)
         if (event && toMs(event.timestamp) >= toMs(item.timestamp)) {
+            // A first snapshot can have unknown historical viewing time (zero) while
+            // the same remote row supplies a real resume point. That tied event does
+            // not establish a reset of the saved position.
+            if (toMs(event.timestamp) === toMs(item.timestamp) && event.progress === 0 && item.progress > 0) return item
             return { ...item, progress: Math.min(100, Math.max(0, event.progress)) }
         }
         return item

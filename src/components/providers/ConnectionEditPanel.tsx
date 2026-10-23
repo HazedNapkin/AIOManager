@@ -4,12 +4,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusChip } from '@/components/ui/status-chip'
 import { ToolbarShell } from '@/components/ui/toolbar-shell'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { TabsContent, TabsTrigger } from '@/components/ui/tabs'
+import { WorkspaceTabs } from '@/components/ui/workspace-tabs'
 import { EmptyState } from '@/components/common/EmptyState'
-import { Trash2, ArrowLeft, Loader2, Zap, CheckCircle2, AlertCircle, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown } from 'lucide-react'
+import { Trash2, ArrowLeft, Loader2, Mail, Lock, Key, RefreshCw, Eye, EyeOff, QrCode, Puzzle, BookOpen, ChevronDown, ChevronRight, Users } from 'lucide-react'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useConnectionStore } from '@/store/connectionStore'
-import { useAccountStore, getStremioAuthKey, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
+import { useAccountStore, getCachedAuthKey, getEncryptionKey, getAccountEmail } from '@/store/accountStore'
 import { useAddons } from '@/hooks/useAddons'
 import { useWatchHistory } from '@/hooks/useWatchHistory'
 import { stremioClient } from '@/api/stremio-client'
@@ -26,10 +27,11 @@ import type { NuvioMemberStatus } from '@/lib/nuvio-tier'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import type { Connection, ConnectionStatus } from '@/types/connection'
-import { PlatformLogo, ConnectionStatusPill, connectionLabel } from './ConnectionPrimitives'
+import { PlatformLogo, ConnectionStatusPill, ConnectionTestButton, ConnectionTestResult, connectionLabel } from './ConnectionPrimitives'
 import { StremioSocialAuth } from '@/components/accounts/StremioSocialAuth'
-import { displayStatus, tokenExpiry } from '@/lib/connection-format'
-import { NuvioBackupTab, NuvioPluginsTab, NuvioProfilesTab, NuvioLibraryTab, NuvioCollectionsTab } from './NuvioWorkspace'
+import { displayStatus, tokenExpiry, timeAgo } from '@/lib/connection-format'
+import { getPlatformEntry } from '@/lib/platform-registry'
+import { NuvioBackupTab, NuvioPluginsTab, NuvioProfilesTab, NuvioLibraryTab, NuvioCollectionsTab, TabToolbar } from './NuvioWorkspace'
 import { ConnectionMembershipTab } from './ConnectionMembershipTab'
 import { ProfileRosterRow } from './ProfileRosterRow'
 import { useUIStore } from '@/store/uiStore'
@@ -46,21 +48,6 @@ function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
             setTimeout(() => reject(new Error('Connection test timed out')), ms)
         )
     ])
-}
-
-function TestResultBanner({ result }: { result: { ok: boolean; message: string } | null }) {
-    if (!result) return null
-    return (
-        <div className={cn(
-            'flex items-center gap-2 rounded-xl border px-3 py-2 text-xs',
-            result.ok
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                : 'border-destructive/30 bg-destructive/10 text-destructive'
-        )}>
-            {result.ok ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
-            <span className="truncate">{result.message}</span>
-        </div>
-    )
 }
 
 interface ReauthMethod {
@@ -80,7 +67,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
     const [activeId, setActiveId] = useState(methods[0].id)
     const active = methods.find(m => m.id === activeId) ?? methods[0]
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-sm font-semibold">{title}</p>
@@ -89,7 +76,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                 {headerAction}
             </div>
             {methods.length > 1 && (
-                <div className={cn(
+                <div data-theme-part="tabs-list" className={cn(
                     'grid gap-0.5 rounded-xl bg-muted/30 p-0.5 border border-border/40',
                     methods.length === 2 ? 'grid-cols-2' : 'grid-cols-3'
                 )}>
@@ -97,6 +84,8 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                         <button
                             key={method.id}
                             type="button"
+                            data-theme-part="tab"
+                            data-state={activeId === method.id ? 'active' : 'inactive'}
                             onClick={() => setActiveId(method.id)}
                             className={cn(
                                 'relative h-8 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring z-10',
@@ -106,6 +95,7 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
                             {activeId === method.id && (
                                 <motion.div
                                     layoutId={layoutId}
+                                    data-theme-part="tab-indicator"
                                     className="absolute inset-0 bg-background rounded-lg shadow-sm -z-10 border border-border/10"
                                     transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                                 />
@@ -119,6 +109,44 @@ function ReauthCard({ title, description, methods, layoutId, headerAction, foote
             {footer}
         </div>
     )
+}
+
+// Resolves the login THIS panel edits — never the account-level canonical key: a
+// secondary card's verify/delete/re-auth must act on its own sealed session, or the
+// action would land on (or destroy) the canonical login's remote account.
+function stremioConnectionAuthKey(connection: Connection): string | undefined {
+    return connection.credentials?.authKey || undefined
+}
+
+// Verified re-auth capture: a fresh session must resolve to the SAME remote user this
+// connection is bound to. With a stored verified userId that is the authority; without
+// one (legacy rows) the verified email must corroborate the stored email — and with
+// neither, the update is refused rather than silently rebinding the connection. A
+// sibling connection already binding the verified user (double-bind) is rejected too.
+async function verifyStremioReconnect(authKey: string, connection: Connection, account?: { connections?: Connection[] }): Promise<{ email?: string; userId?: string }> {
+    const user = await stremioClient.getUser(authKey)
+    const boundId = connection.credentials?.userId
+    if (!boundId) {
+        const verifiedEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : ''
+        const boundEmail = (connection.credentials?.email || '').trim().toLowerCase()
+        if (!verifiedEmail || !boundEmail || verifiedEmail !== boundEmail) {
+            throw new Error('That session belongs to a different Stremio account than this connection. Re-authenticate this connection with its own account (password tab uses the account\'s own email).')
+        }
+    } else if (user._id && user._id !== boundId) {
+        throw new Error(`That session belongs to a different Stremio account${typeof user.email === 'string' && user.email ? ` (${user.email})` : ''} than the one this connection uses. Sign in with this connection's own account.`)
+    }
+    if (user._id) {
+        const doubleBound = (account?.connections || []).some(c =>
+            c.platform === 'stremio' && (c.connectionType == null || c.connectionType === 'native')
+            && c.id !== connection.id && c.credentials?.userId === user._id)
+        if (doubleBound) {
+            throw new Error('That Stremio account is already connected to this AIOManager account through another login.')
+        }
+    }
+    return {
+        email: typeof user.email === 'string' && user.email.trim() ? user.email : undefined,
+        userId: user._id || undefined,
+    }
 }
 
 function StremioCredentialsSection({ accountId, connection }: { accountId: string; connection: Connection }) {
@@ -140,13 +168,17 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
         setSaving(true)
         try {
             const response = await loginWithCredentials(email, password)
+            // Identity guard: the fresh session must still be THIS connection's remote user.
+            const verified = await verifyStremioReconnect(response.authKey, connection, account)
             const encryptionKey = getEncryptionKey()
             const encrypted = await encrypt(response.authKey, encryptionKey)
+            if (getEncryptionKey() !== encryptionKey) throw new Error('Your vault changed while saving. Unlock it and try again.')
             await updateConnection(accountId, connection.id, {
                 credentials: {
                     ...connection.credentials,
                     authKey: encrypted,
-                    email: response.user?.email || email,
+                    email: verified.email || response.user?.email || email,
+                    ...(verified.userId ? { userId: verified.userId } : {}),
                 },
                 status: 'active',
             })
@@ -165,10 +197,19 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
         if (!trimmed) return
         setSavingKey(true)
         try {
+            // Verified before save: an invalid key must fail here, and a key belonging to
+            // a different remote user than this connection's login is rejected outright.
+            const verified = await verifyStremioReconnect(trimmed, connection, account)
             const encryptionKey = getEncryptionKey()
             const encrypted = await encrypt(trimmed, encryptionKey)
+            if (getEncryptionKey() !== encryptionKey) throw new Error('Your vault changed while saving. Unlock it and try again.')
             await updateConnection(accountId, connection.id, {
-                credentials: { ...connection.credentials, authKey: encrypted },
+                credentials: {
+                    ...connection.credentials,
+                    authKey: encrypted,
+                    ...(verified.email ? { email: verified.email } : {}),
+                    ...(verified.userId ? { userId: verified.userId } : {}),
+                },
                 status: 'active',
             })
             toast({ title: 'Auth key updated' })
@@ -183,13 +224,16 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
 
     const handleSocialAuthKey = async (authKey: string, user?: { email?: string; name?: string }) => {
         try {
+            const verified = await verifyStremioReconnect(authKey, connection, account)
             const encryptionKey = getEncryptionKey()
             const encrypted = await encrypt(authKey, encryptionKey)
+            if (getEncryptionKey() !== encryptionKey) throw new Error('Your vault changed while saving. Unlock it and try again.')
             await updateConnection(accountId, connection.id, {
                 credentials: {
                     ...connection.credentials,
                     authKey: encrypted,
-                    ...(user?.email ? { email: user.email } : {}),
+                    ...((verified.email || user?.email) ? { email: verified.email || user?.email } : {}),
+                    ...(verified.userId ? { userId: verified.userId } : {}),
                 },
                 status: 'active',
             })
@@ -204,10 +248,16 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
         try {
             const authKey = (session.platformData as { authKey: string }).authKey
             if (!authKey) throw new Error('QR approval did not return a session. Try again.')
+            const verified = await verifyStremioReconnect(authKey, connection, account)
             const encryptionKey = getEncryptionKey()
             const encrypted = await encrypt(authKey, encryptionKey)
+            if (getEncryptionKey() !== encryptionKey) throw new Error('Your vault changed while saving. Unlock it and try again.')
             await updateConnection(accountId, connection.id, {
-                credentials: { ...connection.credentials, authKey: encrypted },
+                credentials: {
+                    ...connection.credentials,
+                    authKey: encrypted,
+                    ...(verified.userId ? { userId: verified.userId } : {}),
+                },
                 status: 'active',
             })
             toast({ title: 'Stremio session refreshed' })
@@ -259,6 +309,7 @@ function StremioCredentialsSection({ accountId, connection }: { accountId: strin
                                         />
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => setShowPassword(s => !s)}
                                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -359,9 +410,11 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
         setDeleting(true)
         setError(null)
         try {
-            const account = useAccountStore.getState().accounts.find(a => a.id === accountId)
-            const encryptedKey = account ? getStremioAuthKey(account) : null
-            if (!encryptedKey) throw new Error('No auth key found for this account')
+            // THIS connection's sealed key, never the account-level canonical one: deleting
+            // a remote Stremio account is irreversible, and the canonical key would destroy
+            // the wrong login's account when a secondary card is open.
+            const encryptedKey = stremioConnectionAuthKey(connection)
+            if (!encryptedKey) throw new Error('No auth key stored for this connection')
             const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
             await stremioClient.deleteUser(authKey, password)
             removeConnection(accountId, connection.id)
@@ -374,7 +427,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
     }
 
     return (
-        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 shadow-sm space-y-3">
+        <div data-theme-tone="status" data-theme-part="panel" className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold text-destructive">Delete Stremio account</p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -397,6 +450,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
                     />
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setShowPassword(s => !s)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -405,7 +459,7 @@ function StremioDangerZoneSection({ accountId, connection }: { accountId: string
                     </button>
                 </div>
                 {error && (
-                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                 )}
             </div>
             <div className="flex items-center justify-end gap-1.5">
@@ -435,7 +489,7 @@ function RemoveConnectionSection({ accountId, connection, onBack }: { accountId:
     const [confirmRemove, setConfirmRemove] = useState(false)
 
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
             <div className="min-w-0">
                 <p className="text-sm font-semibold">Remove connection</p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -557,7 +611,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
         setTesting(true)
         setTestResult(null)
         try {
-            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'nuvio'))
+            const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'nuvio', connection.credentials?.baseUrl))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
         } catch (err) {
@@ -576,18 +630,9 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
                 description="Re-authenticate to refresh your session tokens."
                 layoutId="nuvio-reauth-method"
                 headerAction={
-                    <Button
-                        variant="subtle"
-                        size="sm"
-                        className="h-8 shrink-0 gap-1.5 text-xs"
-                        onClick={handleTest}
-                        disabled={testing}
-                    >
-                        {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                        {testing ? 'Testing...' : 'Test Connection'}
-                    </Button>
+                    <ConnectionTestButton testing={testing} onClick={handleTest} />
                 }
-                footer={<TestResultBanner result={testResult} />}
+                footer={<ConnectionTestResult result={testResult} />}
                 methods={[
                     {
                         id: 'password',
@@ -623,6 +668,7 @@ function NuvioCredentialsSection({ accountId, connection }: { accountId: string;
                                         />
                                         <button
                                             type="button"
+                                            data-theme-part="button"
                                             onClick={() => setShowPassword(s => !s)}
                                             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                             aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -730,6 +776,8 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
         setTesting(true)
         setTestResult(null)
         try {
+            // Beta's RealStream token path never passes a baseUrl (self-hosted
+            // RealStream is gone), so the test must match it exactly.
             const token = await withTimeout(fetchConnectionToken(accountId, connection.id, 'realstream'))
             setTestResult({ ok: true, message: `Session healthy (token expires ${new Date(token.expiresAt).toLocaleString()})` })
             toast({ title: 'Connection healthy' })
@@ -747,18 +795,9 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
             title="RealStream credentials"
             description="Re-authenticate to refresh your session tokens."
             headerAction={
-                <Button
-                    variant="subtle"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5 text-xs"
-                    onClick={handleTest}
-                    disabled={testing}
-                >
-                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {testing ? 'Testing...' : 'Test Connection'}
-                </Button>
+                <ConnectionTestButton testing={testing} onClick={handleTest} />
             }
-            footer={<TestResultBanner result={testResult} />}
+            footer={<ConnectionTestResult result={testResult} />}
             methods={[
                 {
                     id: 'password',
@@ -794,6 +833,7 @@ function RealStreamCredentialsSection({ accountId, connection }: { accountId: st
                                     />
                                     <button
                                         type="button"
+                                        data-theme-part="button"
                                         onClick={() => setShowPassword(s => !s)}
                                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                         aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -885,18 +925,9 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
             title="Hydra API key"
             description="Update the API key used to push to this outbound server."
             headerAction={
-                <Button
-                    variant="subtle"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1.5 text-xs"
-                    onClick={handleTest}
-                    disabled={testing}
-                >
-                    {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                    {testing ? 'Testing...' : 'Test Connection'}
-                </Button>
+                <ConnectionTestButton testing={testing} onClick={handleTest} />
             }
-            footer={<TestResultBanner result={testResult} />}
+            footer={<ConnectionTestResult result={testResult} />}
             methods={[
                 {
                     id: 'apikey',
@@ -918,6 +949,7 @@ function HydraCredentialsSection({ accountId, connection }: { accountId: string;
                                     />
                                     <button
                                         type="button"
+                                        data-theme-part="button"
                                         onClick={() => setShowKey(s => !s)}
                                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                         aria-label={showKey ? 'Hide key' : 'Show key'}
@@ -959,8 +991,10 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
         setLoading(true)
         setError(null)
         try {
-            const encryptedKey = getStremioAuthKey(account)
-            if (!encryptedKey) throw new Error('No auth key found')
+            // Supporters profiles belong to the login being edited; the canonical key
+            // would list a different user's profiles on a secondary card.
+            const encryptedKey = stremioConnectionAuthKey(connection)
+            if (!encryptedKey) throw new Error('No auth key stored for this connection')
             const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
             const user = await stremioClient.getUser(authKey)
             selfUserId.current = user._id || ''
@@ -975,7 +1009,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
         } finally {
             setLoading(false)
         }
-    }, [account])
+    }, [account, connection])
 
     useEffect(() => { loadProfiles() }, [loadProfiles])
 
@@ -1049,9 +1083,12 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
         claims.get(profileClaimKey({ platform: 'stremio', profileId }))
 
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
-            <div className="min-w-0">
-                <p className="text-sm font-semibold">Supporters profiles</p>
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+            {/* Same section head vocabulary as the Nuvio profile roster so both
+                connection surfaces read as one layout language: live count and
+                reload, never an invented number. */}
+            <TabToolbar label="Supporters profiles" count={loading ? undefined : profiles.length} loading={loading} onReload={() => { void loadProfiles() }} icon={<Users className="h-3.5 w-3.5" />} />
+            <div className="-mt-2.5 min-w-0">
                 <p className="text-xs text-muted-foreground">Each Supporters profile can become its own fully managed account.</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground/80">
                     Adding a profile as an account makes it a full account, just like the ones you already manage: its own addons, its own watch history. It stays on the same Stremio login and nothing changes on Stremio. You can delete the account anytime.
@@ -1064,7 +1101,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                 </div>
             ) : error ? (
                 <>
-                    <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
+                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2 text-xs text-destructive">{error}</div>
                     <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={loadProfiles}>
                         <RefreshCw className="h-3.5 w-3.5" /> Retry
                     </Button>
@@ -1092,7 +1129,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                     </div>
 
                     {pasteFor && (
-                        <div className="rounded-2xl border border-border/40 bg-card p-3 space-y-2.5 shadow-sm">
+                        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card p-3 space-y-2.5 shadow-sm">
                             <p className="text-xs font-medium">Add <strong>{pasteFor.name}</strong> as its own account</p>
                             <div className="space-y-1">
                                 <Label htmlFor={`supporters-name-${pasteFor.id}`} className="text-[11px] text-muted-foreground">Account name</Label>
@@ -1128,9 +1165,10 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                 </>
             )}
 
-            <div className="rounded-xl border border-border/30 bg-muted/20">
+            <div data-theme-part="panel" className="rounded-xl border border-border/30 bg-muted/20">
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={() => setShowKeyHelp(s => !s)}
                     className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
                 >
@@ -1154,6 +1192,7 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
                                 <span className="min-w-0 flex-1">
                                     Open the browser console (<kbd className="px-1 py-0.5 rounded bg-muted border border-border text-[10px]">F12</kbd>) and run:
                                     <pre
+                                        data-theme-part="field"
                                         className="mt-1 select-all cursor-pointer overflow-x-auto rounded-lg bg-muted/60 border border-border/40 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:bg-muted transition-colors"
                                         onClick={(e) => {
                                             const target = e.currentTarget
@@ -1181,21 +1220,35 @@ function SupportersProfilesRoster({ accountId, connection }: { accountId: string
     )
 }
 
-function StremioAddonsSection({ accountId }: { accountId: string }) {
+function ConnectionAddonsSection({ accountId, platform }: { accountId: string; platform: string }) {
     const { addons } = useAddons(accountId)
+    const platformName = getPlatformEntry(platform)?.name || platform
+
+    // This list is AIOManager's recorded collection for the account. It is not a
+    // fresh read from the platform (RealStream especially exposes no live addon
+    // read here), so the note says what the rows actually are.
+    const note = (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+            This is the account's recorded AIOManager collection. Check {platformName} to confirm its current addons.
+        </p>
+    )
 
     if (addons.length === 0) {
         return (
-            <EmptyState
-                icon={<Puzzle className="h-5 w-5" />}
-                title="No addons found"
-                description="Addons installed on this Stremio account will appear here."
-            />
+            <div className="space-y-2">
+                {note}
+                <EmptyState
+                    icon={<Puzzle className="h-5 w-5" />}
+                    title="No addons recorded"
+                    description="Addons recorded for this account will appear here."
+                />
+            </div>
         )
     }
 
     return (
         <div className="space-y-1.5">
+            {note}
             {addons.map((addon, i) => {
                 const name = addon.metadata?.customName || addon.transportName || addon.manifest.name || 'Unknown addon'
                 const logo = addon.metadata?.customLogo || addon.manifest.logo
@@ -1203,6 +1256,7 @@ function StremioAddonsSection({ accountId }: { accountId: string }) {
                 return (
                     <div
                         key={`${addon.transportUrl}-${i}`}
+                        data-theme-part="panel"
                         className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
                     >
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 overflow-hidden">
@@ -1223,6 +1277,7 @@ function StremioAddonsSection({ accountId }: { accountId: string }) {
                             )}
                         </div>
                         <span
+                            data-theme-part="badge"
                             className={cn(
                                 'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',
                                 enabled ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'
@@ -1239,15 +1294,52 @@ function StremioAddonsSection({ accountId }: { accountId: string }) {
 
 function StatCard({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-2xl border border-border/40 bg-card/50 px-3.5 py-3 shadow-sm">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 px-3.5 py-3 shadow-sm">
             <p className="text-lg font-semibold leading-tight">{value}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5">{label}</p>
         </div>
     )
 }
 
+function HeaderStat({ label, value, isError, wide }: { label: string; value: string; isError?: boolean; wide?: boolean }) {
+    return (
+        <div className={cn('min-w-0', wide && 'col-span-2 sm:col-span-4')}>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+            <p className={cn('mt-0.5 text-xs font-medium', wide ? 'break-words' : 'truncate', isError ? 'text-destructive' : 'text-foreground/80')}>{value}</p>
+        </div>
+    )
+}
+
+// The same four facts render on every platform's detail surface, so no connection reads
+// thinner than the others. The Session entry is the platform's honest re-auth state:
+// a stored Stremio auth key proves the key is saved, not that Stremio is reachable,
+// so the label never claims live presence.
+function sessionState(connection: Connection, display: string): string {
+    // Hydra-outbound connections can carry a platform-like slug (e.g. a target
+    // named "Nuvio"), so the outbound check must come before platform checks
+    // or an outbound connection would show the slug platform's auth expectations.
+    if (connection.connectionType === 'hydra-outbound') return 'Static API key'
+    if (connection.platform === 'stremio') {
+        if (display === 'expired') return 'Re-auth required'
+        return connection.credentials?.authKey ? 'Auth key stored' : 'Sign in required'
+    }
+    if (connection.platform === 'nuvio') {
+        // A stored access token only proves a session is saved. It does not by
+        // itself prove refresh works, so the label never claims auto-refresh;
+        // an expired or failing session says so instead.
+        if (display === 'expired' || display === 'error') return 'Re-auth required'
+        return connection.credentials?.accessToken ? 'Session stored' : 'Sign in required'
+    }
+    if (connection.platform === 'realstream') {
+        if (display === 'expired' || display === 'error') return 'Re-auth required'
+        return connection.credentials?.password ? 'Silent re-auth ready' : 'Manual re-auth'
+    }
+    return connection.credentials?.accessToken ? 'Session stored' : 'No session'
+}
+
 function StremioLibrarySection({ accountId }: { accountId: string }) {
-    const { history, loading } = useWatchHistory(accountId)
+    const { history: accountHistory, loading } = useWatchHistory(accountId)
+    const history = useMemo(() => accountHistory.filter(entry => !entry.source || entry.source === 'stremio'), [accountHistory])
 
     const stats = useMemo(() => {
         let movies = 0
@@ -1308,6 +1400,7 @@ function StremioLibrarySection({ accountId }: { accountId: string }) {
                     {stats.topShows.map(([name, count], i) => (
                         <div
                             key={name}
+                            data-theme-part="panel"
                             className="flex items-center gap-3 rounded-2xl border border-border/40 bg-card shadow-sm px-3.5 py-2.5"
                         >
                             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/60 text-[11px] font-bold text-muted-foreground">
@@ -1329,6 +1422,8 @@ export function ConnectionEditPanel({
     accountId,
     connection,
     status,
+    lastError,
+    lastSync,
     premium,
     nuvioMember,
     onBack,
@@ -1336,30 +1431,38 @@ export function ConnectionEditPanel({
     accountId: string
     connection: Connection
     status: ConnectionStatus
+    lastError?: string | null
+    lastSync?: number
     premium?: PremiumStatus
     nuvioMember?: NuvioMemberStatus
     onBack: () => void
 }) {
     const account = useAccountStore(s => s.accounts.find(a => a.id === accountId))
+    const { addons } = useAddons(accountId)
     const [testing, setTesting] = useState(false)
     const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
     const [tab, setTab] = useState('membership')
     const isHydra = connection.connectionType === 'hydra-outbound'
     const isStremio = connection.platform === 'stremio'
     const isNuvio = connection.platform === 'nuvio'
-    const showTabs = isStremio || isNuvio
+    const isRealStream = connection.platform === 'realstream'
+    const showTabs = isStremio || isNuvio || isRealStream
     const name = connectionLabel(connection)
     const expiry = tokenExpiry(connection)
     const display = displayStatus(status, expiry)
+    const session = sessionState(connection, display)
+    const needsAttention = !!lastError || session === 'Re-auth required' || session === 'Sign in required'
 
     const handleTestConnection = async () => {
         if (!account) return
         setTesting(true)
         setTestResult(null)
         try {
-            const encryptedKey = getStremioAuthKey(account)
+            // Verify THIS connection's session. The account-level key would test the
+            // canonical login and report a secondary's broken session as healthy.
+            const encryptedKey = stremioConnectionAuthKey(connection)
             if (!encryptedKey) {
-                throw new Error('No auth key found for this account')
+                throw new Error('No auth key stored for this connection')
             }
             const authKey = await getCachedAuthKey(encryptedKey, getEncryptionKey())
             const user = await withTimeout(stremioClient.getUser(authKey))
@@ -1382,13 +1485,14 @@ export function ConnectionEditPanel({
                     Connections
                 </Button>
             </ToolbarShell>
-            <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
+            <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                     <PlatformLogo platform={connection.platform} className="h-12 w-12 shrink-0" isHydra={isHydra} />
                     <div className="min-w-0 flex-1">
                         <p className="text-base font-semibold truncate">{name}</p>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <ConnectionStatusPill status={display} />
+                            {!connection.enabled && <StatusChip size="sm" className="h-5 px-2 text-xs bg-muted/40">Paused</StatusChip>}
                             {isHydra && <StatusChip size="sm" className="h-5 px-2 text-xs bg-muted/40">Outbound</StatusChip>}
                             {connection.capabilities.map(c => (
                                 <StatusChip key={c} size="sm" className="h-5 px-2 text-xs bg-muted/40">{c}</StatusChip>
@@ -1396,21 +1500,40 @@ export function ConnectionEditPanel({
                         </div>
                     </div>
                 </div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-border/30 pt-3 sm:grid-cols-4">
+                    <HeaderStat
+                        label="Account addons"
+                        value={String(addons.length)}
+                    />
+                    <HeaderStat label="Last sync" value={lastSync ? timeAgo(lastSync) : 'Never'} />
+                    <HeaderStat label="Last error" value={lastError || 'None'} isError={!!lastError} wide={!!lastError} />
+                    <HeaderStat label="Session" value={session} isError={session === 'Re-auth required'} />
+                </div>
+                {showTabs && needsAttention && (
+                    <button
+                        type="button"
+                        data-theme-part="button"
+                        onClick={() => setTab('connection')}
+                        className="mt-2.5 inline-flex items-center gap-1 rounded-md text-xs font-medium text-primary transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        Test or re-authenticate this connection
+                        <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                )}
             </div>
 
             {showTabs ? (
-                <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-                    <TabsList>
+                <WorkspaceTabs label={`${name} workspace`} value={tab} onValueChange={setTab} contentClassName="[&_[data-theme-part=panel]]:shadow-none [&>[data-theme-part=tab-panel]>[data-theme-part=panel]]:rounded-none [&>[data-theme-part=tab-panel]>[data-theme-part=panel]]:border-0 [&>[data-theme-part=tab-panel]>[data-theme-part=panel]]:bg-transparent [&>[data-theme-part=tab-panel]>[data-theme-part=panel]]:p-0" tabs={<>
                         <TabsTrigger value="membership">Membership</TabsTrigger>
                         <TabsTrigger value="connection">Connection</TabsTrigger>
                         {isStremio && premium?.active && (
                             <TabsTrigger value="profiles">Supporters Profiles</TabsTrigger>
                         )}
+                        {(isStremio || isRealStream) && (
+                            <TabsTrigger value="addons">Addons</TabsTrigger>
+                        )}
                         {isStremio && (
-                            <>
-                                <TabsTrigger value="addons">Addons</TabsTrigger>
-                                <TabsTrigger value="library">Library</TabsTrigger>
-                            </>
+                            <TabsTrigger value="library">Library</TabsTrigger>
                         )}
                         {isNuvio && (
                             <>
@@ -1421,7 +1544,7 @@ export function ConnectionEditPanel({
                                 <TabsTrigger value="nuvio-backup">Backup</TabsTrigger>
                             </>
                         )}
-                    </TabsList>
+                    </>}>
 
                     <TabsContent value="membership">
                         <ConnectionMembershipTab platform={connection.platform} premium={premium} nuvioMember={nuvioMember} />
@@ -1431,24 +1554,15 @@ export function ConnectionEditPanel({
                         <div className="space-y-4">
                             {isStremio && (
                                 <>
-                                    <div className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
+                                    <div data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-4 shadow-sm space-y-3">
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="min-w-0">
                                                 <p className="text-sm font-semibold">Connection health</p>
                                                 <p className="text-xs text-muted-foreground">Verify the Stremio auth key is valid and reachable.</p>
                                             </div>
-                                            <Button
-                                                variant="subtle"
-                                                size="sm"
-                                                className="h-8 shrink-0 gap-1.5 text-xs"
-                                                onClick={handleTestConnection}
-                                                disabled={testing || !account}
-                                            >
-                                                {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                                                {testing ? 'Testing...' : 'Test Connection'}
-                                            </Button>
+                                            <ConnectionTestButton testing={testing} onClick={handleTestConnection} disabled={!account} />
                                         </div>
-                                        <TestResultBanner result={testResult} />
+                                        <ConnectionTestResult result={testResult} />
                                     </div>
                                     <StremioCredentialsSection accountId={accountId} connection={connection} />
                                     <StremioDangerZoneSection accountId={accountId} connection={connection} />
@@ -1476,15 +1590,15 @@ export function ConnectionEditPanel({
                             <SupportersProfilesRoster accountId={accountId} connection={connection} />
                         </TabsContent>
                     )}
+                    {(isStremio || isRealStream) && (
+                        <TabsContent value="addons">
+                            <ConnectionAddonsSection accountId={accountId} platform={connection.platform} />
+                        </TabsContent>
+                    )}
                     {isStremio && (
-                        <>
-                            <TabsContent value="addons">
-                                <StremioAddonsSection accountId={accountId} />
-                            </TabsContent>
-                            <TabsContent value="library">
-                                <StremioLibrarySection accountId={accountId} />
-                            </TabsContent>
-                        </>
+                        <TabsContent value="library">
+                            <StremioLibrarySection accountId={accountId} />
+                        </TabsContent>
                     )}
 
                     {isNuvio && (
@@ -1506,13 +1620,9 @@ export function ConnectionEditPanel({
                             </TabsContent>
                         </>
                     )}
-                </Tabs>
+                </WorkspaceTabs>
             ) : (
                 <div className="space-y-4">
-                    {connection.platform === 'realstream' && (
-                        <RealStreamCredentialsSection accountId={accountId} connection={connection} />
-                    )}
-
                     {isHydra && (
                         <HydraCredentialsSection accountId={accountId} connection={connection} />
                     )}

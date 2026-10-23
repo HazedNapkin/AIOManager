@@ -1,27 +1,28 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { AppLoader } from '@/components/common/LoadingScreen'
+import { lazyChunk } from '@/lib/lazy-chunk'
 
-const AccountsPage = lazy(() => import('@/pages/AccountsPage').then(m => ({ default: m.AccountsPage })))
-const AccountDetailPage = lazy(() => import('@/pages/AccountDetailPage').then(m => ({ default: m.AccountDetailPage })))
-const SavedAddonsPage = lazy(() => import('@/pages/SavedAddonsPage').then(m => ({ default: m.SavedAddonsPage })))
-const AIOStreamsPage = lazy(() => import('@/pages/AIOStreamsPage').then(m => ({ default: m.AIOStreamsPage })))
-const AIOMetadataPage = lazy(() => import('@/pages/AIOMetadataPage').then(m => ({ default: m.AIOMetadataPage })))
+const AccountsPage = lazyChunk(() => import('@/pages/AccountsPage').then(m => ({ default: m.AccountsPage })))
+const AccountDetailPage = lazyChunk(() => import('@/pages/AccountDetailPage').then(m => ({ default: m.AccountDetailPage })))
+const SavedAddonsPage = lazyChunk(() => import('@/pages/SavedAddonsPage').then(m => ({ default: m.SavedAddonsPage })))
+const AIOStreamsPage = lazyChunk(() => import('@/pages/AIOStreamsPage').then(m => ({ default: m.AIOStreamsPage })))
+const AIOMetadataPage = lazyChunk(() => import('@/pages/AIOMetadataPage').then(m => ({ default: m.AIOMetadataPage })))
 
-const KronoriumPage = lazy(() => import('@/pages/kronorium/KronoriumPage').then(m => ({ default: m.KronoriumPage })))
-const KronoriumDocsLayout = lazy(() => import('@/components/kronorium/KronoriumDocsLayout').then(m => ({ default: m.KronoriumDocsLayout })))
+const KronoriumPage = lazyChunk(() => import('@/pages/kronorium/KronoriumPage').then(m => ({ default: m.KronoriumPage })))
+const KronoriumDocsLayout = lazyChunk(() => import('@/components/kronorium/KronoriumDocsLayout').then(m => ({ default: m.KronoriumDocsLayout })))
 
-const ReplayPage = lazy(() => import('@/pages/ReplayPage').then(m => ({ default: m.ReplayPage })))
-const ReplaySharePage = lazy(() => import('@/pages/ReplaySharePage').then(m => ({ default: m.ReplaySharePage })))
-const ActivityPage = lazy(() => import('@/pages/ActivityPage').then(m => ({ default: m.ActivityPage })))
-const MetricsPage = lazy(() => import('@/pages/MetricsPage').then(m => ({ default: m.MetricsPage })))
-const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
-const NotesPage = lazy(() => import('@/pages/NotesPage').then(m => ({ default: m.NotesPage })))
-const VaultPage = lazy(() => import('@/pages/VaultPage').then(m => ({ default: m.VaultPage })))
-const ThemeEditorPage = lazy(() => import('@/pages/ThemeEditorPage').then(m => ({ default: m.ThemeEditorPage })))
+const ReplayPage = lazyChunk(() => import('@/pages/ReplayPage').then(m => ({ default: m.ReplayPage })))
+const ReplaySharePage = lazyChunk(() => import('@/pages/ReplaySharePage').then(m => ({ default: m.ReplaySharePage })))
+const ActivityPage = lazyChunk(() => import('@/pages/ActivityPage').then(m => ({ default: m.ActivityPage })))
+const MetricsPage = lazyChunk(() => import('@/pages/MetricsPage').then(m => ({ default: m.MetricsPage })))
+const SettingsPage = lazyChunk(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
+const NotesPage = lazyChunk(() => import('@/pages/NotesPage').then(m => ({ default: m.NotesPage })))
+const VaultPage = lazyChunk(() => import('@/pages/VaultPage').then(m => ({ default: m.VaultPage })))
+const ThemeEditorPage = lazyChunk(() => import('@/pages/ThemeEditorPage').then(m => ({ default: m.ThemeEditorPage })))
 const fallback = <AppLoader variant="route" />
 
 export function AppRoutes() {

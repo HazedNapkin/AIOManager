@@ -23,6 +23,7 @@ import { getTagColor } from '@/lib/tag-utils'
 import { HighlightText } from '@/components/ui/highlight-text'
 import { Tooltip } from '@/components/ui/tooltip'
 import { SavedAddonDeploymentBadge } from './SavedAddonDeploymentBadge'
+import { PlatformSourceChip } from '@/components/addons/PlatformSourceChip'
 import { SavedAddonIcon } from './SavedAddonIcon'
 import { useSavedAddonActions } from './hooks/useSavedAddonActions'
 import { SourceUrlBox } from '@/components/addons/SourceUrlBox'
@@ -101,8 +102,11 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
   return (
     <>
       <div
+        data-theme-part="addon-card"
+        data-selected={Boolean(isSelected)}
         {...longPressProps}
         role={isSelectionMode ? "button" : undefined}
+        aria-pressed={isSelectionMode ? Boolean(isSelected) : undefined}
         tabIndex={isSelectionMode ? 0 : undefined}
         className={cn(
           "group flex flex-col h-full relative rounded-2xl p-3 sm:p-5 border transition-[transform,opacity,box-shadow] duration-200",
@@ -120,7 +124,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
         onKeyDown={isSelectionMode ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCardActivate() } } : undefined}
       >
         {isSelected && (
-          <div className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center border-2 border-background shadow-lg bg-primary">
+          <div data-theme-part="checkbox" data-state="checked" className="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full flex items-center justify-center border-2 border-background shadow-lg bg-primary">
             <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
@@ -182,7 +186,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     if (!params.tag && !params.variant) return null
                     return (
                       <Tooltip content={`Params: ${params.tag ? `tag=${params.tag}` : ''}${params.tag && params.variant ? ', ' : ''}${params.variant ? `v=${params.variant}` : ''}`}>
-                        <span aria-label="Has addon params" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                        <span aria-label="Has addon params" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
                           {params.tag ? <Tag className="h-3 w-3" /> : <Layers className="h-3 w-3" />}
                         </span>
                       </Tooltip>
@@ -191,13 +195,13 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   {savedAddon.syncWithInstalled && (
                     hasUpdate ? (
                       <Tooltip content={`${manifestChangeLabel || 'A newer version is available to push to your installed accounts'} (${getSyncScopeLabel(savedAddon.syncAccountIds)})`}>
-                        <span aria-label="Update ready" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                        <span aria-label="Update ready" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
                           <ArrowUpCircle className="h-3 w-3" />
                         </span>
                       </Tooltip>
                     ) : (
                       <Tooltip content={`In sync with your installed accounts (${getSyncScopeLabel(savedAddon.syncAccountIds)})`}>
-                        <span aria-label="In sync" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
+                        <span aria-label="In sync" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-success/20 bg-success/10 text-success">
                           <Link2 className="h-3 w-3" />
                         </span>
                       </Tooltip>
@@ -205,14 +209,14 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   )}
                   {savedAddon.sourceType === 'cloned-from-account' && (
                     <Tooltip content="Cloned addon">
-                      <span aria-label="Cloned addon" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                      <span aria-label="Cloned addon" data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
                         <Copy className="h-3 w-3" />
                       </span>
                     </Tooltip>
                   )}
                   {hasManifestShapeChange && (
                     <Tooltip content={manifestChangeLabel || 'Manifest catalogs or resources changed'}>
-                      <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
+                      <span aria-label={manifestChangeLabel || 'Manifest catalogs or resources changed'} data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-warning/20 bg-warning/10 text-warning">
                         <FileEdit className="h-3 w-3" />
                       </span>
                     </Tooltip>
@@ -222,7 +226,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     if (status.status === 'restoring') {
                       return (
                         <Tooltip content="Restoring...">
-                          <span aria-label="Restoring..." className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
+                          <span aria-label="Restoring..." data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-primary/20 bg-primary/10 text-primary">
                             <Loader2 className="h-3 w-3 animate-spin" />
                           </span>
                         </Tooltip>
@@ -231,7 +235,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                     if (status.circuitState === 'open') {
                       return (
                         <Tooltip content="Auto-restore disabled after repeated failures. 30m cooldown.">
-                          <span aria-label="Auto-restore disabled after repeated failures. 30m cooldown." className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive">
+                          <span aria-label="Auto-restore disabled after repeated failures. 30m cooldown." data-theme-part="badge" className="inline-flex items-center justify-center rounded-full border p-1 border-destructive/20 bg-destructive/10 text-destructive">
                             <AlertCircle className="h-3 w-3" />
                           </span>
                         </Tooltip>
@@ -321,6 +325,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                 return (
                   <span
                     key={tag}
+                    data-theme-part="badge"
                     className="text-xs pointer-events-none px-1.5 py-0 rounded-full leading-5 font-medium"
                     style={{
                       background: color.bg,
@@ -334,7 +339,7 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
               })}
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-3 mt-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-2">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 {profileName && (
                   <span className="text-xs text-foreground/60 whitespace-normal break-words line-clamp-2">
@@ -342,7 +347,10 @@ export const SavedAddonCard = React.memo(function SavedAddonCard({
                   </span>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex max-w-full flex-wrap items-center gap-1.5">
+                {/* Platforms the accounts that contain this addon sync it to — derived
+                    only from the deployment summary's matching configured URLs. */}
+                <PlatformSourceChip accounts={deployedAccounts} addon={{ transportUrl: savedAddon.installUrl }} scope="addon" />
                 <SavedAddonDeploymentBadge accounts={deployedAccounts} />
                 {savedAddon.createdAt && (
                   <span className="text-xs text-muted-foreground/60 tabular-nums shrink-0">

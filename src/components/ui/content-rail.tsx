@@ -71,7 +71,7 @@ export const ContentRailCard = memo(function ContentRailCard({
             )}
             onClick={onClick}
         >
-            <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-border/30 bg-muted shadow-md transition-all duration-200 group-hover:border-primary/40 group-hover:shadow-xl">
+            <div data-theme-part="card" className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl border border-border/30 bg-muted shadow-md transition-all duration-200 group-hover:border-primary/40 group-hover:shadow-xl">
                 <Poster
                     src={poster}
                     alt={title}
@@ -82,19 +82,19 @@ export const ContentRailCard = memo(function ContentRailCard({
                 />
 
                 {rank !== undefined && (
-                    <div className="absolute left-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-lg bg-black/80 px-1.5 text-xs font-black text-white shadow-md backdrop-blur-sm">
+                    <div data-theme-part="badge" className="absolute left-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-lg bg-black/80 px-1.5 text-xs font-black text-white shadow-md backdrop-blur-sm">
                         {rank}
                     </div>
                 )}
 
                 {typeof isLoved === 'boolean' && (
-                    <div className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
+                    <div data-theme-part="badge" className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
                         <Heart className={cn('h-3 w-3', isLoved ? 'fill-red-500 text-red-500' : 'text-white/50')} />
                     </div>
                 )}
 
                 {onLove && (
-                    <button
+                    <button data-theme-part="button"
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onLove() }}
                         className="absolute right-1.5 bottom-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100"
@@ -107,7 +107,7 @@ export const ContentRailCard = memo(function ContentRailCard({
                 {watchers && watchers.length > 0 && (
                     <div className="absolute bottom-1.5 left-1.5 flex items-center -space-x-1.5">
                         {watchers.slice(0, 3).map(w => (
-                            <div key={w.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
+                            <div data-theme-part="avatar" key={w.id} className="h-5 w-5 rounded-full border border-background overflow-hidden bg-card shadow-sm flex items-center justify-center">
                                 {w.avatar ? (
                                     <img src={w.avatar} alt="" className="h-full w-full object-cover" loading="lazy" />
                                 ) : w.emoji ? (
@@ -118,7 +118,7 @@ export const ContentRailCard = memo(function ContentRailCard({
                             </div>
                         ))}
                         {watchers.length > 3 && (
-                            <div className="h-5 w-5 rounded-full border border-background bg-card shadow-sm flex items-center justify-center">
+                            <div data-theme-part="avatar" className="h-5 w-5 rounded-full border border-background bg-card shadow-sm flex items-center justify-center">
                                 <span className="text-[8px] font-bold text-muted-foreground">+{watchers.length - 3}</span>
                             </div>
                         )}
@@ -127,7 +127,7 @@ export const ContentRailCard = memo(function ContentRailCard({
 
                 {onDismiss && (
                     <div className="absolute right-1.5 top-1.5 z-10 opacity-0 transition-opacity group-hover:opacity-100">
-                        <button
+                        <button data-theme-part="button"
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onDismiss() }}
                             className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white shadow-sm backdrop-blur-sm hover:bg-destructive"
@@ -178,7 +178,7 @@ export function ContentRail({
     }
 
     return (
-        <section className={cn(
+        <section data-theme-part="panel" className={cn(
             'rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm',
             className,
         )}>
@@ -195,7 +195,7 @@ export function ContentRail({
                         <span className="text-xs font-medium text-muted-foreground">{count} {countLabel || 'titles'}</span>
                     )}
                     {showGridToggle && (
-                        <button
+                        <button data-theme-part="button"
                             type="button"
                             onClick={() => setGridMode(g => !g)}
                             className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
@@ -206,7 +206,7 @@ export function ContentRail({
                     )}
                     {!gridMode && (
                         <>
-                            <button
+                            <button data-theme-part="button"
                                 type="button"
                                 onClick={() => scroll('left')}
                                 className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
@@ -214,7 +214,7 @@ export function ContentRail({
                             >
                                 <ChevronLeft className="h-4 w-4" />
                             </button>
-                            <button
+                            <button data-theme-part="button"
                                 type="button"
                                 onClick={() => scroll('right')}
                                 className="flex h-8 w-8 items-center justify-center rounded-full border border-border/40 bg-background/95 opacity-70 shadow-sm transition-all hover:bg-muted hover:opacity-100"
@@ -243,7 +243,7 @@ export function ContentRail({
 
 export function ContentRailSkeleton({ count = 6 }: { count?: number }) {
     return (
-        <section className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm">
+        <section data-theme-part="panel" className="rounded-2xl border border-border/40 bg-card/50 p-3 shadow-sm">
             <div className="flex items-center gap-2.5">
                 <Skeleton className="h-5 w-44" />
             </div>

@@ -33,6 +33,7 @@ const SavedAddonReorderRow = memo(function SavedAddonReorderRow({
 }: SavedAddonReorderRowProps) {
   return (
     <div
+      data-theme-part="addon-card"
       ref={setNodeRef}
       style={style}
       className={[

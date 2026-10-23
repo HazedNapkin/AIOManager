@@ -118,7 +118,12 @@ export function registerSyncRoutes(fastify) {
         }
 
         try {
-            const row = await db.get('SELECT value, password, content_hash FROM kv_store WHERE key = $1', [id])
+            // A conditional refresh only needs the encrypted blob when its revision changed.
+            // Keep password and revision in the same read; authentication still precedes 304.
+            const row = await db.get(
+                'SELECT CASE WHEN content_hash = $1 THEN NULL ELSE value END AS value, password, content_hash FROM kv_store WHERE key = $2',
+                [request.headers['if-none-match'] || null, id]
+            )
 
             if (!row) {
                 trace('syncRoute', 'pull.error', { accountId: id, error: 'not-found' })
@@ -178,6 +183,10 @@ export function registerSyncRoutes(fastify) {
                 }
             }
             const payloadBytes = decryptedValueStr ? decryptedValueStr.length : 0
+            // Omit push-only canonical metadata while preserving legacy payload shapes.
+            if (syncData && typeof syncData === 'object' && !Array.isArray(syncData)) {
+                delete syncData.canonicalAddons
+            }
             trace('syncRoute', 'pull.success', { accountId: id, bytes: payloadBytes, timing: Date.now() - start })
             if (row.content_hash) reply.header('ETag', row.content_hash)
             return syncData && typeof syncData === 'object' ? syncData : {}
@@ -188,9 +197,6 @@ export function registerSyncRoutes(fastify) {
             return { error: 'Server error, please try again later.' }
         }
     })
-
-
-
 
     fastify.post('/api/sync/:id', {
         config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
@@ -226,6 +232,12 @@ export function registerSyncRoutes(fastify) {
         // content_hash (over the random-IV envelope, never stable), a match proves the logical
         // content is unchanged so archive/rewrite/apiKeys churn and the updated_at bump skip.
         const clientHint = typeof data.contentHint === 'string' ? data.contentHint.slice(0, 64) : null
+        // Revision base the client applied (its lastSyncedCloudEtag). Comparing
+        // revisions mistakes no clock for another writer: a slow device clock no
+        // longer self-conflicts, and rapid concurrent writes differing by <5s
+        // still conflict via hash mismatch. Null for first pushes / legacy
+        // snapshots: those fall back to the timestamp guard below.
+        const clientBase = typeof data.baseContentHash === 'string' && data.baseContentHash ? data.baseContentHash : null
         const serverTime = new Date().toISOString()
         data.syncedAt = serverTime
         const storedStr = JSON.stringify(data)
@@ -280,24 +292,33 @@ export function registerSyncRoutes(fastify) {
                     setCachedAuth('sync:' + id, password)
                 }
 
-                if (clientHint && row.content_hint === clientHint) {
-                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hint-match', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
-                }
-
-                if (row.content_hash === contentHash) {
-                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'hash-match', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, syncedAt: serverTime, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
-                }
-
                 const serverUpdated = row.updated_at || 0
-                if (!force && clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000) {
-                    fastify.log.info({ category: 'Server' }, `Overlap for ID ${id}: client ${new Date(clientSyncedAt).toISOString()} predates server ${new Date(serverUpdated).toISOString()}, content-hash gates the write`)
+                const currentSyncedAt = serverUpdated > 0 ? new Date(Number(serverUpdated)).toISOString() : serverTime
+                // Modern clients send the revision they applied; legacy clients send
+                // only a wall-clock baseline. The revision check is authoritative when
+                // both sides carry one; otherwise the timestamp guard applies. force
+                // (explicit user action) bypasses both, unchanged.
+                const hasRevisionBase = clientBase !== null && row.content_hash != null
+                const revisionConflict = hasRevisionBase && clientBase !== row.content_hash
+                const clockConflict = clientSyncedAt > 0 && serverUpdated > 0 && clientSyncedAt < serverUpdated - 5000
+                if (!force && (hasRevisionBase ? revisionConflict : clockConflict)) {
+                    const detail = hasRevisionBase
+                        ? 'cloud revision changed since the client pull'
+                        : 'legacy client timestamp predates server state'
+                    fastify.log.info({ category: 'Server' }, 'Overlap for ID ' + id + ': ' + detail + ', content-hash gates the write')
                     trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'conflict', keysChanged, timing: Date.now() - postStart })
-                    if (keysChanged) await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
-                    return { success: true, conflict: true, syncedAt: serverTime, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
+                    // A rejected snapshot cannot replace the winner's key registry.
+                    return { success: true, conflict: true, syncedAt: currentSyncedAt, contentHash: row.content_hash ?? null, serverStremioCredentialedAccounts }
+                }
+
+                // Revision checks precede even the no-op paths: a stale hint cannot
+                // certify rejected local state or replace the winning key registry.
+                if ((clientHint && row.content_hint === clientHint) || row.content_hash === contentHash) {
+                    trace('syncRoute', 'push.success', { accountId: id, skipped: true, reason: 'unchanged', keysChanged, timing: Date.now() - postStart })
+                    if (keysChanged && data.apiKeys && typeof data.apiKeys === 'object') {
+                        await registerApiKeys(tx, id, data.apiKeys, Array.isArray(data.accounts) ? data.accounts : null)
+                    }
+                    return { success: true, syncedAt: currentSyncedAt, skipped: true, contentHash: row.content_hash, serverStremioCredentialedAccounts }
                 }
 
                 await archiveCurrentKV(tx, id, id)
@@ -547,6 +568,8 @@ export function registerSyncRoutes(fastify) {
             await tx.run('DELETE FROM kv_store_history WHERE key = $1', [id])
         })
         invalidateCachedAuth('sync:' + id)
+        const { invalidateConnectionCache } = await import('../providers/reconciler.js')
+        invalidateConnectionCache(id)
         trace('syncRoute', 'delete.success', { accountId: id, timing: Date.now() - delStart })
 
         return { success: true }

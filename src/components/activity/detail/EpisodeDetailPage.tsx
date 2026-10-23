@@ -14,6 +14,7 @@ import { useUIStore } from '@/store/uiStore'
 import { AccountAvatar } from '@/components/accounts/AccountAvatar'
 import { maskedDisplayName } from '@/components/common/AccountSwitcher'
 import { Tooltip } from '@/components/ui/tooltip'
+import type { EpisodeWatcherIndex } from '@/lib/episode-watchers'
 
 export interface EpisodeDetailPageProps {
     seriesName: string
@@ -32,6 +33,8 @@ export interface EpisodeDetailPageProps {
     hasNextSeason?: boolean
     onPersonClick: (person: { name: string; photo?: string }, role: string) => void
     onAccountClick?: (accountId: string, accountName: string) => void
+    /** Household completion evidence shared with the series episode list. */
+    episodeWatchers?: EpisodeWatcherIndex
     onGoBack: () => void
     onClose: () => void
     onNavigateEpisode?: (seasonNumber: number, episodeNumber: number) => void
@@ -54,6 +57,7 @@ export function EpisodeDetailPage({
     hasNextSeason,
     onPersonClick,
     onAccountClick,
+    episodeWatchers,
     onGoBack,
     onClose,
     onNavigateEpisode,
@@ -153,12 +157,15 @@ export function EpisodeDetailPage({
 
     const events = useWatchEventStore(s => s.events)
     const accounts = useAccountStore(s => s.accounts)
+    const visibleAccounts = useMemo(() => new Map(accounts.filter(account => !account.hideLastWatched).map(account => [account.id, account])), [accounts])
     const isPrivacyModeEnabled = useUIStore(s => s.isPrivacyModeEnabled)
     const privacyLevelNames = useUIStore(s => s.privacyLevelNames)
 
     const episodeWatchStats = useMemo(() => {
-        if (!seriesImdbId) return null
+        const sharedWatchers = (episodeWatchers?.get(seasonNumber)?.get(episodeNumber) ?? [])
+            .filter(watcher => visibleAccounts.has(watcher.id))
         const exact = events.filter(e =>
+            !!seriesImdbId && visibleAccounts.has(e.accountId) &&
             e.itemId === seriesImdbId &&
             e.season === seasonNumber &&
             e.episode === episodeNumber
@@ -168,18 +175,23 @@ export function EpisodeDetailPage({
         // fall back to matching the episode number across seasons.
         const matches = exact.length > 0 || !isAnime
             ? exact
-            : events.filter(e => e.itemId === seriesImdbId && e.episode === episodeNumber)
-        if (matches.length === 0) return null
-        const accountIds = new Set(matches.map(e => e.accountId))
-        const totalTime = matches.reduce((sum, e) => sum + (e.time_watched || 0), 0)
-        const latest = matches.reduce((max, e) => Math.max(max, e.detected_ts || e.event_ts || 0), 0)
+            : events.filter(e => !!seriesImdbId && visibleAccounts.has(e.accountId) && e.itemId === seriesImdbId && e.episode === episodeNumber)
+        if (matches.length === 0 && sharedWatchers.length === 0) return null
+        const accountIds = new Set([
+            ...sharedWatchers.map(watcher => watcher.id),
+            ...matches.map(e => e.accountId),
+        ])
+        const totalTime = matches.reduce((sum, e) => sum + (e.backfill ? 0 : e.time_watched || 0), 0)
+        // Recovered watches and the shared avatar ordering carry observation times,
+        // not watch dates. Only dated events can populate the date label.
+        const latest = matches.reduce((max, e) => e.backfill ? max : Math.max(max, e.event_ts || 0), 0)
         return {
             count: matches.length,
             accountIds: Array.from(accountIds),
             totalTimeMs: totalTime,
             latestTs: latest > 0 ? new Date(latest) : null,
         }
-    }, [events, seriesImdbId, seasonNumber, episodeNumber, isAnime])
+    }, [events, episodeWatchers, visibleAccounts, seriesImdbId, seasonNumber, episodeNumber, isAnime])
 
     return (
         <div className="flex h-[92vh] sm:h-[88vh] flex-col overflow-hidden bg-card text-card-foreground">
@@ -188,6 +200,7 @@ export function EpisodeDetailPage({
                 {/* Close button */}
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={onClose}
                     aria-label="Close"
                     className={cn('absolute right-4 top-4 z-30 flex h-9 w-9 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-all hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 active:scale-95', heroFrostedBtn)}
@@ -201,6 +214,7 @@ export function EpisodeDetailPage({
                 {/* Back button */}
                 <button
                     type="button"
+                    data-theme-part="button"
                     onClick={onGoBack}
                     className={cn('mb-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold backdrop-blur-md transition-all active:scale-95', heroGhostBtn)}
                 >
@@ -212,6 +226,7 @@ export function EpisodeDetailPage({
                     <div className="absolute right-4 top-16 z-20 flex gap-1.5">
                         <button
                             type="button"
+                            data-theme-part="button"
                             onClick={() => {
                                 if (episodeNumber > 1) {
                                     onNavigateEpisode(seasonNumber, episodeNumber - 1)
@@ -227,6 +242,7 @@ export function EpisodeDetailPage({
                         </button>
                         <button
                             type="button"
+                            data-theme-part="button"
                             onClick={() => {
                                 if (maxEpisodesInSeason != null && episodeNumber >= maxEpisodesInSeason) {
                                     if (hasNextSeason) onNavigateEpisode(seasonNumber + 1, 1)
@@ -257,11 +273,11 @@ export function EpisodeDetailPage({
 
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
+                            <span data-theme-part="badge" className="rounded-md bg-primary/85 px-2 py-0.5 text-[11px] font-bold uppercase tracking-widest text-primary-foreground">
                                 S{seasonNumber} E{episodeNumber}
                             </span>
                             {productionCode && (
-                                <span className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium', isLight ? 'border-border bg-card text-muted-foreground' : 'border-white/15 bg-white/5 text-white/60')}>
+                                <span data-theme-part="badge" className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium', isLight ? 'border-border bg-card text-muted-foreground' : 'border-white/15 bg-white/5 text-white/60')}>
                                     {productionCode}
                                 </span>
                             )}
@@ -313,12 +329,12 @@ export function EpisodeDetailPage({
 
                 {/* Synopsis card */}
                 {overview && (
-                    <div className={cn('mt-4 rounded-xl border p-2.5 text-xs leading-relaxed backdrop-blur-sm sm:p-3.5 sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
+                    <div data-theme-part="panel" className={cn('mt-4 rounded-xl border p-2.5 text-xs leading-relaxed backdrop-blur-sm sm:p-3.5 sm:text-sm', isLight ? 'border-border/40 bg-muted/30 text-muted-foreground' : 'border-white/10 bg-white/5 text-white/90')}>
                         <p className={cn(!synopsisExpanded && 'line-clamp-3 sm:line-clamp-4')}>
                             {overview}
                         </p>
                         {overview.length > 220 && (
-                            <button type="button" onClick={() => setSynopsisExpanded(!synopsisExpanded)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
+                            <button type="button" data-theme-part="button" onClick={() => setSynopsisExpanded(!synopsisExpanded)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
                                 {synopsisExpanded ? <>Show Less <ChevronUp className="h-3 w-3" /></> : <>Read More <ChevronDown className="h-3 w-3" /></>}
                             </button>
                         )}
@@ -339,7 +355,7 @@ export function EpisodeDetailPage({
                 {episodeWatchStats && (() => {
                     const totalMin = Math.round(episodeWatchStats.totalTimeMs / 60000)
                     const watcherAccounts = episodeWatchStats.accountIds
-                        .map(id => accounts.find(a => a.id === id))
+                        .map(id => visibleAccounts.get(id))
                         .filter(Boolean)
                     return (
                         <div>
@@ -356,6 +372,7 @@ export function EpisodeDetailPage({
                                                 <Tooltip key={acc!.id} content={maskedName}>
                                                     <button
                                                         type="button"
+                                                        aria-label={maskedName}
                                                         onClick={onAccountClick ? () => onAccountClick(acc!.id, acc!.name || 'Account') : undefined}
                                                         className={cn(
                                                             'relative flex h-9 w-9 items-center justify-center rounded-full border-2 border-background bg-card overflow-hidden transition-transform',
@@ -380,7 +397,9 @@ export function EpisodeDetailPage({
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                     <span className="inline-flex items-center gap-1">
                                         <Eye className="h-3 w-3" />
-                                        {episodeWatchStats.count} watch{episodeWatchStats.count === 1 ? '' : 'es'}
+                                        {episodeWatchStats.count > 0
+                                            ? `${episodeWatchStats.count} watch${episodeWatchStats.count === 1 ? '' : 'es'}`
+                                            : 'Watched'}
                                     </span>
                                     {totalMin > 0 && (
                                         <span className="inline-flex items-center gap-1">
@@ -409,10 +428,10 @@ export function EpisodeDetailPage({
                                 Gallery
                             </h3>
                             <div className="flex items-center gap-1">
-                                <button type="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: -320, behavior: 'smooth' })} aria-label="Scroll gallery left" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
+                                <button type="button" data-theme-part="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: -320, behavior: 'smooth' })} aria-label="Scroll gallery left" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
                                     <ChevronLeft className="h-4 w-4" />
                                 </button>
-                                <button type="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: 320, behavior: 'smooth' })} aria-label="Scroll gallery right" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
+                                <button type="button" data-theme-part="button" onClick={() => scrollGalleryRef.current?.scrollBy({ left: 320, behavior: 'smooth' })} aria-label="Scroll gallery right" className="flex h-7 w-7 items-center justify-center rounded-full border border-border/40 bg-muted/60 text-muted-foreground shadow-sm transition-all hover:bg-accent hover:text-foreground active:scale-95">
                                     <ChevronRight className="h-4 w-4" />
                                 </button>
                             </div>
@@ -470,7 +489,7 @@ export function EpisodeDetailPage({
 
                 {/* DEV NOTICE */}
                 {!seriesTmdbId && !loading && import.meta.env?.DEV && (
-                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-600 dark:text-yellow-400">
+                    <div data-theme-part="panel" data-theme-tone="status" className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
                         No TMDB ID available. Episode enrichment data requires a TMDB ID.
                     </div>
                 )}

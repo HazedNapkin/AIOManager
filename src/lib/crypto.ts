@@ -1,4 +1,6 @@
 import { trace } from '@/lib/trace'
+import { base64ToBytes, bytesToBase64 } from './base64'
+export { bytesToBase64 } from './base64'
 
 const PBKDF2_ITERATIONS = 600000
 const SALT_LENGTH = 16
@@ -166,22 +168,6 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
   }
 }
 
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const CHUNK = 0x8000
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as unknown as number[])
-  }
-  return btoa(binary)
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
-
 export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   const encoder = new TextEncoder()
   const dataBuffer = encoder.encode(String(data))
@@ -215,6 +201,20 @@ export async function hashPassword(password: string, salt: Uint8Array): Promise<
 
   const hashArray = new Uint8Array(hashBits)
   return btoa(String.fromCharCode(...hashArray))
+}
+
+// Password verification and AES key derivation share the same PBKDF2 result.
+export async function deriveKeyAndHash(password: string, salt: Uint8Array): Promise<{ key: CryptoKey; hash: string }> {
+  const bits = await runPbkdf2(String(password), salt, PBKDF2_ITERATIONS, 256)
+  const hash = btoa(String.fromCharCode(...new Uint8Array(bits)))
+  const key = await crypto.subtle.importKey('raw', bits, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'])
+  return { key, hash }
+}
+
+// Return the derived key only when the local password hash matches.
+export async function deriveVerifiedKey(password: string, salt: Uint8Array, storedHash: string): Promise<CryptoKey | null> {
+  const { key, hash } = await deriveKeyAndHash(password, salt)
+  return hash === storedHash ? key : null
 }
 
 export function generateSalt(): Uint8Array {

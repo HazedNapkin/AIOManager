@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSyncStore } from '@/store/syncStore'
+import { captureSyncOwnership, syncRuntime, type SyncOwnership } from '@/store/sync-store-helpers'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,6 +11,7 @@ import { Rocket, Lock, Key, LogIn, RefreshCw, Eye, EyeOff, ShieldAlert, UserRoun
 import { toast } from '@/hooks/use-toast'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { useTheme } from '@/contexts/ThemeContext'
+import { BrandLogo } from '@/components/common/BrandLogo'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -28,12 +30,16 @@ import { useConfetti } from '@/components/ui/confetti'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { TypingText } from '@/components/ui/typing-text'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { cn } from '@/lib/utils'
 import pkg from '../../package.json'
 
 interface LoginPageProps {
     initialMode?: 'login' | 'register'
 }
+
+// A failed login can restore its prior workspace while retaining the same generation.
+const isSupersededAuthFailure = (e: unknown, attempt: number, latest: number, ownership?: SyncOwnership) =>
+    attempt !== latest || (e as Error)?.name === 'SyncOwnershipLostError' ||
+    (ownership?.current() === false && ownership.seq !== syncRuntime.pullSeq && ownership.seq !== syncRuntime.adoptedSeq)
 
 export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     useDocumentTitle('Login')
@@ -42,11 +48,14 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     const login = useSyncStore(s => s.login)
     const logout = useSyncStore(s => s.logout)
     const { isLocked, unlock } = useAuthStore()
-    const { isLight, logoUrl } = useTheme()
+    const { logoUrl } = useTheme()
 
     const confetti = useConfetti()
     const [searchParams] = useSearchParams()
     const navigate = useNavigate()
+
+    // Only the latest UI attempt may publish its outcome.
+    const authAttemptSeq = useRef(0)
 
     const [mode, setMode] = useState<'login' | 'register'>(initialMode)
     const [showPassword, setShowPassword] = useState(false)
@@ -117,9 +126,13 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
     }, [])
 
     const handleContinueWithDevice = async () => {
+        const attempt = ++authAttemptSeq.current
+        setLoading(false)
+        setIsUnlocking(false)
         setDeviceBusy(true)
         try {
             const result = await unlockWithDevice()
+            if (attempt !== authAttemptSeq.current) return
             if (result.ok) {
                 toast({ title: "Welcome back", description: "Signed in with your saved sign-in." })
             } else if (result.reason === 'prf-cancelled' || result.reason === 'unavailable') {
@@ -128,9 +141,10 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 toast({ title: "Sign in to continue", description: result.message })
             }
         } catch {
+            if (attempt !== authAttemptSeq.current) return
             toast({ variant: "destructive", title: "Sign-in failed", description: "Something went wrong. Use the sign-in form below." })
         } finally {
-            setDeviceBusy(false)
+            if (attempt === authAttemptSeq.current) setDeviceBusy(false)
         }
     }
 
@@ -196,11 +210,16 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         // Explicit password auth outranks the remembered layer: a stale device session
         // must never rewrite or gate these requests.
         deactivateDeviceAuth()
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setLoading(false)
+        setDeviceBusy(false)
         setIsUnlocking(true)
         setLoginError(null)
 
         try {
             const success = await unlock(loginPass)
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
             if (!success) {
                 setUnlockFailures(n => n + 1)
                 setLoginError('Invalid password')
@@ -209,22 +228,29 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 if (auth.id) {
                     useSyncStore.setState(s => ({ auth: { ...s.auth, password: loginPass, isAuthenticated: true } }))
                     // Local unlock restores IndexedDB only - deferred pull so the identity and avatar land like a normal login.
-                    setTimeout(() => useSyncStore.getState().refreshFromCloud(), 1500)
+                    setTimeout(() => {
+                        if (attempt === authAttemptSeq.current && ownership.current()) useSyncStore.getState().refreshFromCloud()
+                    }, 1500)
                 }
                 void maybeRememberDevice()
                 toast({ title: "Welcome back", description: "Signed in successfully." })
             }
         } catch (e) {
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
             const msg = (e as Error).message
 
             if (msg.includes('not initialized')) {
                 if (import.meta.env.DEV) console.log('[Auth] Local DB empty. Attempting Cloud Restore...')
                 try {
-                    await login(auth.id, loginPass, true)
+                    const pending = login(auth.id, loginPass, true)
+                    ownership = captureSyncOwnership()
+                    await pending
+                    if (attempt !== authAttemptSeq.current || !ownership.current()) return
                     void maybeRememberDevice()
                     toast({ title: "Restored", description: "Session restored from cloud." })
                 } catch (restoreErr) {
                     if (import.meta.env.DEV) console.error('[Auth] Cloud restore failed:', restoreErr)
+                    if (isSupersededAuthFailure(restoreErr, attempt, authAttemptSeq.current, ownership)) return
                     setLoginError("This browser session could not be restored. Log in from your original browser to sync first.")
                 }
             } else {
@@ -232,7 +258,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 if (import.meta.env.DEV) console.error("Unlock error:", e)
             }
         } finally {
-            setIsUnlocking(false)
+            if (attempt === authAttemptSeq.current) setIsUnlocking(false)
         }
     }
 
@@ -245,16 +271,25 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
         // Explicit password auth outranks the remembered layer: a stale device session
         // must never rewrite or gate these requests.
         deactivateDeviceAuth()
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setIsUnlocking(false)
+        setDeviceBusy(false)
         setLoading(true)
         setLoginError(null)
         try {
-            await login(loginId, loginPass)
+            const pending = login(loginId, loginPass)
+            ownership = captureSyncOwnership()
+            await pending
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
+            if (!useSyncStore.getState().auth.isAuthenticated) return
             void maybeRememberDevice()
         } catch (e) {
-            setLoginError((e as Error).message)
             if (import.meta.env.DEV) console.error("Login error:", e)
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
+            setLoginError((e as Error).message)
         } finally {
-            setLoading(false)
+            if (attempt === authAttemptSeq.current) setLoading(false)
         }
     }
 
@@ -265,24 +300,33 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
             return
         }
 
+        const attempt = ++authAttemptSeq.current
+        let ownership = captureSyncOwnership()
+        setIsUnlocking(false)
+        setDeviceBusy(false)
         setLoading(true)
         setLoginError(null)
         const localAuthBackup = clearLocalAuthSecrets()
         try {
-            await login(effectiveId, loginPass, false, true)
+            const pending = login(effectiveId, loginPass, false, true)
+            ownership = captureSyncOwnership()
+            await pending
+            if (attempt !== authAttemptSeq.current || !ownership.current()) return
+            if (!useSyncStore.getState().auth.isAuthenticated) return
             void maybeRememberDevice()
             toast({ title: "Signed in", description: "This browser session was reset and your cloud data was restored." })
         } catch (e) {
+            console.error("Cloud recovery login error:", e)
+            if (isSupersededAuthFailure(e, attempt, authAttemptSeq.current, ownership)) return
             restoreLocalAuthSecrets(localAuthBackup)
             const msg = (e as Error).message
-            console.error("Cloud recovery login error:", e)
             if (msg.includes("Encryption metadata") || msg.includes("Encryption Mismatch")) {
                 setLoginError("Could not decrypt your cloud data with this password. Make sure you are using the correct UUID and password from when you registered.")
             } else {
                 setLoginError(msg)
             }
         } finally {
-            setLoading(false)
+            if (attempt === authAttemptSeq.current) setLoading(false)
         }
     }
 
@@ -299,13 +343,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 <div className="text-center space-y-4">
                     <div className="flex justify-center">
                         <div className="flex h-20 w-20 items-center justify-center">
-                            <img
-                                src={logoUrl || "/logo.png"}
-                                alt="AIOManager"
-                                loading="lazy"
-                                onError={(e) => { if (e.currentTarget.src !== window.location.origin + '/logo.png') e.currentTarget.src = '/logo.png' }}
-                                className={cn('h-20 w-20 object-contain', !logoUrl && isLight && 'invert')}
-                            />
+                            <BrandLogo logoUrl={logoUrl} className="h-20 w-20 text-foreground" />
                         </div>
                     </div>
                     <div className="space-y-1">
@@ -317,7 +355,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                 </div>
 
                 {!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && (
-                    <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
+                    <div data-theme-tone="status" data-theme-part="panel" className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg space-y-2 animate-in slide-in-from-top-2 duration-500">
                         <div className="flex items-center gap-2 text-sm text-destructive font-semibold">
                             <ShieldAlert className="h-5 w-5" />
                             <span>Secure connection required</span>
@@ -356,7 +394,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <CardContent className="space-y-4">
                                 <div className="space-y-2">
                                     <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
-                                    <div className="p-3 bg-muted/20 rounded-lg border border-border/40 text-center">
+                                    <div data-theme-part="panel" className="p-3 bg-muted/20 rounded-lg border border-border/40 text-center">
                                         <p className="text-xs text-muted-foreground">
                                             A unique UUID will be generated automatically.
                                         </p>
@@ -516,7 +554,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                         </p>
                                     )}
                                     {sessionRestoreError && (
-                                        <div className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning space-y-2 animate-in slide-in-from-top-1">
+                                        <div data-theme-tone="status" data-theme-part="panel" className="rounded-lg border border-warning/25 bg-warning/10 p-3 text-xs text-warning space-y-2 animate-in slide-in-from-top-1">
                                             <p className="font-medium">This browser session could not be restored.</p>
                                             <p className="text-warning/90">Sign in from cloud with this UUID/password to continue.</p>
                                             <Button
@@ -555,7 +593,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </form>
 
                                 {isLocked && auth.isAuthenticated && unlockFailures >= 2 && (
-                                    <div className="rounded-xl border border-warning/30 bg-warning/10 p-3 space-y-2 animate-in slide-in-from-top-1">
+                                    <div data-theme-tone="status" data-theme-part="panel" className="rounded-xl border border-warning/30 bg-warning/10 p-3 space-y-2 animate-in slide-in-from-top-1">
                                         <p className="text-xs font-semibold text-warning">Still not working? This browser's saved session may be corrupted.</p>
                                         <p className="text-xs text-muted-foreground leading-relaxed">
                                             Sign in from cloud instead: it resets this browser's broken saved session and restores everything from your sync. Anything already synced is safe.
@@ -597,7 +635,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                             <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">or</span>
                                             <div className="h-px flex-1 bg-border" />
                                         </div>
-                                        <div className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-muted/20 p-2.5">
+                                        <div data-theme-part="panel" className="flex w-full items-center gap-3 rounded-xl border border-border/50 bg-muted/20 p-2.5">
                                             <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10">
                                             {auth.avatar ? (
                                                 <img src={auth.avatar} alt="" className="h-full w-full object-cover" />
@@ -674,7 +712,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                             <div className="space-y-2">
                                 <Label className="text-xs font-medium text-muted-foreground uppercase">Account UUID</Label>
                                 <div className="relative group">
-                                    <div className="p-4 bg-success/10 rounded-lg border border-success/20 flex items-center justify-between gap-3 group-hover:border-success/40 transition-colors">
+                                    <div data-theme-part="field" className="p-4 bg-success/10 rounded-lg border border-success/20 flex items-center justify-between gap-3 group-hover:border-success/40 transition-colors">
                                         <code className="text-sm font-mono font-bold break-all text-success">
                                             {registeredId}
                                         </code>
@@ -688,7 +726,7 @@ export function LoginPage({ initialMode = 'login' }: LoginPageProps = {}) {
                                 </div>
                             </div>
 
-                            <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-2">
+                            <div data-theme-tone="status" data-theme-part="panel" className="bg-warning/10 border border-warning/20 rounded-lg p-3 space-y-2">
                                 <div className="flex items-center gap-2 text-warning font-semibold text-xs uppercase">
                                     <ShieldAlert className="h-4 w-4" />
                                     No password reset

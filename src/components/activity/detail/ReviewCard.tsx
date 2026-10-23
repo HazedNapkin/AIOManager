@@ -14,7 +14,7 @@ export const ReviewCard = memo(function ReviewCard({ rv }: { rv: ReviewData }) {
     const displayText = !expanded && isLong ? rv.content.slice(0, 220) + '\u2026' : rv.content
 
     return (
-        <div className="flex flex-col justify-between rounded-2xl border border-border/40 bg-card/60 p-4 shadow-sm backdrop-blur-md space-y-2.5">
+        <div data-theme-part="card" className="flex flex-col justify-between rounded-2xl border border-border/40 bg-card/60 p-4 shadow-sm backdrop-blur-md space-y-2.5">
             <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/40 bg-muted font-bold text-xs text-primary shadow">
                     {rv.avatar ? (
@@ -44,6 +44,7 @@ export const ReviewCard = memo(function ReviewCard({ rv }: { rv: ReviewData }) {
                 {isLong && (
                     <button
                         type="button"
+                        data-theme-part="button"
                         onClick={() => setExpanded(e => !e)}
                         className="mt-1.5 flex items-center gap-1 text-[10px] font-bold text-primary/80 hover:text-primary transition-colors"
                     >

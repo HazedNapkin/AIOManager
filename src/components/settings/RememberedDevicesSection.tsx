@@ -34,7 +34,7 @@ interface DeviceRowProps {
 
 const DeviceRow = memo(function DeviceRow({ row, isThisDevice, busy, onRevoke, onRename }: DeviceRowProps) {
     return (
-        <div className="rounded-2xl border border-border/35 bg-background/35 p-2.5 sm:p-3 space-y-2">
+        <div data-theme-part="panel" className="rounded-2xl border border-border/35 bg-background/35 p-2.5 sm:p-3 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
                 <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border/30 bg-muted/20">
                     {row.tier === 'prf'
@@ -42,11 +42,11 @@ const DeviceRow = memo(function DeviceRow({ row, isThisDevice, busy, onRevoke, o
                         : <Laptop className="h-3.5 w-3.5 text-muted-foreground" />}
                 </div>
                 <span className="min-w-0 flex-1 truncate text-xs font-bold">{row.label || 'Remembered device'}</span>
-                <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-muted-foreground">
+                <span data-theme-part="badge" className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-muted-foreground">
                     {row.tier === 'prf' ? 'Passkey' : 'Device key'}
                 </span>
                 {isThisDevice && (
-                    <span className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-primary">
+                    <span data-theme-part="badge" className="rounded-full bg-primary/12 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tighter text-primary">
                         This device
                     </span>
                 )}
@@ -174,7 +174,7 @@ export function RememberedDevicesSection() {
 
     return (
         <section className="space-y-4">
-            <div className="space-y-4 sm:space-y-5 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
+            <div data-theme-part="panel" className="space-y-4 sm:space-y-5 rounded-[1.5rem] sm:rounded-[1.75rem] border border-border/45 bg-card/80 p-3 sm:p-4 md:p-5 shadow-sm">
                 <div className="flex items-start gap-3">
                     <div className="relative mt-0.5 flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-2xl border border-border/35 bg-muted/25">
                         <SquircleOverlay />
@@ -200,16 +200,17 @@ export function RememberedDevicesSection() {
 
                 <div className="space-y-3">
                     {rows === null && !loadFailed && (
-                        <p className="rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
+                        <p data-theme-part="panel" className="rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
                             Loading remembered devices...
                         </p>
                     )}
                     {loadFailed && (
-                        <div className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
                             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                             <span>Could not load remembered devices.</span>
                             <button
                                 type="button"
+                                data-theme-part="button"
                                 className="ml-auto shrink-0 text-primary hover:underline"
                                 onClick={() => refresh().catch(() => setLoadFailed(true))}
                             >
@@ -218,7 +219,7 @@ export function RememberedDevicesSection() {
                         </div>
                     )}
                     {rows !== null && rows.length === 0 && (
-                        <div className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
+                        <div data-theme-part="panel" className="flex items-start gap-2 rounded-2xl border border-dashed border-border/40 bg-background/30 p-3 text-xs text-muted-foreground">
                             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                             <span>No remembered devices. Tick Remember this device at sign-in to skip the password next time.</span>
                         </div>

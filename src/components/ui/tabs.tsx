@@ -10,6 +10,7 @@ const TabsList = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
 >(({ className, ...props }, ref) => (
   <TabsPrimitive.List
+    data-theme-part="tabs-list"
     ref={ref}
     className={cn(
       "inline-flex h-auto w-fit max-w-full flex-wrap items-center justify-start gap-1.5 rounded-2xl border border-border/40 bg-card p-1.5 text-muted-foreground shadow-sm",
@@ -27,6 +28,7 @@ const TabsTrigger = React.forwardRef<
   const activeClass = "data-[state=active]:border data-[state=active]:border-border/40 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
   return (
     <TabsPrimitive.Trigger
+      data-theme-part="tab"
       ref={ref}
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-transparent px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
@@ -49,6 +51,7 @@ const TabsContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content> & { animated?: boolean }
 >(({ className, animated = true, ...props }, ref) => (
   <TabsPrimitive.Content
+    data-theme-part="tab-panel"
     ref={ref}
     className={cn(
       "mt-2 outline-none",
